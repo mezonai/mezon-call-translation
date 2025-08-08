@@ -1,0 +1,43 @@
+luồng Client Server
+
+
+ Client Side
+Mục tiêu: Thu âm giọng nói người dùng, chuyển thành tín hiệu số dạng PCM( phương pháp số hóa tín hiệu âm thanh là analog), gửi real-time đến Server.
+
+ 1. Thu âm thanh từ micro
+Sử dụng thư viện như PyAudio để truy cập microphone.
+
+Ghi lại âm thanh ở mono (1 kênh), tần số mẫu 16.000Hz, 16-bit depth.
+
+2. Số hóa tín hiệu âm thanh (PCM - Pulse Code Modulation)
+Rời rạc hóa (Sampling):
+→ Âm thanh analog được lấy mẫu 16.000 lần mỗi giây.
+
+Lượng tử hóa (Quantization):
+→ Mỗi mẫu được mã hóa bằng 16-bit (2 byte).
+
+Kết quả:
+→ Mỗi giây âm thanh ~ 32KB dữ liệu (16000 x 2).
+
+ 3. Gửi dữ liệu âm thanh qua WebSocket
+Dữ liệu được gửi dạng nhị phân (raw PCM bytes).
+
+Thường chia thành các khối nhỏ (chunk), ví dụ 1024 mẫu mỗi lần gửi (≈ 64ms âm thanh).
+
+Gửi liên tục, thời gian thực đến Server.
+
+
+Phía Server:
+   + Luôn tạo Websocket, Client để nhận
+   + Định nghĩa sẵn cái buffer dạng bytes để nhận vì mình nhận bytes mà
+   + Định nghĩa cái chunk ( tối đa bao nhiêu giây là mình xử lý, mỗi giây tần số lấy mẫu của Server * số bít lượng tử của 1 mẫu) là số bytes tối đa nhận được để xử lý
+   ( chunk ở server là chunk tối đa để xử lý, chunk ở Client là chunk tối đa để gửi)
+   + kiểm tra buffer nhận khi quá chunk size thì đẩy vào chunk để xử lý và xóa đoạn chunk ở buffer đi .
+
+   + Tạo ra 3 Thread chính:
+    
+     - Thread nhận audio từ Client ( đẩy vào array buffer xong rồi đẩy chunk vào input_queue )
+      - Thread xử lý audio ( cái này dùng 2 biến chung là input_queue và output_queue từ hai thread kia để xử lý) ( get chunk từ input_queue( đồng nghĩa với xóa) sau đó xử lý đẩy vào output_queue)
+     - Thread gửi audio cho CLient ( get tư output_queue được text nào đẩy cho Client)
+
+
