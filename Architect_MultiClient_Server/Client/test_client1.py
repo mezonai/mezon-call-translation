@@ -9,24 +9,25 @@ RATE = 16000
 CHANNELS = 1
 DTYPE = 'int16'
 
-# Thông tin client và session
-CLIENT_ID = "trongngovan"
-SESSION_ID = "room1"
-TRANSCRIPT = True  # Mặc định khi connect
+
+CLIENT_ID = "trongngovan" # này có thể là username hoặc userid của người tham gia cuộc họp
+SESSION_ID = "room1" # này là id phòng chat nhé.
+TRANSCRIPT = True  # này là nếu người dùng enable transcript thì sẽ True nhá
 
 async def send_audio():
     uri = f"ws://172.16.220.225:8000/ws/faster-whisper/?client_id={CLIENT_ID}&session_id={SESSION_ID}&transcript={str(TRANSCRIPT).lower()}"
     async with websockets.connect(uri) as websocket:
         print("Connected to server")
 
-        # Task nhận text từ server
+       
         async def receive():
             async for message in websocket:
                 print(f"{message}")
+                #  thực ra đoạn này muốn hiển thị theo tên thì có thể chỉ nhận userid thôi, sau đó join sang mezon để lấy tên nhá chứ ít khi gửi cả cái username hay email lắm ae
 
         recv_task = asyncio.create_task(receive())
 
-        # Generator thu âm audio theo từng chunk
+        # cái này là khi mình stream âm thanh liên tục, cứ được một chunk ( tầm bao nhiêu mẫu dữ liệu đấy) thì ae gửi lên server, ae có thể tùy chỉnh
         def audio_generator():
             with sd.InputStream(samplerate=RATE, channels=CHANNELS, dtype=DTYPE, blocksize=CHUNK) as stream:
                 while True:
@@ -35,10 +36,9 @@ async def send_audio():
 
         try:
             for chunk in audio_generator():
-                # Gửi dưới dạng bytes (raw PCM 16bit)
+                # ae mình mặc định gửi dưới dạng bytes (raw PCM 16bit)
                 await websocket.send(chunk.tobytes())
-                # Ví dụ: sau 5 chunk thì bật transcript
-                # (Bạn có thể thay bằng input hoặc logic khác)
+               
                 # if np.random.rand() < 0.01:  # Ngẫu nhiên gửi lệnh bật/tắt transcript
                 #     msg = json.dumps({"action": "set_transcript", "value": True})
                 #     await websocket.send(msg)
