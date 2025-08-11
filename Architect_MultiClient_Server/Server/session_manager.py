@@ -2,12 +2,13 @@ class SessionManager:
     def __init__(self):
         self.sessions = {}  # session_id -> {clients, transcripts}
 
-    def add_client(self, session_id, client_id, websocket, transcript):
+    def add_client(self, session_id, client_id, websocket, transcript, translation):
         if session_id not in self.sessions:
-            self.sessions[session_id] = {"clients": {}, "transcripts": {}}
+            self.sessions[session_id] = {"clients": {}, "transcripts": {}, "translation": {}}
         self.sessions[session_id]["clients"][client_id] = {
             "websocket": websocket,
-            "transcript": transcript
+            "transcripts": transcript,
+            "translation": translation,
         }
 
     def remove_client(self, session_id, client_id):
@@ -29,22 +30,23 @@ class SessionManager:
     #         }
     #     return {}
 
-    def get_clients_to_notify(self, session_id):
+    def get_clients_to_notify_transcript(self, session_id):
         if session_id in self.sessions:
             return [
                 info["websocket"]
                 for info in self.sessions[session_id]["clients"].values()
-                if info["transcript"]
+                if info.get("transcripts", False)
             ]
         return []
-    
-    def get_client_websocket(self, session_id, client_id):
-        """Hàm mới: Lấy websocket của một client cụ thể."""
+
+    def get_clients_to_notify_translation(self, session_id):
         if session_id in self.sessions:
-            client_info = self.sessions[session_id]["clients"].get(client_id)
-            if client_info:
-                return client_info["websocket"]
-        return None
+            return [
+                info["websocket"]
+                for info in self.sessions[session_id]["clients"].values()
+                if info.get("translation", False)
+            ]
+        return []
 
 session_manager = SessionManager()
 

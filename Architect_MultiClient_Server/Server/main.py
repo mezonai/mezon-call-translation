@@ -11,13 +11,17 @@ async def result_dispatcher():
     while True:
         vosk_result = stt_service_vosk.get_result_nowait()
         if vosk_result:
-            text, client_id, session_id = vosk_result
-            # Gửi text cho tất cả client trong cùng session
-            for ws in session_manager.get_clients_to_notify(session_id):
-                await ws.send_json({
-                    "client_id": client_id,
-                    "text": text
-                })
+            result_type, payload = vosk_result
+
+            if result_type == "transcripts":
+                clients = session_manager.get_clients_to_notify_transcript(payload["session_id"])
+            elif result_type == "translation":
+                clients = session_manager.get_clients_to_notify_translation(payload["session_id"])
+            else:
+                clients = []
+
+            for ws in clients:
+                await ws.send_json(payload)
         # Nghỉ một chút để giảm CPU load
         await asyncio.sleep(0.01)
 

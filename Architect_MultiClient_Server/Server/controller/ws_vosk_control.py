@@ -10,10 +10,11 @@ async def websocket_vosk(
     websocket: WebSocket,
     client_id: str = Query(...),
     session_id: str = Query(...),
-    transcript: bool = Query(...)
+    transcript: bool = Query(...),
+    translation: bool = Query(...)
 ):
     await websocket.accept()
-    session_manager.add_client(session_id, client_id, websocket, transcript)
+    session_manager.add_client(session_id, client_id, websocket, transcript, translation)
     try:
         while True:
             data = await websocket.receive_bytes()

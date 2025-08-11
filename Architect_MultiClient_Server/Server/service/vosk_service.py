@@ -18,7 +18,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", 16000))
 MIN_TEXT_LENGTH = int(os.getenv("MIN_TEXT_LENGTH", 2))
 TRANSLATION_INTERVAL = float(os.getenv("TRANSLATION_INTERVAL", 0.8))
-VOSK_MODEL_PATH = os.getenv("VOSK_MODEL_PATH", "models/transcription/en-model")
+VOSK_MODEL_PATH = os.getenv("VOSK_MODEL_PATH", "Transcription/models/en-model")
 AUDIO_QUEUE_MAXSIZE = int(os.getenv("AUDIO_QUEUE_MAXSIZE", 100))
 RESULT_QUEUE_MAXSIZE = int(os.getenv("RESULT_QUEUE_MAXSIZE", 100))
 AUDIO_TASK_QUEUE_MAXSIZE = int(os.getenv("AUDIO_TASK_QUEUE_MAXSIZE", 100))
@@ -42,7 +42,7 @@ class STTVoskService:
 
         self.translator_worker = TranslatorWorker(
             TranslatorConfig(
-                NLLB_MODEL_NAME=os.getenv("NLLB_MODEL_NAME", "models/translate/nllb-200"),
+                NLLB_MODEL_NAME=os.getenv("NLLB_MODEL_NAME", "facebook/nllb-200-distilled-600M"),
                 SOURCE_LANG=os.getenv("NLLB_SOURCE_LANG", "en_Latn"),
                 TARGET_LANG=os.getenv("NLLB_TARGET_LANG", "vie_Latn"),
             ),
@@ -77,12 +77,27 @@ class STTVoskService:
                     result = json.loads(recognizer.Result())
                     text = result.get("text", "").strip()
                     if len(text) >= MIN_TEXT_LENGTH:
+                        self.result_queue.put(("transcripts", {
+                        "type": "transcripts",
+                        "text": text,
+                        "is_final": True,
+                        "session_id": session_id,
+                        "client_id": client_id
+                        }))
                         self.queue_translation(text, client_id, session_id, state, is_final=True)
                 else:
                     partial = json.loads(recognizer.PartialResult())
                     text = partial.get("partial", "").strip()
 
                     if text and self.should_translate(text, state):
+                        self.result_queue.put(("transcripts", {
+                            "type": "transcripts",
+                            "text": text,
+                            "is_final": False,
+                            "session_id": session_id,
+                            "client_id": client_id
+                        }))
+
                         self.queue_translation(text, client_id, session_id, state, is_final=False)
 
             except queue.Empty:

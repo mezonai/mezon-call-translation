@@ -73,11 +73,12 @@ class TranslatorWorker(threading.Thread):
 
         response_payload = {
             "type": "translation",
-            "original": text_to_translate,
+            # "original": text_to_translate,
             "translation": translation,
             "is_final": is_final,
+            "session_id" : session_id,
             "client_id": client_id,
         }
         
         log.info(f"Translated for {client_id}, queuing for dispatch: '{translation}'")
-        self.result_queue.put((response_payload, client_id, session_id))
+        self.result_queue.put(("translation", response_payload))

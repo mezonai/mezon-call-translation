@@ -14,9 +14,10 @@ DTYPE = 'int16'
 CLIENT_ID = "khaidohoang"
 SESSION_ID = "room1"
 TRANSCRIPT = True  # Mặc định khi connect
+TRANSLATION = False
 
 async def send_audio():
-    uri = f"ws://localhost:8000/ws/vosk/?client_id={CLIENT_ID}&session_id={SESSION_ID}&transcript={str(TRANSCRIPT).lower()}"
+    uri = f"ws://localhost:8000/ws/vosk/?client_id={CLIENT_ID}&session_id={SESSION_ID}&transcript={str(TRANSCRIPT).lower()}&translation={str(TRANSLATION).lower()}"
     async with websockets.connect(uri) as websocket:
         print("Connected to server")
 
