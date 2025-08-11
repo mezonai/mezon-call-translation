@@ -37,5 +37,19 @@ class SessionManager:
                 if info["transcript"]
             ]
         return []
+    
+    def get_client_websocket(self, session_id, client_id):
+        """Hàm mới: Lấy websocket của một client cụ thể."""
+        if session_id in self.sessions:
+            client_info = self.sessions[session_id]["clients"].get(client_id)
+            if client_info:
+                return client_info["websocket"]
+        return None
 
 session_manager = SessionManager()
+
+# session_manager.py
+
+
+
+

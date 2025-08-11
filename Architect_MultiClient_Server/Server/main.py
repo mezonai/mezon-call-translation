@@ -1,41 +1,52 @@
 from fastapi import FastAPI
-from controller.ws_faster_whisper_control import router as faster_whisper_router
-from service.faster_whisper_service import stt_service
+from controller.ws_vosk_control import router as vosk_router
+from service.vosk_service import stt_service_vosk
 from session_manager import session_manager
 import asyncio
+from contextlib import asynccontextmanager
 
-app = FastAPI()
-app.include_router(faster_whisper_router)
 
 async def result_dispatcher():
+    """Vòng lặp lấy kết quả từ VOSK và gửi cho các client."""
     while True:
-        result = stt_service.get_result_nowait()
-        if result:
-            text, client_id, session_id = result
-            # session_manager.update_transcript(session_id, client_id, text)
-            # response = session_manager.get_transcript_json(session_id)
-            # for ws in session_manager.get_clients_to_notify(session_id):
-            #     await ws.send_json(response)
+        vosk_result = stt_service_vosk.get_result_nowait()
+        if vosk_result:
+            text, client_id, session_id = vosk_result
+            # Gửi text cho tất cả client trong cùng session
             for ws in session_manager.get_clients_to_notify(session_id):
-                response = {
-                    # "session_id": session_id,
+                await ws.send_json({
                     "client_id": client_id,
                     "text": text
-                }
-            await ws.send_json(response)
-        else:
-            await asyncio.sleep(0.01)
+                })
+        # Nghỉ một chút để giảm CPU load
+        await asyncio.sleep(0.01)
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(result_dispatcher())
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Quản lý vòng đời app: startup → shutdown."""
+    # Startup
+    dispatcher_task = asyncio.create_task(result_dispatcher())
+    yield
+    # Shutdown
+    stt_service_vosk.shutdown()  # Dừng thread xử lý STT
+    dispatcher_task.cancel()
+    try:
+        await dispatcher_task
+    except asyncio.CancelledError:
+        pass
+
+
+# Khởi tạo FastAPI với Lifespan
+app = FastAPI(lifespan=lifespan)
+app.include_router(vosk_router)
+
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "main:app",
-        host="172.16.220.225",
+        host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=False
     )
-

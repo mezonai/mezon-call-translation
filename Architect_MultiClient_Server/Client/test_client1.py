@@ -15,7 +15,7 @@ SESSION_ID = "room1" # này là id phòng chat nhé.
 TRANSCRIPT = True  # này là nếu người dùng enable transcript thì sẽ True nhá
 
 async def send_audio():
-    uri = f"ws://172.16.220.225:8000/ws/faster-whisper/?client_id={CLIENT_ID}&session_id={SESSION_ID}&transcript={str(TRANSCRIPT).lower()}"
+    uri = f"ws://localhost:8000/ws/vosk/?client_id={CLIENT_ID}&session_id={SESSION_ID}&transcript={str(TRANSCRIPT).lower()}"
     async with websockets.connect(uri) as websocket:
         print("Connected to server")
 

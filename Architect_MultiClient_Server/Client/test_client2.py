@@ -16,7 +16,7 @@ SESSION_ID = "room1"
 TRANSCRIPT = True  # Mặc định khi connect
 
 async def send_audio():
-    uri = f"ws://172.16.220.225:8000/ws/faster-whisper/?client_id={CLIENT_ID}&session_id={SESSION_ID}&transcript={str(TRANSCRIPT).lower()}"
+    uri = f"ws://localhost:8000/ws/vosk/?client_id={CLIENT_ID}&session_id={SESSION_ID}&transcript={str(TRANSCRIPT).lower()}"
     async with websockets.connect(uri) as websocket:
         print("Connected to server")
 
