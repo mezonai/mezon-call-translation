@@ -6,6 +6,8 @@ import threading
 import logging
 from vosk import Model, KaldiRecognizer
 from service.nllb_service import TranslatorWorker, TranslatorConfig
+from utils.vad import SileroVAD
+import numpy as np
 
 from dotenv import load_dotenv
 
@@ -23,7 +25,6 @@ AUDIO_QUEUE_MAXSIZE = int(os.getenv("AUDIO_QUEUE_MAXSIZE", 100))
 RESULT_QUEUE_MAXSIZE = int(os.getenv("RESULT_QUEUE_MAXSIZE", 100))
 AUDIO_TASK_QUEUE_MAXSIZE = int(os.getenv("AUDIO_TASK_QUEUE_MAXSIZE", 100))
 
-
 class STTVoskService:
     def __init__(self, model_path=VOSK_MODEL_PATH):
         log.info("Initializing STTVoskService...")
@@ -39,6 +40,11 @@ class STTVoskService:
         self.result_queue = queue.Queue(maxsize=RESULT_QUEUE_MAXSIZE)
         self.audio_task_queue = queue.Queue(maxsize=AUDIO_TASK_QUEUE_MAXSIZE)
         self.stop_event = threading.Event()
+
+        #Silero vad
+        self.vad = SileroVAD()
+        self.vad_trigger = False
+        self.speech_buffer = bytes()
 
         self.translator_worker = TranslatorWorker(
             TranslatorConfig(
@@ -71,12 +77,30 @@ class STTVoskService:
         while not self.stop_event.is_set():
             try:
                 chunk, client_id, session_id = self.audio_queue.get(timeout=0.1)
+
+                # Convert chunk bytes to float32 normalized audio
+                audio_np = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+
+                # Unpack boolean from tuple returned by VAD
+                triggered = self.vad.is_speech(audio_np, sample_rate=SAMPLE_RATE)
+
+                if triggered:
+                    self.vad_trigger = True
+                    # Append raw chunk bytes to speech_buffer
+                    self.speech_buffer += chunk
+                elif self.vad_trigger:
+                    # Speech just ended, time to transcribe
+                    self.vad_trigger = False
+
+                    if len(self.speech_buffer) == 0:
+                        continue
+
                 recognizer, state = self.get_or_create_recognizer(client_id, session_id)
 
                 if recognizer.AcceptWaveform(chunk):
                     result = json.loads(recognizer.Result())
                     text = result.get("text", "").strip()
-                    if len(text) >= MIN_TEXT_LENGTH:
+                    if len(text) >= MIN_TEXT_LENGTH and text.lower() != "the":
                         self.result_queue.put(("transcripts", {
                         "type": "transcripts",
                         "text": text,
@@ -88,8 +112,7 @@ class STTVoskService:
                 else:
                     partial = json.loads(recognizer.PartialResult())
                     text = partial.get("partial", "").strip()
-
-                    if text and self.should_translate(text, state):
+                    if text and text.lower() != "the" and self.should_translate(text, state):
                         self.result_queue.put(("transcripts", {
                             "type": "transcripts",
                             "text": text,
