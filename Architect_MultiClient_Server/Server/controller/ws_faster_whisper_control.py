@@ -1,5 +1,5 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from service.faster_whisper_service import stt_service, CHUNK_SIZE, OVERLAP_SIZE
+from service.faster_whisper_service import stt_service, CHUNK_SIZE
 from session_manager import session_manager
 import asyncio
 
@@ -10,10 +10,11 @@ async def websocket_faster_whisper(
     websocket: WebSocket,
     client_id: str = Query(...),
     session_id: str = Query(...),
-    transcript: bool = Query(...) 
+    transcript: bool = Query(...),
+    translation: bool = Query(...)
 ):
     await websocket.accept()
-    session_manager.add_client(session_id, client_id, websocket, transcript)
+    session_manager.add_client(session_id, client_id, websocket, transcript, translation)
     
     # Buffer để tích lũy audio chunks
     buffer = bytearray()
@@ -26,7 +27,7 @@ async def websocket_faster_whisper(
             # Xử lý buffer theo chunk size
             while len(buffer) >= CHUNK_SIZE:
                 chunk = buffer[:CHUNK_SIZE]
-                buffer = buffer[CHUNK_SIZE - OVERLAP_SIZE:]
+                buffer = buffer[CHUNK_SIZE:]
                 
                 stt_service.submit_audio(chunk, client_id, session_id)
     except WebSocketDisconnect:
