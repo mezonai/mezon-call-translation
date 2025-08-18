@@ -2,6 +2,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from service.faster_whisper_service import stt_service, CHUNK_SIZE
 from session_manager import session_manager
 import asyncio
+from typing import Optional
 
 router = APIRouter()
 
@@ -11,7 +12,7 @@ async def websocket_faster_whisper(
     client_id: str = Query(...),
     session_id: str = Query(...),
     transcript: bool = Query(...),
-    translation: bool = Query(...),
+    translation: Optional[bool] = Query(default=False),
     language: str = Query(default="en")
 ):
     await websocket.accept()
