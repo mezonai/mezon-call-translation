@@ -2,6 +2,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from service.vosk_service import stt_service_vosk
 from session_manager import session_manager
 import asyncio
+from typing import Optional
 
 router = APIRouter()
 
@@ -11,10 +12,11 @@ async def websocket_vosk(
     client_id: str = Query(...),
     session_id: str = Query(...),
     transcript: bool = Query(...),
-    translation: bool = Query(...)
+    translation: bool = Query(...),
+    language: Optional[str] = Query(default=None)
 ):
     await websocket.accept()
-    session_manager.add_client(session_id, client_id, websocket, transcript, translation)
+    session_manager.add_client(session_id, client_id, websocket, transcript, translation, language)
     try:
         while True:
             data = await websocket.receive_bytes()

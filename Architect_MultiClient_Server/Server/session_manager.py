@@ -2,13 +2,14 @@ class SessionManager:
     def __init__(self):
         self.sessions = {}  # session_id -> {clients, transcripts}
 
-    def add_client(self, session_id, client_id, websocket, transcript, translation):
+    def add_client(self, session_id, client_id, websocket, transcript, translation, language):
         if session_id not in self.sessions:
             self.sessions[session_id] = {"clients": {}, "transcripts": {}, "translation": {}}
         self.sessions[session_id]["clients"][client_id] = {
             "websocket": websocket,
             "transcripts": transcript,
             "translation": translation,
+            "language" : language
         }
 
     def remove_client(self, session_id, client_id):
@@ -17,6 +18,16 @@ class SessionManager:
             self.sessions[session_id]["transcripts"].pop(client_id, None)
             if not self.sessions[session_id]["clients"]:
                 self.sessions.pop(session_id)
+    
+    def get_client_info(self, session_id, client_id):
+        """Return the full client info dict (or None if not found)."""
+        return self.sessions.get(session_id, {}).get("clients", {}).get(client_id)
+
+    def get_client_language(self, session_id, client_id):
+        """Return the client's language (or None if not set)."""
+        client_info = self.get_client_info(session_id, client_id)
+        return client_info.get("language") if client_info else None
+
 
     # def update_transcript(self, session_id, client_id, text):
     #     if session_id in self.sessions:

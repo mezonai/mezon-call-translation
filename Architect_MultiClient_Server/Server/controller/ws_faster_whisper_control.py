@@ -11,10 +11,11 @@ async def websocket_faster_whisper(
     client_id: str = Query(...),
     session_id: str = Query(...),
     transcript: bool = Query(...),
-    translation: bool = Query(...)
+    translation: bool = Query(...),
+    language: str = Query(default="en")
 ):
     await websocket.accept()
-    session_manager.add_client(session_id, client_id, websocket, transcript, translation)
+    session_manager.add_client(session_id, client_id, websocket, transcript, translation, language)
     
     # Buffer để tích lũy audio chunks
     buffer = bytearray()
