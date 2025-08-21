@@ -15,7 +15,7 @@ CLIENT_ID = "doanhthu"
 SESSION_ID = "room2"
 TRANSCRIPT = True
 TRANSLATION = False
-LANGUAGE = "vi"
+LANGUAGE = "en"
 
 mic_enabled = False  # trạng thái bật/tắt mic
 

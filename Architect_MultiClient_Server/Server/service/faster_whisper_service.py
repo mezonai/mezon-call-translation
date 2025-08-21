@@ -103,7 +103,7 @@ class STTFasterWhisperService:
                     self.data_client_temp[session_id][client_id]["buffer_count"] += 1
                     print(f"chunk count: {self.data_client_temp[session_id][client_id]["buffer_count"]}")
                     log.debug(f"Speech buffer length={len(self.data_client_temp[session_id][client_id]["speech_buffer"])} bytes")
-                    if len(self.data_client_temp[session_id][client_id]["speech_buffer"]) == 0 or self.data_client_temp[session_id][client_id]["buffer_count"] == 1:
+                    if len(self.data_client_temp[session_id][client_id]["speech_buffer"]) == 0:
                         continue
 
                     # Chuyển sang mảng float32
@@ -138,6 +138,10 @@ class STTFasterWhisperService:
                         log.info(f"Transcription (client={client_id}, session={session_id}): {text}")
                         log.debug(f"Processing time: {time_end - time_start:.2f}s")
                         print(NEON_GREEN + text)
+                        if self.data_client_temp[session_id][client_id]["buffer_count"] == 1 and len(text) > 7:
+                            print("nghi ngờ")
+                            self.data_client_temp[session_id][client_id]["last_text"] = text
+                            continue
                         if self.data_client_temp[session_id][client_id]["buffer_count"] == 2 and len(text) > 30:
                             print("nghi ngờ")
                             self.data_client_temp[session_id][client_id]["last_text"] = text

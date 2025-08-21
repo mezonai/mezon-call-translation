@@ -24,7 +24,7 @@ async def send_audio():
     global mic_enabled
 
     uri = (
-        f"ws://localhost:8000/ws/faster-whisper/"
+        f"ws://localhost:800/ws/faster-whisper/"
         f"?client_id={CLIENT_ID}&session_id={SESSION_ID}"
         f"&transcript={str(TRANSCRIPT).lower()}"
         f"&translation={str(TRANSLATION).lower()}"

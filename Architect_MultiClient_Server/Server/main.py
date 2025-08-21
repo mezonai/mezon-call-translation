@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from session_manager import session_manager
 
 # Choose engine from env var: "vosk" or "whisper"
-STT_ENGINE = os.getenv("STT_ENGINE", "whisper").lower()
+STT_ENGINE = os.getenv("STT_ENGINE", "vosk").lower()
 
 if STT_ENGINE == "vosk":
     from controller.ws_vosk_control import router as stt_router
