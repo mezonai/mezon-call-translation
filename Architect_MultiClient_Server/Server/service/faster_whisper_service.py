@@ -11,6 +11,7 @@ import os
 from datetime import datetime
 from session_manager import session_manager
 from collections import defaultdict
+import torch
 
 NEON_GREEN = '\033[92m'
 
@@ -18,7 +19,7 @@ SAMPLE_RATE = 16000
 CHUNK_DURATION = 1
 CHUNK_SIZE = int(SAMPLE_RATE * CHUNK_DURATION) * 2  # 16-bit PCM
 # OVERLAP_SIZE = int(CHUNK_SIZE * 0.25)  # 10% overlap
-
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # ===== Logger Setup =====
 class LogFormatter(logging.Formatter):
     COLORS = {
@@ -52,7 +53,7 @@ class STTFasterWhisperService:
 
     def __init__(self):
         log.info("Initializing Whisper model (medium, float16, cuda)...")
-        self.model = WhisperModel("large-v3-turbo", device="cuda", compute_type="float16")
+        self.model = WhisperModel("large-v3-turbo", device=DEVICE, compute_type="float16")
         
         self.audio_queue = queue.Queue()
         self.result_queue = queue.Queue()

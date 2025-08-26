@@ -9,3 +9,6 @@ fastapi
 torch
 torchvision
 torchaudio
+uvicorn[standard]
+livekit
+python-dotenv
