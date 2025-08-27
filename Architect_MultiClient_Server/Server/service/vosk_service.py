@@ -5,7 +5,6 @@ import queue
 import threading
 import logging
 from vosk import Model, KaldiRecognizer
-from service.nllb_service import TranslatorWorker, TranslatorConfig
 from utils.vad import SileroVAD
 import numpy as np
 
@@ -20,7 +19,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 SAMPLE_RATE = int(os.getenv("SAMPLE_RATE", 16000))
 MIN_TEXT_LENGTH = int(os.getenv("MIN_TEXT_LENGTH", 2))
 TRANSLATION_INTERVAL = float(os.getenv("TRANSLATION_INTERVAL", 0.8))
-VOSK_MODEL_PATH = os.getenv("VOSK_MODEL_PATH", "Transcription/models/vosk-model-small-en-us-0.15")
+VOSK_MODEL_PATH = os.getenv("VOSK_MODEL_PATH", "vosk-model-small-en-us-0.15")
 AUDIO_QUEUE_MAXSIZE = int(os.getenv("AUDIO_QUEUE_MAXSIZE", 100))
 RESULT_QUEUE_MAXSIZE = int(os.getenv("RESULT_QUEUE_MAXSIZE", 100))
 AUDIO_TASK_QUEUE_MAXSIZE = int(os.getenv("AUDIO_TASK_QUEUE_MAXSIZE", 100))
@@ -43,20 +42,6 @@ class STTVoskService:
 
         #Silero vad
         self.vad = SileroVAD()
-        # self.vad_trigger = False
-        # self.speech_buffer = bytes()
-
-        # self.translator_worker = TranslatorWorker(
-        #     TranslatorConfig(
-        #         NLLB_MODEL_NAME=os.getenv("NLLB_MODEL_NAME", "facebook/nllb-200-distilled-600M"),
-        #         SOURCE_LANG=os.getenv("NLLB_SOURCE_LANG", "en_Latn"),
-        #         TARGET_LANG=os.getenv("NLLB_TARGET_LANG", "vie_Latn"),
-        #     ),
-        #     self.audio_task_queue,
-        #     self.result_queue,
-        #     self.stop_event
-        # )
-        # self.translator_worker.start()
 
         self.thread = threading.Thread(target=self.stt_worker, daemon=True)
         self.thread.start()
@@ -83,19 +68,6 @@ class STTVoskService:
 
                 # Unpack boolean from tuple returned by VAD
                 triggered = self.vad.is_speech(audio_np, sample_rate=SAMPLE_RATE)
-
-                # if triggered:
-                #     self.vad_trigger = True
-                #     # Append raw chunk bytes to speech_buffer
-                #     self.speech_buffer += chunk
-                # elif self.vad_trigger:
-                #     # Speech just ended, time to transcribe
-                #     self.vad_trigger = False
-
-                #     if len(self.speech_buffer) == 0:
-                #         continue
-                # if not triggered:
-                #     continue
 
                 recognizer, state = self.get_or_create_recognizer(client_id, session_id)
 
@@ -127,14 +99,6 @@ class STTVoskService:
 
             except queue.Empty:
                 continue
-
-    # def should_translate(self, text, state):
-    #     now = time.time()
-    #     if now - state["last_translation_time"] > TRANSLATION_INTERVAL:
-    #         if len(text) >= MIN_TEXT_LENGTH and text != state["last_queued_text"]:
-    #             state["last_translation_time"] = now
-    #             return True
-    #     return False
 
     def queue_translation(self, text, client_id, session_id, state, is_final):
         task = {

@@ -4,19 +4,13 @@ import asyncio
 from contextlib import asynccontextmanager
 from session_manager import session_manager
 
-# Choose engine from env var: "vosk" or "whisper"
-STT_ENGINE = os.getenv("STT_ENGINE", "vosk").lower()
-
-if STT_ENGINE == "vosk":
-    from controller.ws_vosk_control import router as stt_router
-    from service.vosk_service import stt_service_vosk as stt_service
-else:
-    from controller.ws_faster_whisper_control import router as stt_router
-    from service.faster_whisper_service import stt_service as stt_service
+# Vosk STT engine
+from controller.ws_vosk_control import router as stt_router
+from service.vosk_service import stt_service_vosk as stt_service
 
 
 async def result_dispatcher():
-    """Fetch results from the chosen STT engine and send to clients."""
+    """Fetch results from Vosk and send to clients."""
     while True:
         result = stt_service.get_result_nowait()
         if result:

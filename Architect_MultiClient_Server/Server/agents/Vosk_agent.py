@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import time
 load_dotenv()
 
-BACKEND_WS_URL = "ws://localhost:8000/ws/vosk/"  # URL backend
+BACKEND_WS_URL = "ws://localhost:8001/ws/vosk/"  # URL backend
 SESSION_ID = "session123"  # Ví dụ session ID, có thể generate động
 TRANSCRIPT = True
 TRANSLATION = False

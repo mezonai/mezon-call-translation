@@ -11,13 +11,13 @@ load_dotenv()
 # Whisper Live Server configuration
 WHISPER_HOST = "localhost"
 WHISPER_PORT = 9090
-LANGUAGE = "vi"
+LANGUAGE = "en"
 MODEL = "small"
 USE_VAD = True
 SAMPLE_RATE = 16000
 CHANNELS = 1
 # Audio processing settings (matching Whisper Live client)
-CHUNK_SIZE = 4096  # bytes - same as original client
+CHUNK_SIZE = 4096 
 class AudioChunkBuffer:
     """Buffer to accumulate audio data into chunks like the original Whisper Live client"""
     def __init__(self, chunk_size: int = CHUNK_SIZE):
@@ -243,21 +243,10 @@ async def entrypoint(ctx: agents.JobContext):
                 if ctx.room.connection_state != rtc.ConnectionState.CONN_CONNECTED:
                     print(f"⚠️ Room not connected (state: {ctx.room.connection_state}), skipping message")
                     return False
-                # Create chat message data
-                chat_message = {
-                    "id": f"chat-{int(time.time() * 1000)}",
-                    "participantIdentity": participant_identity,
-                    "participantName": participant_name,
-                    "message": text,
-                    "timestamp": int(time.time() * 1000),
-                    "type": "transcription"
-                }
                 # Send as JSON data to chat topic
-                data = json.dumps(chat_message).encode("utf-8")
-                await ctx.room.local_participant.publish_data(
-                    data,
-                    reliable=True,
-                    topic="lk-chat-topic"  # Changed from "transcript" to "lk-chat-topic"
+                await ctx.room.local_participant.send_text(
+                    text,
+                    topic="lk.chat"  
                 )
                 print(f"💬 Chat message sent for {participant_identity}: {text[:50]}{'...' if len(text) > 50 else ''}")
                 return True
