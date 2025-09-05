@@ -16,7 +16,7 @@ TRANSCRIPT = True  # này là nếu người dùng enable transcript thì sẽ T
 TRANSLATION = True
 
 async def send_audio():
-    uri = f"ws://localhost:8000/ws/vosk/?client_id={CLIENT_ID}&session_id={SESSION_ID}&transcript={str(TRANSCRIPT).lower()}&translation={str(TRANSLATION).lower()}"
+    uri = f"ws://localhost:8001/ws/vosk/?client_id={CLIENT_ID}&session_id={SESSION_ID}&transcript={str(TRANSCRIPT).lower()}&translation={str(TRANSLATION).lower()}"
     async with websockets.connect(uri) as websocket:
         print("Connected to server")
 

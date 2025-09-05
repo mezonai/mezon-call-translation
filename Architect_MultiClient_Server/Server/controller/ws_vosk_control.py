@@ -3,6 +3,9 @@ from service.vosk_service import stt_service_vosk
 from session_manager import session_manager
 import asyncio
 from typing import Optional
+import logging
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -13,14 +16,56 @@ async def websocket_vosk(
     session_id: str = Query(...),
     transcript: bool = Query(...),
     translation: bool = Query(...),
-    language: Optional[str] = Query(default=None)
+    language: Optional[str] = Query(default=None),
+    max_duration: Optional[int] = Query(default=None, description="Max session duration in seconds"),
+    idle_timeout: Optional[int] = Query(default=None, description="Disconnect if no audio received for N seconds")
 ):
     await websocket.accept()
+    log.info(
+        "WebSocket accepted for client_id=%s session_id=%s transcript=%s translation=%s language=%s max_duration=%s idle_timeout=%s",
+        client_id,
+        session_id,
+        transcript,
+        translation,
+        language,
+        max_duration,
+        idle_timeout,
+    )
     session_manager.add_client(session_id, client_id, websocket, transcript, translation, language)
     try:
+        start_time = asyncio.get_event_loop().time()
+        last_rx_time = start_time
         while True:
-            data = await websocket.receive_bytes()
+            try:
+                if idle_timeout and idle_timeout > 0:
+                    data = await asyncio.wait_for(websocket.receive_bytes(), timeout=idle_timeout)
+                else:
+                    data = await websocket.receive_bytes()
+                last_rx_time = asyncio.get_event_loop().time()
+            except Exception:
+                log.exception("WebSocket receive error for client_id=%s session_id=%s", client_id, session_id)
+                raise
             stt_service_vosk.submit_audio(data, client_id, session_id)
             pass 
+            # Enforce max duration
+            if max_duration and max_duration > 0:
+                now = asyncio.get_event_loop().time()
+                if now - start_time >= max_duration:
+                    log.info("Max duration reached; closing client_id=%s session_id=%s", client_id, session_id)
+                    await websocket.close(code=1000)
+                    break
+            # Enforce idle timeout (no audio for too long)
+            if idle_timeout and idle_timeout > 0:
+                now = asyncio.get_event_loop().time()
+                if now - last_rx_time >= idle_timeout:
+                    log.info("Idle timeout reached; closing client_id=%s session_id=%s", client_id, session_id)
+                    await websocket.close(code=1000)
+                    break
     except WebSocketDisconnect:
+        log.info("WebSocket disconnected for client_id=%s session_id=%s", client_id, session_id)
+    except Exception:
+        log.exception("Unhandled error in websocket handler for client_id=%s session_id=%s", client_id, session_id)
+    finally:
+        # Always ensure client is removed from session manager on exit
         session_manager.remove_client(session_id, client_id)
+        log.info("Cleaned up client_id=%s from session_id=%s", client_id, session_id)

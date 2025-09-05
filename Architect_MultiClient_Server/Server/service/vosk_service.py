@@ -99,6 +99,8 @@ class STTVoskService:
 
             except queue.Empty:
                 continue
+            except Exception:
+                log.exception("Fatal error in STT worker loop; continuing to run")
 
     def queue_translation(self, text, client_id, session_id, state, is_final):
         task = {
