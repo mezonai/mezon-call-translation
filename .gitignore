@@ -2,3 +2,6 @@
 *.py[cod]
 venv/
 .env
+/logs
+*.mp3
+*.wav

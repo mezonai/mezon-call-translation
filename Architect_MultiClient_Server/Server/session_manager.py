@@ -1,7 +1,6 @@
 import logging
 
-
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class SessionManager:
@@ -17,7 +16,7 @@ class SessionManager:
             "translation": translation,
             "language" : language
         }
-        log.info("Added client %s to session %s (transcript=%s, translation=%s, language=%s)", client_id, session_id, transcript, translation, language)
+        logger.info("Added client %s to session %s (transcript=%s, translation=%s, language=%s)", client_id, session_id, transcript, translation, language)
 
     def remove_client(self, session_id, client_id):
         if session_id in self.sessions:
@@ -25,9 +24,9 @@ class SessionManager:
             self.sessions[session_id]["transcripts"].pop(client_id, None)
             if not self.sessions[session_id]["clients"]:
                 self.sessions.pop(session_id)
-                log.info("Removed last client; session %s closed", session_id)
+                logger.info("Removed last client; session %s closed", session_id)
             else:
-                log.info("Removed client %s from session %s", client_id, session_id)
+                logger.info("Removed client %s from session %s", client_id, session_id)
     
     def get_client_info(self, session_id, client_id):
         """Return the full client info dict (or None if not found)."""
@@ -58,7 +57,7 @@ class SessionManager:
                 for info in self.sessions[session_id]["clients"].values()
                 if info.get("transcripts", False)
             ]
-            log.debug("Found %s transcript clients for session %s", len(sockets), session_id)
+            logger.debug("Found %s transcript clients for session %s", len(sockets), session_id)
             return sockets
         return []
 
@@ -69,7 +68,7 @@ class SessionManager:
                 for info in self.sessions[session_id]["clients"].values()
                 if info.get("translation", False)
             ]
-            log.debug("Found %s translation clients for session %s", len(sockets), session_id)
+            logger.debug("Found %s translation clients for session %s", len(sockets), session_id)
             return sockets
         return []
 

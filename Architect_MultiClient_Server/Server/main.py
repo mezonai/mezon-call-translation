@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from fastapi import FastAPI
 import asyncio
@@ -8,30 +9,32 @@ from session_manager import session_manager
 # Vosk STT engine
 from controller.ws_vosk_control import router as stt_router
 from service.vosk_service import stt_service_vosk as stt_service
+from service.health_service import get_health_service
 from utils.logging_config import setup_logging
 
 
-async def result_dispatcher():
-    """Fetch results from Vosk and send to clients."""
+async def result_dispatcher(async_result_queue: asyncio.Queue):
+    """Fetch results from Vosk (async queue) and send to clients without polling."""
     while True:
         try:
-            result = stt_service.get_result_nowait()
-            if result:
-                result_type, payload = result
+            result_type, payload = await async_result_queue.get()
+            logger.debug("Dispatcher received: type=%s, payload=%s", result_type, payload)
 
-                if result_type == "transcripts":
-                    clients = session_manager.get_clients_to_notify_transcript(payload["session_id"])
-                elif result_type == "translation":
-                    clients = session_manager.get_clients_to_notify_translation(payload["session_id"])
-                else:
-                    clients = []
+            if result_type == "transcripts":
+                clients = session_manager.get_clients_to_notify_transcript(payload["session_id"])
+                logger.debug("Found %s transcript clients for session %s", len(clients), payload["session_id"])
+            elif result_type == "translation":
+                clients = session_manager.get_clients_to_notify_translation(payload["session_id"])
+                logger.debug("Found %s translation clients for session %s", len(clients), payload["session_id"])
+            else:
+                clients = []
 
-                for ws in clients:
-                    try:
-                        await ws.send_json(payload)
-                    except Exception as e:
-                        logger.warning("Failed to send to a client (session_id=%s). Client likely disconnected: %s", payload.get("session_id"), e)
-            await asyncio.sleep(0.01)  # reduce CPU load
+            for ws in clients:
+                try:
+                    await ws.send_json(payload)
+                    logger.debug("Sent result to client: %s", payload)
+                except Exception as e:
+                    logger.warning("Failed to send to a client (session_id=%s). Client likely disconnected: %s", payload.get("session_id"), e)
         except Exception:
             logger.exception("Dispatcher loop error; continuing")
 
@@ -39,7 +42,10 @@ async def result_dispatcher():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup → Shutdown lifecycle."""
-    dispatcher_task = asyncio.create_task(result_dispatcher())
+    async_result_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+    # Provide loop and queue to service for thread-safe result emission
+    stt_service.set_async_result_queue(asyncio.get_event_loop(), async_result_queue)
+    dispatcher_task = asyncio.create_task(result_dispatcher(async_result_queue))
     yield
     stt_service.shutdown()
     dispatcher_task.cancel()
@@ -50,11 +56,43 @@ async def lifespan(app: FastAPI):
 
 
 # Init logging and FastAPI
-setup_logging(logging.INFO)
+setup_logging(level=logging.DEBUG)  # Use default INFO level
 logger = logging.getLogger(__name__)
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(stt_router)
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    health_service = get_health_service()
+    health_status = health_service.get_health_status()
+    
+    status_code = 200
+    if health_status.status == "unhealthy":
+        status_code = 503
+    elif health_status.status == "degraded":
+        status_code = 200  # Still operational but degraded
+    
+    return {
+        "status": health_status.status,
+        "timestamp": health_status.timestamp,
+        "uptime": health_status.uptime,
+        "details": health_status.details
+    }
+
+
+@app.get("/health/simple")
+async def simple_health_check():
+    """Simple health check endpoint."""
+    health_service = get_health_service()
+    is_healthy = health_service.is_healthy()
+    
+    return {
+        "status": "healthy" if is_healthy else "unhealthy",
+        "timestamp": time.time()
+    }
 
 
 if __name__ == "__main__":
