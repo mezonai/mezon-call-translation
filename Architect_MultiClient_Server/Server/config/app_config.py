@@ -24,6 +24,7 @@ class AudioConfig:
 @dataclass
 class VADConfig:
     """Voice Activity Detection configuration."""
+    enabled: bool = False
     threshold: float = 0.5
     min_speech_duration_ms: int = 250
     min_silence_duration_ms: int = 100
@@ -37,14 +38,14 @@ class VADConfig:
 class STTConfig:
     """Speech-to-Text configuration."""
     vosk_model_path: str = "vosk-model-small-en-us-0.15"
-    min_chunks: int = 3
+    min_chunks: int = 1
     max_chunks: int = 15
     min_time_threshold: float = 0.1
     max_time_threshold: float = 0.5
     queue_load_low: float = 0.3
     queue_load_medium: float = 0.5
     queue_load_high: float = 0.7
-    num_workers: int = field(default_factory=lambda: max(1, (os.cpu_count() or 2) - 1))
+    num_workers: int = 3  #field(default_factory=lambda: max(1, (os.cpu_count() or 2) - 1))
     metrics_interval_sec: float = 10.0
     client_cleanup_interval: float = 30.0
     max_client_idle_time: float = 300.0
@@ -134,6 +135,7 @@ class ConfigManager:
         config.audio.dtype = os.getenv("DTYPE", config.audio.dtype)
         
         # VAD configuration
+        config.vad.enabled = os.getenv("VAD_ENABLED", str(config.vad.enabled)).lower() in ("1", "true", "yes", "on")
         config.vad.threshold = float(os.getenv("VAD_THRESHOLD", config.vad.threshold))
         config.vad.min_speech_duration_ms = int(os.getenv("VAD_MIN_SPEECH_DURATION_MS", config.vad.min_speech_duration_ms))
         config.vad.min_silence_duration_ms = int(os.getenv("VAD_MIN_SILENCE_DURATION_MS", config.vad.min_silence_duration_ms))
@@ -223,6 +225,7 @@ class ConfigManager:
                 "dtype": config.audio.dtype
             },
             "vad": {
+                "enabled": config.vad.enabled,
                 "threshold": config.vad.threshold,
                 "min_speech_duration_ms": config.vad.min_speech_duration_ms,
                 "min_silence_duration_ms": config.vad.min_silence_duration_ms,

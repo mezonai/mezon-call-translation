@@ -26,17 +26,18 @@ class VADService:
         self._client_states_lock = threading.RLock()
         self._client_states: Dict[str, Dict[str, Any]] = {}
         self._stop_event = threading.Event()
-        self._vad_disabled = False  # Flag to disable VAD if it keeps failing
+        self._vad_disabled = not self.config.enabled  # disabled via config or runtime fallback
         
         # Initialize circuit breaker
         self._circuit_breaker = get_vad_circuit_breaker()
         
-        # Initialize Silero VAD
-        try:
-            self._init_vad()
-        except Exception as e:
-            logger.error(f"Failed to initialize VAD, disabling VAD functionality: {e}")
-            self._vad_disabled = True
+        # Initialize Silero VAD if enabled
+        if not self._vad_disabled:
+            try:
+                self._init_vad()
+            except Exception as e:
+                logger.error(f"Failed to initialize VAD, disabling VAD functionality: {e}")
+                self._vad_disabled = True
         
         # Start cleanup thread
         self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
