@@ -1,0 +1,20 @@
+# Override file cho development
+version: '3.8'
+
+services:
+  server:
+    # Enable hot reload cho development
+    volumes:
+      - ./Architect_MultiClient_Server/Server:/app/Server
+    environment:
+      - PYTHONUNBUFFERED=1
+      - RELOAD=true
+    command: ["python", "-m", "uvicorn", "Server.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  agent:
+    # Enable hot reload cho development
+    volumes:
+      - ./Architect_MultiClient_Server/agents:/app/agents
+    environment:
+      - PYTHONUNBUFFERED=1
+      - RELOAD=true

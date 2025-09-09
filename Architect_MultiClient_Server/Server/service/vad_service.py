@@ -1,16 +1,20 @@
 """
 VAD Service - Centralized Voice Activity Detection service with improved resource management.
 """
-import torch
+# Torch is optional; only needed when VAD is enabled
+try:
+    import torch  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    torch = None  # type: ignore
 import numpy as np
 from typing import Optional, Dict, Any
 import time
 import logging
 import threading
 from dataclasses import dataclass
-from utils.circuit_breaker import get_vad_circuit_breaker, CircuitBreakerOpenException
-from service.health_service import register_vad_health_checks
-from config import get_config
+from ..utils.circuit_breaker import get_vad_circuit_breaker, CircuitBreakerOpenException
+from .health_service import register_vad_health_checks
+from ..config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,8 @@ class VADService:
     
     def _init_vad(self):
         """Initialize Silero VAD model."""
+        if torch is None:
+            raise RuntimeError("PyTorch is not installed. VAD requires torch/torchaudio. Set VAD_ENABLED=false to disable VAD or install torch.")
         try:
             # Set number of threads for optimization
             torch.set_num_threads(1)

@@ -4,6 +4,7 @@ import websockets
 import time
 import numpy as np
 from livekit import agents, rtc
+import os
 from dotenv import load_dotenv
 import logging
 
@@ -33,8 +34,8 @@ def get_logger(name: str) -> logging.Logger:
     return logger
 
 # WebSocket Server configuration (Vosk-style)
-WEBSOCKET_HOST = "localhost"
-WEBSOCKET_PORT = 8000  # Changed to match test_client1.py
+WEBSOCKET_HOST = os.getenv("WEBSOCKET_HOST", "server")
+WEBSOCKET_PORT = int(os.getenv("WEBSOCKET_PORT", "8000"))
 TRANSCRIPT = True
 TRANSLATION = True
 

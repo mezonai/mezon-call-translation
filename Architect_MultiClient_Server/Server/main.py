@@ -4,13 +4,17 @@ import logging
 from fastapi import FastAPI
 import asyncio
 from contextlib import asynccontextmanager
-from session_manager import session_manager
+from .session_manager import session_manager
 
 # Vosk STT engine
-from controller.ws_vosk_control import router as stt_router
-from service.vosk_service import stt_service_vosk as stt_service
-from service.health_service import get_health_service
-from utils.logging_config import setup_logging
+from .controller.ws_vosk_control import router as stt_router
+from .service.vosk_service import stt_service_vosk as stt_service
+from .service.health_service import get_health_service
+from .utils.logging_config import setup_logging
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
 async def result_dispatcher(async_result_queue: asyncio.Queue):
@@ -56,7 +60,10 @@ async def lifespan(app: FastAPI):
 
 
 # Init logging and FastAPI
-setup_logging(level=logging.DEBUG)  # Use default INFO level
+# Get log level from environment variable
+log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
+setup_logging(level=log_level)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(lifespan=lifespan)

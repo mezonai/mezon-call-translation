@@ -5,10 +5,10 @@ import queue
 import threading
 import logging
 from vosk import Model, KaldiRecognizer
-from service.vad_service import get_vad_service
-from service.health_service import register_stt_health_checks
-from utils.circuit_breaker import get_stt_circuit_breaker, CircuitBreakerOpenException
-from config import get_config
+from .vad_service import get_vad_service
+from .health_service import register_stt_health_checks
+from ..utils.circuit_breaker import get_stt_circuit_breaker, CircuitBreakerOpenException
+from ..config import get_config
 import numpy as np
 from typing import Dict, Tuple, Optional, Any
 from dataclasses import dataclass

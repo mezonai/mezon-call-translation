@@ -1,6 +1,6 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from service.vosk_service import stt_service_vosk
-from session_manager import session_manager
+from ..service.vosk_service import stt_service_vosk
+from ..session_manager import session_manager
 import asyncio
 from typing import Optional
 import logging

@@ -1,0 +1,6 @@
+# Agent-specific requirements (LiveKit Agents + WebSocket client)
+livekit-agents>=0.5.0
+livekit>=0.9.0
+websockets>=11.0.3
+python-dotenv>=1.0.0
+numpy>=1.24.0

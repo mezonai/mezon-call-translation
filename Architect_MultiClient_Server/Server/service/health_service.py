@@ -6,7 +6,7 @@ import logging
 import threading
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
-from utils.circuit_breaker import get_all_circuit_breaker_states
+from ..utils.circuit_breaker import get_all_circuit_breaker_states
 
 logger = logging.getLogger(__name__)
 

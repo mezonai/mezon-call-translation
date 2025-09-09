@@ -6,3 +6,4 @@ venv/
 *.mp3
 *.wav
 Architect_MultiClient_Server/demo_test/
+Architect_MultiClient_Server/test/

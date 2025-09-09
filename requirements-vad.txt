@@ -1,0 +1,3 @@
+# VAD-specific requirements (only if VAD is enabled)
+torch>=2.0.0
+torchaudio>=2.0.0
