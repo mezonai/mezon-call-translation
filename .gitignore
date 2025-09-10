@@ -7,3 +7,4 @@ venv/
 *.wav
 Architect_MultiClient_Server/demo_test/
 Architect_MultiClient_Server/test/
+Architect_MultiClient_Server/agents/demo/

@@ -31,7 +31,11 @@ async def websocket_vosk(
         max_duration,
         idle_timeout,
     )
+    logger.info("Registering client with session manager")
     session_manager.add_client(session_id, client_id, websocket, transcript, translation, language)
+
+    # Ensure client is properly registered for targeted communication
+    logger.info("Client registered: session_id=%s, client_id=%s", session_id, client_id)
     try:
         start_time = asyncio.get_event_loop().time()
         last_rx_time = start_time

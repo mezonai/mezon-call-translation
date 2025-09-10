@@ -37,45 +37,65 @@ class SessionManager:
         client_info = self.get_client_info(session_id, client_id)
         return client_info.get("language") if client_info else None
 
+    def get_clients_to_notify_transcript(self, session_id, sender_client_id=None):
+        """
+        Get clients to notify for transcript.
+        If sender_client_id is provided, only return that specific client if they want transcripts.
+        Otherwise, return all clients in the session who want transcripts (original behavior).
+        """
+        if session_id not in self.sessions:
+            return []
+        
+        clients = self.sessions[session_id]["clients"]
+        
+        # If sender_client_id is specified, only return that client
+        if sender_client_id:
+            client_info = clients.get(sender_client_id)
+            if client_info and client_info.get("transcripts", False):
+                logger.debug("Returning transcript only to sender client %s for session %s", sender_client_id, session_id)
+                return [client_info["websocket"]]
+            else:
+                logger.debug("Sender client %s not found or doesn't want transcripts for session %s", sender_client_id, session_id)
+                return []
+        
+        # Original behavior: return all clients who want transcripts
+        sockets = [
+            info["websocket"]
+            for info in clients.values()
+            if info.get("transcripts", False)
+        ]
+        logger.debug("Found %s transcript clients for session %s", len(sockets), session_id)
+        return sockets
 
-    # def update_transcript(self, session_id, client_id, text):
-    #     if session_id in self.sessions:
-    #         self.sessions[session_id]["transcripts"][client_id] = text
+    def get_clients_to_notify_translation(self, session_id, sender_client_id=None):
+        """
+        Get clients to notify for translation.
+        If sender_client_id is provided, only return that specific client if they want translations.
+        Otherwise, return all clients in the session who want translations (original behavior).
+        """
+        if session_id not in self.sessions:
+            return []
+            
+        clients = self.sessions[session_id]["clients"]
+        
+        # If sender_client_id is specified, only return that client
+        if sender_client_id:
+            client_info = clients.get(sender_client_id)
+            if client_info and client_info.get("translation", False):
+                logger.debug("Returning translation only to sender client %s for session %s", sender_client_id, session_id)
+                return [client_info["websocket"]]
+            else:
+                logger.debug("Sender client %s not found or doesn't want translations for session %s", sender_client_id, session_id)
+                return []
+        
+        # Original behavior: return all clients who want translations
+        sockets = [
+            info["websocket"]
+            for info in clients.values()
+            if info.get("translation", False)
+        ]
+        logger.debug("Found %s translation clients for session %s", len(sockets), session_id)
+        return sockets
 
-    # def get_transcript_json(self, session_id):
-    #     if session_id in self.sessions:
-    #         return {
-    #             "session_id": session_id,
-    #             "transcripts": self.sessions[session_id]["transcripts"]
-    #         }
-    #     return {}
-
-    def get_clients_to_notify_transcript(self, session_id):
-        if session_id in self.sessions:
-            sockets = [
-                info["websocket"]
-                for info in self.sessions[session_id]["clients"].values()
-                if info.get("transcripts", False)
-            ]
-            logger.debug("Found %s transcript clients for session %s", len(sockets), session_id)
-            return sockets
-        return []
-
-    def get_clients_to_notify_translation(self, session_id):
-        if session_id in self.sessions:
-            sockets = [
-                info["websocket"]
-                for info in self.sessions[session_id]["clients"].values()
-                if info.get("translation", False)
-            ]
-            logger.debug("Found %s translation clients for session %s", len(sockets), session_id)
-            return sockets
-        return []
 
 session_manager = SessionManager()
-
-# session_manager.py
-
-
-
-

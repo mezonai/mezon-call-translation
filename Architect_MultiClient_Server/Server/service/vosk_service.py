@@ -14,6 +14,8 @@ from typing import Dict, Tuple, Optional, Any
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
+import asyncio
+from Architect_MultiClient_Server.Server.session_manager import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +118,10 @@ class STTVoskService:
                     logger.exception("[worker=%s] Failed to emit result (both queues)", worker_index)
         else:
             try:
-                self.result_queue.put((result_type, payload))
+                # Ensure the result is sent to the correct WebSocket client
+                client_ws = session_manager.get_client_websocket(payload.get("session_id"), payload.get("client_id"))
+                if client_ws:
+                    asyncio.run_coroutine_threadsafe(client_ws.send(json.dumps(payload)), self.async_loop)
             except Exception:
                 logger.exception("[worker=%s] Failed to emit result (sync queue)", worker_index)
 

@@ -16,7 +16,6 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-
 async def result_dispatcher(async_result_queue: asyncio.Queue):
     """Fetch results from Vosk (async queue) and send to clients without polling."""
     while True:
@@ -25,23 +24,36 @@ async def result_dispatcher(async_result_queue: asyncio.Queue):
             logger.debug("Dispatcher received: type=%s, payload=%s", result_type, payload)
 
             if result_type == "transcripts":
-                clients = session_manager.get_clients_to_notify_transcript(payload["session_id"])
-                logger.debug("Found %s transcript clients for session %s", len(clients), payload["session_id"])
+                # Pass sender_client_id to only send to the client who generated the transcript
+                sender_client_id = payload.get("client_id")
+                clients = session_manager.get_clients_to_notify_transcript(
+                    payload["session_id"], 
+                    sender_client_id=sender_client_id
+                )
+                logger.debug("Found %s transcript clients for session %s (sender: %s)", 
+                           len(clients), payload["session_id"], sender_client_id)
+                
             elif result_type == "translation":
-                clients = session_manager.get_clients_to_notify_translation(payload["session_id"])
-                logger.debug("Found %s translation clients for session %s", len(clients), payload["session_id"])
+                # Pass sender_client_id to only send to the client who generated the translation
+                sender_client_id = payload.get("client_id")
+                clients = session_manager.get_clients_to_notify_translation(
+                    payload["session_id"],
+                    sender_client_id=sender_client_id
+                )
+                logger.debug("Found %s translation clients for session %s (sender: %s)", 
+                           len(clients), payload["session_id"], sender_client_id)
             else:
                 clients = []
 
             for ws in clients:
                 try:
                     await ws.send_json(payload)
-                    logger.debug("Sent result to client: %s", payload)
+                    logger.debug("Sent result to sender client: %s", payload)
                 except Exception as e:
-                    logger.warning("Failed to send to a client (session_id=%s). Client likely disconnected: %s", payload.get("session_id"), e)
+                    logger.warning("Failed to send to sender client (session_id=%s, client_id=%s). Client likely disconnected: %s", 
+                                 payload.get("session_id"), payload.get("client_id"), e)
         except Exception:
             logger.exception("Dispatcher loop error; continuing")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
