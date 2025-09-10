@@ -34,7 +34,7 @@ def get_logger(name: str) -> logging.Logger:
     return logger
 
 # WebSocket Server configuration (Vosk-style)
-WEBSOCKET_HOST = os.getenv("WEBSOCKET_HOST", "server")
+WEBSOCKET_HOST = os.getenv("WEBSOCKET_HOST", "localhost")
 WEBSOCKET_PORT = int(os.getenv("WEBSOCKET_PORT", "8000"))
 TRANSCRIPT = True
 TRANSLATION = True

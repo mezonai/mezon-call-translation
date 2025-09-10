@@ -32,4 +32,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
 
 # Command để chạy agent
-CMD ["python", "agents/testAgents.py", "dev"]
+CMD ["python", "agents/main.py", "dev"]
