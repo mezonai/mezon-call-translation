@@ -12,7 +12,7 @@ Hướng dẫn chạy project Mezon Call Translation sử dụng Docker cho cả
 ### 2. Agent (LiveKit)
 - **Port**: 8080  
 - **Chức năng**: LiveKit agent kết nối với server để xử lý real-time audio
-- **Command**: `python agents/testAgents.py dev`
+- **Command**: `python agents/main.py dev`
 
 ## Prerequisites
 
