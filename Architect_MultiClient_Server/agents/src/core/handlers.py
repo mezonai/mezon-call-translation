@@ -8,7 +8,7 @@ from src.config import SAMPLE_RATE, CHANNELS, TRANSCRIPT, TRANSLATION
 from src.core.websocket_client import WebSocketTranscriptionClient
 from src.core.transcript_manager import TranscriptManager
 from src.logger import get_logger
-from demo.test import RealTimeVADProcessor
+from src.core.vad_processor import RealTimeVADProcessor
 
 logger = get_logger(__name__)
 
@@ -40,7 +40,7 @@ class EventHandlers:
                 if text:
                     is_final = bool(data.get("is_final", False))
                     status = "FINAL" if is_final else "interim"
-                    logger.info(f"[{participant_identity}] {status}: {text}")
+                    # logger.info(f"[{participant_identity}] {status}: {text}")
                     # Dùng thời điểm nhận data làm start/end
                     receive_time = time.time()
 
@@ -86,14 +86,13 @@ class EventHandlers:
             sr=16000, 
             chunk_duration_ms=10,   # Stream 10ms chunks
             overlap_chunks=2,       # Lưu 2 chunks trước (20ms) để overlap
-            enable_playback=True,   # Bật phát audio
+            enable_playback=False,   # Bật phát audio
             min_speech_frames=10,    # Yêu cầu tối thiểu 10 frames liên tiếp (100ms) mới lưu
             save_chunks=False
         )
         
         # Bắt đầu xử lý audio chunks
         processor.start_processing()
-        logger.info(f"Started VAD processing for {speaker_id}")
 
         # Connect to transcription server
         if not await ws_client.connect():
@@ -129,7 +128,6 @@ class EventHandlers:
                 # Convert bytes to float32 array (assuming 16-bit audio)
                 audio_data = np.frombuffer(bytes(frame.data), dtype=np.int16).astype(np.float32) / 32767.0
                 processor.add_audio_chunk(audio_data)
-                print(f"Added audio chunk to processor {len(audio_data)}")
                 # Get batched chunks (mỗi batch là 5 chunks 10ms = 50ms audio)
                 batched_chunks = processor.get_batched_chunks(chunks_per_batch=5)
                 for batch in batched_chunks:

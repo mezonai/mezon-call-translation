@@ -1,20 +1,18 @@
 import numpy as np
 import librosa
 from scipy.io import wavfile
-import logging
-import sys
 import time
 import threading
 from collections import deque
 from queue import Queue
 import pyaudio
 from src.logger import get_logger
+from src.config.vad_config import VADConfig
 
 # ==============================
 # Setup logging
 # ==============================
 logger = get_logger(__name__)
-logger = get_logger("agent_manager")
 # ==============================
 # ZCR Filter với Moving Average (optimized for 30ms chunks)
 # ==============================
@@ -56,9 +54,7 @@ class ZCRFilter:
             and energy > self.energy_thresh
         )
 
-        logger.info(
-            f"    ZCR: {zcr:.4f}, MA: {zcr_ma:.4f}, Energy: {energy:.6f}, Speech: {is_speech}"
-        )
+        logger.debug(f"    ZCR: {zcr:.4f}, MA: {zcr_ma:.4f}, Energy: {energy:.6f}, Speech: {is_speech}")
 
         return is_speech
     
@@ -172,7 +168,11 @@ class RealTimeAudioPlayer:
 # ==============================
 class RealTimeVADProcessor:
     def __init__(self, sr=16000, chunk_duration_ms=10, overlap_chunks=2, 
-                 enable_playback=True, min_speech_frames=10, save_chunks=True):
+                 enable_playback=True, min_speech_frames=None, save_chunks=True):
+        # Lấy min_speech_frames từ config nếu không được chỉ định
+        vad_config = VADConfig.get_config()
+        if min_speech_frames is None:
+            min_speech_frames = vad_config['min_speech_frames']
         self.sr = sr
         self.chunk_duration_ms = chunk_duration_ms
         self.chunk_size = int(chunk_duration_ms * sr / 1000)  # 10ms chunks từ stream
@@ -189,9 +189,16 @@ class RealTimeVADProcessor:
         # Buffer để lưu các chunks trước đó cho overlap
         self.overlap_buffer = deque(maxlen=overlap_chunks)  # Lưu 2 chunks trước
         
-        logger.info(f"🔄 Overlap config: {overlap_chunks} chunks ({self.overlap_ms}ms) + current chunk ({chunk_duration_ms}ms) = {self.analysis_duration_ms}ms analysis")
+        logger.debug(f"🔄 Overlap config: {overlap_chunks} chunks ({self.overlap_ms}ms) + current chunk ({chunk_duration_ms}ms) = {self.analysis_duration_ms}ms analysis")
         
-        self.zcr_filter = ZCRFilter(zcr_thresh=(0.02, 0.2), ma_window=8, analysis_duration_ms=self.analysis_duration_ms,energy_thresh=0.001)
+        # Khởi tạo ZCRFilter với cấu hình từ VADConfig
+        vad_config = VADConfig.get_config()
+        self.zcr_filter = ZCRFilter(
+            zcr_thresh=(vad_config['zcr_low_threshold'], vad_config['zcr_high_threshold']),
+            ma_window=vad_config['ma_window'],
+            analysis_duration_ms=self.analysis_duration_ms,
+            energy_thresh=vad_config['energy_thresh']
+        )
         
         # Audio playback
         if self.enable_playback:
@@ -204,10 +211,13 @@ class RealTimeVADProcessor:
         self.total_chunks = 0
         self.speech_count = 0
         self.silent_streak = 0
-        self.silent_threshold = 50  # Tăng lên 30 cho 10ms chunks (30*10ms = 300ms)
+        self.silent_threshold = vad_config['silent_threshold']  # Số frame im lặng tối đa
+        
+        # Lấy cấu hình từ VADConfig
+        vad_config = VADConfig.get_config()
         
         # Buffer để lưu trữ các chunk gần đây
-        self.pre_speech_buffer_size = 10  # 10ms * 10 = 100ms buffer trước speech
+        self.pre_speech_buffer_size = vad_config['pre_speech_buffer_frames']
         self.chunk_buffer = deque(maxlen=self.pre_speech_buffer_size)
         
         # Buffer tạm thời cho speech candidate (chưa đủ min frames)
@@ -300,7 +310,6 @@ class RealTimeVADProcessor:
                 pass
             else:
                 # Lưu chunk vào processed buffer để phục vụ batching
-                print("đã lưu vào trong processed buffer")
                 self.processed_chunks_buffer.append(original_chunk.copy())
 
         if is_speech:
@@ -312,12 +321,12 @@ class RealTimeVADProcessor:
             
             # Kiểm tra nếu chưa đủ min frames
             if self.consecutive_speech_frames < self.min_speech_frames:
-                logger.info(f"🎤 Chunk {self.total_chunks}: SPEECH ✅ (buffering {self.consecutive_speech_frames}/{self.min_speech_frames})")
+                logger.debug(f"🎤 Chunk {self.total_chunks}: SPEECH ✅ (buffering {self.consecutive_speech_frames}/{self.min_speech_frames})")
                 return
             
             # Nếu đủ min frames và chưa trong speech segment
             if not self.in_speech_segment:
-                logger.info(f"🎯 Speech segment started! Adding buffered chunks ({len(self.chunk_buffer)} pre-speech + {len(self.temp_speech_buffer)} speech)")
+                logger.debug(f"🎯 Speech segment started! Adding buffered chunks ({len(self.chunk_buffer)} pre-speech + {len(self.temp_speech_buffer)} speech)")
                 
                 if self.save_chunks:
                     # Thêm tất cả chunks trong pre-speech buffer
@@ -341,7 +350,7 @@ class RealTimeVADProcessor:
                         self.speech_count += 1
                 self.temp_speech_buffer = []
                 
-                logger.info(f"🎤 Chunk {self.total_chunks}: SPEECH ✅")
+                logger.debug(f"🎤 Chunk {self.total_chunks}: SPEECH ✅")
             
         else:
             # Không phải speech
@@ -356,23 +365,23 @@ class RealTimeVADProcessor:
                     if self.save_chunks:
                         self.accumulated_speech.append(original_chunk.copy())
                         self.speech_count += 1
-                    logger.info(f"🔇 Chunk {self.total_chunks}: SILENCE in speech segment ⚠️ (streak {self.silent_streak})")
+                    logger.debug(f"🔇 Chunk {self.total_chunks}: SILENCE in speech segment ⚠️ (streak {self.silent_streak})")
                 else:
                     # Vượt quá ngưỡng, kết thúc speech segment
                     self.in_speech_segment = False
-                    logger.info(f"🔇 Chunk {self.total_chunks}: SILENCE ❌ (streak {self.silent_streak}) - End of speech segment")
+                    logger.debug(f"🔇 Chunk {self.total_chunks}: SILENCE ❌ (streak {self.silent_streak}) - End of speech segment")
                     
                     # Trigger callback khi kết thúc speech segment
                     self.on_speech_segment_end()
             else:
                 # Không trong speech segment, chỉ ghi log
-                logger.info(f"🔇 Chunk {self.total_chunks}: SILENCE ❌ (streak {self.silent_streak})")
+                logger.debug(f"🔇 Chunk {self.total_chunks}: SILENCE ❌ (streak {self.silent_streak})")
 
     def on_speech_segment_end(self):
         """Callback khi kết thúc một speech segment"""
         if self.accumulated_speech:
             speech_duration = len(self.accumulated_speech) * self.chunk_duration_ms / 1000.0
-            logger.info(f"🎯 Speech segment ended: {speech_duration:.2f}s ({len(self.accumulated_speech)} chunks)")
+            logger.debug(f"🎯 Speech segment ended: {speech_duration:.2f}s ({len(self.accumulated_speech)} chunks)")
             
             # Ở đây bạn có thể xử lý speech segment (gửi để translation, etc.)
             # self.process_speech_segment(self.accumulated_speech)
@@ -387,7 +396,7 @@ class RealTimeVADProcessor:
         if self.enable_playback and self.audio_player:
             self.audio_player.start_playback()
             
-        logger.info("🚀 Started real-time audio processing with playback")
+        logger.info("🚀 Started real-time audio processing")
 
     def stop_processing(self):
         """Dừng xử lý audio stream"""
@@ -486,7 +495,7 @@ class RealTimeVADProcessor:
             
             # Log thông tin batch
             batch_duration_ms = len(batched_chunk) / self.sr * 1000
-            logger.info(f"📦 Created batch {i+1}: {len(batched_chunk)} samples ({batch_duration_ms:.1f}ms)")
+            logger.debug(f"📦 Created batch {i+1}: {len(batched_chunk)} samples ({batch_duration_ms:.1f}ms)")
         
         return batched_chunks
 

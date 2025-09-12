@@ -1,6 +1,8 @@
 import asyncio
-from livekit import agents
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
 
+from livekit import agents
 from src.core.transcript_manager import TranscriptManager
 from src.core.handlers import EventHandlers
 from src.core.agent_manager import AgentManager
@@ -33,7 +35,7 @@ async def entrypoint(ctx: agents.JobContext):
     ctx.room.on("participant_disconnected", event_handlers.on_participant_disconnected)
     ctx.room.on("disconnected", lambda: asyncio.create_task(on_disconnected()))
     
-    # Handle agent commands from data channel
+    # Handle agent commands from data  
     def on_data_received(data):
         asyncio.create_task(agent_manager.handle_agent_commands(data))
     ctx.room.on("data_received", on_data_received)

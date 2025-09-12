@@ -2,7 +2,6 @@ import json
 import time
 import asyncio
 from livekit import agents
-
 from ..logger import get_logger
 
 logger = get_logger(__name__)
@@ -57,7 +56,7 @@ class AgentManager:
                 "agent.version": "1.0.0",
                 "agent.capabilities": "transcription,translation,real_time",
                 "agent.provider": "websocket",
-                "agent.room_id": self.ctx.room.name or self.ctx.room.sid,
+                "agent.room_id": self.ctx.room.name or "room_" + str(int(time.time())),
                 "agent.session_start": str(int(time.time() * 1000))
             }
             
@@ -111,13 +110,13 @@ class AgentManager:
                     self.logger.warning(f"Room not fully connected (no local participant), retry {retries}/{max_retries}")
                     continue
 
-                # Get required room and participant properties with await
+                # Get required room and participant properties
                 try:
-                    local_sid = await self.ctx.room.local_participant.sid
-                    room_sid = await self.ctx.room.sid
-                    room_name = await self.ctx.room.name
-                    participant_identity = await self.ctx.room.local_participant.identity
-                    participant_name = await self.ctx.room.local_participant.name
+                    local_sid = self.ctx.room.local_participant.sid
+                    room_sid = str(await self.ctx.room.sid) if hasattr(self.ctx.room, 'sid') and await self.ctx.room.sid else None
+                    room_name = self.ctx.room.name
+                    participant_identity = self.ctx.room.local_participant.identity
+                    participant_name = self.ctx.room.local_participant.name
                 except Exception as e:
                     await asyncio.sleep(retry_delay)
                     retries += 1
@@ -197,11 +196,11 @@ class AgentManager:
                     self.logger.warning(f"Room not fully connected (no local participant), retry {retries}/{max_retries}")
                     continue
 
-                # Get required room and participant properties with await
+                # Get required room and participant properties
                 try:
-                    local_sid = await self.ctx.room.local_participant.sid
-                    participant_identity = await self.ctx.room.local_participant.identity
-                    participant_name = await self.ctx.room.local_participant.name
+                    local_sid = str(self.ctx.room.local_participant.sid)
+                    participant_identity = self.ctx.room.local_participant.identity
+                    participant_name = self.ctx.room.local_participant.name
                 except Exception as e:
                     await asyncio.sleep(retry_delay)
                     retries += 1
@@ -293,7 +292,7 @@ class AgentManager:
                 "agent": self.agent_metadata,
                 "room": {
                     "name": self.ctx.room.name,
-                    "sid": self.ctx.room.sid,
+                    "sid": str(await self.ctx.room.sid) if hasattr(self.ctx.room, 'sid') else None,
                     "participants": len(self.ctx.room.remote_participants)
                 },
                 "timestamp": int(time.time() * 1000)

@@ -1,24 +1,60 @@
 import logging
+import os
+import sys
+from logging.handlers import RotatingFileHandler
 
-# Configure logging with custom format
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S'
-)
+# Get log level from environment or use INFO as default
+log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
 
-# Set specific log levels for different loggers
-logging.getLogger('websockets').setLevel(logging.WARNING)  # Reduce websocket noise
-logging.getLogger('asyncio').setLevel(logging.WARNING)    # Reduce asyncio noise
+def setup_logger(name: str) -> logging.Logger:
+    """Setup logging configuration for a new logger"""
+    logger = logging.getLogger(name)
 
-# Create metrics logger
-metrics_logger = logging.getLogger('metrics')
-metrics_logger.setLevel(logging.INFO)
+    # Only configure logger if it hasn't been configured yet
+    if not logger.handlers:
+        # Create formatters
+        console_formatter = logging.Formatter(
+            "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        
+        # Console handler
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(console_formatter)
+        console_handler.setLevel(log_level)
+        logger.propagate = False
+        logger.addHandler(console_handler)
+        
+        # Optional file handler for specific loggers
+        if name == 'metrics':
+            file_handler = RotatingFileHandler(
+                'logs/metrics.log',
+                maxBytes=10*1024*1024,  # 10MB
+                backupCount=5
+            )
+            file_formatter = logging.Formatter(
+                '%(asctime)s - %(levelname)s - %(message)s'
+            )
+            file_handler.setFormatter(file_formatter)
+            file_handler.setLevel(log_level)
+            logger.addHandler(file_handler)
+    
+    # Set level
+    logger.setLevel(log_level)
+    
+    return logger
 
-logger = logging.getLogger(__name__)
+# Set up base logger 
+logger = setup_logger(__name__)
+
+# Suppress noisy loggers
+logging.getLogger('websockets').setLevel(logging.WARNING)
+logging.getLogger('asyncio').setLevel(logging.WARNING)  
+
+# Set up metrics logger
+metrics_logger = setup_logger('metrics')
 
 def get_logger(name: str) -> logging.Logger:
     """Get logger with consistent formatting"""
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)  # Ensure new loggers also have INFO level
-    return logger
+    return setup_logger(name)

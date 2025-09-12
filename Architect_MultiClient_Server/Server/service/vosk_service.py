@@ -562,9 +562,6 @@ class STTVoskService:
                 current_time = time.time()
                 cleanup_count = 0
                 
-                # Cleanup inactive VAD clients
-                self.vad_service.cleanup_inactive_clients(max_age=self.config.stt.max_client_idle_time)
-                
                 # Cleanup old accumulated chunks
                 with self._accumulated_chunks_lock:
                     clients_to_remove = []
