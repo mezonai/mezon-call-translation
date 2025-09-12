@@ -1,12 +1,14 @@
 import asyncio
 import json
 import time
+import numpy as np
 from livekit import rtc
 
 from src.config import SAMPLE_RATE, CHANNELS, TRANSCRIPT, TRANSLATION
 from src.core.websocket_client import WebSocketTranscriptionClient
 from src.core.transcript_manager import TranscriptManager
 from src.logger import get_logger
+from demo.test import RealTimeVADProcessor
 
 logger = get_logger(__name__)
 
@@ -14,9 +16,10 @@ logger = get_logger(__name__)
 class EventHandlers:
     """Handles LiveKit room events and manages transcription clients"""
     
-    def __init__(self, ctx, transcript_manager: TranscriptManager):
+    def __init__(self, ctx, transcript_manager: TranscriptManager, agent_manager=None):
         self.ctx = ctx
         self.transcript_manager = transcript_manager
+        self.agent_manager = agent_manager
         self.active_clients = {}
         self.cleanup_lock = asyncio.Lock()
         self.logger = get_logger("event_handlers")
@@ -79,6 +82,18 @@ class EventHandlers:
             transcription_callback=self.create_transcription_callback(speaker_id),
             participant_identity=speaker_id,
         )
+        processor = RealTimeVADProcessor(
+            sr=16000, 
+            chunk_duration_ms=10,   # Stream 10ms chunks
+            overlap_chunks=2,       # Lưu 2 chunks trước (20ms) để overlap
+            enable_playback=True,   # Bật phát audio
+            min_speech_frames=10,    # Yêu cầu tối thiểu 10 frames liên tiếp (100ms) mới lưu
+            save_chunks=False
+        )
+        
+        # Bắt đầu xử lý audio chunks
+        processor.start_processing()
+        logger.info(f"Started VAD processing for {speaker_id}")
 
         # Connect to transcription server
         if not await ws_client.connect():
@@ -111,13 +126,18 @@ class EventHandlers:
                 
                 # Process audio frame
                 frame = event.frame
-                audio_data = bytes(frame.data)
-                
-                # Send audio data (will be batched automatically)
-                await ws_client.send_audio(audio_data)
-                
-                frames_processed += 1
-                bytes_sent += len(audio_data)
+                # Convert bytes to float32 array (assuming 16-bit audio)
+                audio_data = np.frombuffer(bytes(frame.data), dtype=np.int16).astype(np.float32) / 32767.0
+                processor.add_audio_chunk(audio_data)
+                print(f"Added audio chunk to processor {len(audio_data)}")
+                # Get batched chunks (mỗi batch là 5 chunks 10ms = 50ms audio)
+                batched_chunks = processor.get_batched_chunks(chunks_per_batch=5)
+                for batch in batched_chunks:
+                    # Convert float32 [-1.0, 1.0] to int16 [-32767, 32767]
+                    batch_bytes = (batch * 32767).astype(np.int16).tobytes()
+                    await ws_client.send_audio(batch_bytes)
+                    frames_processed += 1
+                    bytes_sent += len(batch_bytes)
                 
                 # Periodic logging
                 current_time = time.time()
@@ -137,16 +157,21 @@ class EventHandlers:
             # Clean up client
             async with self.cleanup_lock:
                 if speaker_id in self.active_clients:
+                    # Dừng VAD processor
+                    processor.stop_processing()
+                    logger.info(f"Stopped VAD processing for {speaker_id}")
+                    
                     await ws_client.disconnect()
                     self.active_clients.pop(speaker_id, None)
                     logger.info(f"Cleaned up transcription for {speaker_id}")
                     
-                    # Notify agent manager about client removal
-                    await self.agent_manager.announce_agent_status("client_removed", {
-                        "participant_removed": speaker_id,
-                        "total_clients": len(self.active_clients),
-                        "clients": list(self.active_clients.keys())
-                    })
+                    # Notify agent manager about client removal if available
+                    if self.agent_manager:
+                        await self.agent_manager.announce_agent_status("client_removed", {
+                            "participant_removed": speaker_id,
+                            "total_clients": len(self.active_clients),
+                            "clients": list(self.active_clients.keys())
+                        })
 
     def on_track_subscribed(self, track: rtc.RemoteAudioTrack, publication: rtc.TrackPublication, participant: rtc.RemoteParticipant):
         """Handle new audio track subscription"""

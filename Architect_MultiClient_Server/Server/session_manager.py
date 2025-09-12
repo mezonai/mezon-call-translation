@@ -14,7 +14,8 @@ class SessionManager:
             "websocket": websocket,
             "transcripts": transcript,
             "translation": translation,
-            "language" : language
+            "language" : language,
+            "last_text": "", 
         }
         logger.info("Added client %s to session %s (transcript=%s, translation=%s, language=%s)", client_id, session_id, transcript, translation, language)
 

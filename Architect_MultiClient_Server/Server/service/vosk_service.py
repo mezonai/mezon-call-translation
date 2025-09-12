@@ -5,7 +5,6 @@ import queue
 import threading
 import logging
 from vosk import Model, KaldiRecognizer
-from .vad_service import get_vad_service
 from .health_service import register_stt_health_checks
 from ..utils.circuit_breaker import get_stt_circuit_breaker, CircuitBreakerOpenException
 from ..config import get_config
@@ -60,14 +59,9 @@ class STTVoskService:
         # Thread-safe accumulated chunks storage
         self.accumulated_chunks: Dict[str, Tuple[list, int, str, float]] = {}
 
-        # Initialize VAD service
-        logger.info("Initializing VAD service...")
-        self.vad_service = get_vad_service()
-        
-        # Initialize circuit breaker
+        # Initialize circuit breaker only (VAD removed)
         self._circuit_breaker = get_stt_circuit_breaker()
-        
-        logger.info("VAD service and circuit breaker initialized successfully")
+        logger.info("Circuit breaker initialized successfully")
 
         # Start worker threads
         self.worker_threads = []
@@ -139,6 +133,7 @@ class STTVoskService:
                 states[key] = {
                     "last_translation_time": time.time(),
                     "last_queued_text": "",
+                    "is_final": False
                 }
             return recognizers[key], states[key]
 
@@ -172,22 +167,22 @@ class STTVoskService:
 
                     # Adjust processing thresholds based on queue load
                     if queue_load >= self.config.stt.queue_load_high:  # Very high load (>70%)
-                        chunks_threshold = self.config.stt.max_chunks
+                        chunks_threshold = self.config.stt.min_chunks
                         time_threshold = self.config.stt.min_time_threshold
                         logger.debug(f"High load mode ({queue_load:.1%}): fast processing")
                     
                     elif queue_load >= self.config.stt.queue_load_medium:  # High load (50-70%)
-                        chunks_threshold = max(self.config.stt.min_chunks, int(self.config.stt.max_chunks * 0.6))
+                        chunks_threshold = max(self.config.stt.min_chunks, int(self.config.stt.max_chunks * 0.3))
                         time_threshold = self.config.stt.min_time_threshold * 2
                         logger.debug(f"Medium load mode ({queue_load:.1%}): quick processing")
                     
                     elif queue_load >= self.config.stt.queue_load_low:  # Medium load (30-50%)
-                        chunks_threshold = max(self.config.stt.min_chunks, int(self.config.stt.max_chunks * 0.3))
+                        chunks_threshold = max(self.config.stt.min_chunks, int(self.config.stt.max_chunks * 0.6))
                         time_threshold = (self.config.stt.min_time_threshold + self.config.stt.max_time_threshold) / 2
                         logger.debug(f"Balanced mode ({queue_load:.1%}): normal processing")
                     
                     else:  # Low load (<30%)
-                        chunks_threshold = self.config.stt.min_chunks
+                        chunks_threshold = self.config.stt.max_chunks
                         time_threshold = self.config.stt.max_time_threshold
                         logger.debug(f"Low load mode ({queue_load:.1%}): quality processing")
                     
@@ -232,29 +227,41 @@ class STTVoskService:
                             text = result.get("text", "").strip()
                             logger.debug("[worker=%s] Final result for client=%s: text='%s', len=%s", worker_index, client_id, text, len(text))
                             if len(text) >= self.config.audio.min_text_length and text.lower() != "the":
-                                self._emit_result("transcripts", {
-                                    "type": "transcripts",
-                                    "text": text,
-                                    "is_final": True,
-                                    "session_id": session_id,
-                                    "client_id": client_id
-                                }, worker_index)
-                                self.queue_translation(text, client_id, session_id, state, is_final=True)
+                                # Kiểm tra text có khác với last_text không
+                                last_text = state.get("last_queued_text", "")
+                                if text != last_text or is_final != state.get("is_final", False):  # Chỉ emit nếu text mới khác text cũ
+                                    self._emit_result("transcripts", {
+                                        "type": "transcripts",
+                                        "text": text,
+                                        "is_final": True,
+                                        "session_id": session_id,
+                                        "client_id": client_id
+                                    }, worker_index)
+                                    self.queue_translation(text, client_id, session_id, state, is_final=True)
+                                else:
+                                    logger.debug("[worker=%s] Skipped duplicate final result for client=%s: '%s'", 
+                                            worker_index, client_id, text)
                         else:
                             partial = json.loads(recognizer.PartialResult())
                             logger.debug("[worker=%s] Raw Vosk partial result: %s", worker_index, partial)
                             text = partial.get("partial", "").strip()
                             logger.debug("[worker=%s] Partial result for client=%s: text='%s', len=%s", worker_index, client_id, text, len(text))
-                            if text and text.lower() != "the" :
-                                self._emit_result("transcripts", {
-                                    "type": "transcripts",
-                                    "text": text,
-                                    "is_final": False,
-                                    "session_id": session_id,
-                                    "client_id": client_id
-                                }, worker_index)
-
-                                self.queue_translation(text, client_id, session_id, state, is_final=False)
+                            if text and text.lower() != "the":
+                                # Kiểm tra text có khác với last_text không
+                                last_text = state.get("last_queued_text", "")
+                                # Chỉ emit nếu text mới khác text cũ
+                                if text != last_text or is_final != state.get("is_final", False):
+                                    self._emit_result("transcripts", {
+                                        "type": "transcripts",
+                                        "text": text,
+                                        "is_final": False,
+                                        "session_id": session_id,
+                                        "client_id": client_id
+                                    }, worker_index)
+                                    self.queue_translation(text, client_id, session_id, state, is_final=False)
+                                else:
+                                    logger.debug("[worker=%s] Skipped duplicate partial result for client=%s: '%s'", 
+                                               worker_index, client_id, text)
 
                         # processed counter
                         with self._stats_lock:
@@ -336,70 +343,24 @@ class STTVoskService:
                 if chunk_duration_ms > 500:  # Too long, might cause delays
                     logger.warning("Chunk too long, may cause processing delays: %.2f ms", chunk_duration_ms)
                 
-                # 3. Optionally process each chunk through VAD
-                speech_detected = True
-                max_prob = 0.0
-
-                if hasattr(self.vad_service, '_vad_disabled') and self.vad_service._vad_disabled:
-                    # Bypass VAD: accept audio directly
-                    logger.debug("VAD disabled, bypassing VAD checks for client=%s", vad_client_id)
-                else:
-                    speech_detected = False
-                    for i, chunk_audio in enumerate(chunks):
-                        try:
-                            # Process through VAD
-                            is_speech = self.vad_service.is_speech(chunk_audio, client_id=vad_client_id)
-                            prob = self.vad_service.get_speech_prob(vad_client_id)
-                            
-                            if is_speech:
-                                speech_detected = True
-                            if prob:
-                                max_prob = max(max_prob, prob)
-                                
-                            logger.debug(
-                                "Chunk %d/%d: speech=%s prob=%.3f rms=%.3f",
-                                i+1, len(chunks), is_speech, prob or 0,
-                                np.sqrt(np.mean(np.square(chunk_audio)))
-                            )
-                                
-                        except Exception as e:
-                            logger.error(
-                                "Error processing chunk %d/%d: %s",
-                                i+1, len(chunks), str(e)
-                            )
-                            continue
-                
-                # 4. Get final statistics
-                stats = self.vad_service.get_client_stats(vad_client_id) if not getattr(self.vad_service, '_vad_disabled', False) else {}
+                # VAD removed - process all audio chunks directly
                 logger.debug(
-                    "VAD analysis complete: client=%s session=%s | "
-                    "speech=%s max_prob=%.3f | chunks=%d/%d processed | "
-                    "stats: speech_count=%d avg_prob=%.3f",
-                    client_id, session_id, speech_detected, max_prob,
-                    len(chunks), len(audio_np) // 512,
-                    stats.get('speech_count', 0), stats.get('avg_probability', 0)
+                    "Processing audio directly: client=%s session=%s | chunks=%d size=%d",
+                    client_id, session_id, len(chunks), len(audio_np)
                 )
                 
-                # Update metrics for monitoring
+                # Update metrics for monitoring (without VAD)
                 with self._stats_lock:
                     s = self.worker_stats[hash(client_id) % self.num_workers]
                     s["last_chunk_duration_ms"] = chunk_duration_ms
-                    s["last_speech_prob"] = max_prob
                     s["total_chunks"] = len(chunks)
-                    s["vad_filtered_chunks"] = len([c for c in chunks if c.size == 512])
+                    s["vad_filtered_chunks"] = len(chunks)  # All chunks are processed
                     
             except Exception as e:
-                logger.error("VAD processing failed for client=%s session=%s: %s", 
+                logger.error("Audio processing failed for client=%s session=%s: %s", 
                            client_id, session_id, str(e), exc_info=True)
                 return False
-            # If VAD is enabled and no speech was detected, drop the chunk
-            if not getattr(self.vad_service, '_vad_disabled', False) and not speech_detected:
-                logger.debug(
-                    "Silence detected (VAD), skipping chunk: client=%s session=%s max_prob=%.3f duration=%.1fms chunks=%d/%d",
-                    client_id, session_id, max_prob,
-                    chunk_duration_ms, len(chunks), len(audio_np) // 512
-                )
-                return False
+            # Process all chunks (VAD removed)
 
             # Route to worker by client_id hash
             worker_index = hash(client_id) % self.num_workers
@@ -464,6 +425,7 @@ class STTVoskService:
         }
         # self.audio_task_queue.put(task)
         state["last_queued_text"] = text
+        state
         logger.info(f"[VOSK-{'FINAL' if is_final else 'PARTIAL'}] Queued for translation from {client_id}: '{text}'")
 
     def submit_audio(self, chunk, client_id, session_id):
@@ -510,15 +472,7 @@ class STTVoskService:
                 except Exception as e:
                     logger.error("Error waiting for cleanup thread: %s", str(e))
             
-            # 4. Clean up VAD resources
-            if hasattr(self, 'vad_service'):
-                try:
-                    self.vad_service.shutdown()
-                    logger.info("VAD service shutdown completed")
-                except Exception as e:
-                    logger.error("Error shutting down VAD service: %s", str(e))
-            
-            # 5. Clean up worker resources and log final states
+            # Clean up worker resources and log final states (VAD removed)
             for i, (recognizers, states, queue) in enumerate(zip(
                 self.worker_recognizers, 
                 self.worker_client_state,

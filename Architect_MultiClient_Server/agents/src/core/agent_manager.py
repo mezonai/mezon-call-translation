@@ -97,75 +97,163 @@ class AgentManager:
             self.logger.error(f"Failed to update agent status: {e}")
             return False
     
-    async def announce_agent_ready(self):
-        """Announce agent is ready via data channel"""
-        try:
-            # Update status to ready first
-            await self.update_agent_status("ready", {
-                "ready_at": int(time.time() * 1000),
-                "participants_count": len(self.ctx.room.remote_participants)
-            })
+    async def announce_agent_ready(self, max_retries=3, retry_delay=1.0):
+        """Announce agent is ready via data channel with retry logic"""
+        retries = 0
+        last_error = None
+
+        while retries < max_retries:
+            try:
+                # Check if room is connected by checking local participant state
+                if not self.ctx.room.local_participant:
+                    await asyncio.sleep(retry_delay)
+                    retries += 1
+                    self.logger.warning(f"Room not fully connected (no local participant), retry {retries}/{max_retries}")
+                    continue
+
+                # Get required room and participant properties with await
+                try:
+                    local_sid = await self.ctx.room.local_participant.sid
+                    room_sid = await self.ctx.room.sid
+                    room_name = await self.ctx.room.name
+                    participant_identity = await self.ctx.room.local_participant.identity
+                    participant_name = await self.ctx.room.local_participant.name
+                except Exception as e:
+                    await asyncio.sleep(retry_delay)
+                    retries += 1
+                    self.logger.warning(f"Failed to get room properties, retry {retries}/{max_retries}: {e}")
+                    continue
+
+                if not local_sid:
+                    await asyncio.sleep(retry_delay)
+                    retries += 1
+                    self.logger.warning(f"Room not fully connected (no local sid), retry {retries}/{max_retries}")
+                    continue
+
+                # Update status to ready first
+                await self.update_agent_status("ready", {
+                    "ready_at": int(time.time() * 1000),
+                    "participants_count": len(self.ctx.room.remote_participants)
+                })
+                
+                # Announce via data channel
+                announcement = {
+                    "type": "agent_announcement",
+                    "event": "agent_ready",
+                    "agent": {
+                        "id": participant_identity,
+                        "name": participant_name,
+                        "service": "vosk_transcription",
+                        "capabilities": self.agent_metadata["capabilities"],
+                        "status": "ready"
+                    },
+                    "room": {
+                        "name": room_name,
+                        "sid": room_sid,
+                        "participants": len(self.ctx.room.remote_participants)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }
+
+                # Try to publish with timeout
+                try:
+                    await asyncio.wait_for(
+                        self.ctx.room.local_participant.publish_data(
+                            json.dumps(announcement).encode("utf-8"),
+                            reliable=True,
+                            topic="agent_control"
+                        ),
+                        timeout=5.0
+                    )
+                    self.logger.info("Agent ready announcement sent via data channel")
+                    return True
+                except asyncio.TimeoutError:
+                    raise Exception("Publish data timeout")
+                
+            except Exception as e:
+                last_error = e
+                retries += 1
+                if retries < max_retries:
+                    self.logger.warning(f"Failed to announce agent ready (attempt {retries}/{max_retries}): {e}")
+                    await asyncio.sleep(retry_delay * retries)  # Exponential backoff
+                else:
+                    self.logger.error(f"Failed to announce agent ready after {max_retries} attempts: {e}")
             
-            # Announce via data channel
-            announcement = {
-                "type": "agent_announcement",
-                "event": "agent_ready",
-                "agent": {
-                    "id": self.ctx.room.local_participant.identity,
-                    "name": self.ctx.room.local_participant.name,
-                    "service": "vosk_transcription",
-                    "capabilities": self.agent_metadata["capabilities"],
-                    "status": "ready"
-                },
-                "room": {
-                    "name": self.ctx.room.name,
-                    "sid": self.ctx.room.sid,
-                    "participants": len(self.ctx.room.remote_participants)
-                },
-                "timestamp": int(time.time() * 1000)
-            }
-            
-            await self.ctx.room.local_participant.publish_data(
-                json.dumps(announcement).encode("utf-8"),
-                reliable=True,
-                topic="agent_control"
-            )
-            
-            self.logger.info("Agent ready announcement sent via data channel")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to announce agent ready: {e}")
-            return False
+        if last_error:
+            self.logger.error(f"All retries failed for announce_agent_ready: {last_error}")
+        return False
     
-    async def announce_agent_status(self, status: str, details: dict = None):
-        """Announce agent status change via data channel"""
-        try:
-            announcement = {
-                "type": "agent_status",
-                "event": "status_change",
-                "agent": {
-                    "id": self.ctx.room.local_participant.identity,
-                    "name": self.ctx.room.local_participant.name,
-                    "service": "vosk_transcription",
-                    "status": status
-                },
-                "details": details or {},
-                "timestamp": int(time.time() * 1000)
-            }
+    async def announce_agent_status(self, status: str, details: dict = None, max_retries=3, retry_delay=1.0):
+        """Announce agent status change via data channel with retry logic"""
+        retries = 0
+        last_error = None
+
+        while retries < max_retries:
+            try:
+                # Check if room is connected by checking local participant state
+                if not self.ctx.room.local_participant:
+                    await asyncio.sleep(retry_delay)
+                    retries += 1
+                    self.logger.warning(f"Room not fully connected (no local participant), retry {retries}/{max_retries}")
+                    continue
+
+                # Get required room and participant properties with await
+                try:
+                    local_sid = await self.ctx.room.local_participant.sid
+                    participant_identity = await self.ctx.room.local_participant.identity
+                    participant_name = await self.ctx.room.local_participant.name
+                except Exception as e:
+                    await asyncio.sleep(retry_delay)
+                    retries += 1
+                    self.logger.warning(f"Failed to get room properties, retry {retries}/{max_retries}: {e}")
+                    continue
+
+                if not local_sid:
+                    await asyncio.sleep(retry_delay)
+                    retries += 1
+                    self.logger.warning(f"Room not fully connected (no local sid), retry {retries}/{max_retries}")
+                    continue
+
+                announcement = {
+                    "type": "agent_status",
+                    "event": "status_change",
+                    "agent": {
+                        "id": participant_identity,
+                        "name": participant_name,
+                        "service": "vosk_transcription",
+                        "status": status
+                    },
+                    "details": details or {},
+                    "timestamp": int(time.time() * 1000)
+                }
+                
+                # Try to publish with timeout
+                try:
+                    await asyncio.wait_for(
+                        self.ctx.room.local_participant.publish_data(
+                            json.dumps(announcement).encode("utf-8"),
+                            reliable=True,
+                            topic="agent_control"
+                        ),
+                        timeout=5.0
+                    )
+                    self.logger.debug(f"Agent status announcement sent: {status}")
+                    return True
+                except asyncio.TimeoutError:
+                    raise Exception("Publish data timeout")
+                
+            except Exception as e:
+                last_error = e
+                retries += 1
+                if retries < max_retries:
+                    self.logger.warning(f"Failed to announce agent status (attempt {retries}/{max_retries}): {e}")
+                    await asyncio.sleep(retry_delay * retries)  # Exponential backoff
+                else:
+                    self.logger.error(f"Failed to announce agent status after {max_retries} attempts: {e}")
             
-            await self.ctx.room.local_participant.publish_data(
-                json.dumps(announcement).encode("utf-8"),
-                reliable=True,
-                topic="agent_control"
-            )
-            
-            self.logger.debug(f"Agent status announcement sent: {status}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to announce agent status: {e}")
-            return False
+        if last_error:
+            self.logger.error(f"All retries failed for announce_agent_status: {last_error}")
+        return False
     
     async def handle_agent_commands(self, data_packet):
         """Handle commands sent to agent via data channel"""

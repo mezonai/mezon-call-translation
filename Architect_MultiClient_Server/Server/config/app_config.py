@@ -38,8 +38,8 @@ class VADConfig:
 class STTConfig:
     """Speech-to-Text configuration."""
     vosk_model_path: str = "vosk-model-small-en-us-0.15"
-    min_chunks: int = 1
-    max_chunks: int = 15
+    min_chunks: int = 3
+    max_chunks: int = 10
     min_time_threshold: float = 0.1
     max_time_threshold: float = 0.5
     queue_load_low: float = 0.3

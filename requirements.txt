@@ -14,6 +14,10 @@ python-dotenv>=1.0.0
 
 # Audio processing (numpy for audio data handling)
 numpy>=1.24.0
+scipy>=1.11.0
+librosa>=0.10.0
+pyaudio>=0.2.13
+
 
 # Optional: VAD dependencies (only if VAD is enabled)
 # torch>=2.0.0
