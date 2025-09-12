@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 import asyncio
-from Architect_MultiClient_Server.Server.session_manager import session_manager
+from .. import session_manager
 
 logger = logging.getLogger(__name__)
 

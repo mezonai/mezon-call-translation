@@ -8,3 +8,5 @@ venv/
 Architect_MultiClient_Server/demo_test/
 Architect_MultiClient_Server/test/
 Architect_MultiClient_Server/agents/demo/
+application.log
+vad_log.txt

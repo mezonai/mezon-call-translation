@@ -76,7 +76,7 @@ mezon-call-translation/
 ### 2. Agent (LiveKit)
 - **Port**: 8080
 - **Function**: LiveKit agent kết nối với server để xử lý real-time audio
-- **Command**: `python agents/testAgents.py dev`
+- **Command**: `python agents/main.py dev`
 
 ## ⚙️ Configuration
 
