@@ -68,7 +68,13 @@ class EventHandlers:
 
     async def manage_speaker_transcription(self, track: rtc.RemoteAudioTrack, publication: rtc.TrackPublication, participant: rtc.RemoteParticipant):
         """Optimized audio streaming with better resource management"""
-        speaker_id = participant.identity
+        print(f"Track SID={publication.sid}, kind={publication.kind}, source={publication.source}")
+        if publication.source == 4:
+            print("Nguồn audio từ screen (screen share)")
+            speaker_id = f"{participant.identity}-screen"
+        else:
+            speaker_id = participant.identity
+
         sid = self.session_id_from_room()
         
         logger.info(f"Starting transcription for {speaker_id} (session={sid})")
@@ -180,7 +186,13 @@ class EventHandlers:
     def on_track_unsubscribed(self, track: rtc.RemoteTrack, publication: rtc.TrackPublication, participant: rtc.RemoteParticipant):
         """Handle track unsubscription"""
         if getattr(track, "kind", None) == rtc.TrackKind.KIND_AUDIO:
-            pid = participant.identity
+            print(f"Track SID={publication.sid}, kind={publication.kind}, source={publication.source}")
+            if publication.source == 4:
+                print("Nguồn audio từ screen (screen share)")
+                pid = f"{participant.identity}-screen"
+            else:
+                pid = participant.identity
+
             logger.info(f"Audio track unsubscribed for {pid}")
             
             async def cleanup_client():

@@ -167,23 +167,23 @@ class STTVoskService:
 
                     # Adjust processing thresholds based on queue load
                     if queue_load >= self.config.stt.queue_load_high:  # Very high load (>70%)
-                        chunks_threshold = self.config.stt.min_chunks
-                        time_threshold = self.config.stt.min_time_threshold
+                        chunks_threshold = self.config.stt.max_chunks
+                        time_threshold = self.config.stt.max_time_threshold
                         logger.debug(f"High load mode ({queue_load:.1%}): fast processing")
                     
                     elif queue_load >= self.config.stt.queue_load_medium:  # High load (50-70%)
-                        chunks_threshold = max(self.config.stt.min_chunks, int(self.config.stt.max_chunks * 0.3))
-                        time_threshold = self.config.stt.min_time_threshold * 2
+                        chunks_threshold = min(self.config.stt.max_chunks, int(self.config.stt.min_chunks * 4))
+                        time_threshold = self.config.stt.min_time_threshold * 3
                         logger.debug(f"Medium load mode ({queue_load:.1%}): quick processing")
                     
-                    elif queue_load >= self.config.stt.queue_load_low:  # Medium load (30-50%)
-                        chunks_threshold = max(self.config.stt.min_chunks, int(self.config.stt.max_chunks * 0.6))
-                        time_threshold = (self.config.stt.min_time_threshold + self.config.stt.max_time_threshold) / 2
+                    elif queue_load >= self.config.stt.queue_load_low:  # Medium load (20-50%)
+                        chunks_threshold = min(self.config.stt.max_chunks, int(self.config.stt.min_chunks * 2))
+                        time_threshold =  self.config.stt.max_time_threshold * 2
                         logger.debug(f"Balanced mode ({queue_load:.1%}): normal processing")
                     
-                    else:  # Low load (<30%)
-                        chunks_threshold = self.config.stt.max_chunks
-                        time_threshold = self.config.stt.max_time_threshold
+                    else:  # Low load (<20%)
+                        chunks_threshold = self.config.stt.min_chunks
+                        time_threshold = self.config.stt.min_time_threshold
                         logger.debug(f"Low load mode ({queue_load:.1%}): quality processing")
                     
                     # Decision to process

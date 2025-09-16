@@ -34,7 +34,7 @@ async def entrypoint(ctx: agents.JobContext):
     ctx.room.on("track_unsubscribed", event_handlers.on_track_unsubscribed)
     ctx.room.on("participant_disconnected", event_handlers.on_participant_disconnected)
     ctx.room.on("disconnected", lambda: asyncio.create_task(on_disconnected()))
-    
+
     # Handle agent commands from data  
     def on_data_received(data):
         asyncio.create_task(agent_manager.handle_agent_commands(data))

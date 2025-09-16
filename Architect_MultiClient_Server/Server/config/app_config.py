@@ -38,11 +38,11 @@ class VADConfig:
 class STTConfig:
     """Speech-to-Text configuration."""
     vosk_model_path: str = "vosk-model-small-en-us-0.15"
-    min_chunks: int = 3
-    max_chunks: int = 10
+    min_chunks: int = 2
+    max_chunks: int = 8
     min_time_threshold: float = 0.1
-    max_time_threshold: float = 0.5
-    queue_load_low: float = 0.3
+    max_time_threshold: float = 0.4
+    queue_load_low: float = 0.2
     queue_load_medium: float = 0.5
     queue_load_high: float = 0.7
     num_workers: int = 3  #field(default_factory=lambda: max(1, (os.cpu_count() or 2) - 1))
