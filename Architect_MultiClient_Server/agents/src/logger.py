@@ -3,6 +3,10 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
 # Get log level from environment or use INFO as default
 log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
 log_level = getattr(logging, log_level_str, logging.INFO)
@@ -29,7 +33,7 @@ def setup_logger(name: str) -> logging.Logger:
         # Optional file handler for specific loggers
         if name == 'metrics':
             file_handler = RotatingFileHandler(
-                'logs/metrics.log',
+                os.path.join(LOG_DIR, "metrics.log"),
                 maxBytes=10*1024*1024,  # 10MB
                 backupCount=5
             )
