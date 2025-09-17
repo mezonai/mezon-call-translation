@@ -1,4 +1,4 @@
-/models
+/model
 *.py[cod]
 venv/
 .env

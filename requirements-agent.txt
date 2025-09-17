@@ -7,3 +7,4 @@ numpy>=1.24.0
 scipy>=1.11.0
 librosa>=0.10.0
 pyaudio>=0.2.13
+PyJWT>=2.10.1

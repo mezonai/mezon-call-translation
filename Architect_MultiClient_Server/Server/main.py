@@ -6,12 +6,20 @@ import asyncio
 from contextlib import asynccontextmanager
 from .session_manager import session_manager
 
+#agent service
+from .controller.agents_control import router as agents_control
+
 # Vosk STT engine
 from .controller.ws_vosk_control import router as stt_router
 from .service.vosk_service import stt_service_vosk as stt_service
 from .service.health_service import get_health_service
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+
 
 # Load environment variables
 load_dotenv()
@@ -79,7 +87,25 @@ setup_logging(level=log_level)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(lifespan=lifespan)
+# Cho phép frontend gọi API
+origins = [
+    "http://localhost:4200",   # Angular / React dev server
+    "http://127.0.0.1:4200",   # nếu chạy khác host
+    "http://localhost:3000",   # nếu dùng React default
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,          # domain được phép
+    allow_credentials=True,
+    allow_methods=["*"],            # GET, POST, PUT, DELETE...
+    allow_headers=["*"],            # Cho phép tất cả headers
+)
+
+
+
 app.include_router(stt_router)
+app.include_router(agents_control)
 
 
 @app.get("/health")
@@ -112,7 +138,6 @@ async def simple_health_check():
         "status": "healthy" if is_healthy else "unhealthy",
         "timestamp": time.time()
     }
-
 
 if __name__ == "__main__":
     import uvicorn

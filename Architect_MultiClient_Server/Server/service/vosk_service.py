@@ -32,10 +32,11 @@ class STTVoskService:
         self.config = get_config()
         
         # Use config for model path
-        model_path = model_path or self.config.stt.vosk_model_path
+        model_path =  os.getenv('VOSK_MODEL_PATH', 'model/Transcription/en-model')
         
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"VOSK model not found at {model_path}")
+        print(f"Loading VOSK model from {model_path}...")
         self.model = Model(model_path)
 
         # Thread safety locks

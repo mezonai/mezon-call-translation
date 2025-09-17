@@ -5,3 +5,4 @@ websockets>=11.0.3
 vosk>=0.3.45
 python-dotenv>=1.0.0
 numpy>=1.24.0
+livekit>=0.9.0
