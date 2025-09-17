@@ -15,6 +15,23 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 import asyncio
 from .. import session_manager
+from deepmultilingualpunctuation import PunctuationModel
+import re
+
+punc_model = PunctuationModel()
+
+#this helps with capitalize
+def capitalize_text(text: str) -> str:
+    sentences = re.split(r'([.?!])', text)
+    result = []
+    for i in range(0, len(sentences)-1, 2):
+        sentence = sentences[i].strip()
+        punctuation = sentences[i+1]
+        if sentence:
+            sentence = sentence[0].upper() + sentence[1:]
+        result.append(sentence + punctuation)
+    return " ".join(result).strip()
+
 
 logger = logging.getLogger(__name__)
 
@@ -231,9 +248,12 @@ class STTVoskService:
                                 # Kiểm tra text có khác với last_text không
                                 last_text = state.get("last_queued_text", "")
                                 if text != last_text or is_final != state.get("is_final", False):  # Chỉ emit nếu text mới khác text cũ
+                                    punc_text = punc_model.restore_punctuation(text)
+                                    cap_text = capitalize_text(punc_text)
+
                                     self._emit_result("transcripts", {
                                         "type": "transcripts",
-                                        "text": text,
+                                        "text": cap_text,
                                         "is_final": True,
                                         "session_id": session_id,
                                         "client_id": client_id
