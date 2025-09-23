@@ -10,4 +10,5 @@ Architect_MultiClient_Server/test/
 Architect_MultiClient_Server/agents/demo/
 application.log
 vad_log.txt
-/demo/
+/demo
+/stress_test_server/
