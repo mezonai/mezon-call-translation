@@ -168,23 +168,23 @@ class STTVoskService:
 
                     # Adjust processing thresholds based on queue load
                     if queue_load >= self.config.stt.queue_load_high:  # Very high load (>70%)
-                        chunks_threshold = self.config.stt.max_chunks
-                        time_threshold = self.config.stt.max_time_threshold
+                        chunks_threshold = self.config.stt.min_chunks
+                        time_threshold = self.config.stt.min_time_threshold
                         logger.debug(f"High load mode ({queue_load:.1%}): fast processing")
                     
                     elif queue_load >= self.config.stt.queue_load_medium:  # High load (50-70%)
-                        chunks_threshold = min(self.config.stt.max_chunks, int(self.config.stt.min_chunks * 4))
-                        time_threshold = self.config.stt.min_time_threshold * 3
+                        chunks_threshold = min(self.config.stt.max_chunks, int(self.config.stt.min_chunks * 3))
+                        time_threshold = self.config.stt.min_time_threshold * 2
                         logger.debug(f"Medium load mode ({queue_load:.1%}): quick processing")
                     
                     elif queue_load >= self.config.stt.queue_load_low:  # Medium load (20-50%)
-                        chunks_threshold = min(self.config.stt.max_chunks, int(self.config.stt.min_chunks * 2))
-                        time_threshold =  self.config.stt.max_time_threshold * 2
+                        chunks_threshold = min(self.config.stt.max_chunks, int(self.config.stt.min_chunks * 4))
+                        time_threshold =  self.config.stt.max_time_threshold * 3
                         logger.debug(f"Balanced mode ({queue_load:.1%}): normal processing")
                     
                     else:  # Low load (<20%)
-                        chunks_threshold = self.config.stt.min_chunks
-                        time_threshold = self.config.stt.min_time_threshold
+                        chunks_threshold = self.config.stt.max_chunks
+                        time_threshold = self.config.stt.max_time_threshold
                         logger.debug(f"Low load mode ({queue_load:.1%}): quality processing")
                     
                     # Decision to process
@@ -369,7 +369,7 @@ class STTVoskService:
             
             # If queue is getting full, try to clear old items
             current_size = worker_queue.qsize()
-            if current_size >= self.config.queue.audio_queue_maxsize * 0.8:  # 80% full
+            if current_size >= self.config.queue.audio_queue_maxsize * 0.9:  # 90% full
                 logger.warning(
                     "Queue %d filling up (%d/%d). Attempting cleanup...",
                     worker_index, current_size, self.config.queue.audio_queue_maxsize
@@ -428,6 +428,132 @@ class STTVoskService:
         state["last_queued_text"] = text
         state
         logger.info(f"[VOSK-{'FINAL' if is_final else 'PARTIAL'}] Queued for translation from {client_id}: '{text}'")
+
+    def cleanup_client(self, client_id: str, session_id: str):
+        """Immediately cleanup client resources when client disconnects."""
+        try:
+            key = (client_id, session_id)
+            cleanup_count = 0
+            
+            logger.info("Starting immediate cleanup for client=%s session=%s", client_id, session_id)
+            
+            # 1. Cleanup accumulated chunks for this client
+            with self._accumulated_chunks_lock:
+                if client_id in self.accumulated_chunks:
+                    del self.accumulated_chunks[client_id]
+                    cleanup_count += 1
+                    logger.debug("Removed accumulated chunks for client=%s", client_id)
+            
+            # 2. Cleanup recognizers and states from all workers
+            with self._client_states_lock:
+                for worker_index in range(self.num_workers):
+                    recognizers = self.worker_recognizers[worker_index]
+                    states = self.worker_client_state[worker_index]
+                    
+                    # Remove this specific client
+                    if key in recognizers:
+                        recognizers.pop(key, None)
+                        cleanup_count += 1
+                        logger.debug("Removed recognizer for client=%s from worker=%d", client_id, worker_index)
+                    
+                    if key in states:
+                        states.pop(key, None)
+                        cleanup_count += 1
+                        logger.debug("Removed client state for client=%s from worker=%d", client_id, worker_index)
+            
+            # 3. Log cleanup completion
+            if cleanup_count > 0:
+                logger.info("Immediate cleanup completed for client=%s session=%s: removed %d resources", 
+                           client_id, session_id, cleanup_count)
+            else:
+                logger.info("No resources found to cleanup for client=%s session=%s", client_id, session_id)
+                
+        except Exception as e:
+            logger.error("Error during immediate client cleanup for client=%s session=%s: %s", 
+                        client_id, session_id, str(e), exc_info=True)
+
+    def get_active_clients_info(self):
+        """Get information about currently active clients for debugging."""
+        try:
+            info = {
+                "total_active_recognizers": 0,
+                "total_accumulated_chunks_clients": 0,
+                "total_accumulated_chunks": 0,
+                "clients_by_worker": {},
+                "accumulated_chunks": {},
+                "worker_queue_sizes": [],
+                "cleanup_thresholds": {
+                    "max_accumulated_chunks_age": self.config.stt.max_accumulated_chunks_age,
+                    "max_client_idle_time": self.config.stt.max_client_idle_time,
+                    "client_cleanup_interval": self.config.stt.client_cleanup_interval
+                }
+            }
+            
+            # Get recognizer info by worker
+            with self._client_states_lock:
+                for worker_index in range(self.num_workers):
+                    recognizers = self.worker_recognizers[worker_index]
+                    states = self.worker_client_state[worker_index]
+                    
+                    worker_clients = []
+                    for key in recognizers.keys():
+                        client_id, session_id = key
+                        last_activity = states.get(key, {}).get("last_translation_time", 0)
+                        worker_clients.append({
+                            "client_id": client_id,
+                            "session_id": session_id,
+                            "last_activity": last_activity,
+                            "inactive_seconds": time.time() - last_activity
+                        })
+                    
+                    info["clients_by_worker"][f"worker_{worker_index}"] = worker_clients
+                    info["total_active_recognizers"] += len(worker_clients)
+            
+            # Get accumulated chunks info
+            with self._accumulated_chunks_lock:
+                total_chunks = 0
+                for client_id, (chunks, total_size, session_id, last_time) in self.accumulated_chunks.items():
+                    chunks_count = len(chunks)
+                    total_chunks += chunks_count
+                    info["accumulated_chunks"][client_id] = {
+                        "session_id": session_id,
+                        "chunks_count": chunks_count,
+                        "total_size": total_size,
+                        "last_update": last_time,
+                        "age_seconds": time.time() - last_time
+                    }
+                
+                info["total_accumulated_chunks_clients"] = len(self.accumulated_chunks)
+                info["total_accumulated_chunks"] = total_chunks
+            
+            # Get queue sizes
+            info["worker_queue_sizes"] = [q.qsize() for q in self.worker_queues]
+            
+            return info
+            
+        except Exception as e:
+            logger.error("Error getting active clients info: %s", str(e), exc_info=True)
+            return {"error": str(e)}
+    
+    def get_circuit_breaker_status(self):
+        """Get circuit breaker status for debugging."""
+        try:
+            return {
+                "state": self._circuit_breaker.state.name,
+                "failure_count": self._circuit_breaker.failure_count,
+                "success_count": self._circuit_breaker.success_count,
+                "last_failure_time": getattr(self._circuit_breaker, 'last_failure_time', None),
+                "can_try": self._circuit_breaker.can_try(),
+                "config": {
+                    "failure_threshold": self._circuit_breaker.config.failure_threshold,
+                    "timeout": self._circuit_breaker.config.timeout,
+                    "success_threshold": self._circuit_breaker.config.success_threshold
+                },
+                "detailed_state": self._circuit_breaker.get_state()
+            }
+        except Exception as e:
+            logger.error("Error getting circuit breaker status: %s", str(e), exc_info=True)
+            return {"error": str(e), "status": "unknown"}
 
     def submit_audio(self, chunk, client_id, session_id):
         """Legacy synchronous submit (may block if queue is full). Prefer submit_audio_async."""
@@ -529,6 +655,37 @@ class STTVoskService:
                     processed = [s.get("processed", 0) for s in self.worker_stats]
 
                 active_clients = sum(len(m) for m in self.worker_recognizers)
+                
+                # Count accumulated chunks separately 
+                with self._accumulated_chunks_lock:
+                    accumulated_clients = len(self.accumulated_chunks)
+                    total_accumulated_chunks = sum(len(chunks) for chunks, _, _, _ in self.accumulated_chunks.values())
+                
+                # Log active clients details in debug mode
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("=== Active Clients Debug Info ===")
+                    for worker_index, recognizers in enumerate(self.worker_recognizers):
+                        if recognizers:
+                            client_keys = list(recognizers.keys())
+                            logger.debug(
+                                "Worker %d active clients (%d): %s", 
+                                worker_index, len(client_keys), client_keys
+                            )
+                    
+                    # Show accumulated chunks details
+                    if self.accumulated_chunks:
+                        chunk_summary = {
+                            client_id: len(chunks) 
+                            for client_id, (chunks, _, _, _) in self.accumulated_chunks.items()
+                        }
+                        logger.debug("Accumulated chunks by client: %s", chunk_summary)
+                
+                # Enhanced logging to show resource breakdown
+                if active_clients != accumulated_clients:
+                    logger.debug(
+                        "Resource mismatch: active_recognizers=%d, accumulated_chunks_clients=%d, total_chunks=%d",
+                        active_clients, accumulated_clients, total_accumulated_chunks
+                    )
 
                 # Calculate VAD efficiency
                 vad_filtered = sum(s.get("vad_filtered_chunks", 0) for s in self.worker_stats)
@@ -540,12 +697,12 @@ class STTVoskService:
                 latest_probs = [round(s.get("last_speech_prob", 0), 3) for s in self.worker_stats]
                 
                 logger.info(
-                    "Metrics | System: workers=%s active_clients=%s | "
+                    "Metrics | System: workers=%s active_recognizers=%s accumulated_chunks_clients=%s total_chunks=%s | "
                     "Queue: total=%s per_worker=%s | "
                     "Performance: avg_wait_ms=%s processed=%s | "
                     "VAD: efficiency=%.1f%% chunks=%s/%s | "
                     "Latest: durations_ms=%s probs=%s",
-                    self.num_workers, active_clients,
+                    self.num_workers, active_clients, accumulated_clients, total_accumulated_chunks,
                     total_q, per_q,
                     avg_waits, processed,
                     vad_efficiency, vad_filtered, total_chunks,
@@ -567,12 +724,22 @@ class STTVoskService:
                 with self._accumulated_chunks_lock:
                     clients_to_remove = []
                     for client_id, (chunks, _, _, last_time) in self.accumulated_chunks.items():
-                        if current_time - last_time > self.config.stt.max_accumulated_chunks_age:
+                        age_seconds = current_time - last_time
+                        if age_seconds > self.config.stt.max_accumulated_chunks_age:
                             clients_to_remove.append(client_id)
+                            logger.debug(
+                                "Marking accumulated chunks for cleanup: client=%s (age=%.1fs, chunks=%d)", 
+                                client_id, age_seconds, len(chunks)
+                            )
                     
                     for client_id in clients_to_remove:
+                        chunks_info = self.accumulated_chunks[client_id]
                         del self.accumulated_chunks[client_id]
                         cleanup_count += 1
+                        logger.info(
+                            "Periodic cleanup: removed accumulated chunks for client=%s (chunks=%d)", 
+                            client_id, len(chunks_info[0])
+                        )
                 
                 # Cleanup old recognizers and states
                 with self._client_states_lock:
@@ -580,16 +747,28 @@ class STTVoskService:
                         recognizers = self.worker_recognizers[worker_index]
                         states = self.worker_client_state[worker_index]
                         
-                        # Remove old client states (no activity for 5 minutes)
+                        # Remove old client states (no activity for configurable time)
                         keys_to_remove = []
+                        inactive_threshold = self.config.stt.max_client_idle_time  # Use config value instead of hard-coded
                         for key, state in states.items():
-                            if current_time - state.get("last_translation_time", 0) > 300:
+                            last_activity = state.get("last_translation_time", 0)
+                            inactive_duration = current_time - last_activity
+                            if inactive_duration > inactive_threshold:
                                 keys_to_remove.append(key)
+                                logger.debug(
+                                    "Marking client for cleanup: %s (worker=%d, inactive_for=%.1fs, threshold=%.1fs)", 
+                                    key, worker_index, inactive_duration, inactive_threshold
+                                )
                         
                         for key in keys_to_remove:
+                            client_id, session_id = key
                             recognizers.pop(key, None)
                             states.pop(key, None)
                             cleanup_count += 1
+                            logger.info(
+                                "Periodic cleanup: removed inactive client=%s session=%s from worker=%d", 
+                                client_id, session_id, worker_index
+                            )
                 
                 if cleanup_count > 0:
                     logger.info("Cleanup completed: removed %d inactive resources", cleanup_count)

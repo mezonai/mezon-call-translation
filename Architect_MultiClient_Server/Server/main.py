@@ -16,7 +16,7 @@ from .service.health_service import get_health_service
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -138,6 +138,20 @@ async def simple_health_check():
         "status": "healthy" if is_healthy else "unhealthy",
         "timestamp": time.time()
     }
+
+@app.post("/admin/emergency-cleanup")
+async def emergency_cleanup():
+    """Emergency cleanup endpoint to fix orphaned clients."""
+    try:
+        result = stt_service.trigger_emergency_cleanup()
+        return {
+            "status": "success",
+            "message": "Emergency cleanup completed",
+            "details": result
+        }
+    except Exception as e:
+        logger.error(f"Emergency cleanup failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Emergency cleanup failed: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

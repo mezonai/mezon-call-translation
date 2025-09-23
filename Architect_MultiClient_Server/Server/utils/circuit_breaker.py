@@ -96,6 +96,17 @@ class CircuitBreaker:
             return True
         return time.time() - self.last_failure_time >= self.config.timeout
     
+    def can_try(self) -> bool:
+        """Check if circuit breaker allows calls."""
+        with self._lock:
+            if self.state == CircuitState.CLOSED:
+                return True
+            elif self.state == CircuitState.HALF_OPEN:
+                return True
+            elif self.state == CircuitState.OPEN:
+                return self._should_attempt_reset()
+            return False
+    
     def _on_success(self):
         """Handle successful call."""
         if self.state == CircuitState.HALF_OPEN:
