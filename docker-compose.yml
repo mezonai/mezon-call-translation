@@ -1,14 +1,12 @@
-version: '3.8'
-
 services:
   # FastAPI Server với Vosk
   server:
     build:
       context: .
       dockerfile: Dockerfile.server
-    container_name: mezon-vosk-server
+    # container_name: mezon-vosk-server   # ❌ removed for scaling
     ports:
-      - "8000:8000"
+      - "8000"   # let Docker assign internal port
     env_file:
       - .env
     environment:
@@ -27,8 +25,27 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/simple"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 40s
+      retries: 5
+      start_period: 60s
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - server
+    networks:
+      - mezon-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
 
   # LiveKit Agent
   agent:
@@ -47,12 +64,12 @@ services:
       - LIVEKIT_URL=${LIVEKIT_URL}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
-      # WebSocket server URL cho agent
-      - WEBSOCKET_HOST=server
-      - WEBSOCKET_PORT=8000
+      # WebSocket server URL cho agent (now through Nginx)
+      - WS_HOST=nginx
+      - WS_PORT=8000
     depends_on:
-      server:
-        condition: service_healthy
+      nginx:
+        condition: service_started
     networks:
       - mezon-network
     restart: unless-stopped

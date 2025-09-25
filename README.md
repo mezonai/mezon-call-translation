@@ -197,7 +197,14 @@ Health Endpoints:
 - Async result dispatching
 - Low-latency processing pipeline
 
-### 5. **Multi-tenant Support**
+### 5. **Horizontal Scaling with Load Balancer**
+- Nginx load balancer for multiple server instances
+- Docker Compose scaling capabilities
+- Health check integration with load balancer
+- Session-independent client routing
+- Zero-downtime scaling operations
+
+### 6. **Multi-tenant Support**
 - Session-based client isolation
 - Per-client language settings
 - Flexible subscription model (transcript/translation)
@@ -214,3 +221,92 @@ Health Endpoints:
 7. **Resource cleanup** → Automatic maintenance
 
 Hệ thống được thiết kế để xử lý real-time speech-to-text cho nhiều client đồng thời với độ trễ thấp và độ tin cậy cao.
+
+## Horizontal Scaling với Load Balancer
+
+### Kiến Trúc Scaling
+Hệ thống hỗ trợ horizontal scaling với Nginx load balancer:
+
+```
+Client → Nginx Load Balancer → Multiple Server Instances
+                           ↓
+                      STT Processing Workers
+                           ↓
+                      Shared Result Queue
+                           ↓
+                      Agent Services
+```
+
+### Cách Thức Hoạt Động
+1. **Nginx Load Balancer**: 
+   - Phân phối traffic đến multiple server instances
+   - Health check tự động cho các backend servers
+   - WebSocket proxy với timeout configuration
+   - Round-robin load balancing (có thể cấu hình khác)
+
+2. **Server Scaling**:
+   - Multiple FastAPI server instances chạy song song
+   - Mỗi instance có bộ STT workers riêng biệt
+   - Session management độc lập trên từng instance
+   - Agent kết nối qua Nginx thay vì direct connection
+
+### Triển Khai Scaling
+
+#### 1. Quick Start với Script
+**Linux/macOS:**
+```bash
+# Start với 5 server instances
+./scripts/scale-deploy.sh start 5
+
+# Scale to 10 instances
+./scripts/scale-deploy.sh scale 10
+
+# Kiểm tra status
+./scripts/scale-deploy.sh status
+```
+
+**Windows:**
+```powershell
+# Start với 5 server instances
+.\scripts\scale-deploy.ps1 start 5
+
+# Scale to 10 instances
+.\scripts\scale-deploy.ps1 scale 10
+
+# Kiểm tra status
+.\scripts\scale-deploy.ps1 status
+```
+
+#### 2. Manual Docker Compose
+```bash
+# Build images
+docker-compose build
+
+# Start với 3 server instances
+docker-compose up -d --scale server=3
+
+# Scale to 5 instances
+docker-compose up -d --scale server=5
+
+# Check status
+docker-compose ps
+```
+
+### Health Check và Monitoring
+- **Load Balancer Health**: `http://localhost:8000/health/simple`
+- **Nginx Status**: Automatic health checks to backend servers
+- **Container Status**: `docker-compose ps`
+- **Logs**: `docker-compose logs -f [service_name]`
+
+### Cấu Hình Nginx
+File `nginx.conf` được tối ưu cho:
+- WebSocket proxy support
+- Health check integration
+- Timeout configuration cho long-running connections
+- Load balancing strategy (có thể điều chỉnh)
+
+### Performance Benefits
+- **Increased Throughput**: Multiple servers xử lý concurrent requests
+- **High Availability**: Server failure không ảnh hưởng toàn hệ thống
+- **Zero Downtime Scaling**: Thêm/bớt instances mà không interrupt service
+- **Resource Optimization**: Phân tải đều across multiple instances

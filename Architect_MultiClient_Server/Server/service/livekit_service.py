@@ -1,10 +1,21 @@
 from google.protobuf.json_format import MessageToDict
-from livekit import api
+try:
+    from livekit import api
+    from livekit.api import twirp_client
+    LIVEKIT_AVAILABLE = True
+except ImportError:
+    LIVEKIT_AVAILABLE = False
+    
 from ..config import get_config
-from livekit.api import twirp_client
 
 
 async def ensure_dispatch(room_name: str, url: str = None):
+    if not LIVEKIT_AVAILABLE:
+        return {
+            "status": "error", 
+            "message": "LiveKit API not available. Please install livekit-api package."
+        }
+        
     cfg = get_config()
 
     lkapi = api.LiveKitAPI(

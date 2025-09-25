@@ -1,4 +1,4 @@
-/model
+/models
 *.py[cod]
 venv/
 .env
@@ -11,4 +11,4 @@ Architect_MultiClient_Server/agents/demo/
 application.log
 vad_log.txt
 /demo
-/stress_test_server/
+Architect_MultiClient_Server/stress_test_server/

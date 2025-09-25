@@ -2,6 +2,7 @@
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 websockets>=11.0.3
+PyJWT>=2.10.1
 
 # Vosk STT engine
 vosk>=0.3.45
