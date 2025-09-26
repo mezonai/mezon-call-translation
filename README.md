@@ -362,7 +362,7 @@ This project is part of the Mezon platform ecosystem. See the project documentat
 └── /health/simple: Simple boolean check
 ```
 
-## Đặc Điểm Kỹ Thuật Nổi Bật
+## Outstanding Technical Features
 
 ### 1. **Scalability**
 - Multi-worker architecture cho STT processing
@@ -401,22 +401,22 @@ This project is part of the Mezon platform ecosystem. See the project documentat
 - Flexible subscription model (transcript/translation)
 - Resource sharing với isolation
 
-## Luồng Hoạt Động Tổng Thể
+## Overall Operational Flow
 
-1. **Client kết nối** → WebSocket với parameters
+1. **Client connection** → WebSocket with parameters
 2. **Audio streaming** → Continuous audio chunks
-3. **VAD filtering** → Loại bỏ silence
+3. **VAD filtering** → Silence elimination
 4. **STT processing** → Multi-worker Vosk recognition
 5. **Result dispatching** → Async delivery to subscribed clients
 6. **Session management** → Multi-client coordination
 7. **Resource cleanup** → Automatic maintenance
 
-Hệ thống được thiết kế để xử lý real-time speech-to-text cho nhiều client đồng thời với độ trễ thấp và độ tin cậy cao.
+The system is designed to handle real-time speech-to-text for multiple clients simultaneously with low latency and high reliability.
 
-## Horizontal Scaling với Load Balancer
+## Horizontal Scaling with Load Balancer
 
-### Kiến Trúc Scaling
-Hệ thống hỗ trợ horizontal scaling với Nginx load balancer:
+### Scaling Architecture
+The system supports horizontal scaling with Nginx load balancer:
 
 ```
 Client → Nginx Load Balancer → Multiple Server Instances
@@ -428,43 +428,45 @@ Client → Nginx Load Balancer → Multiple Server Instances
                       Agent Services
 ```
 
-### Cách Thức Hoạt Động
-1. **Nginx Load Balancer**: 
-   - Phân phối traffic đến multiple server instances
-   - Health check tự động cho các backend servers
-   - WebSocket proxy với timeout configuration
-   - Round-robin load balancing (có thể cấu hình khác)
+### How It Works
+1. **Nginx Load Balancer**:
+
+- Distribute traffic to multiple server instances
+- Automatic health check for backend servers
+- WebSocket proxy with timeout configuration
+- Round-robin load balancing (other configurations are possible)
 
 2. **Server Scaling**:
-   - Multiple FastAPI server instances chạy song song
-   - Mỗi instance có bộ STT workers riêng biệt
-   - Session management độc lập trên từng instance
-   - Agent kết nối qua Nginx thay vì direct connection
 
-### Triển Khai Scaling
+- Multiple FastAPI server instances running in parallel
+- Each instance has its own set of STT workers
+- Independent session management on each instance
+- Agent connects via Nginx instead of direct connection
 
-#### 1. Quick Start với Script
+### Scaling Deployment
+
+#### 1. Quick Start with Script
 **Linux/macOS:**
 ```bash
-# Start với 5 server instances
+# Start with 5 server instances
 ./scripts/scale-deploy.sh start 5
 
 # Scale to 10 instances
 ./scripts/scale-deploy.sh scale 10
 
-# Kiểm tra status
+# Check status
 ./scripts/scale-deploy.sh status
 ```
 
 **Windows:**
 ```powershell
-# Start với 5 server instances
+# Start with 5 server instances
 .\scripts\scale-deploy.ps1 start 5
 
 # Scale to 10 instances
 .\scripts\scale-deploy.ps1 scale 10
 
-# Kiểm tra status
+# Check status
 .\scripts\scale-deploy.ps1 status
 ```
 
@@ -473,7 +475,7 @@ Client → Nginx Load Balancer → Multiple Server Instances
 # Build images
 docker-compose build
 
-# Start với 3 server instances
+# Start with 3 server instances
 docker-compose up -d --scale server=3
 
 # Scale to 5 instances
@@ -483,21 +485,21 @@ docker-compose up -d --scale server=5
 docker-compose ps
 ```
 
-### Health Check và Monitoring
+### Health Check and Monitoring
 - **Load Balancer Health**: `http://localhost:8000/health/simple`
 - **Nginx Status**: Automatic health checks to backend servers
 - **Container Status**: `docker-compose ps`
 - **Logs**: `docker-compose logs -f [service_name]`
 
-### Cấu Hình Nginx
-File `nginx.conf` được tối ưu cho:
+### Nginx Configuration
+The `nginx.conf` file is optimized for:
 - WebSocket proxy support
 - Health check integration
-- Timeout configuration cho long-running connections
-- Load balancing strategy (có thể điều chỉnh)
+- Timeout configuration for long-running connections
+- Load balancing strategy (adjustable)
 
 ### Performance Benefits
-- **Increased Throughput**: Multiple servers xử lý concurrent requests
-- **High Availability**: Server failure không ảnh hưởng toàn hệ thống
-- **Zero Downtime Scaling**: Thêm/bớt instances mà không interrupt service
-- **Resource Optimization**: Phân tải đều across multiple instances
+- **Increased Throughput**: Multiple servers handle concurrent requests
+- **High Availability**: Server failure does not affect the entire system
+- **Zero Downtime Scaling**: Add/remove instances without interrupting service
+- **Resource Optimization**: Distribute load evenly across multiple instances
