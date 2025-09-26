@@ -1,170 +1,361 @@
-# Báo Cáo Workflow Server - Mezon Call Translation
+# Mezon Call Translation
 
-## Tổng Quan Hệ Thống
-Đây là một hệ thống Speech-to-Text (STT) real-time sử dụng kiến trúc multi-client server với các công nghệ chính:
-- **Vosk**: Engine STT chính
-- **Silero VAD**: Voice Activity Detection
-- **FastAPI**: Web framework với WebSocket support
-- **LiveKit**: Platform cho real-time communication
+> Real-time Speech-to-Text (STT) system with multi-client support, horizontal scaling, and LiveKit integration
 
-## Workflow Chi Tiết
+[![Docker](https://img.shields.io/badge/Docker-Ready-blue)](https://docker.com)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Framework-green)](https://fastapi.tiangolo.com)
+[![Vosk](https://img.shields.io/badge/Vosk-STT%20Engine-orange)](https://alphacephei.com/vosk/)
+[![LiveKit](https://img.shields.io/badge/LiveKit-Integration-purple)](https://livekit.io)
 
-### 1. Khởi Tạo Server (`main.py`)
-```
-Startup Sequence:
-├── Setup logging configuration
-├── Initialize FastAPI app với lifespan manager
-├── Khởi tạo async result queue (maxsize=1000)
-├── Khởi tạo STT service với async queue
-├── Start result dispatcher task
-└── Include WebSocket router
-```
+## 🚀 Quick Start
 
-**Lifespan Management:**
-- **Startup**: Tạo async queue, khởi tạo STT service, start dispatcher
-- **Shutdown**: Dọn dẹp resources, cancel tasks, shutdown services
+### Option 1: Basic Setup
+```bash
+# 1. Setup environment
+./scripts/setup.sh                    # Linux/macOS
+.\scripts\setup.ps1                    # Windows
 
-### 2. Quản Lý Phiên (`session_manager.py`)
-```
-Session Structure:
-session_id -> {
-    clients: {
-        client_id: {
-            websocket: WebSocket connection
-            transcripts: bool (nhận transcript?)
-            translation: bool (nhận translation?)
-            language: str (ngôn ngữ client)
-        }
-    }
-}
+# 2. Download Vosk model
+./scripts/download-vosk-model.sh       # Linux/macOS
+.\scripts\download-vosk-model.ps1       # Windows
+
+# 3. Configure environment
+cp env.example .env                    # Edit with your LiveKit credentials
+
+# 4. Run the system
+./scripts/run-dev.sh                   # Development mode
+./scripts/run-prod.sh                  # Production mode
 ```
 
-**Chức năng chính:**
-- Thêm/xóa client khỏi session
-- Lấy danh sách client cần notify transcript/translation
-- Quản lý thông tin ngôn ngữ của từng client
+### Option 2: Horizontal Scaling (Recommended for Production)
+```bash
+# Start with 5 server instances behind load balancer
+./scripts/scale-deploy.sh start 5      # Linux/macOS
+.\scripts\scale-deploy.ps1 start 5      # Windows
 
-### 3. WebSocket Controller (`ws_vosk_control.py`)
-```
-Connection Flow:
-├── Accept WebSocket connection
-├── Parse query parameters (client_id, session_id, transcript, translation, language)
-├── Add client to session manager
-├── Start audio receiving loop
-│   ├── Receive audio bytes từ client
-│   ├── Submit audio to STT service (non-blocking)
-│   ├── Check timeout conditions (max_duration, idle_timeout)
-│   └── Continue loop
-└── Cleanup on disconnect
+# Scale to 10 instances
+./scripts/scale-deploy.sh scale 10
+
+# Check status
+./scripts/scale-deploy.sh status
 ```
 
-**Tham số kết nối:**
-- `client_id`: ID duy nhất của client
-- `session_id`: ID phiên họp
-- `transcript`: Client có muốn nhận transcript không
-- `translation`: Client có muốn nhận translation không
-- `language`: Ngôn ngữ của client
-- `max_duration`: Thời gian tối đa kết nối (seconds)
-- `idle_timeout`: Timeout khi không có audio (seconds)
+**System will be available at**: http://localhost:8000
 
-### 4. STT Service - Vosk (`vosk_service.py`)
+## 📋 Table of Contents
 
-#### 4.1 Kiến Trúc Multi-Worker
-```
-STT Service Architecture:
-├── Main Service Instance
-├── Worker Threads (số lượng = CPU cores - 1)
-│   ├── Worker 0: Queue[0] + Recognizer[0] + State[0]
-│   ├── Worker 1: Queue[1] + Recognizer[1] + State[1]
-│   └── Worker N: Queue[N] + Recognizer[N] + State[N]
-├── Metrics Thread (monitoring)
-├── Cleanup Thread (resource management)
-└── Result Dispatcher (async queue → WebSocket)
-```
+- [System Overview](#-system-overview)
+- [Architecture](#-architecture)
+- [Features](#-features)
+- [Quick Start](#-quick-start)
+- [Documentation](#-documentation)
+- [Deployment Options](#-deployment-options)
+- [API Reference](#-api-reference)
+- [Monitoring](#-monitoring)
+- [Contributing](#-contributing)
+- [Support](#-support)
 
-#### 4.2 Audio Processing Pipeline
-```
-Audio Processing Flow:
-1. Receive audio chunk từ WebSocket
-2. VAD Pre-filtering:
-   ├── Convert audio to numpy array
-   ├── Split into overlapping chunks (512 samples, 50% overlap)
-   ├── Process qua Silero VAD
-   ├── Check speech probability > threshold
-   └── Drop nếu là silence
-3. Route to Worker (hash(client_id) % num_workers)
-4. Accumulate chunks theo adaptive strategy:
-   ├── High load (>70%): Process ngay (min chunks)
-   ├── Medium load (50-70%): Process nhanh
-   ├── Low load (<30%): Process chất lượng (max chunks)
-   └── Time-based processing (min/max thresholds)
-5. STT Processing:
-   ├── Get/Create Vosk recognizer cho client
-   ├── Process accumulated chunks
-   ├── Generate partial/final results
-   └── Emit results to async queue
-```
+## 🎯 System Overview
 
-#### 4.3 Adaptive Processing Strategy
-- **Queue Load Monitoring**: Điều chỉnh threshold dựa trên tải queue
-- **Chunk Accumulation**: Gom nhiều chunk nhỏ thành chunk lớn để tối ưu
-- **Circuit Breaker**: Bảo vệ khỏi lỗi cascade
-- **Resource Cleanup**: Tự động dọn dẹp client không hoạt động
+**Mezon Call Translation** is a production-ready, scalable Speech-to-Text system designed for real-time communication platforms. It provides:
 
-### 5. VAD Service (`vad_service.py`)
+- **Real-time STT**: Convert speech to text with low latency using Vosk engine
+- **Multi-client Support**: Handle multiple simultaneous audio streams
+- **Horizontal Scaling**: Scale across multiple server instances with load balancing
+- **LiveKit Integration**: Seamless integration with LiveKit rooms and agents
+- **High Availability**: Circuit breaker pattern, health monitoring, and graceful degradation
 
-#### 5.1 Silero VAD Integration
-```
-VAD Processing:
-├── Load Silero VAD model (CPU/GPU)
-├── Per-client state management
-├── Chunk-based processing (512 samples)
-├── Speech probability calculation
-├── Circuit breaker protection
-└── Fallback to energy-based detection
-```
+### Key Technologies
 
-#### 5.2 Client State Management
-```
-Client State:
-├── vad_iterator: Silero VAD instance
-├── speech_timestamps: Lịch sử phát hiện speech
-├── last_activity: Thời gian hoạt động cuối
-├── stats: Thống kê processing
-└── error_count: Đếm lỗi để reset iterator
-```
+- **[Vosk](https://alphacephei.com/vosk/)**: Offline speech recognition engine
+- **[FastAPI](https://fastapi.tiangolo.com)**: Modern web framework with WebSocket support
+- **[LiveKit](https://livekit.io)**: Real-time communication platform
+- **[Docker](https://docker.com)**: Containerization and orchestration
+- **[Nginx](https://nginx.org)**: Load balancer and proxy
 
-### 6. Configuration Management (`app_config.py`)
-Hệ thống config phân cấp với environment variable support:
+## 🏗️ Architecture
+
+### High-Level Architecture
 
 ```
-Configuration Hierarchy:
-├── AudioConfig: Sample rate, chunk size, channels
-├── VADConfig: Threshold, duration, device settings
-├── STTConfig: Model path, worker count, thresholds
-├── QueueConfig: Queue sizes, limits
-├── CircuitBreakerConfig: Failure thresholds, timeouts
-├── ServerConfig: Host, port, connections
-└── LoggingConfig: Log levels, file paths, rotation
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Multiple      │    │  Nginx Load     │    │  Server Pool    │
+│   Clients       │◄──►│  Balancer       │◄──►│  (Scalable)     │
+│                 │    │  (Port 8000)    │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │                       │
+                                ▼                       ▼
+                       ┌─────────────────┐    ┌─────────────────┐
+                       │  LiveKit Agent  │    │  Vosk STT       │
+                       │  (Port 8080)    │    │  Workers        │
+                       └─────────────────┘    └─────────────────┘
 ```
 
-### 7. Result Dispatcher Flow
+### Core Components
+
+1. **[Server](docs/overviews/server_architecture.md)** - FastAPI with multi-worker STT processing
+2. **[Agent](docs/overviews/agents_architecture.md)** - LiveKit integration with VAD processing
+3. **Load Balancer** - Nginx for traffic distribution and WebSocket proxy
+4. **Session Management** - Multi-client session coordination
+5. **Health Monitoring** - Comprehensive health checks and metrics
+
+## ✨ Features
+
+### Core Capabilities
+- ✅ **Real-time Speech-to-Text** with Vosk engine
+- ✅ **Multi-client Session Management** with language support
+- ✅ **WebSocket-based Communication** for low latency
+- ✅ **Adaptive Processing** based on system load
+- ✅ **Circuit Breaker Pattern** for fault tolerance
+- ✅ **Voice Activity Detection** (VAD) for efficiency
+
+### Scalability & Operations
+- 🚀 **Horizontal Scaling** with automatic load balancing
+- 📊 **Comprehensive Monitoring** and health checks
+- 🔄 **Auto-recovery** and graceful degradation
+- 📈 **Performance Metrics** and analysis tools
+- 🐳 **Docker Containerization** for easy deployment
+- 🔧 **Configuration Management** via environment variables
+
+### Integration Features
+- 🎤 **LiveKit Integration** for room management
+- 🌐 **REST API** for system management
+- 📡 **WebSocket API** for real-time communication
+- 🔐 **JWT Authentication** support
+- 📝 **Multi-language Support** for transcripts
+
+## 📚 Documentation
+
+### Setup & Installation
+- **[Setup Guide](docs/setup/SETUP-GUIDE.md)** - Complete installation and configuration guide
+- **Environment Configuration** - LiveKit credentials and system settings
+- **Model Management** - Vosk model download and configuration
+
+### Architecture Documentation
+- **[Server Architecture](docs/overviews/server_architecture.md)** - Detailed server design and components
+- **[Agent Architecture](docs/overviews/agents_architecture.md)** - LiveKit agent implementation
+- **System Design Patterns** - Circuit breaker, session management, worker pools
+
+### Operations & Monitoring
+- **[Metrics Guide](docs/operations/metrics-guide.md)** - Performance monitoring and log analysis
+- **Health Check Endpoints** - System status and monitoring
+- **Troubleshooting** - Common issues and solutions
+
+### Development
+- **API Documentation** - REST and WebSocket endpoints
+- **Configuration Reference** - All environment variables and settings
+- **Development Setup** - Hot reload and debugging
+
+## 🚀 Deployment Options
+
+### 1. Development Mode
+```bash
+# Hot reload enabled, debug logging
+./scripts/run-dev.sh
 ```
-Result Flow:
-1. STT Worker generates result
-2. Emit to async_result_queue
-3. Dispatcher receives from queue
-4. Determine result type (transcript/translation)
-5. Get target clients từ session_manager
-6. Send JSON result to WebSocket clients
-7. Handle client disconnection gracefully
+- ✅ Hot reload for code changes
+- ✅ Enhanced debugging
+- ✅ Local volume mounting
+
+### 2. Production Mode
+```bash
+# Optimized for production
+./scripts/run-prod.sh
+```
+- ✅ Performance optimizations
+- ✅ Resource limits
+- ✅ Production logging
+
+### 3. Horizontal Scaling (Recommended)
+```bash
+# Multiple server instances with load balancing
+./scripts/scale-deploy.sh start 5
+```
+- ✅ Multiple server instances
+- ✅ Nginx load balancer
+- ✅ Auto-scaling capabilities
+- ✅ High availability
+
+### 4. Manual Docker Compose
+```bash
+# Custom scaling
+docker-compose up -d --scale server=3
 ```
 
-### 8. Health Check System
+## 🔌 API Reference
+
+### WebSocket API
 ```
-Health Endpoints:
-├── /health: Detailed health status
-│   ├── Service status (healthy/degraded/unhealthy)
+ws://localhost:8000/ws/vosk/
+```
+**Parameters**:
+- `client_id`: Unique client identifier
+- `session_id`: Session identifier
+- `transcript`: Enable transcript delivery
+- `translation`: Enable translation delivery
+- `language`: Client language (en, vi, etc.)
+
+**Input**: Binary audio data  
+**Output**: JSON transcript/translation results
+
+### REST API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Detailed health status |
+| `/health/simple` | GET | Simple health check |
+| `/agent/join` | POST | LiveKit agent dispatch |
+| `/ws/stats` | GET | WebSocket statistics |
+
+### Health Check Example
+```bash
+# Simple health check
+curl http://localhost:8000/health/simple
+
+# Detailed health information
+curl http://localhost:8000/health
+```
+
+## 📊 Monitoring
+
+### Built-in Monitoring
+- **Health Endpoints**: Real-time system status
+- **Metrics Collection**: Performance and usage statistics
+- **Log Analysis**: Comprehensive logging with structured format
+- **Worker Statistics**: STT worker performance tracking
+
+### Key Metrics
+- **Audio Processing Latency**: Real-time performance tracking
+- **Worker Load Distribution**: Load balancing effectiveness
+- **Session Management**: Client connection statistics
+- **Error Rates**: System reliability monitoring
+
+### Monitoring Tools
+```bash
+# Check system status
+./scripts/scale-deploy.sh status
+
+# View real-time logs
+docker-compose logs -f server
+
+# Monitor resource usage
+docker stats
+```
+
+For detailed metrics analysis, see the [Metrics Guide](docs/operations/metrics-guide.md).
+
+## 🔧 Configuration
+
+### Environment Variables
+```bash
+# Core Configuration
+LIVEKIT_URL=wss://your-livekit-server.com
+LIVEKIT_API_KEY=your-api-key
+LIVEKIT_API_SECRET=your-api-secret
+VOSK_MODEL_PATH=/app/models/vosk-model
+
+# Performance Tuning
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8000
+LOG_LEVEL=INFO
+```
+
+### Advanced Configuration
+The system supports extensive configuration for:
+- Audio processing parameters
+- Worker pool management
+- Circuit breaker settings
+- Health check intervals
+- Scaling parameters
+
+See [Setup Guide](docs/setup/SETUP-GUIDE.md) for complete configuration options.
+
+## 🤝 Contributing
+
+### Development Setup
+1. Fork the repository
+2. Follow the [Setup Guide](docs/setup/SETUP-GUIDE.md)
+3. Use development mode: `./scripts/run-dev.sh`
+4. Make changes with hot reload enabled
+5. Test thoroughly with multiple clients
+6. Submit pull request with documentation updates
+
+### Architecture Guidelines
+- Follow the existing service pattern
+- Maintain thread-safe operations
+- Add appropriate error handling
+- Include health check integration
+- Update documentation
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Server won't start**:
+```bash
+# Check Vosk model exists
+ls -la models/vosk-model/
+
+# Download if missing
+./scripts/download-vosk-model.sh
+```
+
+**Agent connection failed**:
+```bash
+# Verify server is running
+curl http://localhost:8000/health/simple
+
+# Check environment variables
+cat .env
+```
+
+**Poor performance**:
+```bash
+# Check resource usage
+docker stats
+
+# Scale up servers
+./scripts/scale-deploy.sh scale 10
+```
+
+For comprehensive troubleshooting, see the [Setup Guide](docs/setup/SETUP-GUIDE.md).
+
+## 📞 Support
+
+### Getting Help
+1. **Check Documentation**: Review relevant guides in `/docs`
+2. **System Requirements**: Ensure Docker & Docker Compose are installed
+3. **Health Checks**: Verify system status via health endpoints
+4. **Log Analysis**: Examine service logs for specific errors
+5. **Resource Check**: Ensure adequate CPU, memory, and disk space
+
+### Debug Information
+```bash
+# System status
+docker-compose ps
+docker stats
+
+# Service health
+curl http://localhost:8000/health
+
+# Recent logs
+docker-compose logs --tail=100 server
+```
+
+### Resources
+- **[Setup Guide](docs/setup/SETUP-GUIDE.md)** - Installation and configuration
+- **[Server Architecture](docs/overviews/server_architecture.md)** - System design
+- **[Operations Guide](docs/operations/metrics-guide.md)** - Monitoring and troubleshooting
+
+---
+
+## 📄 License
+
+This project is part of the Mezon platform ecosystem. See the project documentation for licensing information.
+
+## 🏷️ Tags
+
+`speech-to-text` `real-time` `vosk` `fastapi` `livekit` `docker` `microservices` `websocket` `audio-processing` `scalable`/degraded/unhealthy)
 │   ├── Uptime information
 │   ├── Component details
 │   └── HTTP status codes (200/503)
