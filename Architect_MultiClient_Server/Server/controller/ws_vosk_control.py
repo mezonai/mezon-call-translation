@@ -1,8 +1,10 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from ..service.vosk_service import stt_service_vosk
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from ..service.migration_controller import pipeline_controller
 from ..session_manager import session_manager
 from ..utils.websocket_monitor import websocket_monitor
 import asyncio
+import time
 from typing import Optional
 import logging
 
@@ -32,7 +34,6 @@ async def websocket_vosk(
         max_duration,
         idle_timeout,
     )
-    logger.info("Registering client with session manager")
     session_manager.add_client(session_id, client_id, websocket, transcript, translation, language)
     
     # Record connection for monitoring
@@ -83,9 +84,9 @@ async def websocket_vosk(
                 logger.error("Unexpected error during WebSocket receive for client_id=%s session_id=%s: %s", 
                            client_id, session_id, str(e), exc_info=True)
                 break
-            # Non-blocking submit with pre-VAD filtering to avoid event loop blocking
+            # Submit audio to client's individual pipeline
             try:
-                await stt_service_vosk.submit_audio_async(data, client_id, session_id)
+                await pipeline_controller.submit_audio_async(data, client_id, session_id)
             except Exception as audio_error:
                 logger.error("Error processing audio for client_id=%s session_id=%s: %s", 
                            client_id, session_id, str(audio_error), exc_info=True)
@@ -111,12 +112,12 @@ async def websocket_vosk(
         # Always ensure client is removed from session manager on exit
         session_manager.remove_client(session_id, client_id)
         
-        # Also cleanup from VoskService to keep metrics accurate
+        # Cleanup client pipeline when disconnecting
         try:
-            stt_service_vosk.cleanup_client(client_id, session_id)
-            logger.info("Cleaned up client_id=%s from session_id=%s in both session manager and vosk service", client_id, session_id)
+            await pipeline_controller.cleanup_client(client_id, session_id)
+            logger.info("Cleaned up client_id=%s from session_id=%s - pipeline destroyed", client_id, session_id)
         except Exception as e:
-            logger.warning("Failed to cleanup client from VoskService: %s", e)
+            logger.warning("Failed to cleanup client pipeline: %s", e)
             logger.info("Cleaned up client_id=%s from session_id=%s in session manager only", client_id, session_id)
 
 @router.get("/ws/stats")
@@ -128,6 +129,85 @@ async def get_websocket_stats():
     return {
         "websocket_stats": stats,
         "frequent_disconnect_codes": frequent_codes,
-        "active_clients_info": stt_service_vosk.get_active_clients_info(),
-        "circuit_breaker_status": stt_service_vosk.get_circuit_breaker_status()
+        "active_clients_info": pipeline_controller.get_active_clients_info(),
+        "circuit_breaker_status": pipeline_controller.get_circuit_breaker_status(),
+        "service_info": pipeline_controller.get_service_info()
     }
+
+@router.get("/ws/pipeline-distribution")
+async def get_pipeline_distribution():
+    """Get per-client pipeline distribution analysis"""
+    return {
+        "pipeline_distribution": pipeline_controller.get_pipeline_distribution(),
+        "timestamp": time.time(),
+        "recommendations": _get_pipeline_recommendations(pipeline_controller.get_pipeline_distribution())
+    }
+
+def _get_pipeline_recommendations(distribution_data: dict) -> list:
+    """Generate recommendations based on pipeline distribution analysis"""
+    recommendations = []
+    
+    if "error" in distribution_data:
+        return ["Unable to analyze pipeline distribution due to error"]
+    
+    pipeline_dist = distribution_data.get("pipeline_distribution", {})
+    total_pipelines = pipeline_dist.get("total_pipelines", 0)
+    active_pipelines = pipeline_dist.get("active_pipelines", 0)
+    max_clients = pipeline_dist.get("max_clients", 0)
+    
+    # Calculate utilization
+    utilization = (total_pipelines / max_clients * 100) if max_clients > 0 else 0
+    
+    if utilization >= 90:
+        recommendations.append(f"High utilization ({utilization:.1f}%). Consider increasing MAX_CONCURRENT_CLIENTS.")
+    elif utilization >= 70:
+        recommendations.append(f"Moderate utilization ({utilization:.1f}%). Monitor for capacity planning.")
+    elif utilization < 20 and total_pipelines > 0:
+        recommendations.append(f"Low utilization ({utilization:.1f}%). Consider reducing MAX_CONCURRENT_CLIENTS for resource optimization.")
+    
+    if active_pipelines < total_pipelines:
+        idle_pipelines = total_pipelines - active_pipelines
+        recommendations.append(f"{idle_pipelines} idle pipelines will be cleaned up automatically.")
+    
+    if total_pipelines == 0:
+        recommendations.append("No active client pipelines. Per-client architecture is ready for incoming connections.")
+    else:
+        recommendations.append(f"Per-client pipeline architecture is working correctly with {total_pipelines} individual client pipelines.")
+    
+    return recommendations
+
+@router.get("/ws/pipeline-health")
+async def get_pipeline_health():
+    """Get pipeline health information"""
+    health = await pipeline_controller.get_pipeline_health()
+    
+    return {
+        "pipeline_health": health,
+        "timestamp": time.time(),
+        "architecture": "per_client_pipelines"
+    }
+
+@router.get("/ws/service-info")
+async def get_service_info():
+    """Get service information and architecture details"""
+    return {
+        "service_info": pipeline_controller.get_service_info(),
+        "timestamp": time.time()
+    }
+
+@router.post("/ws/pipeline/{client_id}/cleanup")
+async def force_pipeline_cleanup(client_id: str, session_id: str = "default"):
+    """Force cleanup of a specific client pipeline"""
+    try:
+        await pipeline_controller.cleanup_client(client_id, session_id)
+        return {
+            "success": True,
+            "message": f"Pipeline cleanup completed for client {client_id}",
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": time.time()
+        }

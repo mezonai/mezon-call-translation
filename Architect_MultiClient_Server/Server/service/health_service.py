@@ -200,95 +200,108 @@ def get_health_service() -> HealthService:
 
 
 def register_stt_health_checks(stt_service):
-    """Register STT service specific health checks."""
+    """Register STT service specific health checks for per-client pipeline architecture."""
     health_service = get_health_service()
     
-    def check_stt_workers():
-        """Check STT worker health."""
+    def check_pipeline_service():
+        """Check pipeline service health."""
         try:
-            if not hasattr(stt_service, 'worker_threads'):
-                return {"status": "unhealthy", "error": "No worker threads found"}
-            
-            active_workers = sum(1 for t in stt_service.worker_threads if t.is_alive())
-            total_workers = len(stt_service.worker_threads)
-            
-            if active_workers == 0:
-                status = "unhealthy"
-            elif active_workers < total_workers:
-                status = "degraded"
+            if hasattr(stt_service, 'pipeline_manager'):
+                # New pipeline-based service
+                stats = stt_service.get_stats()
+                manager_stats = stats.get("manager_stats", {})
+                
+                active_pipelines = manager_stats.get("current_active", 0)
+                max_clients = stt_service.config.server.max_concurrent_clients
+                utilization = (active_pipelines / max_clients * 100) if max_clients > 0 else 0
+                
+                if utilization >= 95:
+                    status = "unhealthy"
+                elif utilization >= 80:
+                    status = "degraded"
+                else:
+                    status = "healthy"
+                
+                return {
+                    "status": status,
+                    "active_pipelines": active_pipelines,
+                    "max_clients": max_clients,
+                    "utilization_percent": round(utilization, 1),
+                    "total_created": manager_stats.get("total_created", 0),
+                    "total_destroyed": manager_stats.get("total_destroyed", 0),
+                    "rejections": manager_stats.get("client_limit_rejections", 0)
+                }
             else:
-                status = "healthy"
-            
-            return {
-                "status": status,
-                "active_workers": active_workers,
-                "total_workers": total_workers,
-                "worker_health": [t.is_alive() for t in stt_service.worker_threads]
-            }
+                return {"status": "unhealthy", "error": "Pipeline manager not found"}
         except Exception as e:
-            return {"status": "unhealthy", "error": f"Worker check failed: {e}"}
+            return {"status": "unhealthy", "error": f"Pipeline service check failed: {e}"}
     
-    def check_stt_queues():
-        """Check STT queue health."""
+    def check_pipeline_health():
+        """Check individual pipeline health."""
         try:
-            if not hasattr(stt_service, 'worker_queues'):
-                return {"status": "unhealthy", "error": "No worker queues found"}
-            
-            queue_sizes = [q.qsize() for q in stt_service.worker_queues]
-            max_queue_size = max(queue_sizes) if queue_sizes else 0
-            total_queue_size = sum(queue_sizes)
-            
-            # Determine status based on queue sizes
-            if max_queue_size > 80:  # 80% full
-                status = "unhealthy"
-            elif max_queue_size > 60:  # 60% full
-                status = "degraded"
+            if hasattr(stt_service, 'pipeline_manager'):
+                pipeline_info = stt_service.pipeline_manager.get_all_pipeline_info()
+                
+                total_pipelines = len(pipeline_info)
+                active_pipelines = len([p for p in pipeline_info if p["state"] == "active"])
+                idle_pipelines = len([p for p in pipeline_info if p["state"] == "idle"])
+                
+                # Check for any problematic pipelines
+                error_pipelines = len([p for p in pipeline_info if "error" in str(p.get("state", ""))])
+                
+                if error_pipelines > 0:
+                    status = "degraded"
+                elif total_pipelines == 0:
+                    status = "healthy"  # No pipelines is normal when no clients
+                else:
+                    status = "healthy"
+                
+                return {
+                    "status": status,
+                    "total_pipelines": total_pipelines,
+                    "active_pipelines": active_pipelines,
+                    "idle_pipelines": idle_pipelines,
+                    "error_pipelines": error_pipelines
+                }
             else:
-                status = "healthy"
-            
-            return {
-                "status": status,
-                "queue_sizes": queue_sizes,
-                "max_queue_size": max_queue_size,
-                "total_queue_size": total_queue_size,
-                "queue_utilization": [q.qsize() / q.maxsize * 100 for q in stt_service.worker_queues]
-            }
+                return {"status": "unhealthy", "error": "Pipeline manager not available"}
         except Exception as e:
-            return {"status": "unhealthy", "error": f"Queue check failed: {e}"}
+            return {"status": "unhealthy", "error": f"Pipeline health check failed: {e}"}
     
-    def check_stt_accumulated_chunks():
-        """Check accumulated chunks health."""
+    def check_circuit_breaker():
+        """Check circuit breaker status."""
         try:
-            if not hasattr(stt_service, 'accumulated_chunks'):
-                return {"status": "healthy", "message": "No accumulated chunks to check"}
-            
-            with stt_service._accumulated_chunks_lock:
-                total_clients = len(stt_service.accumulated_chunks)
-                total_chunks = sum(len(chunks) for chunks, _, _, _ in stt_service.accumulated_chunks.values())
-            
-            # Determine status based on accumulated chunks
-            if total_chunks > 1000:  # Too many accumulated chunks
-                status = "unhealthy"
-            elif total_chunks > 500:  # Many accumulated chunks
-                status = "degraded"
+            if hasattr(stt_service, 'get_circuit_breaker_status'):
+                cb_status = stt_service.get_circuit_breaker_status()
+                
+                if "error" in cb_status:
+                    return {"status": "unhealthy", "error": cb_status["error"]}
+                
+                state = cb_status.get("state", "UNKNOWN")
+                if state == "OPEN":
+                    status = "unhealthy"
+                elif state == "HALF_OPEN":
+                    status = "degraded"
+                else:
+                    status = "healthy"
+                
+                return {
+                    "status": status,
+                    "circuit_breaker_state": state,
+                    "failure_count": cb_status.get("failure_count", 0),
+                    "success_count": cb_status.get("success_count", 0)
+                }
             else:
-                status = "healthy"
-            
-            return {
-                "status": status,
-                "total_clients": total_clients,
-                "total_accumulated_chunks": total_chunks,
-                "avg_chunks_per_client": total_chunks / total_clients if total_clients > 0 else 0
-            }
+                return {"status": "degraded", "error": "Circuit breaker status not available"}
         except Exception as e:
-            return {"status": "unhealthy", "error": f"Accumulated chunks check failed: {e}"}
+            return {"status": "unhealthy", "error": f"Circuit breaker check failed: {e}"}
     
-    # Register STT health checks
-    health_service.register_health_check("stt_workers", check_stt_workers)
-    health_service.register_health_check("stt_queues", check_stt_queues)
-    health_service.register_health_check("stt_accumulated_chunks", check_stt_accumulated_chunks)
+    # Register pipeline-specific health checks
+    health_service.register_health_check("pipeline_service", check_pipeline_service)
+    health_service.register_health_check("pipeline_health", check_pipeline_health)
+    health_service.register_health_check("stt_circuit_breaker", check_circuit_breaker)
     
-    logger.info("STT health checks registered")
+    logger.info("Per-client pipeline health checks registered")
 
 
 def register_vad_health_checks(vad_service):

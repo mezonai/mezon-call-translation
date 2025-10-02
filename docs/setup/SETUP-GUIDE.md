@@ -309,11 +309,11 @@ docker-compose logs -f -t
 
 ### Performance Monitoring
 
-For detailed performance analysis, see the [Metrics Guide](../operations/metrics-guide.md) which covers:
-- Log metrics interpretation
+For detailed performance analysis, see the [Per-Client Pipeline Metrics Guide](../operations/metrics-guide.md) which covers:
+- Pipeline metrics interpretation
 - System performance monitoring
-- Worker load balancing analysis
-- VAD efficiency tracking
+- Per-client resource analysis
+- Architecture benefits tracking
 
 ## 📝 Development
 

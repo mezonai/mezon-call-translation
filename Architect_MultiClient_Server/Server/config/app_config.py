@@ -40,14 +40,10 @@ class VADConfig:
 class STTConfig:
     """Speech-to-Text configuration."""
     vosk_model_path: str = "vosk-model-small-en-us-0.15"
-    min_chunks: int = 2
-    max_chunks: int = 8
-    min_time_threshold: float = 0.1
-    max_time_threshold: float = 0.4
-    queue_load_low: float = 0.2
-    queue_load_medium: float = 0.5
-    queue_load_high: float = 0.7
-    num_workers: int = 3  #field(default_factory=lambda: max(1, (os.cpu_count() or 2) - 1))
+    min_chunks: int = 2  # Process after just 1 chunk
+    max_chunks: int = 4  # Reduced from 8 to be more responsive
+    min_time_threshold: float = 0.1  # 50ms - very responsive
+    max_time_threshold: float = 0.2  # 200ms - reduced from 400ms
     metrics_interval_sec: float = 10.0
     client_cleanup_interval: float = 30.0
     max_client_idle_time: float = 300.0
@@ -69,7 +65,7 @@ class CircuitBreakerConfig:
     vad_timeout: float = 30.0
     vad_success_threshold: int = 2
     stt_failure_threshold: int = 5
-    stt_timeout: float = 60.0
+    stt_timeout: float = 60.0  # Increased from 10.0 to 60.0 seconds for stability
     stt_success_threshold: int = 3
 
 
@@ -81,6 +77,7 @@ class ServerConfig:
     reload: bool = False
     log_level: str = "INFO"
     max_connections: int = 1000
+    max_concurrent_clients: int = 50  # Maximum concurrent clients for per-client pipeline
 
 
 @dataclass
@@ -167,10 +164,6 @@ class ConfigManager:
         config.stt.max_chunks = int(os.getenv("VOSK_MAX_CHUNKS", config.stt.max_chunks))
         config.stt.min_time_threshold = float(os.getenv("VOSK_MIN_TIME_THRESHOLD", config.stt.min_time_threshold))
         config.stt.max_time_threshold = float(os.getenv("VOSK_MAX_TIME_THRESHOLD", config.stt.max_time_threshold))
-        config.stt.queue_load_low = float(os.getenv("VOSK_QUEUE_LOAD_LOW", config.stt.queue_load_low))
-        config.stt.queue_load_medium = float(os.getenv("VOSK_QUEUE_LOAD_MEDIUM", config.stt.queue_load_medium))
-        config.stt.queue_load_high = float(os.getenv("VOSK_QUEUE_LOAD_HIGH", config.stt.queue_load_high))
-        config.stt.num_workers = int(os.getenv("NUM_STT_WORKERS", config.stt.num_workers))
         config.stt.metrics_interval_sec = float(os.getenv("METRICS_INTERVAL_SEC", config.stt.metrics_interval_sec))
         config.stt.client_cleanup_interval = float(os.getenv("CLIENT_CLEANUP_INTERVAL", config.stt.client_cleanup_interval))
         config.stt.max_client_idle_time = float(os.getenv("MAX_CLIENT_IDLE_TIME", config.stt.max_client_idle_time))
@@ -206,6 +199,7 @@ class ConfigManager:
         config.server.reload = os.getenv("SERVER_RELOAD", "false").lower() == "true"
         config.server.log_level = os.getenv("SERVER_LOG_LEVEL", config.server.log_level)
         config.server.max_connections = int(os.getenv("SERVER_MAX_CONNECTIONS", config.server.max_connections))
+        config.server.max_concurrent_clients = int(os.getenv("MAX_CONCURRENT_CLIENTS", config.server.max_concurrent_clients))
         
         # Logging configuration
         config.logging.level = os.getenv("LOG_LEVEL", config.logging.level)
@@ -268,10 +262,6 @@ class ConfigManager:
                 "max_chunks": config.stt.max_chunks,
                 "min_time_threshold": config.stt.min_time_threshold,
                 "max_time_threshold": config.stt.max_time_threshold,
-                "queue_load_low": config.stt.queue_load_low,
-                "queue_load_medium": config.stt.queue_load_medium,
-                "queue_load_high": config.stt.queue_load_high,
-                "num_workers": config.stt.num_workers,
                 "metrics_interval_sec": config.stt.metrics_interval_sec,
                 "client_cleanup_interval": config.stt.client_cleanup_interval,
                 "max_client_idle_time": config.stt.max_client_idle_time,
@@ -295,7 +285,8 @@ class ConfigManager:
                 "port": config.server.port,
                 "reload": config.server.reload,
                 "log_level": config.server.log_level,
-                "max_connections": config.server.max_connections
+                "max_connections": config.server.max_connections,
+                "max_concurrent_clients": config.server.max_concurrent_clients
             },
             "logging": {
                 "level": config.logging.level,

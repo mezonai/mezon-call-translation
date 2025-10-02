@@ -9,9 +9,9 @@ from .session_manager import session_manager
 #agent service
 from .controller.agents_control import router as agents_control
 
-# Vosk STT engine
+# Per-Client Pipeline Service
 from .controller.ws_vosk_control import router as stt_router
-from .service.vosk_service import stt_service_vosk as stt_service
+from .service.migration_controller import pipeline_controller
 from .service.health_service import get_health_service
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
@@ -26,20 +26,20 @@ load_dotenv()
 
 async def result_dispatcher(async_result_queue: asyncio.Queue):
     """Fetch results from Vosk (async queue) and send to clients without polling."""
+    logger.info("Result dispatcher started")
     while True:
         try:
             result_type, payload = await async_result_queue.get()
-            logger.debug("Dispatcher received: type=%s, payload=%s", result_type, payload)
+            logger.debug(f"Dispatcher received: type={result_type}, text='{payload.get('text', '')}', client={payload.get('client_id')}")
 
-            if result_type == "transcripts":
+            if result_type in ["transcript", "transcripts"]:
                 # Pass sender_client_id to only send to the client who generated the transcript
                 sender_client_id = payload.get("client_id")
                 clients = session_manager.get_clients_to_notify_transcript(
                     payload["session_id"], 
                     sender_client_id=sender_client_id
                 )
-                logger.debug("Found %s transcript clients for session %s (sender: %s)", 
-                           len(clients), payload["session_id"], sender_client_id)
+                logger.debug(f"Sending transcript to {len(clients)} clients for session {payload['session_id']} (sender: {sender_client_id})")
                 
             elif result_type == "translation":
                 # Pass sender_client_id to only send to the client who generated the translation
@@ -48,30 +48,38 @@ async def result_dispatcher(async_result_queue: asyncio.Queue):
                     payload["session_id"],
                     sender_client_id=sender_client_id
                 )
-                logger.debug("Found %s translation clients for session %s (sender: %s)", 
-                           len(clients), payload["session_id"], sender_client_id)
+                logger.debug(f"Sending translation to {len(clients)} clients for session {payload['session_id']} (sender: {sender_client_id})")
             else:
+                logger.warning(f"Unknown result type: {result_type}")
                 clients = []
 
             for ws in clients:
                 try:
                     await ws.send_json(payload)
-                    logger.debug("Sent result to sender client: %s", payload)
+                    logger.debug(f"Successfully sent {result_type} to client: '{payload.get('text', '')[:50]}...'")
                 except Exception as e:
-                    logger.warning("Failed to send to sender client (session_id=%s, client_id=%s). Client likely disconnected: %s", 
-                                 payload.get("session_id"), payload.get("client_id"), e)
-        except Exception:
-            logger.exception("Dispatcher loop error; continuing")
+                    logger.warning(f"Failed to send to client (session_id={payload.get('session_id')}, client_id={payload.get('client_id')}): {e}")
+        except Exception as e:
+            logger.error(f"Dispatcher loop error: {e}", exc_info=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup → Shutdown lifecycle."""
     async_result_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+    
+    # Start per-client pipeline service
+    await pipeline_controller.start_service()
+    
     # Provide loop and queue to service for thread-safe result emission
-    stt_service.set_async_result_queue(asyncio.get_event_loop(), async_result_queue)
+    pipeline_controller.set_async_result_queue(asyncio.get_event_loop(), async_result_queue)
+    
     dispatcher_task = asyncio.create_task(result_dispatcher(async_result_queue))
+    
     yield
-    stt_service.shutdown()
+    
+    # Shutdown pipeline service gracefully
+    await pipeline_controller.shutdown_service()
+    
     dispatcher_task.cancel()
     try:
         await dispatcher_task

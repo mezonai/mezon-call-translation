@@ -147,10 +147,10 @@
 │  └─────────────────────────────────────────────────────────┘│
 │                           │                                 │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │ 2. Worker Assignment                                    ││
-│  │    • Hash-based worker selection                        ││
-│  │    • Queue management                                   ││
-│  │    • Load balancing                                     ││
+│  │ 2. Per-Client Pipeline Assignment                       ││
+│  │    • Individual pipeline creation per client            ││
+│  │    • Dedicated resource allocation                      ││
+│  │    • Complete client isolation                          ││
 │  └─────────────────────────────────────────────────────────┘│
 │                           │                                 │
 │  ┌─────────────────────────────────────────────────────────┐│
@@ -226,27 +226,32 @@
 
 ### Technical Details
 
-#### 3.3 Worker Thread Architecture
+#### 3.3 Per-Client Pipeline Architecture
 
 ```
 STT Vosk Service
-├── Worker Thread 1
-│   ├── Audio Queue (maxsize: configurable)
-│   ├── Recognizer Pool (per client)
-│   ├── Client State Management
-│   └── Result Emission
-├── Worker Thread 2
-│   └── ...
-├── Worker Thread N
-│   └── ...
-├── Cleanup Thread
-│   ├── Periodic resource cleanup
-│   ├── Inactive client removal
-│   └── Memory management
-└── Metrics Thread
-    ├── Performance monitoring
-    ├── Queue size tracking
-    └── Health metrics
+├── Pipeline Manager
+│   ├── Client Pipeline 1
+│   │   ├── Individual Audio Queue (dedicated buffer)
+│   │   ├── Dedicated Vosk Recognizer
+│   │   ├── Async Processing Task
+│   │   └── Result Callback
+│   ├── Client Pipeline 2
+│   │   ├── Individual Audio Queue (dedicated buffer)
+│   │   ├── Dedicated Vosk Recognizer
+│   │   ├── Async Processing Task
+│   │   └── Result Callback
+│   └── Client Pipeline N
+│       └── ...
+├── Pipeline Management
+│   ├── Client limit enforcement
+│   ├── Automatic idle cleanup
+│   ├── Resource monitoring
+│   └── Health status tracking
+└── Circuit Breaker Protection
+    ├── Per-pipeline fault tolerance
+    ├── Automatic recovery
+    └── Error isolation
 ```
 
 #### 3.4 Session Management Schema
@@ -349,12 +354,12 @@ WS /ws/vosk/
 
 #### 3.8 Scalability Metrics
 
-- **Concurrent Clients**: Supports multiple clients (limited by system resources)
-- **Worker Threads**: Configurable (default based on CPU cores)
+- **Concurrent Clients**: Configurable limit (MAX_CONCURRENT_CLIENTS)
+- **Per-Client Pipelines**: Individual processing pipelines for complete isolation
 - **Audio Processing Latency**: < 100ms for real-time processing
-- **Queue Management**: Adaptive thresholds based on load
-- **Memory Usage**: Efficient chunk accumulation with cleanup
-- **Fault Tolerance**: Circuit breaker protection with automatic recovery
+- **Resource Management**: Dedicated buffers and recognizers per client
+- **Memory Usage**: Efficient per-client resource cleanup
+- **Fault Tolerance**: Circuit breaker protection with client isolation
 
 #### 3.9 Configuration Parameters
 
@@ -367,14 +372,15 @@ max_chunks: 10
 min_time_threshold: 0.5s
 max_time_threshold: 3.0s
 
-# Queue Management  
+# Pipeline Management  
 audio_queue_maxsize: 100
-result_queue_maxsize: 1000
+max_concurrent_clients: 50
+idle_timeout_seconds: 300
 
-# Worker Management
-num_workers: auto (CPU based)
-metrics_interval_sec: 5.0
-client_cleanup_interval: 30.0
+# Per-Client Resources
+vosk_model_path: model/Transcription/en-model
+pipeline_cleanup_interval: 30.0
+client_isolation: true
 
 # Circuit Breaker
 failure_threshold: 5

@@ -6,7 +6,7 @@ from typing import Optional
 @dataclass
 class CircuitBreakerConfig:
     failure_threshold: int = 5
-    reset_timeout: float = 60.0
+    reset_timeout: float = 10.0
     half_open_timeout: float = 5.0
 
 class CircuitState(Enum):

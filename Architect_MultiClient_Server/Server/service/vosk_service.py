@@ -62,6 +62,11 @@ class STTVoskService:
 
         # Initialize circuit breaker only (VAD removed)
         self._circuit_breaker = get_stt_circuit_breaker()
+        
+        # Round-robin counter for better load distribution
+        self._round_robin_counter = 0
+        self._round_robin_lock = threading.Lock()
+        
         logger.info("Circuit breaker initialized successfully")
 
         # Start worker threads
@@ -94,6 +99,127 @@ class STTVoskService:
         
         # Register health checks
         register_stt_health_checks(self)
+        
+    def _get_worker_index(self, client_id: str) -> int:
+        """Get worker index with improved load balancing.
+        
+        Uses a hybrid approach:
+        1. Hash-based assignment for session consistency
+        2. Fallback to round-robin if hash creates imbalance
+        """
+        # Primary: Hash-based for session consistency
+        hash_worker = hash(client_id) % self.num_workers
+        
+        # Check if this worker is significantly overloaded
+        if hasattr(self, 'worker_queues') and len(self.worker_queues) > hash_worker:
+            current_queue_size = self.worker_queues[hash_worker].qsize()
+            avg_queue_size = sum(q.qsize() for q in self.worker_queues) / len(self.worker_queues)
+            
+            # If hash worker is significantly overloaded, use round-robin
+            if current_queue_size > avg_queue_size * 1.5 + 10:  # 50% above average + buffer
+                with self._round_robin_lock:
+                    self._round_robin_counter = (self._round_robin_counter + 1) % self.num_workers
+                    return self._round_robin_counter
+        
+        return hash_worker
+
+    def get_worker_load_distribution(self):
+        """Get detailed worker load distribution for monitoring."""
+        try:
+            worker_loads = []
+            total_queue_size = 0
+            
+            for i, queue in enumerate(self.worker_queues):
+                queue_size = queue.qsize()
+                total_queue_size += queue_size
+                
+                # Get worker stats
+                with self._stats_lock:
+                    worker_stat = self.worker_stats[i] if i < len(self.worker_stats) else {}
+                    processed = worker_stat.get("processed", 0)
+                    avg_wait_ms = worker_stat.get("avg_wait_ms", 0.0)
+                
+                # Get client count for this worker
+                with self._client_states_lock:
+                    client_count = len(self.worker_recognizers[i]) if i < len(self.worker_recognizers) else 0
+                
+                worker_loads.append({
+                    "worker_id": i,
+                    "queue_size": queue_size,
+                    "processed_chunks": processed,
+                    "avg_wait_ms": round(avg_wait_ms, 1),
+                    "active_clients": client_count,
+                    "is_active": queue_size > 0 or processed > 0
+                })
+            
+            # Calculate distribution metrics
+            active_workers = [w for w in worker_loads if w["is_active"]]
+            queue_sizes = [w["queue_size"] for w in worker_loads]
+            processed_counts = [w["processed_chunks"] for w in worker_loads]
+            
+            return {
+                "worker_loads": worker_loads,
+                "total_workers": len(worker_loads),
+                "active_workers": len(active_workers),
+                "total_queue_size": total_queue_size,
+                "queue_distribution": {
+                    "min": min(queue_sizes),
+                    "max": max(queue_sizes),
+                    "avg": round(sum(queue_sizes) / len(queue_sizes), 1),
+                    "std_dev": round(np.std(queue_sizes), 1) if queue_sizes else 0
+                },
+                "processing_distribution": {
+                    "min": min(processed_counts),
+                    "max": max(processed_counts),
+                    "avg": round(sum(processed_counts) / len(processed_counts), 1),
+                    "std_dev": round(np.std(processed_counts), 1) if processed_counts else 0
+                },
+                "distribution_quality": self._assess_distribution_quality(worker_loads)
+            }
+            
+        except Exception as e:
+            logger.error("Error getting worker load distribution: %s", str(e), exc_info=True)
+            return {"error": str(e)}
+    
+    def _assess_distribution_quality(self, worker_loads: list) -> str:
+        """Assess the quality of load distribution."""
+        try:
+            active_workers = [w for w in worker_loads if w["is_active"]]
+            if len(active_workers) < 2:
+                return "insufficient_data"
+            
+            # Check queue size distribution
+            queue_sizes = [w["queue_size"] for w in active_workers]
+            max_queue = max(queue_sizes)
+            min_queue = min(queue_sizes)
+            avg_queue = sum(queue_sizes) / len(queue_sizes)
+            
+            # Check processing distribution
+            processed_counts = [w["processed_chunks"] for w in active_workers]
+            max_processed = max(processed_counts)
+            min_processed = min(processed_counts)
+            
+            # Assessment criteria
+            if max_queue == 0 and max_processed == 0:
+                return "no_load"
+            
+            # Check for idle workers (should be working but aren't)
+            total_workers = len(worker_loads)
+            if len(active_workers) < total_workers * 0.7:  # Less than 70% workers active
+                return "poor_distribution"
+            
+            # Check queue balance
+            if avg_queue > 0 and (max_queue - min_queue) > avg_queue * 2:
+                return "unbalanced_queues"
+            
+            # Check processing balance
+            if max_processed > 0 and min_processed == 0 and len(active_workers) > 1:
+                return "unbalanced_processing"
+            
+            return "good"
+            
+        except Exception:
+            return "unknown"
 
     def set_async_result_queue(self, loop, async_queue):
         """Register asyncio loop and queue for non-polling result dispatch."""
@@ -363,8 +489,8 @@ class STTVoskService:
                 return False
             # Process all chunks (VAD removed)
 
-            # Route to worker by client_id hash
-            worker_index = hash(client_id) % self.num_workers
+            # Route to worker with improved load balancing
+            worker_index = self._get_worker_index(client_id)
             worker_queue = self.worker_queues[worker_index]
             
             # If queue is getting full, try to clear old items
@@ -557,7 +683,7 @@ class STTVoskService:
 
     def submit_audio(self, chunk, client_id, session_id):
         """Legacy synchronous submit (may block if queue is full). Prefer submit_audio_async."""
-        worker_index = hash(client_id) % self.num_workers
+        worker_index = self._get_worker_index(client_id)
         self.worker_queues[worker_index].put((time.time(), chunk, client_id, session_id))
 
     def get_result_nowait(self):

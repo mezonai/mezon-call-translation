@@ -23,6 +23,7 @@ class SessionManager:
         if session_id in self.sessions:
             self.sessions[session_id]["clients"].pop(client_id, None)
             self.sessions[session_id]["transcripts"].pop(client_id, None)
+            self.sessions[session_id]["translation"].pop(client_id, None)  # Fix: Also clean up translation data
             if not self.sessions[session_id]["clients"]:
                 self.sessions.pop(session_id)
                 logger.info("Removed last client; session %s closed", session_id)
