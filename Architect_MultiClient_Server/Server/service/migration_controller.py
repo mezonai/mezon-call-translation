@@ -26,9 +26,9 @@ class PipelineServiceController:
         """Get the pipeline service"""
         return self.pipeline_service
     
-    async def submit_audio_async(self, chunk: bytes, client_id: str, session_id: str) -> bool:
+    async def submit_audio_async(self, chunk: bytes, client_id: str, session_id: str, chunk_id: Optional[int] = None) -> bool:
         """Submit audio using pipeline service"""
-        return await self.pipeline_service.submit_audio_async(chunk, client_id, session_id)
+        return await self.pipeline_service.submit_audio_async(chunk, client_id, session_id, chunk_id=chunk_id)
     
     async def cleanup_client(self, client_id: str, session_id: str):
         """Cleanup client using pipeline service"""

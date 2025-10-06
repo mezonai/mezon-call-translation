@@ -1,8 +1,8 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from ..service.migration_controller import pipeline_controller
 from ..session_manager import session_manager
 from ..utils.websocket_monitor import websocket_monitor
+from ..service.metrics_service import metrics
 import asyncio
 import time
 from typing import Optional
@@ -84,9 +84,28 @@ async def websocket_vosk(
                 logger.error("Unexpected error during WebSocket receive for client_id=%s session_id=%s: %s", 
                            client_id, session_id, str(e), exc_info=True)
                 break
+            # Track bytes received
+            try:
+                metrics.ws_bytes_received.labels(session_id=session_id).inc(len(data))
+            except Exception:
+                pass
+            
             # Submit audio to client's individual pipeline
             try:
-                await pipeline_controller.submit_audio_async(data, client_id, session_id)
+                # Optional chunk-id header support: b'CHID' + 8-byte little-endian chunk_id
+                chunk_id = None
+                payload = data
+                if isinstance(data, (bytes, bytearray)) and len(data) >= 12 and data[:4] == b'CHID':
+                    try:
+                        chunk_id = int.from_bytes(data[4:12], 'little', signed=False)
+                        payload = data[12:]
+                        logger.debug("Parsed chunk_id=%s for client_id=%s session_id=%s", chunk_id, client_id, session_id)
+                    except Exception:
+                        # Malformed header, fall back to raw payload
+                        payload = data
+                        chunk_id = None
+                # Forward payload and optional chunk_id to pipeline
+                await pipeline_controller.submit_audio_async(payload, client_id, session_id, chunk_id=chunk_id)
             except Exception as audio_error:
                 logger.error("Error processing audio for client_id=%s session_id=%s: %s", 
                            client_id, session_id, str(audio_error), exc_info=True)

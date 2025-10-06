@@ -69,10 +69,11 @@ class NewSTTVoskService:
         self.async_loop = loop
         self.async_result_queue = async_queue
     
-    async def submit_audio_async(self, chunk: bytes, client_id: str, session_id: str):
-        """Submit audio chunk for processing"""
+    async def submit_audio_async(self, chunk: bytes, client_id: str, session_id: str, chunk_id: Optional[int] = None):
+        """Submit audio chunk for processing, optional chunk_id for tracing"""
         if not self._started:
             await self.start()
+
         
         try:
             # Check circuit breaker
@@ -98,6 +99,8 @@ class NewSTTVoskService:
             if not pipeline:
                 try:
                     pipeline = await self.pipeline_manager.create_pipeline(client_id, session_id)
+                    # pass
+
                     logger.info(f"Created new pipeline for client {client_id} in session {session_id}")
                 except ClientLimitExceededError as e:
                     logger.error(
@@ -109,8 +112,9 @@ class NewSTTVoskService:
                     self._circuit_breaker.record_failure()
                     return False
             
-            # Submit audio to pipeline
-            success = await pipeline.submit_audio(chunk)
+            # Submit audio to pipeline (propagate optional chunk_id)
+            success = await pipeline.submit_audio(chunk, chunk_id=chunk_id)
+
             
             if success:
                 self._circuit_breaker.record_success()

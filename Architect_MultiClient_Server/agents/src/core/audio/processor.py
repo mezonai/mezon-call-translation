@@ -50,7 +50,7 @@ class EnhancedVADProcessor:
         self.pipeline = AudioPipeline(self.processing_queue, self.output_queue)
         self.pipeline.add_stage(PreProcessingStage(config.sample_rate))
         self.pipeline.add_stage(VADProcessingStage(self.vad))
-        self.pipeline.add_stage(PostProcessingStage(batch_size=3))
+        self.pipeline.add_stage(PostProcessingStage(batch_size=5))  # Changed from 3 to 5 for 50ms chunks
         
         # Setup state
         self.is_processing = False

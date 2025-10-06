@@ -24,19 +24,6 @@ class AudioConfig:
 
 
 @dataclass
-class VADConfig:
-    """Voice Activity Detection configuration."""
-    enabled: bool = False
-    threshold: float = 0.5
-    min_speech_duration_ms: int = 250
-    min_silence_duration_ms: int = 100
-    window_size_samples: int = 512
-    cleanup_interval: float = 30.0
-    max_client_idle_time: float = 300.0
-    device: Optional[str] = None
-
-
-@dataclass
 class STTConfig:
     """Speech-to-Text configuration."""
     vosk_model_path: str = "vosk-model-small-en-us-0.15"
@@ -61,9 +48,6 @@ class QueueConfig:
 @dataclass
 class CircuitBreakerConfig:
     """Circuit breaker configuration."""
-    vad_failure_threshold: int = 3
-    vad_timeout: float = 30.0
-    vad_success_threshold: int = 2
     stt_failure_threshold: int = 5
     stt_timeout: float = 60.0  # Increased from 10.0 to 60.0 seconds for stability
     stt_success_threshold: int = 3
@@ -110,7 +94,6 @@ class AuthConfig:
 class AppConfig:
     """Main application configuration."""
     audio: AudioConfig = field(default_factory=AudioConfig)
-    vad: VADConfig = field(default_factory=VADConfig)
     stt: STTConfig = field(default_factory=STTConfig)
     queue: QueueConfig = field(default_factory=QueueConfig)
     circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
@@ -148,16 +131,6 @@ class ConfigManager:
         config.audio.channels = int(os.getenv("CHANNELS", config.audio.channels))
         config.audio.dtype = os.getenv("DTYPE", config.audio.dtype)
         
-        # VAD configuration
-        config.vad.enabled = os.getenv("VAD_ENABLED", str(config.vad.enabled)).lower() in ("1", "true", "yes", "on")
-        config.vad.threshold = float(os.getenv("VAD_THRESHOLD", config.vad.threshold))
-        config.vad.min_speech_duration_ms = int(os.getenv("VAD_MIN_SPEECH_DURATION_MS", config.vad.min_speech_duration_ms))
-        config.vad.min_silence_duration_ms = int(os.getenv("VAD_MIN_SILENCE_DURATION_MS", config.vad.min_silence_duration_ms))
-        config.vad.window_size_samples = int(os.getenv("VAD_WINDOW_SIZE_SAMPLES", config.vad.window_size_samples))
-        config.vad.cleanup_interval = float(os.getenv("VAD_CLEANUP_INTERVAL", config.vad.cleanup_interval))
-        config.vad.max_client_idle_time = float(os.getenv("VAD_MAX_CLIENT_IDLE_TIME", config.vad.max_client_idle_time))
-        config.vad.device = os.getenv("VAD_DEVICE", config.vad.device)
-        
         # STT configuration
         config.stt.vosk_model_path = os.getenv("VOSK_MODEL_PATH", config.stt.vosk_model_path)
         config.stt.min_chunks = int(os.getenv("VOSK_MIN_CHUNKS", config.stt.min_chunks))
@@ -179,16 +152,12 @@ class ConfigManager:
         config.auth.jwt_secret = os.getenv("JWT_SECRET", config.auth.jwt_secret)
         config.auth.jwt_algorithm = os.getenv("JWT_ALGORITHM", config.auth.jwt_algorithm)
 
-
         # Queue configuration
         config.queue.audio_queue_maxsize = int(os.getenv("AUDIO_QUEUE_MAXSIZE", config.queue.audio_queue_maxsize))
         config.queue.result_queue_maxsize = int(os.getenv("RESULT_QUEUE_MAXSIZE", config.queue.result_queue_maxsize))
         config.queue.audio_task_queue_maxsize = int(os.getenv("AUDIO_TASK_QUEUE_MAXSIZE", config.queue.audio_task_queue_maxsize))
         
         # Circuit breaker configuration
-        config.circuit_breaker.vad_failure_threshold = int(os.getenv("VAD_CIRCUIT_BREAKER_FAILURE_THRESHOLD", config.circuit_breaker.vad_failure_threshold))
-        config.circuit_breaker.vad_timeout = float(os.getenv("VAD_CIRCUIT_BREAKER_TIMEOUT", config.circuit_breaker.vad_timeout))
-        config.circuit_breaker.vad_success_threshold = int(os.getenv("VAD_CIRCUIT_BREAKER_SUCCESS_THRESHOLD", config.circuit_breaker.vad_success_threshold))
         config.circuit_breaker.stt_failure_threshold = int(os.getenv("STT_CIRCUIT_BREAKER_FAILURE_THRESHOLD", config.circuit_breaker.stt_failure_threshold))
         config.circuit_breaker.stt_timeout = float(os.getenv("STT_CIRCUIT_BREAKER_TIMEOUT", config.circuit_breaker.stt_timeout))
         config.circuit_breaker.stt_success_threshold = int(os.getenv("STT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD", config.circuit_breaker.stt_success_threshold))
@@ -246,16 +215,6 @@ class ConfigManager:
                 "channels": config.audio.channels,
                 "dtype": config.audio.dtype
             },
-            "vad": {
-                "enabled": config.vad.enabled,
-                "threshold": config.vad.threshold,
-                "min_speech_duration_ms": config.vad.min_speech_duration_ms,
-                "min_silence_duration_ms": config.vad.min_silence_duration_ms,
-                "window_size_samples": config.vad.window_size_samples,
-                "cleanup_interval": config.vad.cleanup_interval,
-                "max_client_idle_time": config.vad.max_client_idle_time,
-                "device": config.vad.device
-            },
             "stt": {
                 "vosk_model_path": config.stt.vosk_model_path,
                 "min_chunks": config.stt.min_chunks,
@@ -273,9 +232,6 @@ class ConfigManager:
                 "audio_task_queue_maxsize": config.queue.audio_task_queue_maxsize
             },
             "circuit_breaker": {
-                "vad_failure_threshold": config.circuit_breaker.vad_failure_threshold,
-                "vad_timeout": config.circuit_breaker.vad_timeout,
-                "vad_success_threshold": config.circuit_breaker.vad_success_threshold,
                 "stt_failure_threshold": config.circuit_breaker.stt_failure_threshold,
                 "stt_timeout": config.circuit_breaker.stt_timeout,
                 "stt_success_threshold": config.circuit_breaker.stt_success_threshold
@@ -331,4 +287,3 @@ def get_config() -> AppConfig:
 def reload_config() -> AppConfig:
     """Reload application configuration."""
     return get_config_manager().reload_config()
-

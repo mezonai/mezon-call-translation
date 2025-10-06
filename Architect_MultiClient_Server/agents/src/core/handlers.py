@@ -132,6 +132,7 @@ class EventHandlers:
                 # Process audio frame
                 frame = event.frame
                 # Convert bytes to float32 array (assuming 16-bit audio)
+                
                 audio_data = np.frombuffer(bytes(frame.data), dtype=np.int16).astype(np.float32) / 32767.0
                 processor.add_audio_chunk(audio_data)
                 # Get batched chunks (mỗi batch là 5 chunks 10ms = 50ms audio)

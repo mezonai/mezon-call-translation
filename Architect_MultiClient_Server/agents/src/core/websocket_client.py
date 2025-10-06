@@ -247,14 +247,14 @@ class WebSocketTranscriptionClient:
             
             # Check if we should send (based on buffer size or time)
             current_time = time.time()
-            should_send = (
-                len(self.audio_buffer) >= self.config.batch_size or 
-                total_buffer_size >= self.config.max_buffer_size or
-                (current_time - self.last_send_time) > 0.1  # Force send every 100ms
-            )
-            
-            if not should_send:
-                return
+            # should_send = (
+            #     len(self.audio_buffer) >= self.config.batch_size or 
+            #     total_buffer_size >= self.config.max_buffer_size or
+            #     (current_time - self.last_send_time) > 0.1  # Force send every 100ms
+            # )
+            # print(len(self.audio_buffer) >= self.config.batch_size, total_buffer_size >= self.config.max_buffer_size, (current_time - self.last_send_time) > 0.1)
+            # if not should_send:
+            #     return
                 
             # Rate limiting
             if current_time - self.last_send_time < self.config.send_delay:
@@ -266,6 +266,7 @@ class WebSocketTranscriptionClient:
                 
             batched_data = b''.join(self.audio_buffer)
             batch_size = len(batched_data)
+            ms_sent = int(batch_size / (16000*2) * 1000)
             self.audio_buffer.clear()
             
             # Check circuit breaker before sending

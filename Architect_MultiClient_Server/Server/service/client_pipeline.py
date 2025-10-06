@@ -77,6 +77,7 @@ class ClientInferencePipeline:
         self.accumulated_chunks: List[bytes] = []  # Client's own buffer
         self.accumulated_size = 0
         self.last_process_time = time.time()
+        self.last_chunk_id: Optional[int] = None  # Track last observed chunk id for emission
         
         logger.info(f"Created individual audio buffer (max_size={self.config.queue.audio_queue_maxsize}) for client {client_id}")
         
@@ -117,27 +118,19 @@ class ClientInferencePipeline:
         # Adaptive chunk sizing based on performance data
         if concurrent_clients <= 2:
             # 1-2 clients: 100-200ms latency, minimal overhead
-            chunk_size = 2  # ~100-200ms worth of audio chunks
+            chunk_size = 4  # ~100-200ms worth of audio chunks
             reason = "Low latency, minimal overhead"
         elif concurrent_clients <= 4:
             # 3-4 clients: 200-300ms, balanced performance
-            chunk_size = 3  # ~200-300ms worth of audio chunks  
+            chunk_size = 2  # ~200-300ms worth of audio chunks  
             reason = "Balanced performance, stable scaling"
-        elif concurrent_clients <= 8:
-            # 5-8 clients: 300ms, OPTIMAL sweet spot
-            chunk_size = 4  # ~300ms worth of audio chunks
-            reason = "OPTIMAL - Sweet spot performance"
-        elif concurrent_clients <= 12:
-            # 9-12 clients: 300-400ms, acceptable but needs monitoring
-            chunk_size = 5  # ~300-400ms worth of audio chunks
-            reason = "Acceptable, needs monitoring"
         else:
-            # 13+ clients: NOT recommended - high variance
-            chunk_size = 6  # ~300-400ms worth of audio chunks
-            reason = "NOT RECOMMENDED - High variance expected"
-            
+            # 5-8 clients: 200ms, OPTIMAL sweet spot
+            chunk_size = 1  # ~200ms worth of audio chunks
+            reason = "OPTIMAL - Sweet spot performance"
+        
         logger.debug(f"Client {self.client_id}: Adaptive chunk size = {chunk_size} (clients={concurrent_clients})")
-        return chunk_size
+        return 2
     
     async def start(self):
         """Start the pipeline processing"""
@@ -148,9 +141,10 @@ class ClientInferencePipeline:
         self._processing_task = asyncio.create_task(self._processing_loop())
         logger.info(f"✅ Started dedicated processing task for client {self.client_id}")
     
-    async def submit_audio(self, audio_chunk: bytes) -> bool:
-        """Submit audio chunk for processing"""
+    async def submit_audio(self, audio_chunk: bytes, chunk_id: Optional[int] = None) -> bool:
+        """Submit audio chunk for processing with optional chunk_id"""
         # Check pipeline state first
+
         if self.state not in [PipelineState.ACTIVE, PipelineState.IDLE]:
             logger.debug(f"Cannot submit audio to pipeline in state {self.state} for client {self.client_id}")
             return False
@@ -173,9 +167,13 @@ class ClientInferencePipeline:
                 )
                 return False
             
-            # Add to individual client queue (non-blocking)
-            self.audio_queue.put_nowait(audio_chunk)
+            # Add to individual client queue (non-blocking). Support optional chunk_id.
+            if chunk_id is not None:
+                self.audio_queue.put_nowait((chunk_id, audio_chunk))
+            else:
+                self.audio_queue.put_nowait(audio_chunk)
             self.last_activity = time.time()
+
             
             # Update state to active if idle (log only state change)
             if self.state == PipelineState.IDLE:
@@ -206,12 +204,20 @@ class ClientInferencePipeline:
                 try:
                     # Wait for audio chunk or timeout
                     try:
-                        chunk = await asyncio.wait_for(
+                        item = await asyncio.wait_for(
                             self.audio_queue.get(), 
                             timeout=1.0  # 1 second timeout
                         )
+                        # Unpack optional (chunk_id, chunk) tuple
+                        if isinstance(item, tuple) and len(item) == 2 and isinstance(item[1], (bytes, bytearray)):
+                            chunk_id, chunk = item
+                            if isinstance(chunk_id, int):
+                                self.last_chunk_id = chunk_id
+                        else:
+                            chunk = item
                         # Remove frequent chunk processing log
                     except asyncio.TimeoutError:
+
                         # Check if we should go idle
                         if time.time() - self.last_activity > 5.0:  # 5 seconds idle
                             if self.state == PipelineState.ACTIVE:
@@ -260,7 +266,6 @@ class ClientInferencePipeline:
                 
                 # Only log when actually processing (not every chunk)
                 if should_process and self.accumulated_chunks:
-                    logger.info(f"Client {self.client_id}: Processing {len(self.accumulated_chunks)} chunks (adaptive_size={adaptive_chunk_size})")
                     await self._process_accumulated_chunks()
                     self.last_process_time = now
                 
@@ -306,7 +311,15 @@ class ClientInferencePipeline:
             # Process with Vosk (run in thread to avoid blocking)
             is_final = await asyncio.to_thread(self.recognizer.AcceptWaveform, merged_chunk)
             
+            chunk_size = len(merged_chunk)
+            duration_ms = (chunk_size *1000)/ (self.config.audio.sample_rate* 2) 
             processing_ms = (time.time() - start_time) * 1000
+            logger.info(
+                f"Client {self.client_id} | Chunk Size: {chunk_size} bytes | "
+                f"Duration: {duration_ms:.2f} ms | Processing: {processing_ms:.2f} ms | buffer audio: {self.audio_queue.qsize()}"
+            )
+            if(duration_ms < processing_ms):
+                logger.warning(f"Client {self.client_id}: Audio processing time exceeded chunk duration! {processing_ms:.2f} ms > {duration_ms:.2f} ms")
 
             if is_final:
                 # Final result
@@ -320,8 +333,10 @@ class ClientInferencePipeline:
                         "is_final": True,
                         "client_id": self.client_id,
                         "session_id": self.session_id,
-                        "timestamp": time.time()
+                        "timestamp": time.time(),
+                        **({"chunk_id": self.last_chunk_id} if self.last_chunk_id is not None else {})
                     })
+
                     self.stats.final_results += 1
             else:
                 # Partial result
@@ -335,8 +350,10 @@ class ClientInferencePipeline:
                         "is_final": False,
                         "client_id": self.client_id,
                         "session_id": self.session_id,
-                        "timestamp": time.time()
+                        "timestamp": time.time(),
+                        **({"chunk_id": self.last_chunk_id} if self.last_chunk_id is not None else {})
                     })
+
                     self.stats.partial_results += 1
         
         except Exception as e:

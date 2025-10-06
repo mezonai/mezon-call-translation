@@ -8,6 +8,14 @@ class MetricsService:
     ws_connections = Gauge('ws_connections_current', 'Current number of websocket connections')
     ws_messages_total = Counter('ws_messages_total', 'Total websocket messages', ['direction', 'session_id'])
     ws_errors = Counter('ws_errors_total', 'Total websocket errors', ['type'])
+    ws_disconnects = Counter('ws_disconnects_total', 'Total websocket disconnects', ['code'])
+    ws_connection_duration = Histogram(
+        'ws_connection_duration_seconds',
+        'WebSocket connection duration in seconds',
+        buckets=(1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600)
+    )
+    ws_bytes_received = Counter('ws_bytes_received_total', 'Total bytes received via WebSocket', ['session_id'])
+    ws_bytes_sent = Counter('ws_bytes_sent_total', 'Total bytes sent via WebSocket', ['session_id'])
     
     # Speech Processing metrics
     speech_segments = Counter('speech_segments_total', 'Total speech segments detected')
@@ -23,15 +31,6 @@ class MetricsService:
     transcription_duration = Histogram(
         'transcription_duration_seconds',
         'Time spent on transcription',
-        buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0)
-    )
-    
-    # Translation metrics
-    translation_requests = Counter('translation_requests_total', 'Total translation requests')
-    translation_errors = Counter('translation_errors_total', 'Translation errors', ['error_type'])
-    translation_duration = Histogram(
-        'translation_duration_seconds',
-        'Time spent on translation',
         buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0)
     )
     
@@ -68,12 +67,6 @@ class MetricsService:
         """Track transcription request"""
         cls.transcription_requests.inc()
         cls.transcription_duration.observe(duration)
-    
-    @classmethod
-    def track_translation(cls, duration: float):
-        """Track translation request"""
-        cls.translation_requests.inc()
-        cls.translation_duration.observe(duration)
     
     @classmethod
     def track_circuit_breaker(cls, name: str, is_open: bool, failure_count: int):

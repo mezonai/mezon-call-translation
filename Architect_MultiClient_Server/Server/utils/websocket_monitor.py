@@ -11,6 +11,13 @@ import time
 from dataclasses import dataclass
 from collections import defaultdict
 
+# Import metrics service for Prometheus integration
+try:
+    from ..service.metrics_service import metrics
+    METRICS_AVAILABLE = True
+except ImportError:
+    METRICS_AVAILABLE = False
+
 @dataclass
 class DisconnectEvent:
     """Record of a WebSocket disconnect event"""
@@ -34,6 +41,13 @@ class WebSocketMonitor:
         """Record when a client connects"""
         self.connections[client_id] = time.time()
         self.logger.debug(f"Recorded connection for {client_id} in session {session_id}")
+        
+        # Update Prometheus metrics
+        if METRICS_AVAILABLE:
+            try:
+                metrics.ws_connections.inc()
+            except Exception as e:
+                self.logger.debug(f"Failed to update connection metrics: {e}")
         
     def record_disconnect(self, client_id: str, session_id: str, code: int, reason: str = ""):
         """Record when a client disconnects"""
@@ -63,6 +77,18 @@ class WebSocketMonitor:
             
         # Update stats
         self.disconnect_stats[code] += 1
+        
+        # Update Prometheus metrics
+        if METRICS_AVAILABLE:
+            try:
+                metrics.ws_connections.dec()
+                # Track disconnect by code
+                metrics.ws_disconnects.labels(code=str(code)).inc()
+                # Track connection duration if available
+                if connection_duration:
+                    metrics.ws_connection_duration.observe(connection_duration)
+            except Exception as e:
+                self.logger.debug(f"Failed to update disconnect metrics: {e}")
         
         # Log disconnect with appropriate level
         duration_str = f"duration={connection_duration:.2f}s" if connection_duration else "duration=unknown"

@@ -238,34 +238,8 @@ class CircuitBreakerOpenException(Exception):
     pass
 
 
-# Global circuit breakers for different services
-_vad_circuit_breaker: Optional[CircuitBreaker] = None
+# Global circuit breaker for STT service
 _stt_circuit_breaker: Optional[CircuitBreaker] = None
-
-
-def get_vad_circuit_breaker() -> CircuitBreaker:
-    """Get or create VAD circuit breaker."""
-    global _vad_circuit_breaker
-    if _vad_circuit_breaker is None:
-        try:
-            from ..config import get_config
-            app_config = get_config()
-            config = CircuitBreakerConfig(
-                failure_threshold=app_config.circuit_breaker.vad_failure_threshold,
-                timeout=app_config.circuit_breaker.vad_timeout,
-                success_threshold=app_config.circuit_breaker.vad_success_threshold,
-                expected_exception=Exception
-            )
-        except ImportError:
-            # Fallback to default config if config system not available
-            config = CircuitBreakerConfig(
-                failure_threshold=3,
-                timeout=30.0,
-                success_threshold=2,
-                expected_exception=Exception
-            )
-        _vad_circuit_breaker = CircuitBreaker(config)
-    return _vad_circuit_breaker
 
 
 def get_stt_circuit_breaker() -> CircuitBreaker:
@@ -295,10 +269,8 @@ def get_stt_circuit_breaker() -> CircuitBreaker:
 
 def reset_all_circuit_breakers():
     """Reset all circuit breakers."""
-    global _vad_circuit_breaker, _stt_circuit_breaker
+    global _stt_circuit_breaker
     
-    if _vad_circuit_breaker:
-        _vad_circuit_breaker.reset()
     if _stt_circuit_breaker:
         _stt_circuit_breaker.reset()
     
@@ -309,8 +281,6 @@ def get_all_circuit_breaker_states() -> dict:
     """Get states of all circuit breakers."""
     states = {}
     
-    if _vad_circuit_breaker:
-        states['vad'] = _vad_circuit_breaker.get_state()
     if _stt_circuit_breaker:
         states['stt'] = _stt_circuit_breaker.get_state()
     

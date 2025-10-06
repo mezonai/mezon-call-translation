@@ -25,9 +25,9 @@ class WebSocketConfig:
     ping_interval: int = 30
     ping_timeout: int = 15
     max_queue_size: int = 32
-    batch_size: int = 10
+    batch_size: int = 1
     max_buffer_size: int = 32768  # 32KB
-    send_delay: float = 0.05  # 50ms
+    send_delay: float = 0.01  # 10ms
 
 @dataclass
 class BufferConfig:

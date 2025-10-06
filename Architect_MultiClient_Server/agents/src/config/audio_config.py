@@ -40,7 +40,7 @@ class AudioProcessorConfig:
     """Audio processor configuration"""
     sample_rate: int = 16000
     channels: int = 1
-    chunk_duration_ms: int = 10
+    chunk_duration_ms: int = 50
     overlap_chunks: int = 2
     enable_playback: bool = False
     min_speech_frames: int = 10

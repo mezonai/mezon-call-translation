@@ -6,10 +6,13 @@ import logging
 import threading
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
+from fastapi import APIRouter, HTTPException
 from ..utils.circuit_breaker import get_all_circuit_breaker_states
 
 logger = logging.getLogger(__name__)
 
+# Create router for health endpoints
+router = APIRouter()
 
 @dataclass
 class HealthStatus:
@@ -132,7 +135,7 @@ class HealthService:
         except Exception as e:
             return {
                 "status": "unhealthy",
-                "error": f"Memory check failed: {e}"
+                "error": f"Memory check failed: {e}",
             }
     
     def _check_circuit_breakers(self) -> Dict[str, Any]:
@@ -294,7 +297,8 @@ def register_stt_health_checks(stt_service):
             else:
                 return {"status": "degraded", "error": "Circuit breaker status not available"}
         except Exception as e:
-            return {"status": "unhealthy", "error": f"Circuit breaker check failed: {e}"}
+            return {"status": "unhealthy",
+                    "error": f"Circuit breaker check failed: {e}"}
     
     # Register pipeline-specific health checks
     health_service.register_health_check("pipeline_service", check_pipeline_service)
@@ -304,39 +308,38 @@ def register_stt_health_checks(stt_service):
     logger.info("Per-client pipeline health checks registered")
 
 
-def register_vad_health_checks(vad_service):
-    """Register VAD service specific health checks."""
+# Health API endpoints
+@router.get("/health")
+async def health_check():
+    """Get detailed health status."""
     health_service = get_health_service()
+    health_status = health_service.get_health_status()
     
-    def check_vad_clients():
-        """Check VAD client health."""
-        try:
-            stats = vad_service.get_all_stats()
-            total_clients = stats.get("total_clients", 0)
-            total_processed = stats.get("total_chunks_processed", 0)
-            detection_rate = stats.get("overall_detection_rate", 0)
-            
-            # Determine status based on VAD performance
-            if detection_rate < 0.1:  # Very low detection rate
-                status = "unhealthy"
-            elif detection_rate < 0.3:  # Low detection rate
-                status = "degraded"
-            else:
-                status = "healthy"
-            
-            return {
-                "status": status,
-                "total_clients": total_clients,
-                "total_chunks_processed": total_processed,
-                "detection_rate": detection_rate,
-                "total_duration_s": stats.get("total_duration_s", 0),
-                "avg_duration_per_client": stats.get("avg_duration_per_client", 0)
-            }
-        except Exception as e:
-            return {"status": "unhealthy", "error": f"VAD client check failed: {e}"}
+    # Return appropriate HTTP status code based on health
+    if health_status.status == "unhealthy":
+        raise HTTPException(status_code=503, detail=health_status.__dict__)
+    elif health_status.status == "degraded":
+        raise HTTPException(status_code=429, detail=health_status.__dict__)
     
-    # Register VAD health checks
-    health_service.register_health_check("vad_clients", check_vad_clients)
-    
-    logger.info("VAD health checks registered")
+    return health_status.__dict__
 
+@router.get("/health/summary")
+async def health_summary():
+    """Get health summary."""
+    health_service = get_health_service()
+    health_status = health_service.get_health_status()
+    return {
+        "status": health_status.status,
+        "timestamp": health_status.timestamp,
+        "uptime": health_status.uptime
+    }
+
+@router.get("/health/details")
+async def health_details():
+    """Get detailed health information."""
+    health_service = get_health_service()
+    health_status = health_service.get_health_status()
+    return health_status.__dict__
+
+# Export the router as health_service to match the expected import in main.py
+health_service = router

@@ -5,6 +5,8 @@ from fastapi import FastAPI
 import asyncio
 from contextlib import asynccontextmanager
 from .session_manager import session_manager
+from .service.metrics_service import metrics
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 #agent service
 from .controller.agents_control import router as agents_control
@@ -16,7 +18,7 @@ from .service.health_service import get_health_service
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -56,8 +58,20 @@ async def result_dispatcher(async_result_queue: asyncio.Queue):
             for ws in clients:
                 try:
                     await ws.send_json(payload)
+                    try:
+                        metrics.track_ws_message('out', payload.get('session_id', 'unknown'))
+                        # Track bytes sent (approximate JSON size)
+                        import json
+                        payload_size = len(json.dumps(payload).encode('utf-8'))
+                        metrics.ws_bytes_sent.labels(session_id=payload.get('session_id', 'unknown')).inc(payload_size)
+                    except Exception:
+                        pass
                     logger.debug(f"Successfully sent {result_type} to client: '{payload.get('text', '')[:50]}...'")
                 except Exception as e:
+                    try:
+                        metrics.ws_errors.labels(type='send').inc()
+                    except Exception:
+                        pass
                     logger.warning(f"Failed to send to client (session_id={payload.get('session_id')}, client_id={payload.get('client_id')}): {e}")
         except Exception as e:
             logger.error(f"Dispatcher loop error: {e}", exc_info=True)
@@ -74,17 +88,19 @@ async def lifespan(app: FastAPI):
     pipeline_controller.set_async_result_queue(asyncio.get_event_loop(), async_result_queue)
     
     dispatcher_task = asyncio.create_task(result_dispatcher(async_result_queue))
+    system_metrics_task = asyncio.create_task(system_metrics_loop())
     
     yield
     
     # Shutdown pipeline service gracefully
     await pipeline_controller.shutdown_service()
     
-    dispatcher_task.cancel()
-    try:
-        await dispatcher_task
-    except asyncio.CancelledError:
-        pass
+    for t in (dispatcher_task, system_metrics_task):
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
 
 
 # Init logging and FastAPI
@@ -110,11 +126,65 @@ app.add_middleware(
     allow_headers=["*"],            # Cho phép tất cả headers
 )
 
+# HTTP metrics middleware for Prometheus
+@app.middleware("http")
+async def prometheus_http_middleware(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    try:
+        path = request.url.path
+        method = request.method
+        status = getattr(response, 'status_code', 200)
+        metrics.http_requests_total.labels(method=method, endpoint=path, status=status).inc()
+        duration = time.time() - start_time
+        metrics.http_request_duration.labels(endpoint=path).observe(duration)
+    except Exception as e:
+        logger.debug(f"Prometheus HTTP middleware error: {e}")
+    return response
+
+# System metrics background updater (CPU, memory, queue sizes)
+async def system_metrics_loop():
+    try:
+        import psutil  # optional dependency
+        have_psutil = True
+    except Exception:
+        psutil = None
+        have_psutil = False
+    while True:
+        try:
+            if have_psutil:
+                try:
+                    metrics.cpu_usage.set(psutil.cpu_percent(interval=None))
+                    vm = psutil.virtual_memory()
+                    metrics.memory_usage.set(getattr(vm, 'used', 0))
+                except Exception as e:
+                    logger.debug(f"System metrics (cpu/mem) error: {e}")
+            # Queue size aggregation across pipelines
+            try:
+                info = pipeline_controller.get_active_clients_info()
+                details = info.get('pipeline_details', []) or []
+                total_qsize = 0
+                for d in details:
+                    try:
+                        total_qsize += int(d.get('queue_size', 0))
+                    except Exception:
+                        continue
+                metrics.queue_size.labels(queue_name='audio_queue').set(total_qsize)
+            except Exception as e:
+                logger.debug(f"Queue size metrics error: {e}")
+        except Exception as e:
+            logger.debug(f"System metrics loop error: {e}")
+        await asyncio.sleep(5.0)
+
+# Prometheus metrics endpoint
+@app.get("/metrics")
+async def prometheus_metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 
 
 app.include_router(stt_router)
 app.include_router(agents_control)
-
 
 @app.get("/health")
 async def health_check():
@@ -147,19 +217,7 @@ async def simple_health_check():
         "timestamp": time.time()
     }
 
-@app.post("/admin/emergency-cleanup")
-async def emergency_cleanup():
-    """Emergency cleanup endpoint to fix orphaned clients."""
-    try:
-        result = stt_service.trigger_emergency_cleanup()
-        return {
-            "status": "success",
-            "message": "Emergency cleanup completed",
-            "details": result
-        }
-    except Exception as e:
-        logger.error(f"Emergency cleanup failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Emergency cleanup failed: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,0 +1,154 @@
+# Prometheus Alert Rules for Mezon Call Translation Service
+
+groups:
+  - name: mezon_server_alerts
+    interval: 30s
+    rules:
+      # High Error Rate Alert
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: server
+        annotations:
+          summary: "High error rate detected"
+          description: "Server {{ $labels.instance }} has error rate of {{ $value }} errors/sec"
+
+      # WebSocket Connection Issues
+      - alert: HighWebSocketErrors
+        expr: rate(ws_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: websocket
+        annotations:
+          summary: "High WebSocket error rate"
+          description: "WebSocket errors: {{ $value }} errors/sec on {{ $labels.instance }}"
+
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: memory_usage_bytes > 2147483648  # 2GB
+        for: 10m
+        labels:
+          severity: warning
+          component: server
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value | humanize }}B on {{ $labels.instance }}"
+
+      # High CPU Usage
+      - alert: HighCPUUsage
+        expr: cpu_usage_percent > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: server
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+      # Circuit Breaker Open
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state == 2
+        for: 2m
+        labels:
+          severity: critical
+          component: circuit-breaker
+        annotations:
+          summary: "Circuit breaker is open"
+          description: "Circuit breaker {{ $labels.name }} is open on {{ $labels.instance }}"
+
+      # High Queue Size
+      - alert: HighQueueSize
+        expr: queue_size > 50
+        for: 5m
+        labels:
+          severity: warning
+          component: audio-processing
+        annotations:
+          summary: "Audio queue is backing up"
+          description: "Queue {{ $labels.queue_name }} has {{ $value }} items on {{ $labels.instance }}"
+
+      # Slow Transcription
+      - alert: SlowTranscription
+        expr: histogram_quantile(0.95, rate(transcription_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: transcription
+        annotations:
+          summary: "Slow transcription detected"
+          description: "95th percentile transcription time is {{ $value }}s on {{ $labels.instance }}"
+
+      # High Transcription Error Rate
+      - alert: HighTranscriptionErrorRate
+        expr: rate(transcription_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: transcription
+        annotations:
+          summary: "High transcription error rate"
+          description: "Transcription error rate: {{ $value }} errors/sec on {{ $labels.instance }}"
+
+      # Service Down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: server
+        annotations:
+          summary: "Service is down"
+          description: "{{ $labels.job }} on {{ $labels.instance }} is down"
+
+      # Too Many Active Pipelines
+      - alert: TooManyActivePipelines
+        expr: ws_connections_current > 45  # 90% of max 50
+        for: 5m
+        labels:
+          severity: warning
+          component: pipeline
+        annotations:
+          summary: "Approaching pipeline limit"
+          description: "{{ $value }} active pipelines (limit: 50) on {{ $labels.instance }}"
+
+  - name: prometheus_alerts
+    interval: 30s
+    rules:
+      # Prometheus Scrape Failures
+      - alert: PrometheusScrapeFailing
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: prometheus
+        annotations:
+          summary: "Prometheus scrape failing"
+          description: "Prometheus cannot scrape {{ $labels.job }} on {{ $labels.instance }}"
+
+      # Prometheus High Scrape Duration
+      - alert: PrometheusHighScrapeDuration
+        expr: scrape_duration_seconds > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: prometheus
+        annotations:
+          summary: "Prometheus scrape duration high"
+          description: "Scrape duration is {{ $value }}s for {{ $labels.job }}"
+
+  - name: grafana_alerts
+    interval: 30s
+    rules:
+      # Grafana Down
+      - alert: GrafanaDown
+        expr: up{job="grafana"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: grafana
+        annotations:
+          summary: "Grafana is down"
+          description: "Grafana service is not responding"
