@@ -31,9 +31,11 @@ async def result_dispatcher(async_result_queue: asyncio.Queue):
     logger.info("Result dispatcher started")
     while True:
         try:
+            start_time = time.time()
             result_type, payload = await async_result_queue.get()
             logger.debug(f"Dispatcher received: type={result_type}, text='{payload.get('text', '')}', client={payload.get('client_id')}")
 
+            logger.info(f"Queue size: {async_result_queue.qsize()}")
             if result_type in ["transcript", "transcripts"]:
                 # Pass sender_client_id to only send to the client who generated the transcript
                 sender_client_id = payload.get("client_id")
@@ -73,6 +75,8 @@ async def result_dispatcher(async_result_queue: asyncio.Queue):
                     except Exception:
                         pass
                     logger.warning(f"Failed to send to client (session_id={payload.get('session_id')}, client_id={payload.get('client_id')}): {e}")
+            time_ws = time.time() - start_time
+            print("thời gian gửi là: ", time_ws)       
         except Exception as e:
             logger.error(f"Dispatcher loop error: {e}", exc_info=True)
 

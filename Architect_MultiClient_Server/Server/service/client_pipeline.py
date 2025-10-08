@@ -8,6 +8,7 @@ import json
 import threading
 import time
 import logging
+import queue
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -46,7 +47,7 @@ class ClientInferencePipeline:
     """Dedicated inference pipeline for a single client
     
     Each client gets:
-    - Individual asyncio task for processing
+    - Dedicated thread for continuous processing
     - Separate audio buffer/queue
     - Own Vosk recognizer instance
     - Independent processing state
@@ -73,7 +74,7 @@ class ClientInferencePipeline:
         self.last_activity = time.time()
         
         # Audio processing (INDIVIDUAL per client)
-        self.audio_queue = asyncio.Queue(maxsize=self.config.queue.audio_queue_maxsize)
+        self.audio_queue = queue.Queue(maxsize=self.config.queue.audio_queue_maxsize)
         self.accumulated_chunks: List[bytes] = []  # Client's own buffer
         self.accumulated_size = 0
         self.last_process_time = time.time()
@@ -93,10 +94,10 @@ class ClientInferencePipeline:
             state=self.state
         )
         
-        # Processing control (DEDICATED task per client)
-        self._processing_task: Optional[asyncio.Task] = None
-        self._shutdown_event = asyncio.Event()
-        self._lock = asyncio.Lock()
+        # Processing control (DEDICATED THREAD per client)
+        self._processing_thread: Optional[threading.Thread] = None
+        self._shutdown_event = threading.Event()
+        self._lock = threading.Lock()
         
         # Circuit breaker (per client)
         self._circuit_breaker = get_stt_circuit_breaker()
@@ -138,8 +139,9 @@ class ClientInferencePipeline:
             raise RuntimeError(f"Cannot start pipeline in state {self.state}")
         
         self.state = PipelineState.ACTIVE
-        self._processing_task = asyncio.create_task(self._processing_loop())
-        logger.info(f"✅ Started dedicated processing task for client {self.client_id}")
+        self._processing_thread = threading.Thread(target=self._processing_loop, daemon=True)
+        self._processing_thread.start()
+        logger.info(f"✅ Started dedicated processing thread for client {self.client_id}")
     
     async def submit_audio(self, audio_chunk: bytes, chunk_id: Optional[int] = None) -> bool:
         """Submit audio chunk for processing with optional chunk_id"""
@@ -182,7 +184,7 @@ class ClientInferencePipeline:
             
             return True
             
-        except asyncio.QueueFull:
+        except queue.Full:
             logger.warning(f"Individual audio buffer full for client {self.client_id}, dropping chunk")
             return False
         except Exception as e:
@@ -195,19 +197,16 @@ class ClientInferencePipeline:
             self._circuit_breaker.record_failure()
             return False
     
-    async def _processing_loop(self):
-        """Main processing loop for the pipeline"""
-        logger.info(f"Client {self.client_id}: Processing loop started")
+    def _processing_loop(self):
+        """Main processing loop for the pipeline - runs in dedicated thread"""
+        logger.info(f"Client {self.client_id}: Processing loop started in thread {threading.current_thread().name}")
         
         try:
             while not self._shutdown_event.is_set():
                 try:
                     # Wait for audio chunk or timeout
                     try:
-                        item = await asyncio.wait_for(
-                            self.audio_queue.get(), 
-                            timeout=1.0  # 1 second timeout
-                        )
+                        item = self.audio_queue.get(timeout=1.0)  # 1 second timeout
                         # Unpack optional (chunk_id, chunk) tuple
                         if isinstance(item, tuple) and len(item) == 2 and isinstance(item[1], (bytes, bytearray)):
                             chunk_id, chunk = item
@@ -216,8 +215,7 @@ class ClientInferencePipeline:
                         else:
                             chunk = item
                         # Remove frequent chunk processing log
-                    except asyncio.TimeoutError:
-
+                    except queue.Empty:
                         # Check if we should go idle
                         if time.time() - self.last_activity > 5.0:  # 5 seconds idle
                             if self.state == PipelineState.ACTIVE:
@@ -226,7 +224,7 @@ class ClientInferencePipeline:
                         continue
                     
                     # Process the chunk
-                    await self._process_audio_chunk(chunk)
+                    self._process_audio_chunk(chunk)
                     
                 except Exception as e:
                     logger.error(
@@ -236,19 +234,17 @@ class ClientInferencePipeline:
                         f"   Current failures: {self._circuit_breaker.failure_count + 1}/{self._circuit_breaker.config.failure_threshold}"
                     )
                     self._circuit_breaker.record_failure()
-                    await asyncio.sleep(0.1)  # Brief pause on error
+                    time.sleep(0.1)  # Brief pause on error
             
-        except asyncio.CancelledError:
-            logger.info(f"Client {self.client_id}: Processing loop cancelled")
         except Exception as e:
             logger.error(f"Client {self.client_id}: Fatal error in processing loop: {e}")
         finally:
             self.state = PipelineState.TERMINATED
             logger.info(f"Client {self.client_id}: Processing loop terminated")
     
-    async def _process_audio_chunk(self, chunk: bytes):
+    def _process_audio_chunk(self, chunk: bytes):
         """Process a single audio chunk"""
-        async with self._lock:
+        with self._lock:
             start_time = time.time()
             
             try:
@@ -266,7 +262,7 @@ class ClientInferencePipeline:
                 
                 # Only log when actually processing (not every chunk)
                 if should_process and self.accumulated_chunks:
-                    await self._process_accumulated_chunks()
+                    self._process_accumulated_chunks()
                     self.last_process_time = now
                 
                 # Update statistics
@@ -291,7 +287,7 @@ class ClientInferencePipeline:
                 self._circuit_breaker.record_failure()
                 raise
     
-    async def _process_accumulated_chunks(self):
+    def _process_accumulated_chunks(self):
         """Process all accumulated chunks"""
         if not self.accumulated_chunks:
             logger.warning(f"Client {self.client_id}: No accumulated chunks to process")
@@ -308,8 +304,8 @@ class ClientInferencePipeline:
             
             start_time = time.time()
 
-            # Process with Vosk (run in thread to avoid blocking)
-            is_final = await asyncio.to_thread(self.recognizer.AcceptWaveform, merged_chunk)
+            # Process with Vosk (DIRECT call in dedicated thread)
+            is_final = self.recognizer.AcceptWaveform(merged_chunk)
             
             chunk_size = len(merged_chunk)
             duration_ms = (chunk_size *1000)/ (self.config.audio.sample_rate* 2) 
@@ -327,7 +323,7 @@ class ClientInferencePipeline:
                 text = result.get("text", "").strip()
                 
                 if len(text) >= self.config.audio.min_text_length:
-                    await self._emit_result("transcript", {
+                    self._emit_result("transcript", {
                         "type": "transcript",
                         "text": text,
                         "is_final": True,
@@ -344,7 +340,7 @@ class ClientInferencePipeline:
                 text = partial.get("partial", "").strip()
                 
                 if len(text) >= self.config.audio.min_text_length:
-                    await self._emit_result("transcript", {
+                    self._emit_result("transcript", {
                         "type": "transcript",
                         "text": text,
                         "is_final": False,
@@ -360,12 +356,11 @@ class ClientInferencePipeline:
             logger.error(f"Client {self.client_id}: Error processing accumulated chunks: {e}", exc_info=True)
             raise
     
-    async def _emit_result(self, result_type: str, payload: Dict):
-        """Emit processing result"""
+    def _emit_result(self, result_type: str, payload: Dict):
+        """Emit processing result (thread-safe callback)"""
         try:
-            # Call the result callback (usually to emit via WebSocket)
             if self.result_callback:
-                await asyncio.to_thread(self.result_callback, result_type, payload)
+                self.result_callback(result_type, payload)
             else:
                 logger.error(f"Client {self.client_id}: NO RESULT CALLBACK CONFIGURED - transcript will be lost!")
             
@@ -383,22 +378,16 @@ class ClientInferencePipeline:
         # Signal shutdown
         self._shutdown_event.set()
         
-        # Wait for processing task to complete
-        if self._processing_task:
-            try:
-                await asyncio.wait_for(self._processing_task, timeout=timeout)
-            except asyncio.TimeoutError:
-                logger.warning(f"Client {self.client_id}: Shutdown timeout, cancelling task")
-                self._processing_task.cancel()
-                try:
-                    await self._processing_task
-                except asyncio.CancelledError:
-                    pass
+        # Wait for processing thread to complete
+        if self._processing_thread and self._processing_thread.is_alive():
+            self._processing_thread.join(timeout=timeout)
+            if self._processing_thread.is_alive():
+                logger.warning(f"Client {self.client_id}: Shutdown timeout, thread still alive")
         
         # Process any remaining chunks
         try:
             if self.accumulated_chunks:
-                await self._process_accumulated_chunks()
+                self._process_accumulated_chunks()
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error processing final chunks: {e}")
         
@@ -426,6 +415,7 @@ class ClientInferencePipeline:
             "idle_seconds": time.time() - self.last_activity,
             "queue_size": self.audio_queue.qsize(),
             "accumulated_chunks": len(self.accumulated_chunks),
+            "thread_name": self._processing_thread.name if self._processing_thread else "unknown",
             "stats": {
                 "chunks_processed": self.stats.chunks_processed,
                 "final_results": self.stats.final_results,

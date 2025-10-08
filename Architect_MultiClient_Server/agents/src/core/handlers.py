@@ -94,7 +94,8 @@ class EventHandlers:
             overlap_chunks=2,       # Lưu 2 chunks trước (20ms) để overlap
             enable_playback=False,   # Bật phát audio
             min_speech_frames=10,    # Yêu cầu tối thiểu 10 frames liên tiếp (100ms) mới lưu
-            save_chunks=False
+            save_chunks=False,
+            enable_vad=False
         )
         
         # Bắt đầu xử lý audio chunks

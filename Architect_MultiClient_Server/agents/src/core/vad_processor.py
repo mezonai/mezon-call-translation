@@ -168,7 +168,7 @@ class RealTimeAudioPlayer:
 # ==============================
 class RealTimeVADProcessor:
     def __init__(self, sr=16000, chunk_duration_ms=10, overlap_chunks=2, 
-                 enable_playback=True, min_speech_frames=None, save_chunks=True):
+                 enable_playback=True, min_speech_frames=None, save_chunks=True, enable_vad=True):
         # Lấy min_speech_frames từ config nếu không được chỉ định
         vad_config = VADConfig.get_config()
         if min_speech_frames is None:
@@ -180,6 +180,7 @@ class RealTimeVADProcessor:
         self.enable_playback = enable_playback
         self.min_speech_frames = min_speech_frames  # Số frame tối thiểu để lưu vào buffer
         self.save_chunks = save_chunks  # Flag để kiểm soát việc lưu chunks
+        self.enable_vad = enable_vad  # New flag to enable/disable VAD
         
         # Analysis chunk size = current chunk + overlap chunks
         self.overlap_ms = overlap_chunks * chunk_duration_ms
@@ -239,6 +240,7 @@ class RealTimeVADProcessor:
         
         logger.info(f"📊 Min speech frames required: {min_speech_frames} ({min_speech_frames * chunk_duration_ms}ms)")
         logger.info(f"📦 Processed chunks buffer initialized for batching")
+        logger.info(f"VAD Enabled: {self.enable_vad}")
 
     def add_audio_chunk(self, audio_chunk):
         """Thêm audio chunk vào queue để xử lý"""
@@ -288,10 +290,14 @@ class RealTimeVADProcessor:
         analysis_chunk = chunk_data['analysis']  # 30ms chunk
         
         self.total_chunks += 1
-        
-        # Kiểm tra xem chunk có phải là speech không (dùng analysis chunk 30ms)
-        is_speech = self.zcr_filter.check(analysis_chunk)
-        
+
+        # Nếu VAD bị tắt, xử lý tất cả các chunk như là speech
+        if not self.enable_vad:
+            is_speech = True
+        else:
+            # Kiểm tra xem chunk có phải là speech không (dùng analysis chunk 30ms)
+            is_speech = self.zcr_filter.check(analysis_chunk)
+
         # Thêm chunk hiện tại vào buffer (lưu original chunk 10ms)
         chunk_data_item = {
             'audio': original_chunk.copy(),
@@ -375,7 +381,7 @@ class RealTimeVADProcessor:
                     self.on_speech_segment_end()
             else:
                 # Không trong speech segment, chỉ ghi log
-                logger.debug(f"🔇 Chunk {self.total_chunks}: SILENCE ❌ (streak {self.silent_streak})")
+                logger.debug(f"🔇 Chunk {self.total_chunks}: SILENCE ❌")
 
     def on_speech_segment_end(self):
         """Callback khi kết thúc một speech segment"""
