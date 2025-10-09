@@ -7,7 +7,7 @@ import os
 import logging
 from typing import Optional, Any, Dict
 
-from .new_vosk_service import NewSTTVoskService
+from Server.service.new_vosk_service import NewSTTVoskService
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,9 @@ class PipelineServiceController:
     
     def __init__(self):
         # Initialize the new pipeline-based service
-        from .new_vosk_service import stt_service_new
+        from Server.service.new_vosk_service import stt_service_new
         self.pipeline_service = stt_service_new
+        self.result_dispatcher = None  # NEW: For optimized dispatch
         
         logger.info("Pipeline service controller initialized with per-client architecture")
     
@@ -67,9 +68,16 @@ class PipelineServiceController:
             logger.error(f"Error getting pipeline distribution: {e}")
             return {"error": str(e), "architecture": "per_client_pipelines"}
     
+    def set_result_dispatcher(self, dispatcher):
+        """Set the optimized result dispatcher"""
+        self.result_dispatcher = dispatcher
+        self.pipeline_service.set_result_dispatcher(dispatcher)
+        logger.info("✅ PipelineController configured with OptimizedResultDispatcher")
+    
     def set_async_result_queue(self, loop, async_queue):
-        """Set async result queue for pipeline service"""
-        self.pipeline_service.set_async_result_queue(loop, async_queue)
+        """DEPRECATED - kept for backward compatibility"""
+        logger.warning("⚠️ set_async_result_queue() is DEPRECATED! Use set_result_dispatcher()")
+        # Do nothing - new architecture doesn't use shared queue
     
     async def start_service(self):
         """Start the pipeline service"""

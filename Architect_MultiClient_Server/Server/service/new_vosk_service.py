@@ -33,15 +33,16 @@ class NewSTTVoskService:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"VOSK model not found at {model_path}")
         
-        # Initialize pipeline manager
+        # Result handling
+        self.result_dispatcher = None  # NEW: For optimized dispatch
+        self.async_result_queue = None  # Legacy: kept for compatibility
+        self.async_loop = None  # Legacy: kept for compatibility
+        
+        # Initialize pipeline manager with dispatcher callback
         self.pipeline_manager = PipelineManager(
             model_path=model_path,
-            result_callback=self._emit_result
+            result_callback=self._emit_result_via_dispatcher  # Changed to new method
         )
-        
-        # Result dispatching
-        self.async_result_queue = None  # set by main via set_async_result_queue
-        self.async_loop = None
         
         # Circuit breaker
         self._circuit_breaker = get_stt_circuit_breaker()
@@ -64,8 +65,14 @@ class NewSTTVoskService:
         
         logger.info("New STT Vosk Service started")
     
+    def set_result_dispatcher(self, dispatcher):
+        """Set the optimized result dispatcher"""
+        self.result_dispatcher = dispatcher
+        logger.info("✅ STT Service configured with OptimizedResultDispatcher")
+    
     def set_async_result_queue(self, loop, async_queue):
-        """Register asyncio loop and queue for non-polling result dispatch."""
+        """DEPRECATED - Register asyncio loop and queue for non-polling result dispatch."""
+        logger.warning("⚠️ set_async_result_queue() is DEPRECATED! Use set_result_dispatcher()")
         self.async_loop = loop
         self.async_result_queue = async_queue
     
@@ -140,9 +147,38 @@ class NewSTTVoskService:
             self._circuit_breaker.record_failure()
             return False
     
-    def _emit_result(self, result_type: str, payload: Dict):
-        """Thread-safe result emission."""
-        logger.debug(f"NewSTTVoskService: Received result from pipeline - {result_type}: '{payload.get('text', '')}'")
+    def _emit_result_via_dispatcher(self, result_type: str, payload: Dict):
+        """Thread-safe result emission via optimized dispatcher"""
+        if self.result_dispatcher is not None:
+            try:
+                client_id = payload.get('client_id')
+                session_id = payload.get('session_id')
+                
+                coro = self.result_dispatcher.emit_result(
+                    session_id=session_id,
+                    client_id=client_id,
+                    result_type=result_type,
+                    payload=payload
+                )
+                
+                try:
+                    loop = asyncio.get_event_loop()
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+                except RuntimeError:
+                    loop = asyncio.get_running_loop()
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+                
+                logger.debug(f"Emitted result via optimized dispatcher: {result_type}")
+                
+            except Exception as e:
+                logger.error(f"Failed to emit via dispatcher: {e}")
+                self._fallback_emit_result(result_type, payload)
+        else:
+            self._fallback_emit_result(result_type, payload)
+    
+    def _fallback_emit_result(self, result_type: str, payload: Dict):
+        """Fallback using legacy queue"""
+        logger.debug(f"Using legacy result emission - {result_type}: '{payload.get('text', '')}'")
         
         if self.async_result_queue is not None and self.async_loop is not None:
             try:
@@ -150,11 +186,11 @@ class NewSTTVoskService:
                     self.async_result_queue.put_nowait, 
                     (result_type, payload)
                 )
-                logger.debug(f"NewSTTVoskService: Successfully queued result for dispatch to client")
+                logger.debug("Successfully queued result using legacy method")
             except Exception as e:
-                logger.error(f"NewSTTVoskService: Failed to emit result: {e}")
+                logger.error(f"Failed to emit result (legacy): {e}")
         else:
-            logger.error(f"NewSTTVoskService: No async result queue configured - result DROPPED! Queue={self.async_result_queue}, Loop={self.async_loop}")
+            logger.error(f"No result output configured! Queue={self.async_result_queue}, Loop={self.async_loop}")
     
     async def cleanup_client(self, client_id: str, session_id: str):
         """Cleanup client resources when client disconnects."""

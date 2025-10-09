@@ -112,13 +112,22 @@ class PipelineManager:
                         f"Current active: {len(self.pipelines)}, Cleaned: {cleaned}"
                     )
             
+            # Get dispatcher reference
+            result_dispatcher = None
+            try:
+                from ..service.result_dispatcher import get_result_dispatcher
+                result_dispatcher = get_result_dispatcher()
+            except Exception as e:
+                logger.debug(f"Could not get result dispatcher: {e}")
+
             # Create new pipeline
             pipeline = ClientInferencePipeline(
                 client_id=client_id,
                 session_id=session_id,
                 model=self.model,
                 result_callback=self.result_callback,
-                pipeline_manager=self  # Pass reference for adaptive chunk sizing
+                pipeline_manager=self,  # Pass reference for adaptive chunk sizing
+                result_dispatcher=result_dispatcher  # NEW parameter
             )
             
             # Store and start pipeline

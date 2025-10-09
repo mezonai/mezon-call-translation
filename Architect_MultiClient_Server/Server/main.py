@@ -8,13 +8,11 @@ from .session_manager import session_manager
 from .service.metrics_service import metrics
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
-#agent service
-from .controller.agents_control import router as agents_control
-
-# Per-Client Pipeline Service
-from .controller.ws_vosk_control import router as stt_router
-from .service.migration_controller import pipeline_controller
-from .service.health_service import get_health_service
+# Import relative to Server package
+from Server.controller.agents_control import router as agents_control
+from Server.controller.ws_vosk_control import router as stt_router
+from Server.service.migration_controller import pipeline_controller
+from Server.service.health_service import get_health_service
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
 
@@ -26,85 +24,34 @@ from fastapi.middleware.cors import CORSMiddleware
 # Load environment variables
 load_dotenv()
 
-async def result_dispatcher(async_result_queue: asyncio.Queue):
-    """Fetch results from Vosk (async queue) and send to clients without polling."""
-    logger.info("Result dispatcher started")
-    while True:
-        try:
-            start_time = time.time()
-            result_type, payload = await async_result_queue.get()
-            logger.debug(f"Dispatcher received: type={result_type}, text='{payload.get('text', '')}', client={payload.get('client_id')}")
 
-            logger.info(f"Queue size: {async_result_queue.qsize()}")
-            if result_type in ["transcript", "transcripts"]:
-                # Pass sender_client_id to only send to the client who generated the transcript
-                sender_client_id = payload.get("client_id")
-                clients = session_manager.get_clients_to_notify_transcript(
-                    payload["session_id"], 
-                    sender_client_id=sender_client_id
-                )
-                logger.debug(f"Sending transcript to {len(clients)} clients for session {payload['session_id']} (sender: {sender_client_id})")
-                
-            elif result_type == "translation":
-                # Pass sender_client_id to only send to the client who generated the translation
-                sender_client_id = payload.get("client_id")
-                clients = session_manager.get_clients_to_notify_translation(
-                    payload["session_id"],
-                    sender_client_id=sender_client_id
-                )
-                logger.debug(f"Sending translation to {len(clients)} clients for session {payload['session_id']} (sender: {sender_client_id})")
-            else:
-                logger.warning(f"Unknown result type: {result_type}")
-                clients = []
-
-            for ws in clients:
-                try:
-                    await ws.send_json(payload)
-                    try:
-                        metrics.track_ws_message('out', payload.get('session_id', 'unknown'))
-                        # Track bytes sent (approximate JSON size)
-                        import json
-                        payload_size = len(json.dumps(payload).encode('utf-8'))
-                        metrics.ws_bytes_sent.labels(session_id=payload.get('session_id', 'unknown')).inc(payload_size)
-                    except Exception:
-                        pass
-                    logger.debug(f"Successfully sent {result_type} to client: '{payload.get('text', '')[:50]}...'")
-                except Exception as e:
-                    try:
-                        metrics.ws_errors.labels(type='send').inc()
-                    except Exception:
-                        pass
-                    logger.warning(f"Failed to send to client (session_id={payload.get('session_id')}, client_id={payload.get('client_id')}): {e}")
-            time_ws = time.time() - start_time
-            print("thời gian gửi là: ", time_ws)       
-        except Exception as e:
-            logger.error(f"Dispatcher loop error: {e}", exc_info=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup → Shutdown lifecycle."""
-    async_result_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+    # Initialize optimized dispatcher
+    from .service.result_dispatcher import get_result_dispatcher
+    result_dispatcher = get_result_dispatcher(metrics=metrics)
     
-    # Start per-client pipeline service
+    # Start pipeline service
     await pipeline_controller.start_service()
     
-    # Provide loop and queue to service for thread-safe result emission
-    pipeline_controller.set_async_result_queue(asyncio.get_event_loop(), async_result_queue)
+    # Set dispatcher (replaces set_async_result_queue)
+    pipeline_controller.set_result_dispatcher(result_dispatcher)
     
-    dispatcher_task = asyncio.create_task(result_dispatcher(async_result_queue))
     system_metrics_task = asyncio.create_task(system_metrics_loop())
     
     yield
     
-    # Shutdown pipeline service gracefully
+    # Shutdown
+    await result_dispatcher.shutdown()
     await pipeline_controller.shutdown_service()
     
-    for t in (dispatcher_task, system_metrics_task):
-        t.cancel()
-        try:
-            await t
-        except asyncio.CancelledError:
-            pass
+    system_metrics_task.cancel()
+    try:
+        await system_metrics_task
+    except asyncio.CancelledError:
+        pass
 
 
 # Init logging and FastAPI
@@ -176,6 +123,19 @@ async def system_metrics_loop():
                 metrics.queue_size.labels(queue_name='audio_queue').set(total_qsize)
             except Exception as e:
                 logger.debug(f"Queue size metrics error: {e}")
+            
+            # Dispatcher queue metrics
+            try:
+                from .service.result_dispatcher import get_result_dispatcher
+                dispatcher = get_result_dispatcher()
+                dispatcher_stats = dispatcher.get_stats()
+                total_dispatcher_queue = sum(
+                    client.get('queue_size', 0)
+                    for client in dispatcher_stats.get('clients', [])
+                )
+                metrics.queue_size.labels(queue_name='dispatcher_queue').set(total_dispatcher_queue)
+            except Exception as e:
+                logger.debug(f"Dispatcher queue metrics error: {e}")
         except Exception as e:
             logger.debug(f"System metrics loop error: {e}")
         await asyncio.sleep(5.0)

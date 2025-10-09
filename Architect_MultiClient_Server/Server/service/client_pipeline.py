@@ -1,5 +1,7 @@
 """
-Per-Client Inference Pipeline for Vosk STT Processing
+Per-Client Inference                    self._emit_result("transcript", result_payload)
+                    logger.debug(f"Emitting final result for client {self.client_id}: {text[:50]}...")
+                    self.stats.final_results += 1peline for Vosk STT Processing
 Replaces the shared worker pool with dedicated pipelines per client.
 """
 
@@ -54,12 +56,21 @@ class ClientInferencePipeline:
     """
     
     def __init__(self, client_id: str, session_id: str, model: Model, 
-                 result_callback: Callable[[str, Dict], None], pipeline_manager=None):
+                 result_callback: Callable[[str, Dict], None], pipeline_manager=None,
+                 result_dispatcher=None):  # NEW parameter
         self.client_id = client_id
         self.session_id = session_id
         self.model = model
         self.result_callback = result_callback
+        self.result_dispatcher = result_dispatcher  # NEW: Store reference
         self.pipeline_manager = pipeline_manager  # Reference to get concurrent client count
+        
+        # Store main event loop during initialization
+        try:
+            self._main_loop = asyncio.get_event_loop()
+            logger.debug(f"Client {self.client_id}: Stored main event loop during initialization")
+        except Exception as e:
+            logger.warning(f"Client {self.client_id}: Could not store main event loop: {e}")
         
         # Get configuration
         self.config = get_config()
@@ -323,16 +334,19 @@ class ClientInferencePipeline:
                 text = result.get("text", "").strip()
                 
                 if len(text) >= self.config.audio.min_text_length:
-                    self._emit_result("transcript", {
-                        "type": "transcript",
+                    # Format phù hợp với client
+                    result_payload = {
                         "text": text,
                         "is_final": True,
                         "client_id": self.client_id,
                         "session_id": self.session_id,
-                        "timestamp": time.time(),
-                        **({"chunk_id": self.last_chunk_id} if self.last_chunk_id is not None else {})
-                    })
+                        "timestamp": time.time()
+                    }
+                    if self.last_chunk_id is not None:
+                        result_payload["chunk_id"] = self.last_chunk_id
 
+                    self._emit_result("transcript", result_payload)
+                    logger.debug(f"Emitting final result for client {self.client_id}: {text[:50]}...")
                     self.stats.final_results += 1
             else:
                 # Partial result
@@ -340,16 +354,19 @@ class ClientInferencePipeline:
                 text = partial.get("partial", "").strip()
                 
                 if len(text) >= self.config.audio.min_text_length:
-                    self._emit_result("transcript", {
-                        "type": "transcript",
+                    # Format phù hợp với client
+                    result_payload = {
                         "text": text,
                         "is_final": False,
                         "client_id": self.client_id,
                         "session_id": self.session_id,
-                        "timestamp": time.time(),
-                        **({"chunk_id": self.last_chunk_id} if self.last_chunk_id is not None else {})
-                    })
+                        "timestamp": time.time()
+                    }
+                    if self.last_chunk_id is not None:
+                        result_payload["chunk_id"] = self.last_chunk_id
 
+                    self._emit_result("transcript", result_payload)
+                    logger.debug(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
                     self.stats.partial_results += 1
         
         except Exception as e:
@@ -357,12 +374,49 @@ class ClientInferencePipeline:
             raise
     
     def _emit_result(self, result_type: str, payload: Dict):
-        """Emit processing result (thread-safe callback)"""
+        """Emit processing result using optimized dispatcher (thread-safe)"""
         try:
+            # Prefer optimized dispatcher
+            if self.result_dispatcher:
+                coro = self.result_dispatcher.emit_result(
+                    session_id=self.session_id,
+                    client_id=self.client_id,
+                    result_type=result_type,
+                    payload=payload
+                )
+                
+                # Store the main event loop during initialization for thread-safe access
+                if not hasattr(self, '_main_loop'):
+                    try:
+                        import threading
+                        if threading.current_thread() is threading.main_thread():
+                            self._main_loop = asyncio.get_event_loop()
+                        else:
+                            # If we're in a different thread, try to get the running loop from main thread
+                            for thread in threading.enumerate():
+                                if thread is threading.main_thread():
+                                    try:
+                                        self._main_loop = asyncio.get_running_loop()
+                                        break
+                                    except RuntimeError:
+                                        pass
+                    except Exception as e:
+                        logger.error(f"Failed to get main event loop: {e}")
+                
+                if hasattr(self, '_main_loop'):
+                    try:
+                        asyncio.run_coroutine_threadsafe(coro, self._main_loop)
+                        return
+                    except Exception as e:
+                        logger.error(f"Failed to run coroutine in main loop: {e}")
+                else:
+                    logger.error("No main event loop available for async dispatch")
+            
+            # Fallback to legacy callback
             if self.result_callback:
                 self.result_callback(result_type, payload)
             else:
-                logger.error(f"Client {self.client_id}: NO RESULT CALLBACK CONFIGURED - transcript will be lost!")
+                logger.error(f"Client {self.client_id}: NO RESULT OUTPUT CONFIGURED!")
             
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error emitting result: {e}", exc_info=True)

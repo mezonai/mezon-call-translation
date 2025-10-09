@@ -1,8 +1,8 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from ..service.migration_controller import pipeline_controller
-from ..session_manager import session_manager
-from ..utils.websocket_monitor import websocket_monitor
-from ..service.metrics_service import metrics
+from Server.service.migration_controller import pipeline_controller
+from Server.session_manager import session_manager
+from Server.utils.websocket_monitor import websocket_monitor
+from Server.service.metrics_service import metrics
 import asyncio
 import time
 from typing import Optional
@@ -34,6 +34,11 @@ async def websocket_vosk(
         max_duration,
         idle_timeout,
     )
+    
+    from ..service.result_dispatcher import get_result_dispatcher
+    result_dispatcher = get_result_dispatcher()
+    await result_dispatcher.register_client(session_id, client_id, websocket)
+    
     session_manager.add_client(session_id, client_id, websocket, transcript, translation, language)
     
     # Record connection for monitoring
@@ -128,8 +133,16 @@ async def websocket_vosk(
         logger.error("Unhandled error in websocket handler for client_id=%s session_id=%s: %s", 
                     client_id, session_id, str(e), exc_info=True)
     finally:
-        # Always ensure client is removed from session manager on exit
+        # Always ensure client is removed from all services
         session_manager.remove_client(session_id, client_id)
+        
+        # Unregister from result dispatcher
+        try:
+            from ..service.result_dispatcher import get_result_dispatcher
+            result_dispatcher = get_result_dispatcher()
+            await result_dispatcher.unregister_client(session_id, client_id)
+        except Exception as e:
+            logger.warning("Error unregistering from dispatcher: %s", e)
         
         # Cleanup client pipeline when disconnecting
         try:
@@ -138,6 +151,17 @@ async def websocket_vosk(
         except Exception as e:
             logger.warning("Failed to cleanup client pipeline: %s", e)
             logger.info("Cleaned up client_id=%s from session_id=%s in session manager only", client_id, session_id)
+
+@router.get("/ws/dispatcher-stats")
+async def get_dispatcher_stats():
+    """Get dispatcher performance statistics"""
+    from ..service.result_dispatcher import get_result_dispatcher
+    result_dispatcher = get_result_dispatcher()
+    return {
+        "dispatcher_stats": result_dispatcher.get_stats(),
+        "timestamp": time.time(),
+        "architecture": "per_client_concurrent_dispatchers"
+    }
 
 @router.get("/ws/stats")
 async def get_websocket_stats():
