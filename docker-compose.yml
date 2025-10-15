@@ -8,7 +8,7 @@ services:
     ports:
       - "8000"   # let Docker assign internal port
     env_file:
-      - .env
+      - Architect_MultiClient_Server/Server/.env
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
@@ -53,23 +53,33 @@ services:
       context: .
       dockerfile: Dockerfile.agent
     container_name: mezon-livekit-agent
-    ports:
-      - "8080:8080"
+    # No host port mapping needed; agent connects internally to nginx and bot
     env_file:
-      - .env
+      - Architect_MultiClient_Server/agents/.env
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
-      # LiveKit environment variables (cần được set trong .env)
-      - LIVEKIT_URL=${LIVEKIT_URL}
-      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
-      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
-      # WebSocket server URL cho agent (now through Nginx)
-      - WS_HOST=nginx
-      - WS_PORT=8000
     depends_on:
       nginx:
         condition: service_started
+    networks:
+      - mezon-network
+    restart: unless-stopped
+
+  # Mezon Transcript Bot (Node)
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: mezon-transcript-bot
+    ports:
+      - "8080:8080"
+    env_file:
+      - Architect_MultiClient_Server/bot/.env
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - nginx
     networks:
       - mezon-network
     restart: unless-stopped
@@ -85,3 +95,4 @@ volumes:
   # Persistent volume cho logs
   logs:
     driver: local
+ 

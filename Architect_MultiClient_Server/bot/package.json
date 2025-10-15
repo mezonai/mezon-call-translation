@@ -1,0 +1,20 @@
+{
+  "name": "bot-transcript",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "nodemon index"
+  },
+  "dependencies": {
+    "@livekit/rtc-node": "^0.13.20",
+    "axios": "^1.11.0",
+    "bot-transcript": "file:",
+    "dotenv": "^16.4.5",
+    "jsonwebtoken": "^9.0.2",
+    "livekit-server-sdk": "^2.14.0",
+    "mezon-sdk": "^2.8.20"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}

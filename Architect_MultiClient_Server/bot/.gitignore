@@ -1,0 +1,6 @@
+node_modules
+.env
+# Mezon cache
+/mezon-cache
+private-key.pem
+public-key.pem

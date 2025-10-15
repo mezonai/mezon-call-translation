@@ -1,9 +1,3 @@
-"""
-Per-Client Inference                    self._emit_result("transcript", result_payload)
-                    logger.debug(f"Emitting final result for client {self.client_id}: {text[:50]}...")
-                    self.stats.final_results += 1peline for Vosk STT Processing
-Replaces the shared worker pool with dedicated pipelines per client.
-"""
 
 import asyncio
 import json
@@ -365,7 +359,7 @@ class ClientInferencePipeline:
                     if self.last_chunk_id is not None:
                         result_payload["chunk_id"] = self.last_chunk_id
 
-                    self._emit_result("transcript", result_payload)
+                    # self._emit_result("transcript", result_payload)
                     logger.debug(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
                     self.stats.partial_results += 1
         
