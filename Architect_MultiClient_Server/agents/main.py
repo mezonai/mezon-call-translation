@@ -27,6 +27,8 @@ async def entrypoint(ctx: agents.JobContext):
         logger.info("Room disconnected, cleaning up all clients")
         await event_handlers.safe_disconnect_all()
         await agent_manager.cleanup()  # Cleanup agent
+        # THÊM: Cleanup Bot WebSocket
+        await transcript_manager.cleanup()
         disconnected.set()
 
     # Set up event handlers
@@ -56,6 +58,7 @@ async def entrypoint(ctx: agents.JobContext):
     finally:
         logger.info("Shutting down agent...")
         await event_handlers.safe_disconnect_all()
+        await transcript_manager.cleanup()
 
 
 if __name__ == "__main__":

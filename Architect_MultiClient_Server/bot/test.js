@@ -1,44 +1,37 @@
-// test_agent.js
+// test_agent.js (updated for /ws/agent/{session_id} endpoint)
 const WebSocket = require('ws');
 
-const ws = new WebSocket('ws://127.0.0.1:8080');
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-ws.on('open', () => {
-  console.log('Connected to bot');
+const sessionId = 'BvDcmJeHg';
+const clientId = 'John.Doe';
+const ws = new WebSocket(`ws://127.0.0.1:8080/ws/agent/${sessionId}`);
 
-  // 1) Register a user to receive transcripts for the meeting (uses existing registry logic on server)
-  ws.send(JSON.stringify({
-    type: 'register',
-    meetingCode: 'BvDcmJeHg',
-    userId: '1946168514767228928'
-  }));
+ws.on('open', async () => {
+  console.log('Connected to bot agent endpoint');
 
+  // Send 20 messages, 200ms apart, with Agent payload format
+  for (let i = 1; i <= 20; i++) {
+    const payload = {
+      text: `${i}/20: test transcript payload`,
+      is_final: i % 5 === 0, // mark every 5th as final, others interim
+      client_id: clientId,
+      session_id: sessionId,
+      timestamp: new Date().toISOString()
+    };
+    ws.send(JSON.stringify(payload));
+    await delay(200);
+  }
 });
 
 ws.on('message', (data) => {
-  const msg = JSON.parse(data.toString());
-  console.log('Response:', msg);
-
-  // After server confirms registration, send multiple transcripts quickly
-  if (msg.type === 'registered') {
-    const messages = [
-      'First message from John',
-      'Second quick update',
-      'Third note with more details',
-      'Fourth: testing concurrency',
-      'Fifth and final burst'
-    ];
-
-    // Fire off all messages nearly at once
-    messages.forEach((text, idx) => {
-      ws.send(JSON.stringify({
-        type: 'transcript',
-        meetingCode: 'BvDcmJeHg',
-        name_user: 'John Doe',
-        text: `${idx + 1}/${messages.length}: ${text}`,
-        timestamp: new Date().toISOString()
-      }));
-    });
+  try {
+    const msg = JSON.parse(data.toString());
+    console.log('Response:', msg);
+  } catch (e) {
+    console.log('Raw message:', data.toString());
   }
 });
 

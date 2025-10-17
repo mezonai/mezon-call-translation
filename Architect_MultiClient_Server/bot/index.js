@@ -44,7 +44,9 @@ async function main() {
 
   client.onChannelMessage(async (event) => {
     try {
-      const text = event?.content?.t?.toLowerCase()?.trim();
+      const raw = event?.content?.t;
+      console.log(raw)
+      const text = typeof raw === 'string' ? raw.toLowerCase().trim() : '';
       if (!text) return;
 
       // Command routing

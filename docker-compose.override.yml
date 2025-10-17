@@ -17,3 +17,16 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - RELOAD=true
+
+  bot:
+    # Enable hot reload for bot with nodemon in development
+    working_dir: /app/bot
+    environment:
+      - NODE_ENV=development
+      - npm_config_build_from_source=true
+    volumes:
+      - ./Architect_MultiClient_Server/bot:/app/bot
+      - /app/bot/node_modules
+    command: sh -c "npm install --no-audit --no-fund && npm rebuild better-sqlite3 --build-from-source || true && npx nodemon index.js"
+    ports:
+      - "8080:8080"
