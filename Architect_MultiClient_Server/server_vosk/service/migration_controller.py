@@ -7,7 +7,7 @@ import os
 import logging
 from typing import Optional, Any, Dict
 
-from Server.service.new_vosk_service import NewSTTVoskService
+from server_vosk.service.new_vosk_service import NewSTTVoskService
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class PipelineServiceController:
     
     def __init__(self):
         # Initialize the new pipeline-based service
-        from Server.service.new_vosk_service import stt_service_new
+        from server_vosk.service.new_vosk_service import stt_service_new
         self.pipeline_service = stt_service_new
         self.result_dispatcher = None  # NEW: For optimized dispatch
         

@@ -1,15 +1,14 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from Server.service.migration_controller import pipeline_controller
-from Server.session_manager import session_manager
-from Server.utils.websocket_monitor import websocket_monitor
-from Server.service.metrics_service import metrics
+from server_vosk.service.migration_controller import pipeline_controller
+from server_vosk.session_manager import session_manager
+from server_vosk.utils.websocket_monitor import websocket_monitor
+from server_vosk.service.metrics_service import metrics
 import asyncio
 import time
 from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 @router.websocket("/ws/vosk/")

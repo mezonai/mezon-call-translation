@@ -9,10 +9,10 @@ from .service.metrics_service import metrics
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 # Import relative to Server package
-from Server.controller.agents_control import router as agents_control
-from Server.controller.ws_vosk_control import router as stt_router
-from Server.service.migration_controller import pipeline_controller
-from Server.service.health_service import get_health_service
+from server_vosk.controller.agents_control import router as agents_control
+from server_vosk.controller.ws_vosk_control import router as stt_router
+from server_vosk.service.migration_controller import pipeline_controller
+from server_vosk.service.health_service import get_health_service
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
 
