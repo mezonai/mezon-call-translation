@@ -78,17 +78,20 @@ module.exports = async function handleEnableTranscript(
     const dmClan = await client.clans.fetch('0');
     const user = await dmClan.users.fetch(userId);
     
-    await user.sendDM({ 
-      t: `✅ **Transcript Đã Được Bật**
+    await user.sendDM({
+      t: `
+    ----- TRANSCRIPT ĐÃ BẬT ----- 
 
-🎙️ **Meeting:** \`${meetingCode}\`
-📍 **Channel:** ${channel.name || 'Unknown'}
-👥 **Users đang nghe:** ${users.length}
-
-📢 Bạn sẽ nhận được tin nhắn real-time mỗi khi có người nói trong cuộc họp.
-
-ℹ️ Để tắt, gửi lệnh: \`*disable_transcript\`` 
+    📋 Cuộc họp: ${meetingCode}
+    🏠 Kênh: ${channel.name || 'Không rõ'}
+    👥 Thành viên: ${users.length}
+    
+    Bạn sẽ nhận bản ghi âm & văn bản theo thời gian thực.  
+    Tắt bằng lệnh: *disable_transcript
+    `
     });
+    
+    
 
   } catch (err) {
     console.error('❌ Error in handleEnableTranscript:', err);
@@ -98,11 +101,10 @@ module.exports = async function handleEnableTranscript(
       const user = await dmClan.users.fetch(event.sender_id);
       
       await user.sendDM({ 
-        t: `❌ **Lỗi Khi Bật Transcript**
+        t: `❌ Lỗi Khi Bật Transcript
+        ⚠️ Lỗi: ${err.message}
 
-⚠️ **Lỗi:** ${err.message}
-
-🔧 Vui lòng thử lại sau hoặc liên hệ admin.` 
+        🔧 Vui lòng thử lại sau hoặc liên hệ admin.` 
       });
     } catch (dmError) {
       console.error('Failed to send error DM:', dmError);

@@ -70,3 +70,4 @@ temp/
 
 # Application specific
 application.log
+/Architect_MultiClient_Server/bot/node_modules

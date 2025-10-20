@@ -23,9 +23,11 @@ module.exports = async function handleDisableTranscript(
     const meetingCode = channel.meeting_code;
 
     // 2. Kiểm tra voice channel
-    if (!meetingCode || channel.type !== 2) {
+    console.log(meetingCode, channel.channel_type );
+
+    if (!meetingCode || channel.channel_type !== 10) {
       const message = await channel.messages.fetch(event.message_id);
-      await message.reply({
+      console.log({
         t: "❌ Bạn chỉ có thể tắt transcript trong voice channel."
       });
       return;
@@ -36,7 +38,7 @@ module.exports = async function handleDisableTranscript(
     // 3. Check if user is registered
     if (!meetingRegistry.hasUser(meetingCode, userId)) {
       const message = await channel.messages.fetch(event.message_id);
-      await message.reply({
+      console.log({
         t: "⚠️ Bạn chưa bật transcript cho meeting này."
       });
       return;
@@ -54,14 +56,18 @@ module.exports = async function handleDisableTranscript(
     const dmClan = await client.clans.fetch('0');
     const user = await dmClan.users.fetch(userId);
     
-    await user.sendDM({ 
-      t: `🔕 **Transcript Đã Được Tắt**
+    await user.sendDM({
+      t: `
 
-🎙️ **Meeting:** \`${meetingCode}\`
-📍 **Channel:** ${channel.name || 'Unknown'}
+    ----- 🔕 TRANSCRIPT ĐÃ TẮT -----
 
-✅ Bạn sẽ không còn nhận được transcript từ meeting này.` 
+    🎙️ Cuộc họp: ${meetingCode}
+    🏠 Kênh: ${channel.name || 'Không rõ'}
+    
+    ✅ Bạn sẽ không còn nhận được bản ghi và transcript từ cuộc họp này.
+    `
     });
+    
 
   } catch (err) {
     console.error('❌ Error in handleDisableTranscript:', err);
@@ -71,11 +77,11 @@ module.exports = async function handleDisableTranscript(
       const user = await dmClan.users.fetch(event.sender_id);
       
       await user.sendDM({ 
-        t: `❌ **Lỗi Khi Tắt Transcript**
+        t: `
+      ❌ Lỗi Khi Tắt Transcript
+      ⚠️ Lỗi: ${err.message}
 
-⚠️ **Lỗi:** ${err.message}
-
-🔧 Vui lòng thử lại sau hoặc liên hệ admin.` 
+      🔧 Vui lòng thử lại sau hoặc liên hệ admin.` 
       });
     } catch (dmError) {
       console.error('Failed to send error DM:', dmError);

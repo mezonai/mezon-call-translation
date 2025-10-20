@@ -31,14 +31,14 @@ module.exports = async function handleTranscriptStatus(
     let statusMsg = `📊 **Transcript Status**\n\n`;
     
     // Kiểm tra voice channel
-    if (meetingCode && channel.type === 2) {
+    if (meetingCode && channel.channel_type === 2) {
       const users = meetingRegistry.getUsers(meetingCode);
       const isUserRegistered = meetingRegistry.hasUser(meetingCode, userId);
       
-      statusMsg += `📍 **Current Channel:** ${channel.name || 'Unknown'}\n`;
-      statusMsg += `🎙️ **Meeting Code:** \`${meetingCode}\`\n`;
-      statusMsg += `👥 **Users listening:** ${users.length}\n`;
-      statusMsg += `📢 **Your status:** ${isUserRegistered ? '✅ Enabled' : '❌ Disabled'}\n\n`;
+      statusMsg += `📍 Current Channel: ${channel.name || 'Unknown'}\n`;
+      statusMsg += `🎙️ Meeting Code: \`${meetingCode}\`\n`;
+      statusMsg += `👥 Users listening: ${users.length}\n`;
+      statusMsg += `📢 Your status: ${isUserRegistered ? '✅ Enabled' : '❌ Disabled'}\n\n`;
       
       if (users.length > 0) {
         statusMsg += `**Active users:**\n`;
@@ -54,7 +54,7 @@ module.exports = async function handleTranscriptStatus(
     }
     
     statusMsg += `\n━━━━━━━━━━━━━━━━━\n`;
-    statusMsg += `🌐 **Global Stats:**\n`;
+    statusMsg += `🌐 Global Stats:\n`;
     statusMsg += `• Total meetings: ${stats.totalMeetings}\n`;
     statusMsg += `• Total users: ${stats.totalUsers}`;
 

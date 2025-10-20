@@ -24,7 +24,7 @@ class BotWebSocketClient:
     def __init__(self, session_id: str, meeting_code: str):
         self.session_id = session_id
         self.meeting_code = meeting_code
-        self.uri = f"ws://{self.BOT_WS_HOST}:{self.BOT_WS_PORT}/ws/agent/BvDcmJeHg" #{session_id}
+        self.uri = f"ws://{self.BOT_WS_HOST}:{self.BOT_WS_PORT}/ws/agent/{session_id}"
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
         self.connected = False
         self.reconnecting = False
