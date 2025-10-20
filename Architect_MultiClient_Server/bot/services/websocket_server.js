@@ -1,7 +1,9 @@
 // services/websocket_server.js
 
 const WebSocket = require('ws');
-
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 class TranscriptWebSocketServer {
   constructor(port, mezonClient, meetingRegistry) {
     this.port = port;
@@ -11,6 +13,7 @@ class TranscriptWebSocketServer {
     // Bộ nhớ cache lưu tin nhắn cuối cùng của mỗi user
     // Cấu trúc: { [userId]: Message }
     this.lastMessages = {};
+    this.lastClient = {};
 
     // Tracking last send times for rate limiting per user
     this.lastSendTimes = new Map();
@@ -91,7 +94,7 @@ class TranscriptWebSocketServer {
 
       // Process both interim and final transcripts; dropping is handled by rate limit below
 
-      const { text, client_id, session_id, timestamp } = data;
+      const { text, client_id, session_id, timestamp, is_final } = data;
 
       console.log(`📨 Transcript from agent: [${session_id}] ${client_id}: ${text}`);
 
@@ -113,7 +116,8 @@ class TranscriptWebSocketServer {
         client_id,
         text,
         users,
-        timestamp
+        timestamp,
+        Boolean(is_final)
       );
 
       // Respond to Agent
@@ -133,57 +137,81 @@ class TranscriptWebSocketServer {
     }
   }
 
-  async broadcastTranscriptWithRateLimit(sessionId, clientId, text, userIds, timestamp) {
+  async broadcastTranscriptWithRateLimit(sessionId, clientId, text, userIds, timestamp, isFinal) {
     const dmClan = await this.client.clans.fetch('0');
     const results = [];
     const time = timestamp
       ? new Date(timestamp).toLocaleTimeString('vi-VN')
       : new Date().toLocaleTimeString('vi-VN');
 
-    const dmMessage = {
-      t: `🎙️ [${sessionId}] (${time}) — **${clientId}**: ${text}`
-    };
+    const newContent = `🎙️ [${sessionId}] (${time}) — **${clientId}**${isFinal ? ' (final)' : ''}: ${text}`;
 
-    // Rate limiting: 100ms per user
+
+
+
     for (const userId of userIds) {
       try {
         const user = await dmClan.users.fetch(userId);
 
-        // Kiểm tra last send time
+
         const now = Date.now();
         const lastSendKey = `${userId}_last_send`;
         const lastSend = this.lastSendTimes?.get(lastSendKey) || 0;
+        const delta = now - lastSend;
 
-        if (now - lastSend < 100) {
-          // Chưa đủ 100ms, skip transcript này
+        // 🚦 Rate limit: chỉ bỏ qua nếu isFinal === false và gửi quá nhanh
+        if (delta < 500 && !isFinal) {
+          console.log(`⏱️ Rate-limited user ${userId}: delta=${delta}ms (<500ms), skipping`);
           results.push({
             userId: userId,
             status: 'rate_limited',
-            message: 'Skipped due to rate limit'
+            message: `Skipped due to rate limit (delta=${delta}ms)`
           });
           continue;
         }
 
-        // Gửi DM
-        await user.sendDM(dmMessage);
-
-        // Cập nhật last send time
-        if (!this.lastSendTimes) {
-          this.lastSendTimes = new Map();
-        }
+        // ✅ Cập nhật last send time
+        if (!this.lastSendTimes) this.lastSendTimes = new Map();
         this.lastSendTimes.set(lastSendKey, now);
 
-        results.push({
-          userId: userId,
-          status: 'success'
-        });
+        const lastMsg = this.lastMessages[userId];
+        const lastClientId = this.lastClient?.[userId];
+        const isDifferentClient = lastClientId && lastClientId !== clientId;
 
-        console.log(`   ✅ Sent to user ${userId}`);
+        if (!lastMsg || isDifferentClient) {
+          // ➤ Nếu chưa có tin nhắn trước hoặc clientId đã thay đổi → gửi tin nhắn mới
+          const sentMessage = await user.sendDM({ t: newContent });
+          await delay(100);
+          const channel = await this.client.channels.fetch(sentMessage?.channel_id);
+          const message = await channel.messages.fetch(sentMessage?.message_id);
+          this.lastMessages[userId] = message;
+          this.lastClient = this.lastClient || {};
+          this.lastClient[userId] = clientId; // 🔄 Lưu lại clientId
+          console.log(`✅ Sent new message to user ${userId}`);
+        } else {
+          // ➤ Update tin nhắn cũ
+          await lastMsg.update({ t: newContent });
+          console.log(`🔁 Updated message for user ${userId}`);
+        }
+
+        // Nếu là final thì reset để lần sau gửi lại từ đầu
+        if (isFinal) {
+          this.lastMessages[userId] = null;
+          this.lastClient[userId] = null;
+        }
+
+        results.push({ userId, status: 'success' });
+
+
+
+
+
+
 
       } catch (error) {
-        console.error(`   ❌ Failed to send to user ${userId}:`, error.message);
+        console.error(`❌ Failed to send/update for user ${userId}:`, error.message);
         results.push({
-          userId: userId,
+          userId,
           status: 'error',
           error: error.message
         });
@@ -192,6 +220,7 @@ class TranscriptWebSocketServer {
 
     return results;
   }
+
 
   async handleMessage(ws, message) {
     try {
@@ -275,14 +304,37 @@ class TranscriptWebSocketServer {
     for (const userId of userIds) {
       try {
         const user = await dmClan.users.fetch(userId);
-
         // Kiểm tra xem người dùng này đã có tin nhắn trước đó chưa
+        // Kiểm tra last send time (100ms per user)
+        const now = Date.now();
+        const lastSendKey = `${userId}_last_send`;
+        const lastSend = this.lastSendTimes?.get(lastSendKey) || 0;
+        const delta = now - lastSend;
+        if (delta < 500) {
+          console.log(`⏱️ Rate-limited user ${userId}: delta=${delta}ms (<500ms), skipping`)
+          results.push({
+            userId: userId,
+            status: 'rate_limited',
+            message: `Skipped due to rate limit (delta=${delta}ms)`
+          });
+          continue;
+        } else {
+          // Cập nhật last send time
+          if (!this.lastSendTimes) {
+            this.lastSendTimes = new Map();
+          }
+          this.lastSendTimes.set(lastSendKey, now);
+
+        }
         const lastMsg = this.lastMessages[userId];
         if (!lastMsg) {
           // ➤ Gửi tin nhắn đầu tiên
           const sentMessage = await user.sendDM({ t: newContent });
-          console.log('🧾 Sent message ID:', sentMessage?.id || sentMessage?.message_id);
-          this.lastMessages[userId] = sentMessage; // Lưu lại để update lần sau
+          // console.log('🧾 Sent message full object:', JSON.stringify(sentMessage, null, 2));
+          await delay(100);
+          const channel = await this.client.channels.fetch(sentMessage?.channel_id);
+          const message = await channel.messages.fetch(sentMessage?.message_id);
+          this.lastMessages[userId] = message; // Lưu lại để update lần sau
           console.log(`✅ Sent first message to user ${userId}`);
         } else {
           // ➤ Update tin nhắn cũ

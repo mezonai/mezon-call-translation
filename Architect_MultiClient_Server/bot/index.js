@@ -15,12 +15,12 @@ const meetingRegistry = new MeetingRegistry();
 let wsServer = null;
 
 async function main() {
-  const client = new MezonClient({ botId: process.env.APPLICATION_ID, token: process.env.APPLICATION_TOKEN });
+  const client = new MezonClient({ botId: process.env.APPLICATION_ID, token: process.env.APPLICATION_TOKEN, host: 'dev-mezon.nccsoft.vn', port: '8088', mmnApiUrl: 'https://dev-mmn.nccsoft.vn/mmn-api/', zkApiUrl: 'https://dev-mmn.nccsoft.vn/zk-api/', });
   // Start WebSocket server immediately so clients can connect while bot logs in
   const WS_PORT = process.env.WS_PORT || 8080;
   wsServer = new TranscriptWebSocketServer(WS_PORT, client, meetingRegistry);
   wsServer.start();
-  
+
   try {
     await client.login();
   } catch (err) {
@@ -30,7 +30,7 @@ async function main() {
 
   client.on("ready", () => {
     console.log(`✅ Bot is ready! Logged in as ${client.user?.username}`);
-    
+
     // Log stats every 5 minutes
     setInterval(() => {
       const stats = meetingRegistry.getStats();

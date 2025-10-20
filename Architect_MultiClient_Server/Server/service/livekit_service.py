@@ -9,7 +9,7 @@ except ImportError:
 from ..config import get_config
 
 
-async def ensure_dispatch(room_name: str, url: str = None):
+async def ensure_dispatch(room_name: str):
     if not LIVEKIT_AVAILABLE:
         return {
             "status": "error", 
@@ -19,7 +19,7 @@ async def ensure_dispatch(room_name: str, url: str = None):
     cfg = get_config()
 
     lkapi = api.LiveKitAPI(
-        url=url or cfg.livekit.url,
+        url=cfg.livekit.url,
         api_key=cfg.livekit.api_key,
         api_secret=cfg.livekit.api_secret,
     )

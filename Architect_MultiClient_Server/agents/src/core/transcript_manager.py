@@ -34,7 +34,7 @@ class TranscriptManager:
         self._bot_ws_lock = asyncio.Lock()
 
         # Session ID = meeting code = room name
-        self.session_id = "BvDcmJeHg" #ctx.room.name
+        self.session_id = ctx.room.name
 
         self.logger.info(f"TranscriptManager initialized for meeting {self.session_id}")
     
