@@ -17,7 +17,7 @@ class MeetingRegistry {
   removeUser(meetingCode, userId) {
     if (this.meetings.has(meetingCode)) {
       this.meetings.get(meetingCode).delete(userId);
-      
+
       // Cleanup empty meetings
       if (this.meetings.get(meetingCode).size === 0) {
         this.meetings.delete(meetingCode);
@@ -26,13 +26,13 @@ class MeetingRegistry {
   }
 
   getUsers(meetingCode) {
-    return this.meetings.has(meetingCode) 
+    return this.meetings.has(meetingCode)
       ? Array.from(this.meetings.get(meetingCode))
       : [];
   }
 
   hasUser(meetingCode, userId) {
-    return this.meetings.has(meetingCode) 
+    return this.meetings.has(meetingCode)
       && this.meetings.get(meetingCode).has(userId);
   }
 
@@ -55,6 +55,13 @@ class MeetingRegistry {
         .reduce((sum, users) => sum + users.size, 0)
     };
   }
-}
 
+
+  getUserCount(meetingCode) {
+    if (!this.meetings.has(meetingCode)) {
+      return 0;
+    }
+    return this.meetings.get(meetingCode).size;
+  }
+}
 module.exports = MeetingRegistry;
