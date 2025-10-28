@@ -42,6 +42,15 @@ async function main() {
     console.error("❌ Client Error:", error);
   });
 
+  client.onVoiceLeavedEvent(async (event)=>{
+    try{
+      console.log(event);
+      return handleDisableTranscript(client, event, meetingRegistry);
+    }catch(err){
+      console.error("❌ ", err);
+    }
+  });
+
   client.onChannelMessage(async (event) => {
     try {
       const raw = event?.content?.t;

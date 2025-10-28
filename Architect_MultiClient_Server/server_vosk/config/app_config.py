@@ -17,7 +17,6 @@ class AudioConfig:
     """Audio processing configuration."""
     sample_rate: int = 16000
     min_text_length: int = 2
-    translation_interval: float = 0.8
     chunk_size: int = 320
     channels: int = 1
     dtype: str = 'int16'
@@ -126,7 +125,6 @@ class ConfigManager:
         # Audio configuration
         config.audio.sample_rate = int(os.getenv("SAMPLE_RATE", config.audio.sample_rate))
         config.audio.min_text_length = int(os.getenv("MIN_TEXT_LENGTH", config.audio.min_text_length))
-        config.audio.translation_interval = float(os.getenv("TRANSLATION_INTERVAL", config.audio.translation_interval))
         config.audio.chunk_size = int(os.getenv("CHUNK_SIZE", config.audio.chunk_size))
         config.audio.channels = int(os.getenv("CHANNELS", config.audio.channels))
         config.audio.dtype = os.getenv("DTYPE", config.audio.dtype)
@@ -210,7 +208,6 @@ class ConfigManager:
             "audio": {
                 "sample_rate": config.audio.sample_rate,
                 "min_text_length": config.audio.min_text_length,
-                "translation_interval": config.audio.translation_interval,
                 "chunk_size": config.audio.chunk_size,
                 "channels": config.audio.channels,
                 "dtype": config.audio.dtype

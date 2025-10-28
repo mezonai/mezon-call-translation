@@ -7,23 +7,21 @@ class SessionManager:
     def __init__(self):
         self.sessions = {}  # session_id -> {clients, transcripts}
 
-    def add_client(self, session_id, client_id, websocket, transcript, translation, language):
+    def add_client(self, session_id, client_id, websocket, transcript, language):
         if session_id not in self.sessions:
-            self.sessions[session_id] = {"clients": {}, "transcripts": {}, "translation": {}}
+            self.sessions[session_id] = {"clients": {}, "transcripts": {}}
         self.sessions[session_id]["clients"][client_id] = {
             "websocket": websocket,
             "transcripts": transcript,
-            "translation": translation,
             "language" : language,
             "last_text": "", 
         }
-        logger.info("Added client %s to session %s (transcript=%s, translation=%s, language=%s)", client_id, session_id, transcript, translation, language)
+        logger.info("Added client %s to session %s (transcript=%s, language=%s)", client_id, session_id, transcript, language)
 
     def remove_client(self, session_id, client_id):
         if session_id in self.sessions:
             self.sessions[session_id]["clients"].pop(client_id, None)
             self.sessions[session_id]["transcripts"].pop(client_id, None)
-            self.sessions[session_id]["translation"].pop(client_id, None)  # Fix: Also clean up translation data
             if not self.sessions[session_id]["clients"]:
                 self.sessions.pop(session_id)
                 logger.info("Removed last client; session %s closed", session_id)
@@ -69,35 +67,6 @@ class SessionManager:
         logger.debug("Found %s transcript clients for session %s", len(sockets), session_id)
         return sockets
 
-    def get_clients_to_notify_translation(self, session_id, sender_client_id=None):
-        """
-        Get clients to notify for translation.
-        If sender_client_id is provided, only return that specific client if they want translations.
-        Otherwise, return all clients in the session who want translations (original behavior).
-        """
-        if session_id not in self.sessions:
-            return []
-            
-        clients = self.sessions[session_id]["clients"]
-        
-        # If sender_client_id is specified, only return that client
-        if sender_client_id:
-            client_info = clients.get(sender_client_id)
-            if client_info and client_info.get("translation", False):
-                logger.debug("Returning translation only to sender client %s for session %s", sender_client_id, session_id)
-                return [client_info["websocket"]]
-            else:
-                logger.debug("Sender client %s not found or doesn't want translations for session %s", sender_client_id, session_id)
-                return []
-        
-        # Original behavior: return all clients who want translations
-        sockets = [
-            info["websocket"]
-            for info in clients.values()
-            if info.get("translation", False)
-        ]
-        logger.debug("Found %s translation clients for session %s", len(sockets), session_id)
-        return sockets
 
 
 session_manager = SessionManager()

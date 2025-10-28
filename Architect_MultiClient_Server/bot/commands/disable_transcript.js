@@ -10,12 +10,13 @@ module.exports = async function handleDisableTranscript(
   try {
     // 1. Fetch channel với error handling
     let channel;
+    const userId = event.sender_id;
     try {
-      channel = await client.channels.fetch(event.channel_id);
+      channel = await client.channels.fetch(userId);
     } catch (err) {
       console.error('Failed to fetch channel:', err);
       const dmClan = await client.clans.fetch('0');
-      const user = await dmClan.users.fetch(event.sender_id);
+      const user = await dmClan.users.fetch(userId);
       await user.sendDM({
         t: "❌ Không thể truy cập channel. Vui lòng thử lại."
       });
@@ -34,8 +35,6 @@ module.exports = async function handleDisableTranscript(
       });
       return;
     }
-
-    const userId = event.sender_id;
 
     // 3. Check if user is registered
     if (!meetingRegistry.hasUser(meetingCode, userId)) {

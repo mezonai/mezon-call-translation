@@ -83,8 +83,6 @@ class EventHandlers:
         ws_client = WebSocketTranscriptionClient(
             client_id=speaker_id,
             session_id=sid,
-            transcript=TRANSCRIPT,
-            translation=TRANSLATION,
             transcription_callback=self.create_transcription_callback(speaker_id),
             participant_identity=speaker_id,
         )

@@ -353,8 +353,6 @@ class TranscriptWebSocketServer {
         });
       }
     }
-    // Delay to avoid rate limiting
-    await new Promise(resolve => setTimeout(resolve, 500));
     return results;
   }
 

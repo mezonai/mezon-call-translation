@@ -16,19 +16,15 @@ async def websocket_vosk(
     websocket: WebSocket,
     client_id: str = Query(...),
     session_id: str = Query(...),
-    transcript: bool = Query(...),
-    translation: bool = Query(...),
     language: Optional[str] = Query(default=None),
     max_duration: Optional[int] = Query(default=None, description="Max session duration in seconds"),
     idle_timeout: Optional[int] = Query(default=None, description="Disconnect if no audio received for N seconds")
 ):
     await websocket.accept()
     logger.info(
-        "WebSocket accepted for client_id=%s session_id=%s transcript=%s translation=%s language=%s max_duration=%s idle_timeout=%s",
+        "WebSocket accepted for client_id=%s session_id=%s language=%s max_duration=%s idle_timeout=%s",
         client_id,
         session_id,
-        transcript,
-        translation,
         language,
         max_duration,
         idle_timeout,
@@ -38,7 +34,8 @@ async def websocket_vosk(
     result_dispatcher = get_result_dispatcher()
     await result_dispatcher.register_client(session_id, client_id, websocket)
     
-    session_manager.add_client(session_id, client_id, websocket, transcript, translation, language)
+    # Always enable transcript for connected clients
+    session_manager.add_client(session_id, client_id, websocket, True, language)
     
     # Record connection for monitoring
     websocket_monitor.record_connection(client_id, session_id)

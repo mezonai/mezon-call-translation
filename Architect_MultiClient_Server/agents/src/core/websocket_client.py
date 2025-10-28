@@ -15,12 +15,9 @@ class WebSocketTranscriptionClient:
     """
     Optimized WebSocket client with batching and rate limiting
     """
-    def __init__(self, client_id, session_id, transcript=True, translation=True,
-                 transcription_callback=None, participant_identity=None):
+    def __init__(self, client_id, session_id, transcription_callback=None, participant_identity=None):
         self.client_id = client_id
         self.session_id = session_id
-        self.transcript = transcript
-        self.translation = translation
         self.transcription_callback = transcription_callback
         self.participant_identity = participant_identity
 
@@ -63,7 +60,6 @@ class WebSocketTranscriptionClient:
         self.uri = (
             f"ws://{self.config.host}:{self.config.port}/ws/vosk/"
             f"?client_id={self.client_id}&session_id={self.session_id}"
-            f"&transcript={str(self.transcript).lower()}&translation={str(self.translation).lower()}"
         )
         
         connect_start = time.time()
