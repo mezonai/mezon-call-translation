@@ -12,7 +12,7 @@ module.exports = async function handleDisableTranscript(
     let channel;
     const userId = event.sender_id;
     try {
-      channel = await client.channels.fetch(userId);
+      channel = await client.channels.fetch(event.channel_id);
     } catch (err) {
       console.error('Failed to fetch channel:', err);
       const dmClan = await client.clans.fetch('0');

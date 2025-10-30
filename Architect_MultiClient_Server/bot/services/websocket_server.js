@@ -190,8 +190,13 @@ class TranscriptWebSocketServer {
           console.log(`✅ Sent new message to user ${userId}`);
         } else {
           // ➤ Update tin nhắn cũ
-          await lastMsg.update({ t: newContent });
-          console.log(`🔁 Updated message for user ${userId}`);
+          try {
+            await lastMsg.update({ t: newContent });
+            console.log(`🔁 Updated message for user ${userId}`);
+          } catch (error) {
+            console.error("lỗi update tin nhắn: ", error.message)
+          }
+
         }
 
         // Nếu là final thì reset để lần sau gửi lại từ đầu
@@ -201,11 +206,6 @@ class TranscriptWebSocketServer {
         }
 
         results.push({ userId, status: 'success' });
-
-
-
-
-
 
 
       } catch (error) {

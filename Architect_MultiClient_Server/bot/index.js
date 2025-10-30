@@ -27,7 +27,7 @@ async function main() {
     console.error("❌ Failed to login:", err);
     process.exit(1);
   }
-
+  console.log("ok");
   client.on("ready", () => {
     console.log(`✅ Bot is ready! Logged in as ${client.user?.username}`);
 
@@ -42,11 +42,16 @@ async function main() {
     console.error("❌ Client Error:", error);
   });
 
-  client.onVoiceLeavedEvent(async (event)=>{
-    try{
+  client.onVoiceLeavedEvent(async (event) => {
+    try {
       console.log(event);
-      return handleDisableTranscript(client, event, meetingRegistry);
-    }catch(err){
+      const mockEvent = {
+        sender_id: event.voice_user_id,      // ID người gửi sự kiện (user hiện tại)
+        channel_id: event.voice_channel_id,  // ID của kênh mà sự kiện xảy ra     
+
+      };
+      return handleDisableTranscript(client, mockEvent, meetingRegistry);
+    } catch (err) {
       console.error("❌ ", err);
     }
   });
