@@ -75,21 +75,20 @@ module.exports = async function handleEnableTranscript(
     console.log(`✅ User ${userId} registered for meeting ${meetingCode}`);
     console.log(`   Total users in meeting: ${users.length}`);
 
-    // 6. Send confirmation DM
-    const dmClan = await client.clans.fetch('0');
-    const user = await dmClan.users.fetch(userId);
+    // 6. Send confirmation DM with chat link
+    const clanId = event.clan_id;
+    const url = `https://mezon.ai/chat/clans/${clanId}/channels/${event.channel_id}`;
+    const msgText = `Transcript ở: ${url}`;
+    const linkStart = msgText.indexOf(url);
+    const linkEnd = linkStart + url.length;
 
-    await user.sendDM({
-      t: `
-    ----- TRANSCRIPT ĐÃ BẬT ----- 
-
-    📋 Cuộc họp: ${meetingCode}
-    🏠 Kênh: ${channel.name || 'Không rõ'}
-    👥 Thành viên: ${users.length}
-    
-    Bạn sẽ nhận bản ghi âm & văn bản theo thời gian thực.  
-    Tắt bằng lệnh: *disable_transcript
-    `
+    const clan = await client.clans.fetch(clanId);
+    const userObj = await clan.users.fetch(userId);
+    await userObj.sendDM({
+        t: msgText,
+        mk: [
+            { type: 'lk', s: linkStart, e: linkEnd }
+        ]
     });
 
 

@@ -43,7 +43,7 @@ class EventHandlers:
                     # logger.info(f"[{participant_identity}] {status}: {text}")
                     # Dùng thời điểm nhận data làm start/end
                     receive_time = time.time()
-
+                    print(text)
                     segments = [{
                         "text": text,
                         "start": receive_time,

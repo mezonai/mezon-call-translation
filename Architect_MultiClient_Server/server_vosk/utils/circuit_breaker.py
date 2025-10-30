@@ -37,7 +37,7 @@ class CircuitBreaker:
     - HALF_OPEN: Testing if service is back, limited calls allowed
     """
     
-    def __init__(self, config: CircuitBreakerConfig):
+    def __init__(self, config: CircuitBreakerConfig, on_threshold_reached=None):
         self.config = config
         self.state = CircuitState.CLOSED
         self.failure_count = 0
@@ -45,6 +45,7 @@ class CircuitBreaker:
         self.last_failure_time = None
         self.last_reset_attempt_time = None  # Track when we last attempted reset
         self._lock = threading.RLock()
+        self._on_threshold_reached = on_threshold_reached
         
         logger.info(
             f"Circuit breaker initialized: failure_threshold={config.failure_threshold}, "
@@ -190,9 +191,13 @@ class CircuitBreaker:
                 f"Circuit breaker FAILED in HALF_OPEN state after {self.success_count} successes, "
                 f"returning to OPEN state. Total failures: {self.failure_count}"
             )
+            if self._on_threshold_reached:
+                self._on_threshold_reached()
         elif self.state == CircuitState.CLOSED:
             if self.failure_count >= self.config.failure_threshold:
                 self.state = CircuitState.OPEN
+                if self._on_threshold_reached:
+                    self._on_threshold_reached()
                 logger.error(
                     f"🚨 CIRCUIT BREAKER OPENED! 🚨\n"
                     f"   Reason: Exceeded failure threshold ({self.failure_count}/{self.config.failure_threshold})\n"
