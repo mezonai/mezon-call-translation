@@ -43,7 +43,6 @@ class EventHandlers:
                     # logger.info(f"[{participant_identity}] {status}: {text}")
                     # Dùng thời điểm nhận data làm start/end
                     receive_time = time.time()
-                    print(text)
                     segments = [{
                         "text": text,
                         "start": receive_time,
@@ -123,6 +122,7 @@ class EventHandlers:
             )
             
             async for event in stream:
+                print(1)
                 # Check if client is still active
                 if speaker_id not in self.active_clients:
                     logger.info(f"Stopping stream for {speaker_id} - client removed")

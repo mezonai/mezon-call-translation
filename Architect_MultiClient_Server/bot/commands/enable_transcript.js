@@ -10,6 +10,7 @@ module.exports = async function handleEnableTranscript(
   meetingRegistry
 ) {
   try {
+    console.log(event)
     // 1. Fetch channel
     const channel = await client.channels.fetch(event.channel_id);
     const meetingCode = channel.meeting_code;
@@ -85,10 +86,10 @@ module.exports = async function handleEnableTranscript(
     const clan = await client.clans.fetch(clanId);
     const userObj = await clan.users.fetch(userId);
     await userObj.sendDM({
-        t: msgText,
-        mk: [
-            { type: 'lk', s: linkStart, e: linkEnd }
-        ]
+      t: msgText,
+      mk: [
+        { type: 'lk', s: linkStart, e: linkEnd }
+      ]
     });
 
 
