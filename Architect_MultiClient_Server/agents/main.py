@@ -27,8 +27,7 @@ async def entrypoint(ctx: agents.JobContext):
         logger.info("Room disconnected, cleaning up all clients")
         await event_handlers.safe_disconnect_all()
         await agent_manager.cleanup()  # Cleanup agent
-        # THÊM: Cleanup Bot WebSocket
-        await transcript_manager.cleanup()
+        await transcript_manager.cleanup()  # Cleanup internal state
         disconnected.set()
 
     # Set up event handlers
@@ -46,7 +45,7 @@ async def entrypoint(ctx: agents.JobContext):
     await agent_manager.setup_agent_identity()
     await agent_manager.announce_agent_ready()
 
-    # Send welcome message via data channel
+    # Log welcome message (no longer sent via data channel)
     await transcript_manager.send_welcome_message()
 
     logger.info("🎤 Vosk Agent ready and waiting for participants...")

@@ -122,7 +122,6 @@ class EventHandlers:
             )
             
             async for event in stream:
-                print(1)
                 # Check if client is still active
                 if speaker_id not in self.active_clients:
                     logger.info(f"Stopping stream for {speaker_id} - client removed")

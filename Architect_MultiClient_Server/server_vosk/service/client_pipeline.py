@@ -8,10 +8,9 @@ import queue
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass
 from enum import Enum
-import numpy as np
 from vosk import Model, KaldiRecognizer
 
-from ..utils.circuit_breaker import get_stt_circuit_breaker, CircuitBreakerOpenException
+from ..utils.circuit_breaker import get_stt_circuit_breaker
 from ..config import get_config
 
 logger = logging.getLogger(__name__)

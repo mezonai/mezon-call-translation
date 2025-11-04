@@ -7,13 +7,12 @@ import os
 import time
 import asyncio
 import logging
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Optional
 
 from .pipeline_manager import PipelineManager, ClientLimitExceededError
 from .health_service import register_stt_health_checks
-from ..utils.circuit_breaker import get_stt_circuit_breaker, CircuitBreakerOpenException
+from ..utils.circuit_breaker import get_stt_circuit_breaker
 from ..config import get_config
-from .. import session_manager
 
 logger = logging.getLogger(__name__)
 

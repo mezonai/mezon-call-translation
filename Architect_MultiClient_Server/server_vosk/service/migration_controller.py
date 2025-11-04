@@ -3,11 +3,9 @@ Per-Client Pipeline Service Controller
 Manages the new per-client inference pipeline architecture.
 """
 
-import os
 import logging
 from typing import Optional, Any, Dict
 
-from server_vosk.service.new_vosk_service import NewSTTVoskService
 
 logger = logging.getLogger(__name__)
 

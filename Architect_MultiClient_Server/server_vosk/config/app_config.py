@@ -17,9 +17,7 @@ class AudioConfig:
     """Audio processing configuration."""
     sample_rate: int = 16000
     min_text_length: int = 2
-    chunk_size: int = 320
     channels: int = 1
-    dtype: str = 'int16'
 
 
 @dataclass
@@ -31,17 +29,12 @@ class STTConfig:
     min_time_threshold: float = 0.1  # 50ms - very responsive
     max_time_threshold: float = 0.2  # 200ms - reduced from 400ms
     metrics_interval_sec: float = 10.0
-    client_cleanup_interval: float = 30.0
-    max_client_idle_time: float = 300.0
-    max_accumulated_chunks_age: float = 60.0
 
 
 @dataclass
 class QueueConfig:
     """Queue configuration."""
-    audio_queue_maxsize: int = 100
-    result_queue_maxsize: int = 100
-    audio_task_queue_maxsize: int = 100
+    audio_queue_maxsize: int = 100  # Per-client audio queue size
 
 
 @dataclass
@@ -125,9 +118,7 @@ class ConfigManager:
         # Audio configuration
         config.audio.sample_rate = int(os.getenv("SAMPLE_RATE", config.audio.sample_rate))
         config.audio.min_text_length = int(os.getenv("MIN_TEXT_LENGTH", config.audio.min_text_length))
-        config.audio.chunk_size = int(os.getenv("CHUNK_SIZE", config.audio.chunk_size))
         config.audio.channels = int(os.getenv("CHANNELS", config.audio.channels))
-        config.audio.dtype = os.getenv("DTYPE", config.audio.dtype)
         
         # STT configuration
         config.stt.vosk_model_path = os.getenv("VOSK_MODEL_PATH", config.stt.vosk_model_path)
@@ -136,9 +127,6 @@ class ConfigManager:
         config.stt.min_time_threshold = float(os.getenv("VOSK_MIN_TIME_THRESHOLD", config.stt.min_time_threshold))
         config.stt.max_time_threshold = float(os.getenv("VOSK_MAX_TIME_THRESHOLD", config.stt.max_time_threshold))
         config.stt.metrics_interval_sec = float(os.getenv("METRICS_INTERVAL_SEC", config.stt.metrics_interval_sec))
-        config.stt.client_cleanup_interval = float(os.getenv("CLIENT_CLEANUP_INTERVAL", config.stt.client_cleanup_interval))
-        config.stt.max_client_idle_time = float(os.getenv("MAX_CLIENT_IDLE_TIME", config.stt.max_client_idle_time))
-        config.stt.max_accumulated_chunks_age = float(os.getenv("MAX_ACCUMULATED_CHUNKS_AGE", config.stt.max_accumulated_chunks_age))
         
         # LiveKit configuration
         config.livekit.url = os.getenv("LIVEKIT_URL", config.livekit.url)
@@ -152,8 +140,6 @@ class ConfigManager:
 
         # Queue configuration
         config.queue.audio_queue_maxsize = int(os.getenv("AUDIO_QUEUE_MAXSIZE", config.queue.audio_queue_maxsize))
-        config.queue.result_queue_maxsize = int(os.getenv("RESULT_QUEUE_MAXSIZE", config.queue.result_queue_maxsize))
-        config.queue.audio_task_queue_maxsize = int(os.getenv("AUDIO_TASK_QUEUE_MAXSIZE", config.queue.audio_task_queue_maxsize))
         
         # Circuit breaker configuration
         config.circuit_breaker.stt_failure_threshold = int(os.getenv("STT_CIRCUIT_BREAKER_FAILURE_THRESHOLD", config.circuit_breaker.stt_failure_threshold))
@@ -208,9 +194,7 @@ class ConfigManager:
             "audio": {
                 "sample_rate": config.audio.sample_rate,
                 "min_text_length": config.audio.min_text_length,
-                "chunk_size": config.audio.chunk_size,
-                "channels": config.audio.channels,
-                "dtype": config.audio.dtype
+                "channels": config.audio.channels
             },
             "stt": {
                 "vosk_model_path": config.stt.vosk_model_path,
@@ -218,15 +202,10 @@ class ConfigManager:
                 "max_chunks": config.stt.max_chunks,
                 "min_time_threshold": config.stt.min_time_threshold,
                 "max_time_threshold": config.stt.max_time_threshold,
-                "metrics_interval_sec": config.stt.metrics_interval_sec,
-                "client_cleanup_interval": config.stt.client_cleanup_interval,
-                "max_client_idle_time": config.stt.max_client_idle_time,
-                "max_accumulated_chunks_age": config.stt.max_accumulated_chunks_age
+                "metrics_interval_sec": config.stt.metrics_interval_sec
             },
             "queue": {
-                "audio_queue_maxsize": config.queue.audio_queue_maxsize,
-                "result_queue_maxsize": config.queue.result_queue_maxsize,
-                "audio_task_queue_maxsize": config.queue.audio_task_queue_maxsize
+                "audio_queue_maxsize": config.queue.audio_queue_maxsize
             },
             "circuit_breaker": {
                 "stt_failure_threshold": config.circuit_breaker.stt_failure_threshold,

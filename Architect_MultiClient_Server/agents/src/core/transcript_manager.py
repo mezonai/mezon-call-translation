@@ -1,17 +1,11 @@
 import asyncio
-import json
-from datetime import datetime
-from typing import Optional
-
-import os
 from livekit import agents
 
-from src.core.bot_websocket_client import BotWebSocketClient
 from src.logger import get_logger
 
 
 class TranscriptManager:
-    """Manages transcript entries and forwards them to Bot WebSocket server."""
+    """Manages transcript entries for tracking and logging purposes."""
     
     def __init__(self, ctx: agents.JobContext):
         """Initialize TranscriptManager
@@ -24,14 +18,6 @@ class TranscriptManager:
         
         # Per-participant incremental sequence for client-side ordering 
         self._seq_by_participant = {}
-
-        # Bot WebSocket configuration
-        self.bot_ws_host = os.getenv("BOT_WS_HOST", "bot")
-        self.bot_ws_port = os.getenv("BOT_WS_PORT", "8080")
-
-        # Bot WebSocket client (khởi tạo lazy)
-        self._bot_ws_client: Optional[BotWebSocketClient] = None
-        self._bot_ws_lock = asyncio.Lock()
 
         # Session ID = meeting code = room name
         self.session_id = ctx.room.name
@@ -48,7 +34,7 @@ class TranscriptManager:
         language: str | None = None,
         seq: int | None = None,
     ):
-        """Forward transcript to Bot WebSocket
+        """Log and track transcript entry (no longer forwarded to external services)
         
         Args:
             text (str): Transcript text 
@@ -60,43 +46,31 @@ class TranscriptManager:
             seq (int, optional): Sequence number. Defaults to None.
         
         Returns:
-            bool: True if sent successfully
+            bool: Always returns True (for backward compatibility)
         """
         try:
-            # Forward both interim and final transcripts
-            
-            # Ensure Bot connection
-            if not await self._ensure_bot_connection():
-                self.logger.error("Cannot connect to Bot, dropping transcript")
-                return False
-            
             # Compute sequence if not provided
             if seq is None:
                 current = self._seq_by_participant.get(participant_identity, 0) + 1
                 self._seq_by_participant[participant_identity] = current
                 seq = current
             
-            # Build payload (match Vosk server format). Keep is_final as provided
-            payload = {
-                "text": text.strip(),
-                "is_final": bool(is_final),
-                "client_id": participant_identity,
-                "session_id": self.session_id,
-                "timestamp": datetime.utcnow().isoformat()
-            }
+            # Log transcript entry for tracking
+            transcript_type = "FINAL" if is_final else "PARTIAL"
+            self.logger.info(
+                f"[{transcript_type}] [{self.session_id}] {participant_name} ({participant_identity}): {text[:100]}..."
+            )
             
-            # Send to Bot
-            success = await self._bot_ws_client.send_transcript(payload)
+            # Track internally but don't forward anywhere
+            self.logger.debug(
+                f"Transcript tracked - seq={seq}, is_final={is_final}, "
+                f"client={participant_identity}, session={self.session_id}"
+            )
             
-            if success:
-                self.logger.debug(f"Sent transcript to Bot: [{participant_identity}] {text[:50]}...")
-            else:
-                self.logger.warning(f"Failed to send transcript to Bot for {participant_identity}")
-            
-            return success
+            return True
             
         except Exception as e:
-            self.logger.error(f"Error sending transcript to Bot: {e}")
+            self.logger.error(f"Error tracking transcript: {e}")
             return False
     
     def create_transcription_callback(self, participant_identity: str, participant_name: str):
@@ -137,45 +111,9 @@ class TranscriptManager:
     async def send_welcome_message(self):
         """Send welcome message when agent is ready"""
         await asyncio.sleep(2)  # Wait for stable connection
-        await self.send_transcript_entry(
-            text="Vosk transcription agent is ready!",
-            participant_identity="agent",
-            participant_name="Transcription Agent",
-            is_final=True
-        )
+        self.logger.info("Vosk transcription agent is ready!")
     
     async def cleanup(self):
-        """Cleanup Bot WebSocket connection"""
-        if self._bot_ws_client:
-            await self._bot_ws_client.disconnect()
-            self._bot_ws_client = None
-            self.logger.info("Bot WebSocket connection cleaned up")
-
-    async def _ensure_bot_connection(self) -> bool:
-        """Ensure Bot WebSocket connection is established
-        
-        Returns:
-            bool: True if connected successfully
-        """
-        async with self._bot_ws_lock:
-            if self._bot_ws_client and self._bot_ws_client.connected:
-                return True
-
-            # Ensure BotWebSocketClient uses configured host/port
-            BotWebSocketClient.BOT_WS_HOST = self.bot_ws_host
-            BotWebSocketClient.BOT_WS_PORT = self.bot_ws_port
-
-            # Create new client
-            self._bot_ws_client = BotWebSocketClient(
-                session_id=self.session_id,
-                meeting_code=self.session_id
-            )
-
-            # Connect
-            success = await self._bot_ws_client.connect()
-            if success:
-                self.logger.info(f"Bot WebSocket connected for meeting {self.session_id}")
-            else:
-                self.logger.error(f"Failed to connect Bot WebSocket for meeting {self.session_id}")
-
-            return success
+        """Cleanup internal state"""
+        self._seq_by_participant.clear()
+        self.logger.info("TranscriptManager cleaned up")

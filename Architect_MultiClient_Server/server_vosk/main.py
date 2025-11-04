@@ -4,7 +4,6 @@ import logging
 from fastapi import FastAPI
 import asyncio
 from contextlib import asynccontextmanager
-from .session_manager import session_manager
 from .service.metrics_service import metrics
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
@@ -16,7 +15,7 @@ from server_vosk.service.health_service import get_health_service
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException, Response, Request
+from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 
