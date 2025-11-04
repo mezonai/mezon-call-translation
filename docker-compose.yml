@@ -61,6 +61,8 @@ services:
     depends_on:
       nginx:
         condition: service_started
+      mongodb:
+        condition: service_healthy
     networks:
       - mezon-network
     restart: unless-stopped
@@ -83,6 +85,27 @@ services:
       - mezon-network
     restart: unless-stopped
 
+  # MongoDB for transcript storage
+  mongodb:
+    image: mongo:7
+    container_name: mezon-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=mezon_transcripts
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - mezon-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
 networks:
   mezon-network:
     driver: bridge
@@ -93,5 +116,11 @@ volumes:
     driver: local
   # Persistent volume cho logs
   logs:
+    driver: local
+  # Persistent volume cho MongoDB data
+  mongodb_data:
+    driver: local
+  # Persistent volume cho MongoDB config
+  mongodb_config:
     driver: local
  

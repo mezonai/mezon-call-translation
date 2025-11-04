@@ -7,7 +7,7 @@ from collections import deque
 from queue import Queue
 import pyaudio
 from src.logger import get_logger
-from src.config.vad_config import VADConfig
+from src.config import get_config
 
 # ==============================
 # Setup logging
@@ -169,10 +169,13 @@ class RealTimeAudioPlayer:
 class RealTimeVADProcessor:
     def __init__(self, sr=16000, chunk_duration_ms=10, overlap_chunks=2, 
                  enable_playback=True, min_speech_frames=None, save_chunks=True, enable_vad=True):
+        # Lấy config
+        config = get_config()
+        
         # Lấy min_speech_frames từ config nếu không được chỉ định
-        vad_config = VADConfig.get_config()
         if min_speech_frames is None:
-            min_speech_frames = vad_config['min_speech_frames']
+            min_speech_frames = config.vad.min_speech_frames
+        
         self.sr = sr
         self.chunk_duration_ms = chunk_duration_ms
         self.chunk_size = int(chunk_duration_ms * sr / 1000)  # 10ms chunks từ stream
@@ -192,13 +195,12 @@ class RealTimeVADProcessor:
         
         logger.debug(f"🔄 Overlap config: {overlap_chunks} chunks ({self.overlap_ms}ms) + current chunk ({chunk_duration_ms}ms) = {self.analysis_duration_ms}ms analysis")
         
-        # Khởi tạo ZCRFilter với cấu hình từ VADConfig
-        vad_config = VADConfig.get_config()
+        # Khởi tạo ZCRFilter với cấu hình từ Config
         self.zcr_filter = ZCRFilter(
-            zcr_thresh=(vad_config['zcr_low_threshold'], vad_config['zcr_high_threshold']),
-            ma_window=vad_config['ma_window'],
+            zcr_thresh=config.vad.zcr_thresh,
+            ma_window=config.vad.ma_window,
             analysis_duration_ms=self.analysis_duration_ms,
-            energy_thresh=vad_config['energy_thresh']
+            energy_thresh=config.vad.energy_thresh
         )
         
         # Audio playback
@@ -212,13 +214,10 @@ class RealTimeVADProcessor:
         self.total_chunks = 0
         self.speech_count = 0
         self.silent_streak = 0
-        self.silent_threshold = vad_config['silent_threshold']  # Số frame im lặng tối đa
-        
-        # Lấy cấu hình từ VADConfig
-        vad_config = VADConfig.get_config()
+        self.silent_threshold = config.vad.silent_threshold_frames  # Số frame im lặng tối đa
         
         # Buffer để lưu trữ các chunk gần đây
-        self.pre_speech_buffer_size = vad_config['pre_speech_buffer_frames']
+        self.pre_speech_buffer_size = config.vad.pre_speech_buffer_frames
         self.chunk_buffer = deque(maxlen=self.pre_speech_buffer_size)
         
         # Buffer tạm thời cho speech candidate (chưa đủ min frames)

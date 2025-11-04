@@ -2,7 +2,7 @@ import asyncio
 import time
 import websockets
 from typing import Optional
-from src.services.config_service import ConfigService
+from src.config import get_config
 from src.services.metrics_service import MetricsService
 from src.utils.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 from src.logger import get_logger
@@ -22,7 +22,7 @@ class WebSocketTranscriptionClient:
         self.participant_identity = participant_identity
 
         # Configuration
-        self.config = ConfigService.get_instance().websocket
+        self.config = get_config().websocket
         
         # Metrics
         self.metrics = MetricsService.get_instance()

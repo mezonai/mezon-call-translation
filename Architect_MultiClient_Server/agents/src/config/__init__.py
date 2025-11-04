@@ -1,22 +1,28 @@
-"""Configuration package"""
+"""
+Configuration package - Centralized configuration management
+All configuration is loaded from a single source
+"""
 
-from .audio_config import (
-    AudioProcessorConfig,
-    AudioThreadingConfig,
-    VadConfig,
-    AudioConfigError
-)
-
-from .constants import (
+from .config import (
+    Config,
+    AudioConfig,
+    VADConfig,
+    WebSocketConfig,
+    BufferConfig,
+    ThreadingConfig,
+    get_config,
     SAMPLE_RATE,
     CHANNELS
 )
 
 __all__ = [
-    'AudioProcessorConfig',
-    'AudioThreadingConfig',
-    'VadConfig',
-    'AudioConfigError',
+    'Config',
+    'AudioConfig',
+    'VADConfig',
+    'WebSocketConfig',
+    'BufferConfig',
+    'ThreadingConfig',
+    'get_config',
     'SAMPLE_RATE',
     'CHANNELS'
 ]

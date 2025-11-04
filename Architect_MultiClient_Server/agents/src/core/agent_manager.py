@@ -1,3 +1,6 @@
+"""
+Agent identity & control management - Metadata, status updates, data channel commands
+"""
 import json
 import time
 import asyncio
@@ -8,7 +11,7 @@ logger = get_logger(__name__)
 
 
 class AgentManager:
-    """Manages agent identity, metadata, and status"""
+    """Quản lý agent identity, metadata, status broadcasts, và command handling"""
     
     def __init__(self, ctx: agents.JobContext):
         self.ctx = ctx

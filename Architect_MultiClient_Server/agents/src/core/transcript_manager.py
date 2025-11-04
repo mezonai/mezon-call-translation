@@ -1,28 +1,36 @@
+"""
+Transcript lifecycle management - Sequence tracking, MongoDB persistence, data channel publishing
+"""
 import asyncio
+import os
 from livekit import agents
 
 from src.logger import get_logger
+from src.services.mongodb_service import get_mongodb_service
 
 
 class TranscriptManager:
-    """Manages transcript entries for tracking and logging purposes."""
+    """Quản lý transcript entries: sequence tracking, logging, MongoDB storage"""
     
     def __init__(self, ctx: agents.JobContext):
-        """Initialize TranscriptManager
-        
-        Args:
-            ctx (agents.JobContext): LiveKit job context containing room info
-        """
+        """Initialize transcript manager với MongoDB và sequence tracking per-participant"""
         self.ctx = ctx
         self.logger = get_logger("transcript_manager")
         
-        # Per-participant incremental sequence for client-side ordering 
+        # Sequence số incremental cho mỗi participant để client ordering
         self._seq_by_participant = {}
 
-        # Session ID = meeting code = room name
+        # Session ID = room name (meeting code)
         self.session_id = ctx.room.name
+        
+        # MongoDB service (singleton pattern)
+        self.mongodb = get_mongodb_service()
+        self.enable_mongodb = False
 
-        self.logger.info(f"TranscriptManager initialized for meeting {self.session_id}")
+        self.logger.info(
+            f"TranscriptManager initialized for meeting {self.session_id} "
+            f"(MongoDB: {'enabled' if self.enable_mongodb else 'disabled'})"
+        )
     
     async def send_transcript_entry(
         self,
@@ -34,38 +42,48 @@ class TranscriptManager:
         language: str | None = None,
         seq: int | None = None,
     ):
-        """Log and track transcript entry (no longer forwarded to external services)
-        
-        Args:
-            text (str): Transcript text 
-            participant_identity (str): Participant's identity
-            participant_name (str, optional): Display name. Defaults to "Speaker".
-            is_final (bool, optional): Whether this is final transcript. Defaults to True.
-            segments (list, optional): Transcript segments. Defaults to None.
-            language (str, optional): Language code. Defaults to None.
-            seq (int, optional): Sequence number. Defaults to None.
-        
-        Returns:
-            bool: Always returns True (for backward compatibility)
+        """
+        Core transcript processing:
+        1. Compute sequence number (per-participant incremental)
+        2. Log transcript (FINAL vs PARTIAL)
+        3. Save to MongoDB (nếu enabled)
         """
         try:
-            # Compute sequence if not provided
+            # Auto-increment sequence cho participant
             if seq is None:
                 current = self._seq_by_participant.get(participant_identity, 0) + 1
                 self._seq_by_participant[participant_identity] = current
                 seq = current
             
-            # Log transcript entry for tracking
+            # Log với prefix FINAL/PARTIAL cho visibility
             transcript_type = "FINAL" if is_final else "PARTIAL"
             self.logger.info(
-                f"[{transcript_type}] [{self.session_id}] {participant_name} ({participant_identity}): {text[:100]}..."
+                f"[{transcript_type}] [{self.session_id}] {participant_name} ({participant_identity}): {text}"
             )
             
-            # Track internally but don't forward anywhere
-            self.logger.debug(
-                f"Transcript tracked - seq={seq}, is_final={is_final}, "
-                f"client={participant_identity}, session={self.session_id}"
-            )
+            # MongoDB persistence (async, không block main flow)
+            if self.enable_mongodb:
+                doc_id = await self.mongodb.save_transcript(
+                    session_id=self.session_id,
+                    participant_identity=participant_identity,
+                    participant_name=participant_name,
+                    text=text,
+                    is_final=is_final,
+                    segments=segments,
+                    language=language,
+                    seq=seq,
+                    metadata={
+                        "room_name": self.ctx.room.name,
+                        "agent_name": "Vosk-Transcription-Agent"
+                    }
+                )
+                
+                if doc_id:
+                    self.logger.debug(f"💾 Saved to MongoDB: doc_id={doc_id}")
+                else:
+                    self.logger.warning("Failed to save transcript to MongoDB")
+            else:
+                self.logger.debug("MongoDB disabled, transcript only logged")
             
             return True
             
@@ -74,14 +92,16 @@ class TranscriptManager:
             return False
     
     def create_transcription_callback(self, participant_identity: str, participant_name: str):
-        """Create transcription callback for a specific participant"""
-        
+        """
+        Factory tạo callback cho WebSocket transcription client
+        Vosk server -> callback -> send_transcript_entry()
+        """
         async def transcription_callback(text: str, segments: list = None):
-            """Handle transcription results from server"""
+            """Handle transcript từ Vosk server (text + optional segments)"""
             if not text or not text.strip():
                 return
             
-            # Since server only sends text, create a single segment
+            # Server chỉ gửi text, tạo default segment
             if segments is None:
                 segments = [{
                     "text": text.strip(),
@@ -90,13 +110,10 @@ class TranscriptManager:
                     "completed": True
                 }]
             
-            # Determine if this is a final transcription
-            is_final = True  # Server sends final text, so always final
-            
-            # Optional: pick language if server attached it in segments (keep None if absent)
-            lang = None
+            # Server gửi final text (không có partial)
+            is_final = True
+            lang = None  # Optional language detection
 
-            # Prepare convenience text (already provided), forward raw segments to client
             await self.send_transcript_entry(
                 text=text.strip(),
                 participant_identity=participant_identity,
@@ -109,11 +126,16 @@ class TranscriptManager:
         return transcription_callback
     
     async def send_welcome_message(self):
-        """Send welcome message when agent is ready"""
-        await asyncio.sleep(2)  # Wait for stable connection
+        """Send welcome message khi agent ready (optional)"""
+        await asyncio.sleep(2)
         self.logger.info("Vosk transcription agent is ready!")
     
     async def cleanup(self):
-        """Cleanup internal state"""
+        """Cleanup sequence tracking và MongoDB connection"""
         self._seq_by_participant.clear()
+        
+        # Disconnect MongoDB connection pool
+        if self.enable_mongodb:
+            await self.mongodb.disconnect()
+        
         self.logger.info("TranscriptManager cleaned up")
