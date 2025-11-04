@@ -4,7 +4,7 @@ import time
 import numpy as np
 from livekit import rtc
 
-from src.config import SAMPLE_RATE, CHANNELS, TRANSCRIPT, TRANSLATION
+from src.config import SAMPLE_RATE, CHANNELS
 from src.core.websocket_client import WebSocketTranscriptionClient
 from src.core.transcript_manager import TranscriptManager
 from src.logger import get_logger

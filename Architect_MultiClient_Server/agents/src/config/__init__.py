@@ -9,10 +9,7 @@ from .audio_config import (
 
 from .constants import (
     SAMPLE_RATE,
-    CHANNELS,
-    TRANSCRIPT,
-    TRANSLATION,
-    DEFAULT_CONFIG
+    CHANNELS
 )
 
 __all__ = [
@@ -21,8 +18,6 @@ __all__ = [
     'VadConfig',
     'AudioConfigError',
     'SAMPLE_RATE',
-    'CHANNELS',
-    'TRANSCRIPT',
-    'TRANSLATION',
-    'DEFAULT_CONFIG'
+    'CHANNELS'
 ]
+
