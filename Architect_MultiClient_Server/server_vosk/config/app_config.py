@@ -67,20 +67,7 @@ class LoggingConfig:
     max_file_size: int = 10 * 1024 * 1024  # 10MB
     backup_count: int = 5
 
-@dataclass
-class LiveKitConfig:
-    """LiveKit API configuration."""
-    url: str = "http://localhost:7880"
-    api_key: str = "devkey"
-    api_secret: str = "secret"
-    agent_name: str = "Vosk-Transcription-Agent"
 
-
-@dataclass
-class AuthConfig:
-    """Authentication configuration."""
-    jwt_secret: str = "supersecret"   # để verify JWT
-    jwt_algorithm: str = "HS256"
 
 @dataclass
 class AppConfig:
@@ -91,8 +78,6 @@ class AppConfig:
     circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    livekit: LiveKitConfig = field(default_factory=LiveKitConfig)
-    auth: AuthConfig = field(default_factory=AuthConfig)
 
     def __post_init__(self):
         """Post-initialization processing."""
@@ -127,16 +112,7 @@ class ConfigManager:
         config.stt.min_time_threshold = float(os.getenv("VOSK_MIN_TIME_THRESHOLD", config.stt.min_time_threshold))
         config.stt.max_time_threshold = float(os.getenv("VOSK_MAX_TIME_THRESHOLD", config.stt.max_time_threshold))
         config.stt.metrics_interval_sec = float(os.getenv("METRICS_INTERVAL_SEC", config.stt.metrics_interval_sec))
-        
-        # LiveKit configuration
-        config.livekit.url = os.getenv("LIVEKIT_URL", config.livekit.url)
-        config.livekit.api_key = os.getenv("LIVEKIT_API_KEY", config.livekit.api_key)
-        config.livekit.api_secret = os.getenv("LIVEKIT_API_SECRET", config.livekit.api_secret)
-        config.livekit.agent_name = os.getenv("LIVEKIT_AGENT_NAME", config.livekit.agent_name)
 
-        # Auth configuration
-        config.auth.jwt_secret = os.getenv("JWT_SECRET", config.auth.jwt_secret)
-        config.auth.jwt_algorithm = os.getenv("JWT_ALGORITHM", config.auth.jwt_algorithm)
 
         # Queue configuration
         config.queue.audio_queue_maxsize = int(os.getenv("AUDIO_QUEUE_MAXSIZE", config.queue.audio_queue_maxsize))
@@ -228,16 +204,6 @@ class ConfigManager:
                 "metrics_log_file": config.logging.metrics_log_file,
                 "max_file_size": config.logging.max_file_size,
                 "backup_count": config.logging.backup_count
-            },
-            "livekit": {
-                "url": config.livekit.url,
-                "api_key": config.livekit.api_key,
-                "api_secret": "***hidden***",   # không log secret thẳng ra
-                "agent_name": config.livekit.agent_name,
-            },
-            "auth": {
-                "jwt_secret": "***hidden***",
-                "jwt_algorithm": config.auth.jwt_algorithm,
             }
 
         }
