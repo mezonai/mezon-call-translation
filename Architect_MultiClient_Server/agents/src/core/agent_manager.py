@@ -116,7 +116,8 @@ class AgentManager:
                 # Get required room and participant properties
                 try:
                     local_sid = self.ctx.room.local_participant.sid
-                    room_sid = str(await self.ctx.room.sid) if hasattr(self.ctx.room, 'sid') and await self.ctx.room.sid else None
+                    # Fix: room.sid is a property, not a coroutine
+                    room_sid = str(self.ctx.room.sid) if hasattr(self.ctx.room, 'sid') and self.ctx.room.sid else None
                     room_name = self.ctx.room.name
                     participant_identity = self.ctx.room.local_participant.identity
                     participant_name = self.ctx.room.local_participant.name
