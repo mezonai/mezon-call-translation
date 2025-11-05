@@ -1,0 +1,23 @@
+API create và cancel là như nhau.
+curl -X POST http://localhost:8000/api/create_dispatch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account": {
+      "appid": "aaa",
+      "token": "bbb"
+    },
+    "room_name": "ccc"
+  }'
+
+curl -X POST http://localhost:8000/api/cancel_dispatch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account": {
+      "appid": "aaa",
+      "token": "bbb"
+    },
+    "room_name": "ccc"
+  }'
+
+
+
