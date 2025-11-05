@@ -8,7 +8,6 @@ from .service.metrics_service import metrics
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 # Import relative to Server package
-from server_vosk.controller.agents_control import router as agents_control
 from server_vosk.controller.ws_vosk_control import router as stt_router
 from server_vosk.service.migration_controller import pipeline_controller
 from server_vosk.service.health_service import get_health_service
@@ -147,7 +146,6 @@ async def prometheus_metrics():
 
 
 app.include_router(stt_router)
-app.include_router(agents_control)
 
 @app.get("/health")
 async def health_check():

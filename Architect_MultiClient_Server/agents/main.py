@@ -127,7 +127,7 @@ async def entrypoint(ctx: agents.JobContext):
             await tts_manager.cleanup()
 
 def start_api():
-    uvicorn.run("stt_agent:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
 
 if __name__ == "__main__":
 
@@ -135,5 +135,5 @@ if __name__ == "__main__":
     api_thread.start()
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=entrypoint,
-        agent_name=agent_name
+        # agent_name=agent_name
     ))

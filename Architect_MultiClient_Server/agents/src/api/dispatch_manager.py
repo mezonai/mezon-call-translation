@@ -13,7 +13,7 @@ load_dotenv()
 from fastapi import APIRouter, HTTPException
 import httpx
 from pydantic import BaseModel
-from api.verify_account import authenticate_account
+from src.api.verify_account import authenticate_account
 
 router = APIRouter()
 
