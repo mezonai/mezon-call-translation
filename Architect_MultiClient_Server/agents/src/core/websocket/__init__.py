@@ -1,0 +1,19 @@
+"""
+WebSocket clients for external services
+
+This module provides WebSocket clients for:
+- STT (Speech-to-Text): Vosk transcription server
+- TTS (Text-to-Speech): TTS generation server
+
+All clients inherit from BaseWebSocketClient for common functionality.
+"""
+
+from .base_client import BaseWebSocketClient
+from .stt_client import STTWebSocketClient
+from .interview_bot_client import TTSWebSocketClient
+
+__all__ = [
+    "BaseWebSocketClient",
+    "STTWebSocketClient",
+    "TTSWebSocketClient"
+]

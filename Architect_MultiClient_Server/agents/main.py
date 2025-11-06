@@ -1,5 +1,5 @@
 """
-LiveKit Agent entrypoint - Khởi động Vosk transcription agent + TTS
+LiveKit Agent entrypoint - Starts Vosk transcription agent + TTS
 """
 import asyncio
 import os
@@ -11,7 +11,7 @@ import threading
 
 from livekit import agents
 from src.core.transcript_manager import TranscriptManager
-from src.core.handlers import EventHandlers
+from src.core.event_handlers import EventHandlers
 from src.core.agent_manager import AgentManager
 from src.core.tts_manager import TTSManager
 from src.logger import get_logger
@@ -24,7 +24,7 @@ agent_name = os.environ.get("LIVEKIT_AGENT_NAME")
 
 
 async def entrypoint(ctx: agents.JobContext):
-    """Main agent entrypoint - setup và quản lý lifecycle"""
+    """Main agent entrypoint - setup and lifecycle management"""
     await ctx.connect()
     disconnected = asyncio.Event()
     logger.info(f"✅ Connected to room: {ctx.room.name}")
@@ -80,7 +80,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 
     async def on_disconnected():
-        """Cleanup khi room disconnect"""
+        """Cleanup when room disconnects"""
         logger.info("Room disconnected, cleaning up all clients")
         await event_handlers.safe_disconnect_all()
         await agent_manager.cleanup()
@@ -127,12 +127,14 @@ async def entrypoint(ctx: agents.JobContext):
             await tts_manager.cleanup()
 
 def start_api():
+    """Start FastAPI server for dispatch management (development/standalone mode only)"""
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
 
 if __name__ == "__main__":
 
     api_thread = threading.Thread(target=start_api, daemon=True)
     api_thread.start()
+
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=entrypoint,
         # agent_name=agent_name

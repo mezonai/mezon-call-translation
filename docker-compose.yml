@@ -52,7 +52,8 @@ services:
       context: .
       dockerfile: Dockerfile.agent
     container_name: mezon-livekit-agent
-    # No host port mapping needed; agent connects internally to nginx and bot
+    ports:
+      - "8002:8000"  # FastAPI dispatch API
     env_file:
       - Architect_MultiClient_Server/agents/.env
     environment:
@@ -63,24 +64,6 @@ services:
         condition: service_started
       mongodb:
         condition: service_healthy
-    networks:
-      - mezon-network
-    restart: unless-stopped
-
-  # Mezon Transcript Bot (Node)
-  bot:
-    build:
-      context: .
-      dockerfile: Dockerfile.bot
-    container_name: mezon-transcript-bot
-    ports:
-      - "8080:8080"
-    env_file:
-      - Architect_MultiClient_Server/bot/.env
-    environment:
-      - NODE_ENV=production
-    depends_on:
-      - nginx
     networks:
       - mezon-network
     restart: unless-stopped

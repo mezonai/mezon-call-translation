@@ -10,14 +10,14 @@ from src.services.mongodb_service import get_mongodb_service
 
 
 class TranscriptManager:
-    """Quản lý transcript entries: sequence tracking, logging, MongoDB storage"""
+    """Manages transcript entries: sequence tracking, logging, MongoDB storage"""
     
     def __init__(self, ctx: agents.JobContext):
-        """Initialize transcript manager với MongoDB và sequence tracking per-participant"""
+        """Initialize transcript manager with MongoDB and per-participant sequence tracking"""
         self.ctx = ctx
         self.logger = get_logger("transcript_manager")
         
-        # Sequence số incremental cho mỗi participant để client ordering
+        # Incremental sequence number for each participant for client ordering
         self._seq_by_participant = {}
 
         # Session ID = room name (meeting code)
@@ -46,22 +46,22 @@ class TranscriptManager:
         Core transcript processing:
         1. Compute sequence number (per-participant incremental)
         2. Log transcript (FINAL vs PARTIAL)
-        3. Save to MongoDB (nếu enabled)
+        3. Save to MongoDB (if enabled)
         """
         try:
-            # Auto-increment sequence cho participant
+            # Auto-increment sequence for participant
             if seq is None:
                 current = self._seq_by_participant.get(participant_identity, 0) + 1
                 self._seq_by_participant[participant_identity] = current
                 seq = current
             
-            # Log với prefix FINAL/PARTIAL cho visibility
+            # Log with FINAL/PARTIAL prefix for visibility
             transcript_type = "FINAL" if is_final else "PARTIAL"
             self.logger.info(
                 f"[{transcript_type}] [{self.session_id}] {participant_name} ({participant_identity}): {text}"
             )
             
-            # MongoDB persistence (async, không block main flow)
+            # MongoDB persistence (async, does not block main flow)
             if self.enable_mongodb:
                 doc_id = await self.mongodb.save_transcript(
                     session_id=self.session_id,
@@ -93,15 +93,15 @@ class TranscriptManager:
     
     def create_transcription_callback(self, participant_identity: str, participant_name: str):
         """
-        Factory tạo callback cho WebSocket transcription client
+        Factory to create callback for WebSocket transcription client
         Vosk server -> callback -> send_transcript_entry()
         """
         async def transcription_callback(text: str, segments: list = None):
-            """Handle transcript từ Vosk server (text + optional segments)"""
+            """Handle transcript from Vosk server (text + optional segments)"""
             if not text or not text.strip():
                 return
             
-            # Server chỉ gửi text, tạo default segment
+            # Server only sends text, create default segment
             if segments is None:
                 segments = [{
                     "text": text.strip(),
@@ -110,7 +110,7 @@ class TranscriptManager:
                     "completed": True
                 }]
             
-            # Server gửi final text (không có partial)
+            # Server sends final text (no partial)
             is_final = True
             lang = None  # Optional language detection
 
@@ -126,12 +126,12 @@ class TranscriptManager:
         return transcription_callback
     
     async def send_welcome_message(self):
-        """Send welcome message khi agent ready (optional)"""
+        """Send welcome message when agent is ready (optional)"""
         await asyncio.sleep(2)
         self.logger.info("Vosk transcription agent is ready!")
     
     async def cleanup(self):
-        """Cleanup sequence tracking và MongoDB connection"""
+        """Cleanup sequence tracking and MongoDB connection"""
         self._seq_by_participant.clear()
         
         # Disconnect MongoDB connection pool

@@ -1,13 +1,13 @@
 """Core business logic modules"""
 
 from .transcript_manager import TranscriptManager
-from .websocket_client import WebSocketTranscriptionClient
-from .handlers import EventHandlers
+from .websocket.stt_client import STTWebSocketClient
+from .event_handlers import EventHandlers
 from .agent_manager import AgentManager
 
 __all__ = [
     "TranscriptManager",
-    "WebSocketTranscriptionClient", 
+    "STTWebSocketClient", 
     "EventHandlers",
     "AgentManager"
 ]

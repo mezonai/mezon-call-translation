@@ -11,7 +11,7 @@ from livekit import rtc, agents
 
 from ..logger import get_logger
 from ..services.tts_engine import TTSEngine
-from ..services.tts_websocket_client import TTSWebSocketClient
+from .websocket.interview_bot_client import TTSWebSocketClient
 
 logger = get_logger(__name__)
 

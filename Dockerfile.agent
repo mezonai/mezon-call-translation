@@ -1,11 +1,14 @@
 # Dockerfile cho LiveKit Agent
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Cài đặt system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     wget \
     curl \
+    procps \
+    lsof \
+    net-tools \
     libasound2-dev \
     portaudio19-dev \
     libportaudio2 \
@@ -28,7 +31,10 @@ COPY Architect_MultiClient_Server/agents/ ./agents/
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Expose port cho LiveKit (nếu cần)
+# Expose ports
+# - 8000: FastAPI dispatch API
+# - 8080: LiveKit agent (if needed)
+EXPOSE 8000
 EXPOSE 8080
 
 # Command để chạy agent

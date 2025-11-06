@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 
 class AgentManager:
-    """Quản lý agent identity, metadata, status broadcasts, và command handling"""
+    """Manages agent identity, metadata, status broadcasts, and command handling"""
     
     def __init__(self, ctx: agents.JobContext):
         self.ctx = ctx

@@ -1,3 +1,26 @@
+"""
+Enhanced Audio Processing Pipeline
+
+This module provides the main audio processing pipeline for voice activity detection
+and audio chunk management. It integrates multiple processing stages including
+preprocessing, VAD, and post-processing with comprehensive error handling and metrics.
+
+Key Features:
+    - Multi-stage audio pipeline architecture
+    - Voice Activity Detection (VAD) with ZCR filtering
+    - Buffer pooling for memory efficiency
+    - Thread-safe queue management
+    - Real-time metrics tracking
+    - Graceful error handling and recovery
+
+Classes:
+    EnhancedVADProcessor: Main processor coordinating the audio pipeline
+    
+Dependencies:
+    - AudioProcessorConfig: Configuration for audio processing parameters
+    - AudioThreadingConfig: Threading configuration for async operations
+    - AudioPipeline: Pipeline architecture for stage-based processing
+"""
 import asyncio
 import numpy as np
 from typing import Optional, List
@@ -8,12 +31,12 @@ from src.utils.error_handling import AudioProcessingError, ErrorContext, ErrorSe
 from src.logger import get_logger
 
 logger = get_logger(__name__)
-from src.utils.thread_safe.buffer import AudioBuffer, AudioChunk
-from src.utils.thread_safe.queue import AudioQueue
+from src.utils.thread_safe.thread_safe_buffer import AudioBuffer, AudioChunk
+from src.utils.thread_safe.thread_safe_queue import AudioQueue
 from src.utils.vad.zcr_filter import EnhancedZCRFilter
-from src.utils.resource_management import AudioBufferPool
+from src.utils.resource_manager import AudioBufferPool
 from src.services.metrics_service import MetricsService
-from .pipeline import (
+from .audio_pipeline import (
     AudioPipeline,
     PreProcessingStage,
     VADProcessingStage,
@@ -160,7 +183,7 @@ class EnhancedVADProcessor:
                 
             except Exception as e:
                 self.metrics.track("vad.output_errors", 1)
-                print(f"Error in output processing: {e}")
+                logger.error(f"Error in output processing: {e}", exc_info=True)
     
     def get_stats(self) -> dict:
         """Get processing statistics"""
