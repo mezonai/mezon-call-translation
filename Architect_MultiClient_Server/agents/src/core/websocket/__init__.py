@@ -10,10 +10,9 @@ All clients inherit from BaseWebSocketClient for common functionality.
 
 from .base_client import BaseWebSocketClient
 from .stt_client import STTWebSocketClient
-from .interview_bot_client import TTSWebSocketClient
+
 
 __all__ = [
     "BaseWebSocketClient",
     "STTWebSocketClient",
-    "TTSWebSocketClient"
 ]

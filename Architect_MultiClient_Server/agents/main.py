@@ -17,8 +17,10 @@ from src.core.tts_manager import TTSManager
 from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
 from src.api.dispatch_manager import router as dispatch_router
+from src.api.tts_api import router as tts_router
 app = FastAPI()
 app.include_router(dispatch_router, prefix="/api")
+app.include_router(tts_router, prefix="/api")
 logger = get_logger(__name__)
 agent_name = os.environ.get("LIVEKIT_AGENT_NAME")
 
@@ -51,20 +53,22 @@ async def entrypoint(ctx: agents.JobContext):
         try:
             logger.info("Initializing TTS Manager...")
             
-            # Get WebSocket URL from environment or use default
-            ws_url = os.getenv('TTS_WS_URL', f"ws://localhost:8089/ws/tts/{session_id}")
+            # Get model path from environment
             model_path = os.getenv('TTS_MODEL_PATH', 'models/silero_v3_en.pt')
             
             tts_manager = TTSManager(
                 ctx=ctx,
                 session_id=session_id,
-                ws_url=ws_url,
                 model_path=model_path
             )
             
-            # Initialize TTS (load model, setup track, connect WebSocket)
+            # Initialize TTS (load model, setup track)
             if await tts_manager.initialize():
                 logger.info("✅ TTS Manager initialized successfully")
+                
+                # Note: DataChannel routing is handled by central dispatcher in main.py
+                logger.info("✅ TTS listening on DataChannel topic='tts_control'")
+                
                 # Announce TTS ready
                 await tts_manager.announce_tts_ready()
             else:
@@ -99,8 +103,31 @@ async def entrypoint(ctx: agents.JobContext):
     ctx.room.on("disconnected", lambda: asyncio.create_task(on_disconnected()))
 
  
-    def on_data_received(data):
-        asyncio.create_task(agent_manager.handle_agent_commands(data))
+    def on_data_received(data_packet):
+        """Central DataChannel dispatcher - routes messages to appropriate handlers"""
+        try:
+            topic = data_packet.topic
+            participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
+            
+            # Log incoming data for debugging
+            logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
+            
+            # Route to appropriate handler based on topic
+            if topic == "agent_commands":
+                logger.debug(f"→ Routing to AgentManager")
+                asyncio.create_task(agent_manager.handle_agent_commands(data_packet))
+            elif topic == "tts_control":
+                if tts_manager:
+                    logger.info(f"🎯 Routing to TTSManager")
+                    asyncio.create_task(tts_manager.handle_tts_data(data_packet))
+                else:
+                    logger.warning("⚠️ Received TTS request but TTS is not enabled")
+            else:
+                logger.debug(f"Unhandled DataChannel topic: {topic}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error in DataChannel dispatcher: {e}", exc_info=True)
+    
     ctx.room.on("data_received", on_data_received)
 
     await agent_manager.setup_agent_identity()
@@ -128,7 +155,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 def start_api():
     """Start FastAPI server for dispatch management (development/standalone mode only)"""
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=False)
 
 if __name__ == "__main__":
 
