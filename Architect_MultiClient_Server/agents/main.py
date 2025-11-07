@@ -18,9 +18,11 @@ from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
 from src.api.dispatch_manager import router as dispatch_router
 from src.api.tts_api import router as tts_router
+from src.api.stream_message_api import router as stream_router
 app = FastAPI()
 app.include_router(dispatch_router, prefix="/api")
 app.include_router(tts_router, prefix="/api")
+app.include_router(stream_router, prefix="/api")
 logger = get_logger(__name__)
 agent_name = os.environ.get("LIVEKIT_AGENT_NAME")
 

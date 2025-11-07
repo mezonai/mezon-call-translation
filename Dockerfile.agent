@@ -38,4 +38,4 @@ EXPOSE 8000
 EXPOSE 8080
 
 # Command để chạy agent
-CMD ["python", "agents/main.py", "dev"]
+CMD ["python", "agents/main.py", "start"]
