@@ -62,7 +62,7 @@ class TranscriptManager:
             )
             
             # MongoDB persistence (async, does not block main flow)
-            if self.enable_mongodb:
+            if self.enable_mongodb and is_final:
                 doc_id = await self.mongodb.save_transcript(
                     session_id=self.session_id,
                     participant_identity=participant_identity,

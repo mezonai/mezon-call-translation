@@ -1,24 +1,35 @@
 """
 TTS API endpoints for sending TTS requests via DataChannel
 """
+try:
+    from livekit import api, rtc
+    from livekit.api import twirp_client
+    LIVEKIT_AVAILABLE = True
+except ImportError:
+    LIVEKIT_AVAILABLE = False
+
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import json
 import time
-from livekit import api, rtc
-import os
+from src.api.verify_account import authenticate_account
 
 router = APIRouter()
 
-# LiveKit configuration
-LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
-LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
-LIVEKIT_URL = os.getenv("LIVEKIT_URL")
+
+class AccountModel(BaseModel):
+    appid: str
+    token: str
 
 
 class TTSRequest(BaseModel):
     """TTS request model"""
+    account: AccountModel
     room_name: str
     text: str
     language: Optional[str] = "en"
@@ -34,85 +45,148 @@ class TTSResponse(BaseModel):
     timestamp: float
 
 
-@router.post("/tts/send", response_model=TTSResponse)
-async def send_tts_request(request: TTSRequest):
+async def send_tts_to_room(room_name: str, text: str, language: str = "en", voice: str = "default"):
     """
-    Send TTS request to LiveKit room via DataChannel
+    Internal function to send TTS request to LiveKit room via DataChannel
     
     Args:
-        request: TTSRequest containing room_name, text, language, voice
+        room_name: LiveKit room name
+        text: Text to synthesize
+        language: Language code (default: "en")
+        voice: Voice name (default: "default")
         
     Returns:
-        TTSResponse with success status and details
-        
-    Example:
-        POST /api/tts/send
-        {
-            "room_name": "d1olQsRvR",
-            "text": "Hello world",
-            "language": "en",
-            "voice": "default"
-        }
+        Dict with status and message
     """
+    if not LIVEKIT_AVAILABLE:
+        return {
+            "status": "error",
+            "message": "LiveKit API not available. Please install livekit-api package."
+        }
+    
+    # Get LiveKit configuration from environment
+    url = os.environ.get("LIVEKIT_URL")
+    api_key = os.environ.get("LIVEKIT_API_KEY")
+    api_secret = os.environ.get("LIVEKIT_API_SECRET")
+    
+    if not url or not api_key or not api_secret:
+        return {
+            "status": "error",
+            "message": "LiveKit credentials not configured. Check LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET"
+        }
+    
+    # Validate text
+    if not text or not text.strip():
+        return {
+            "status": "error",
+            "message": "Text is required and cannot be empty"
+        }
+    
+    lkapi = api.LiveKitAPI(
+        url=url,
+        api_key=api_key,
+        api_secret=api_secret,
+    )
+    
     try:
-        # Validate inputs
-        if not request.room_name or not request.room_name.strip():
-            raise HTTPException(status_code=400, detail="room_name is required")
-        
-        if not request.text or not request.text.strip():
-            raise HTTPException(status_code=400, detail="text is required")
-        
-        # Check credentials
-        if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET or not LIVEKIT_URL:
-            raise HTTPException(
-                status_code=500,
-                detail="LiveKit credentials not configured. Check LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL"
-            )
-        
-        # Create LiveKit API client
-        lk_api = api.LiveKitAPI(
-            LIVEKIT_URL,
-            LIVEKIT_API_KEY,
-            LIVEKIT_API_SECRET,
-        )
-        
         # Prepare TTS payload
         payload = {
             "type": "tts_request",
-            "text": request.text.strip(),
-            "language": request.language,
-            "voice": request.voice,
+            "text": text.strip(),
+            "language": language,
+            "voice": voice,
             "timestamp": time.time(),
         }
         
         # Send data to room via DataChannel
-        await lk_api.room.send_data(
+        await lkapi.room.send_data(
             api.SendDataRequest(
-                room=request.room_name,
+                room=room_name,
                 data=json.dumps(payload).encode("utf-8"),
                 kind=rtc.DataPacketKind.KIND_RELIABLE,
                 topic="tts_control",
             )
         )
         
-        # Close API connection
-        await lk_api.aclose()
+        await lkapi.aclose()
         
-        return TTSResponse(
-            success=True,
-            message="TTS request sent successfully",
-            room_name=request.room_name,
-            text_length=len(request.text),
-            timestamp=time.time()
-        )
+        return {
+            "status": "success",
+            "message": "TTS request sent successfully",
+            "room_name": room_name,
+            "text_length": len(text),
+            "timestamp": time.time()
+        }
         
-    except HTTPException:
-        raise
+    except twirp_client.TwirpError as e:
+        await lkapi.aclose()
+        return {
+            "status": "error",
+            "message": f"LiveKit server error: {e}"
+        }
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to send TTS request: {str(e)}"
-        )
+        await lkapi.aclose()
+        return {
+            "status": "error",
+            "message": f"Failed to send TTS request: {str(e)}"
+        }
+
+
+@router.post("/tts/speak", response_model=TTSResponse)
+async def api_send_tts_request(request: TTSRequest):
+    """
+    Send TTS request to LiveKit room via DataChannel
+    
+    Requires authentication via account credentials.
+    
+    Args:
+        request: TTSRequest containing account, room_name, text, language, voice
+        
+    Returns:
+        TTSResponse with success status and details
+        
+    Example:
+        POST /api/tts/speak
+        {
+            "account": {
+                "appid": "your_app_id",
+                "token": "your_token"
+            },
+            "room_name": "d1olQsRvR",
+            "text": "Hello world",
+            "language": "en",
+            "voice": "default"
+        }
+    """
+    # Authenticate account
+    account = request.account.dict()
+    if not await authenticate_account(account):
+        raise HTTPException(status_code=401, detail="Account authentication failed")
+    
+    # Validate room_name
+    if not request.room_name or not request.room_name.strip():
+        raise HTTPException(status_code=400, detail="room_name is required")
+    
+    # Send TTS request
+    result = await send_tts_to_room(
+        room_name=request.room_name,
+        text=request.text,
+        language=request.language,
+        voice=request.voice
+    )
+    
+    # Handle errors
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result["message"])
+    
+    # Return success response
+    return TTSResponse(
+        success=True,
+        message=result["message"],
+        room_name=result["room_name"],
+        text_length=result["text_length"],
+        timestamp=result["timestamp"]
+    )
 
 
 @router.get("/tts/health")
@@ -123,17 +197,26 @@ async def tts_health_check():
     Returns:
         Health status and configuration info
     """
-    has_credentials = bool(
-        LIVEKIT_API_KEY and 
-        LIVEKIT_API_SECRET and 
-        LIVEKIT_URL
-    )
+    if not LIVEKIT_AVAILABLE:
+        return {
+            "status": "error",
+            "message": "LiveKit API not available",
+            "configured": False,
+        }
+    
+    # Get credentials from environment
+    url = os.environ.get("LIVEKIT_URL")
+    api_key = os.environ.get("LIVEKIT_API_KEY")
+    api_secret = os.environ.get("LIVEKIT_API_SECRET")
+    
+    has_credentials = bool(url and api_key and api_secret)
     
     return {
         "status": "ok" if has_credentials else "error",
         "message": "TTS API is ready" if has_credentials else "Missing LiveKit credentials",
         "configured": has_credentials,
-        "livekit_url": LIVEKIT_URL if LIVEKIT_URL else "Not configured",
-        "has_api_key": bool(LIVEKIT_API_KEY),
-        "has_api_secret": bool(LIVEKIT_API_SECRET),
+        "livekit_url": url if url else "Not configured",
+        "has_api_key": bool(api_key),
+        "has_api_secret": bool(api_secret),
     }
+
