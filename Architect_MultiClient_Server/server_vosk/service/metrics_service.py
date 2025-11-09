@@ -40,7 +40,7 @@ class MetricsService:
     queue_size = Gauge('queue_size', 'Current queue size', ['queue_name'])
     
     # Circuit Breaker metrics
-    circuit_breaker_state = Gauge('circuit_breaker_state', 'Circuit breaker state (0=closed, 1=half-open, 2=open)', ['name'])
+    circuit_breaker_state = Gauge('circuit_breaker_state', 'Circuit breaker state (0=active, 1=disconnecting)', ['name'])
     circuit_breaker_failures = Counter('circuit_breaker_failures_total', 'Circuit breaker failures', ['name'])
     
     # Request metrics
@@ -69,11 +69,18 @@ class MetricsService:
         cls.transcription_duration.observe(duration)
     
     @classmethod
-    def track_circuit_breaker(cls, name: str, is_open: bool, failure_count: int):
-        """Track circuit breaker state"""
-        state = 2 if is_open else 0
+    def track_circuit_breaker(cls, name: str, is_disconnecting: bool, failure_count: int):
+        """Track circuit breaker state
+        
+        Args:
+            name: Circuit breaker name
+            is_disconnecting: Whether circuit is disconnecting client (True) or active (False)
+            failure_count: Current failure count
+        """
+        state = 1 if is_disconnecting else 0  # 0=ACTIVE, 1=DISCONNECTING
         cls.circuit_breaker_state.labels(name=name).set(state)
-        cls.circuit_breaker_failures.labels(name=name).inc(failure_count)
+        if failure_count > 0:
+            cls.circuit_breaker_failures.labels(name=name).inc(failure_count)
 
 # Create singleton instance
 metrics = MetricsService()

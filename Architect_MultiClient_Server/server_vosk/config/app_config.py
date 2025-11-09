@@ -39,10 +39,12 @@ class QueueConfig:
 
 @dataclass
 class CircuitBreakerConfig:
-    """Circuit breaker configuration."""
-    stt_failure_threshold: int = 5
-    stt_timeout: float = 60.0  # Increased from 10.0 to 60.0 seconds for stability
-    stt_success_threshold: int = 3
+    """Circuit breaker configuration.
+    
+    When failure_threshold is reached, the client is disconnected immediately
+    and must reconnect to get a fresh circuit breaker.
+    """
+    stt_failure_threshold: int = 5  # Number of consecutive failures before disconnect
 
 
 @dataclass
@@ -119,8 +121,6 @@ class ConfigManager:
         
         # Circuit breaker configuration
         config.circuit_breaker.stt_failure_threshold = int(os.getenv("STT_CIRCUIT_BREAKER_FAILURE_THRESHOLD", config.circuit_breaker.stt_failure_threshold))
-        config.circuit_breaker.stt_timeout = float(os.getenv("STT_CIRCUIT_BREAKER_TIMEOUT", config.circuit_breaker.stt_timeout))
-        config.circuit_breaker.stt_success_threshold = int(os.getenv("STT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD", config.circuit_breaker.stt_success_threshold))
         
         # Server configuration
         config.server.host = os.getenv("SERVER_HOST", config.server.host)
@@ -184,9 +184,7 @@ class ConfigManager:
                 "audio_queue_maxsize": config.queue.audio_queue_maxsize
             },
             "circuit_breaker": {
-                "stt_failure_threshold": config.circuit_breaker.stt_failure_threshold,
-                "stt_timeout": config.circuit_breaker.stt_timeout,
-                "stt_success_threshold": config.circuit_breaker.stt_success_threshold
+                "stt_failure_threshold": config.circuit_breaker.stt_failure_threshold
             },
             "server": {
                 "host": config.server.host,

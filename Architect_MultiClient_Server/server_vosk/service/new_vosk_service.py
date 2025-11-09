@@ -230,13 +230,11 @@ class NewSTTVoskService:
             return {
                 "state": self._circuit_breaker.state.name,
                 "failure_count": self._circuit_breaker.failure_count,
-                "success_count": self._circuit_breaker.success_count,
                 "last_failure_time": getattr(self._circuit_breaker, 'last_failure_time', None),
+                "disconnecting": getattr(self._circuit_breaker, '_disconnecting', False),
                 "can_try": self._circuit_breaker.can_try(),
                 "config": {
-                    "failure_threshold": self._circuit_breaker.config.failure_threshold,
-                    "timeout": self._circuit_breaker.config.timeout,
-                    "success_threshold": self._circuit_breaker.config.success_threshold
+                    "failure_threshold": self._circuit_breaker.config.failure_threshold
                 },
                 "detailed_state": self._circuit_breaker.get_state()
             }

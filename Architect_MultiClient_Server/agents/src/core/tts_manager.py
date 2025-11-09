@@ -385,38 +385,41 @@ class TTSManager:
             # Convert float32 to int16 for LiveKit
             audio_int16 = (audio_data * 32767).astype(np.int16)
             
-            # Stream audio in 10ms chunks for smooth playback
-            chunk_size = self.sample_rate // 100  # 10ms chunks
-            total_chunks = len(audio_int16) // chunk_size
+            # Stream audio in 20ms chunks (LiveKit standard)
+            # At 48000 Hz: 20ms = 48000 * 0.02 = 960 samples
+            chunk_size = int(self.sample_rate * 0.02)  # 20ms chunks
+            total_chunks = (len(audio_int16) + chunk_size - 1) // chunk_size
             
             logger.debug(
-                f"Streaming {total_chunks} chunks "
-                f"({len(audio_int16) / self.sample_rate:.2f}s)"
+                f"Streaming {total_chunks} chunks of {chunk_size} samples each "
+                f"({len(audio_int16) / self.sample_rate:.2f}s total)"
             )
             
             for i in range(0, len(audio_int16), chunk_size):
                 chunk = audio_int16[i:i + chunk_size]
                 
-                # Pad last chunk if needed
+                # Pad last chunk if needed to maintain consistent frame size
                 if len(chunk) < chunk_size:
                     chunk = np.pad(
                         chunk,
                         (0, chunk_size - len(chunk)),
-                        mode='constant'
+                        mode='constant',
+                        constant_values=0
                     )
                 
-                # Create and send audio frame
+                # Create and send audio frame with exact parameters
                 frame = rtc.AudioFrame(
                     data=chunk.tobytes(),
                     sample_rate=self.sample_rate,
                     num_channels=1,
-                    samples_per_channel=len(chunk)
+                    samples_per_channel=chunk_size  # Must match chunk size
                 )
                 
                 await self.audio_source.capture_frame(frame)
+                
+                # Small delay to prevent buffer overflow (optional, can be removed if playback is smooth)
+                # await asyncio.sleep(0.001)
             
-            # Ensure last frames are flushed
-            await asyncio.sleep(0.1)
             logger.debug("Audio streaming completed")
             
         except Exception as e:
@@ -499,14 +502,15 @@ class TTSManager:
         try:
             logger.info("Cleaning up TTS Manager...")
             
-            # Flush audio buffer with silent frame
+            # Flush audio buffer with silent frame (20ms at 48000 Hz = 960 samples)
             if self.audio_source:
                 try:
+                    chunk_size = int(self.sample_rate * 0.02)  # 20ms
                     silent_frame = rtc.AudioFrame(
-                        data=np.zeros(480, dtype=np.int16).tobytes(),
+                        data=np.zeros(chunk_size, dtype=np.int16).tobytes(),
                         sample_rate=self.sample_rate,
                         num_channels=1,
-                        samples_per_channel=480
+                        samples_per_channel=chunk_size
                     )
                     await self.audio_source.capture_frame(silent_frame)
                 except Exception as e:

@@ -1,5 +1,8 @@
 """
 Circuit Breaker Pattern implementation for robust error handling.
+
+Modified version: Instead of OPEN/HALF_OPEN states that block requests,
+this version disconnects and cleans up the client when threshold is reached.
 """
 import time
 import logging
@@ -13,17 +16,14 @@ logger = logging.getLogger(__name__)
 
 class CircuitState(Enum):
     """Circuit breaker states."""
-    CLOSED = "CLOSED"      # Normal operation
-    OPEN = "OPEN"          # Circuit is open, calls fail fast
-    HALF_OPEN = "HALF_OPEN"  # Testing if service is back
+    ACTIVE = "ACTIVE"          # Normal operation, monitoring failures
+    DISCONNECTING = "DISCONNECTING"  # Threshold reached, disconnecting client
 
 
 @dataclass
 class CircuitBreakerConfig:
     """Configuration for circuit breaker."""
-    failure_threshold: int = 5
-    timeout: float = 10.0
-    success_threshold: int = 3
+    failure_threshold: int = 5  # Number of failures before disconnecting client
     expected_exception: type = Exception
 
 
@@ -31,25 +31,26 @@ class CircuitBreaker:
     """
     Circuit breaker pattern implementation for fault tolerance.
     
-    The circuit breaker has three states:
-    - CLOSED: Normal operation, calls pass through
-    - OPEN: Circuit is open, calls fail fast
-    - HALF_OPEN: Testing if service is back, limited calls allowed
+    Modified behavior:
+    - ACTIVE: Normal operation, monitoring failures
+    - When failure_threshold is reached: Disconnect client immediately
+    - Client must reconnect to get a fresh circuit breaker
+    
+    This prevents cascading failures by removing problematic clients quickly.
     """
     
     def __init__(self, config: CircuitBreakerConfig, on_threshold_reached=None):
         self.config = config
-        self.state = CircuitState.CLOSED
+        self.state = CircuitState.ACTIVE
         self.failure_count = 0
-        self.success_count = 0
         self.last_failure_time = None
-        self.last_reset_attempt_time = None  # Track when we last attempted reset
         self._lock = threading.RLock()
         self._on_threshold_reached = on_threshold_reached
+        self._disconnecting = False  # Track if disconnect initiated
         
         logger.info(
-            f"Circuit breaker initialized: failure_threshold={config.failure_threshold}, "
-            f"timeout={config.timeout}s, success_threshold={config.success_threshold}"
+            f"Circuit breaker initialized: failure_threshold={config.failure_threshold} "
+            f"(will disconnect client when threshold reached)"
         )
     
     def call(self, func: Callable, *args, **kwargs) -> Any:
@@ -65,19 +66,16 @@ class CircuitBreaker:
             Function result
             
         Raises:
-            CircuitBreakerOpenException: When circuit is open
+            CircuitBreakerOpenException: When client is being disconnected
             Exception: Original function exception
         """
         with self._lock:
-            if self.state == CircuitState.OPEN:
-                if self._should_attempt_reset():
-                    self.state = CircuitState.HALF_OPEN
-                    self.success_count = 0
-                    logger.info("Circuit breaker transitioning to HALF_OPEN state")
-                else:
-                    raise CircuitBreakerOpenException(
-                        f"Circuit breaker is OPEN. Last failure: {self.last_failure_time}"
-                    )
+            # If already disconnecting, reject all calls
+            if self.state == CircuitState.DISCONNECTING or self._disconnecting:
+                raise CircuitBreakerOpenException(
+                    f"Circuit breaker is DISCONNECTING client. "
+                    f"Failure threshold reached: {self.failure_count}/{self.config.failure_threshold}"
+                )
             
             try:
                 result = func(*args, **kwargs)
@@ -102,140 +100,93 @@ class CircuitBreaker:
         with self._lock:
             self._on_success()
     
-    def _should_attempt_reset(self) -> bool:
-        """Check if enough time has passed to attempt reset."""
-        if self.last_failure_time is None:
-            return True
-        return time.time() - self.last_failure_time >= self.config.timeout
-    
     def can_try(self) -> bool:
-        """Check if circuit breaker allows calls."""
+        """
+        Check if circuit breaker allows calls.
+        
+        Returns False when client is being disconnected.
+        """
         with self._lock:
-            current_time = time.time()
-            
-            if self.state == CircuitState.CLOSED:
-                return True
-            elif self.state == CircuitState.HALF_OPEN:
-                return True
-            elif self.state == CircuitState.OPEN:
-                time_since_failure = current_time - self.last_failure_time if self.last_failure_time else 0
-                can_reset = self._should_attempt_reset()
-                
-                if can_reset:
-                    # Only log transition message once per reset attempt
-                    should_log_transition = (
-                        self.last_reset_attempt_time is None or 
-                        current_time - self.last_reset_attempt_time > 5.0  # Log at most every 5 seconds
-                    )
-                    
-                    if should_log_transition:
-                        logger.info(
-                            f"Circuit breaker transitioning from OPEN to HALF_OPEN after {time_since_failure:.1f}s "
-                            f"(timeout: {self.config.timeout}s, failures: {self.failure_count})"
-                        )
-                        self.last_reset_attempt_time = current_time
-                    
-                    self.state = CircuitState.HALF_OPEN
-                    self.success_count = 0  # Reset success count for HALF_OPEN state
-                    return True
-                else:
-                    # Only log blocking message occasionally to avoid spam
-                    if self.last_reset_attempt_time is None or current_time - self.last_reset_attempt_time > 10.0:
-                        logger.debug(
-                            f"Circuit breaker OPEN - blocking calls. Time since failure: {time_since_failure:.1f}s, "
-                            f"timeout needed: {self.config.timeout}s, failure count: {self.failure_count}/{self.config.failure_threshold}"
-                        )
-                        self.last_reset_attempt_time = current_time
-                    return False
-            return False
+            return self.state == CircuitState.ACTIVE and not self._disconnecting
     
     def _on_success(self):
         """Handle successful call."""
-        if self.state == CircuitState.HALF_OPEN:
-            self.success_count += 1
-            logger.info(
-                f"Circuit breaker success in HALF_OPEN: {self.success_count}/{self.config.success_threshold} "
-                f"(need {self.config.success_threshold - self.success_count} more to close)"
-            )
-            if self.success_count >= self.config.success_threshold:
-                self.state = CircuitState.CLOSED
-                self.failure_count = 0
-                self.success_count = 0
-                logger.info(
-                    f"✅ CIRCUIT BREAKER FULLY RECOVERED! ✅\n"
-                    f"   State changed from HALF_OPEN to CLOSED\n"
-                    f"   Service is now fully operational\n"
-                    f"   Failure count reset to 0"
-                )
-        elif self.state == CircuitState.CLOSED:
-            # Reset failure count on success in normal state
+        if self.state == CircuitState.ACTIVE:
+            # Reset failure count on success
             if self.failure_count > 0:
                 logger.debug(f"Circuit breaker success: resetting failure count from {self.failure_count} to 0")
                 self.failure_count = 0
     
     def _on_failure(self):
-        """Handle failed call."""
+        """Handle failed call - disconnect client when threshold reached."""
         self.failure_count += 1
         self.last_failure_time = time.time()
         
         logger.warning(
-            f"Circuit breaker recorded failure #{self.failure_count} "
-            f"(threshold: {self.config.failure_threshold}, state: {self.state.value})"
+            f"Circuit breaker recorded failure #{self.failure_count}/{self.config.failure_threshold} "
+            f"(state: {self.state.value})"
         )
         
-        if self.state == CircuitState.HALF_OPEN:
-            # Failed in half-open state, go back to open
-            self.state = CircuitState.OPEN
-            self.success_count = 0
+        # Check if threshold reached
+        if self.failure_count >= self.config.failure_threshold:
+            self.state = CircuitState.DISCONNECTING
+            self._disconnecting = True
+            
             logger.error(
-                f"Circuit breaker FAILED in HALF_OPEN state after {self.success_count} successes, "
-                f"returning to OPEN state. Total failures: {self.failure_count}"
+                f"🚨 CIRCUIT BREAKER THRESHOLD REACHED - DISCONNECTING CLIENT! 🚨\n"
+                f"   Reason: Exceeded failure threshold ({self.failure_count}/{self.config.failure_threshold})\n"
+                f"   Last failure time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.last_failure_time))}\n"
+                f"   Action: Client will be disconnected and cleaned up immediately\n"
+                f"   Recovery: Client must reconnect to get a fresh start"
             )
+            
+            # Trigger disconnect callback
             if self._on_threshold_reached:
-                self._on_threshold_reached()
-        elif self.state == CircuitState.CLOSED:
-            if self.failure_count >= self.config.failure_threshold:
-                self.state = CircuitState.OPEN
-                if self._on_threshold_reached:
+                try:
                     self._on_threshold_reached()
-                logger.error(
-                    f"🚨 CIRCUIT BREAKER OPENED! 🚨\n"
-                    f"   Reason: Exceeded failure threshold ({self.failure_count}/{self.config.failure_threshold})\n"
-                    f"   Will block all requests for {self.config.timeout} seconds\n"
-                    f"   Last failure time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.last_failure_time))}\n"
-                    f"   Recovery: Need {self.config.success_threshold} consecutive successes to fully recover"
-                )
-            else:
-                remaining_failures = self.config.failure_threshold - self.failure_count
-                logger.warning(
-                    f"Circuit breaker approaching threshold: {self.failure_count}/{self.config.failure_threshold} "
-                    f"({remaining_failures} more failures will open circuit)"
-                )
+                except Exception as e:
+                    logger.error(f"Error calling disconnect callback: {e}", exc_info=True)
+        else:
+            remaining_failures = self.config.failure_threshold - self.failure_count
+            logger.warning(
+                f"Circuit breaker approaching threshold: {self.failure_count}/{self.config.failure_threshold} "
+                f"({remaining_failures} more failures will trigger client disconnect)"
+            )
     
     def get_state(self) -> dict:
-        """Get current circuit breaker state."""
+        """Get current circuit breaker state.
+        
+        Returns:
+            dict: Current state containing:
+                - state: Current circuit state (ACTIVE or DISCONNECTING)
+                - failure_count: Number of consecutive failures
+                - last_failure_time: Timestamp of last failure (or None)
+                - time_since_last_failure: Seconds since last failure (or None)
+                - disconnecting: Whether client is being disconnected
+        """
         with self._lock:
             return {
                 'state': self.state.value,
                 'failure_count': self.failure_count,
-                'success_count': self.success_count,
                 'last_failure_time': self.last_failure_time,
-                'last_reset_attempt_time': self.last_reset_attempt_time,
                 'time_since_last_failure': (
                     time.time() - self.last_failure_time 
                     if self.last_failure_time else None
-                )
+                ),
+                'disconnecting': self._disconnecting
             }
     
     def reset(self):
-        """Manually reset circuit breaker to CLOSED state."""
+        """Manually reset circuit breaker to ACTIVE state.
+        
+        Note: This is typically called when a client reconnects.
+        """
         with self._lock:
-            self.state = CircuitState.CLOSED
+            self.state = CircuitState.ACTIVE
             self.failure_count = 0
-            self.success_count = 0
             self.last_failure_time = None
-            self.last_reset_attempt_time = None
-            logger.info("Circuit breaker manually reset to CLOSED state")
+            self._disconnecting = False
+            logger.info("Circuit breaker manually reset to ACTIVE state")
 
 
 class CircuitBreakerOpenException(Exception):
@@ -248,7 +199,11 @@ _stt_circuit_breaker: Optional[CircuitBreaker] = None
 
 
 def get_stt_circuit_breaker() -> CircuitBreaker:
-    """Get or create STT circuit breaker."""
+    """Get or create STT circuit breaker.
+    
+    Note: This returns a global circuit breaker. In practice, each client
+    should have its own circuit breaker instance for isolated failure tracking.
+    """
     global _stt_circuit_breaker
     if _stt_circuit_breaker is None:
         try:
@@ -256,16 +211,12 @@ def get_stt_circuit_breaker() -> CircuitBreaker:
             app_config = get_config()
             config = CircuitBreakerConfig(
                 failure_threshold=app_config.circuit_breaker.stt_failure_threshold,
-                timeout=app_config.circuit_breaker.stt_timeout,
-                success_threshold=app_config.circuit_breaker.stt_success_threshold,
                 expected_exception=Exception
             )
         except ImportError:
             # Fallback to default config if config system not available
             config = CircuitBreakerConfig(
                 failure_threshold=5,
-                timeout=60.0,
-                success_threshold=3,
                 expected_exception=Exception
             )
         _stt_circuit_breaker = CircuitBreaker(config)

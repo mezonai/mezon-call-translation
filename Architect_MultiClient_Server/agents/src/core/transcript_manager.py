@@ -7,7 +7,7 @@ from livekit import agents
 
 from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
-
+from src.api.stream_message_manager import stream_message_manager
 
 class TranscriptManager:
     """Manages transcript entries: sequence tracking, logging, MongoDB storage"""
@@ -60,30 +60,39 @@ class TranscriptManager:
             self.logger.info(
                 f"[{transcript_type}] [{self.session_id}] {participant_name} ({participant_identity}): {text}"
             )
-            
+                        
             # MongoDB persistence (async, does not block main flow)
-            if self.enable_mongodb and is_final:
-                doc_id = await self.mongodb.save_transcript(
-                    session_id=self.session_id,
-                    participant_identity=participant_identity,
-                    participant_name=participant_name,
-                    text=text,
-                    is_final=is_final,
-                    segments=segments,
-                    language=language,
-                    seq=seq,
-                    metadata={
-                        "room_name": self.ctx.room.name,
-                        "agent_name": "Vosk-Transcription-Agent"
-                    }
-                )
-                
-                if doc_id:
-                    self.logger.debug(f"💾 Saved to MongoDB: doc_id={doc_id}")
+            if is_final:
+                try:
+                    room_name = self.ctx.room.name 
+                    queue = await stream_message_manager.get_queue(room_name)
+                    await queue.put(text)
+                    self.logger.info(f"[SSE] Pushed to queue (room={room_name}): {text}")
+
+                except Exception as e:
+                    self.logger.exception(f"[SSE] Failed to push text: {e}")
+
+                if self.enable_mongodb:
+                    doc_id = await self.mongodb.save_transcript(
+                        session_id=self.session_id,
+                        participant_identity=participant_identity,
+                        participant_name=participant_name,
+                        text=text,
+                        is_final=is_final,
+                        segments=segments,
+                        language=language,
+                        seq=seq,
+                        metadata={
+                            "room_name": self.ctx.room.name,
+                            "agent_name": "Vosk-Transcription-Agent"
+                        }
+                    )
+                    if doc_id:
+                        self.logger.info(f"💾 Saved to MongoDB: doc_id={doc_id}")
+                    else:
+                        self.logger.warning("Failed to save transcript to MongoDB")
                 else:
-                    self.logger.warning("Failed to save transcript to MongoDB")
-            else:
-                self.logger.debug("MongoDB disabled, transcript only logged")
+                    self.logger.debug("MongoDB disabled, transcript only logged")
             
             return True
             

@@ -145,23 +145,17 @@ class HealthService:
             
             # Determine overall status
             status = "healthy"
-            open_breakers = []
-            half_open_breakers = []
+            disconnecting_breakers = []
             
             for name, state in circuit_states.items():
-                if state["state"] == "OPEN":
-                    open_breakers.append(name)
-                    status = "unhealthy"
-                elif state["state"] == "HALF_OPEN":
-                    half_open_breakers.append(name)
-                    if status == "healthy":
-                        status = "degraded"
+                if state["state"] == "DISCONNECTING":
+                    disconnecting_breakers.append(name)
+                    status = "degraded"  # System still functional but cleaning up clients
             
             return {
                 "status": status,
                 "circuit_breakers": circuit_states,
-                "open_breakers": open_breakers,
-                "half_open_breakers": half_open_breakers
+                "disconnecting_breakers": disconnecting_breakers
             }
         except Exception as e:
             return {
@@ -281,10 +275,8 @@ def register_stt_health_checks(stt_service):
                     return {"status": "unhealthy", "error": cb_status["error"]}
                 
                 state = cb_status.get("state", "UNKNOWN")
-                if state == "OPEN":
-                    status = "unhealthy"
-                elif state == "HALF_OPEN":
-                    status = "degraded"
+                if state == "DISCONNECTING":
+                    status = "degraded"  # Cleaning up problematic client
                 else:
                     status = "healthy"
                 
@@ -292,7 +284,7 @@ def register_stt_health_checks(stt_service):
                     "status": status,
                     "circuit_breaker_state": state,
                     "failure_count": cb_status.get("failure_count", 0),
-                    "success_count": cb_status.get("success_count", 0)
+                    "disconnecting": cb_status.get("disconnecting", False)
                 }
             else:
                 return {"status": "degraded", "error": "Circuit breaker status not available"}

@@ -16,7 +16,7 @@ from src.core.agent_manager import AgentManager
 from src.core.tts_manager import TTSManager
 from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
-from src.api.dispatch_manager import router as dispatch_router
+from src.api.dispatch_api import router as dispatch_router
 from src.api.tts_api import router as tts_router
 from src.api.stream_message_api import router as stream_router
 app = FastAPI()
@@ -166,5 +166,5 @@ if __name__ == "__main__":
 
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=entrypoint,
-        # agent_name=agent_name
+        agent_name=agent_name
     ))
