@@ -1,0 +1,5 @@
+vấn đề hiển thị name agent hiện tại đang hiển thị dưới dạng identity custom vấn đề phát sinh là
+trong một room chỉ join được 1 agent này ( hiện tại chưa thành vấn đề vì chỉ cần 1 agent join vào )
+
+âm thành còn bị rè khi có nhiều phòng ( cần phải test nhiều hơn để tìm nguyên nhân phát sinh )
+
