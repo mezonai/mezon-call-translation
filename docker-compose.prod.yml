@@ -1,0 +1,33 @@
+# Production configuration
+version: '3.8'
+
+services:
+  server-vosk:
+    # Production optimizations
+    environment:
+      - PYTHONUNBUFFERED=1
+      - RELOAD=false
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  agent:
+    # Production optimizations
+    environment:
+      - PYTHONUNBUFFERED=1
+      - RELOAD=false
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'

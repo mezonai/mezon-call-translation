@@ -1,0 +1,109 @@
+services:
+  # FastAPI Server với Vosk
+  server-vosk:
+    build:
+      context: .
+      dockerfile: Dockerfile.server_vosk
+    ports:
+      - "8000"   # let Docker assign internal port
+    env_file:
+      - Architect_MultiClient_Server/server_vosk/.env
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - VOSK_MODEL_PATH=${VOSK_MODEL_PATH}
+    volumes:
+      # Mount thư mục models để có thể thay đổi model mà không cần rebuild
+      - ./models:/app/models
+      # Mount thư mục logs để xem logs từ bên ngoài
+      - ./logs:/app/logs
+    networks:
+      - mezon-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/simple"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - server-vosk
+    networks:
+      - mezon-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  # LiveKit Agent
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: mezon-livekit-agent
+    ports:
+      - "8002:8000"  # FastAPI dispatch API
+    env_file:
+      - Architect_MultiClient_Server/agents/.env
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      nginx:
+        condition: service_started
+      mongodb:
+        condition: service_healthy
+    networks:
+      - mezon-network
+    restart: unless-stopped
+
+  # MongoDB for transcript storage
+  mongodb:
+    image: mongo:7
+    container_name: mezon-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=mezon_transcripts
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - mezon-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  mezon-network:
+    driver: bridge
+
+volumes:
+  # Persistent volume cho models
+  models:
+    driver: local
+  # Persistent volume cho logs
+  logs:
+    driver: local
+  # Persistent volume cho MongoDB data
+  mongodb_data:
+    driver: local
+  # Persistent volume cho MongoDB config
+  mongodb_config:
+    driver: local
+ 

@@ -1,0 +1,14 @@
+/models
+*.py[cod]
+venv/
+.env
+/logs
+*.mp3
+*.wav
+Architect_MultiClient_Server/demo_test/
+Architect_MultiClient_Server/test/
+Architect_MultiClient_Server/agents/demo/
+application.log
+vad_log.txt
+examples/
+Architect_MultiClient_Server/stress_test_server/

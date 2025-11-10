@@ -1,0 +1,19 @@
+# Override file cho development
+
+services:
+  server-vosk:
+    # Enable hot reload cho development
+    volumes:
+      - ./Architect_MultiClient_Server/server_vosk:/app/server_vosk
+    environment:
+      - PYTHONUNBUFFERED=1
+      - RELOAD=true
+    command: ["python", "-m", "uvicorn", "server_vosk.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  agent:
+    # Enable hot reload cho development
+    volumes:
+      - ./Architect_MultiClient_Server/agents:/app/agents
+    environment:
+      - PYTHONUNBUFFERED=1
+      - RELOAD=true
