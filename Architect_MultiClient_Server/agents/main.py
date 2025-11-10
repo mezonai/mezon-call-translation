@@ -8,6 +8,7 @@ load_dotenv()
 import uvicorn
 from fastapi import FastAPI
 import threading
+import json
 
 from livekit import agents
 from src.core.transcript_manager import TranscriptManager
@@ -24,15 +25,29 @@ app.include_router(dispatch_router, prefix="/api")
 app.include_router(tts_router, prefix="/api")
 app.include_router(stream_router, prefix="/api")
 logger = get_logger(__name__)
-agent_name = os.environ.get("LIVEKIT_AGENT_NAME")
+agent_name = os.getenv("LIVEKIT_AGENT_NAME")
 
 
 async def entrypoint(ctx: agents.JobContext):
     """Main agent entrypoint - setup and lifecycle management"""
+    from livekit import api
+
+    # tạo token mới
+    new_token = api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET"))
+    new_token.with_identity("KOMU")
+    new_token.with_name("KOMU Agent")
+    new_token.with_grants(api.VideoGrants(
+        room_join=True,
+        room=ctx.room.name,
+        can_publish=True,
+        can_subscribe=True
+    ))
+
+    # ghi đè token trong ctx
+    ctx._info.token = new_token.to_jwt()
     await ctx.connect()
     disconnected = asyncio.Event()
     logger.info(f"✅ Connected to room: {ctx.room.name}")
-    
     # Get session_id from room name
     session_id = ctx.room.name
     
