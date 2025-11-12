@@ -3,11 +3,11 @@ Transcript lifecycle management - Sequence tracking, MongoDB persistence, data c
 """
 import asyncio
 import os
+import httpx
 from livekit import agents
 
 from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
-from src.api.stream_message_manager import stream_message_manager
 
 class TranscriptManager:
     """Manages transcript entries: sequence tracking, logging, MongoDB storage"""
@@ -63,14 +63,27 @@ class TranscriptManager:
                         
             # MongoDB persistence (async, does not block main flow)
             if is_final:
-                try:
-                    room_name = self.ctx.room.name 
-                    queue = await stream_message_manager.get_queue(room_name)
-                    await queue.put(text)
-                    self.logger.info(f"[SSE] Pushed to queue (room={room_name}): {text}")
+                # try:
+                #     room_name = self.ctx.room.name 
+                #     queue = await stream_message_manager.get_queue(room_name)
+                #     await queue.put(text)
+                #     self.logger.info(f"[SSE] Pushed to queue (room={room_name}): {text}")
 
+                # except Exception as e:
+                #     self.logger.exception(f"[SSE] Failed to push text: {e}")
+                try:
+                    room_name = self.ctx.room.name
+                    port = int(os.environ.get("PORT_AGENT", "8002"))
+                    api_url = f"http://localhost:{port}/api/push_message"
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            api_url,
+                            json={"room_name": room_name, "message": text},
+                            timeout=0.5
+                        )
+                        self.logger.info(f"[API] Pushed to queue via API (room={room_name}): {text}, status={resp.status_code}")
                 except Exception as e:
-                    self.logger.exception(f"[SSE] Failed to push text: {e}")
+                    self.logger.error(f"[API] Failed to push text via API: {e}")
 
                 if self.enable_mongodb:
                     doc_id = await self.mongodb.save_transcript(

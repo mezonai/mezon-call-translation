@@ -171,12 +171,8 @@ async def entrypoint(ctx: agents.JobContext):
             await tts_manager.cleanup()
 
 def start_api():
-    uvicorn.run(
-        "main:app",
-        host=os.getenv("AGENT_HOST", "0.0.0.0"),
-        port=int(os.getenv("AGENT_PORT", "8002")), 
-        reload=False
-    )
+
+    uvicorn.run("main:app", host=os.getenv("AGENT_HOST", "0.0.0.0"), port=int(os.getenv("AGENT_PORT", "8002")), reload=False)
 
 if __name__ == "__main__":
 
