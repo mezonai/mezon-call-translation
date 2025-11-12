@@ -55,6 +55,11 @@ class TTSManager:
         # DataChannel handler registered flag
         self.handler_registered = False
         
+        # Request queue management (prevent concurrent audio streaming)
+        self._request_queue = asyncio.Queue()
+        self._processing_task: Optional[asyncio.Task] = None
+        self._is_processing = False
+        
         # Statistics
         self.stats = {
             "total_requests": 0,
@@ -62,6 +67,7 @@ class TTSManager:
             "failed_requests": 0,
             "total_audio_duration": 0.0,
             "total_synthesis_time": 0.0,
+            "queued_requests": 0,
             "started_at": int(time.time() * 1000)
         }
         
@@ -93,11 +99,59 @@ class TTSManager:
                 return False
             
             logger.info("✅ TTS Manager initialized successfully")
+            
+            # Start request processing worker
+            self._processing_task = asyncio.create_task(self._process_request_queue())
+            logger.info("✅ TTS request queue worker started")
+            
             return True
             
         except Exception as e:
             logger.error(f"Failed to initialize TTS Manager: {e}", exc_info=True)
             return False
+    
+    async def _process_request_queue(self):
+        """
+        Background worker that processes TTS requests sequentially from queue
+        This ensures only one audio stream is active at a time
+        """
+        logger.info("TTS request queue worker started")
+        
+        try:
+            while True:
+                # Wait for next request
+                request_data = await self._request_queue.get()
+                
+                # Check for shutdown signal
+                if request_data is None:
+                    logger.info("TTS request queue worker shutting down")
+                    break
+                
+                self._is_processing = True
+                
+                try:
+                    text = request_data["text"]
+                    sender_identity = request_data["sender_identity"]
+                    
+                    logger.info(
+                        f"📋 Processing queued TTS request "
+                        f"(queue_size={self._request_queue.qsize()}): '{text[:30]}...'"
+                    )
+                    
+                    # Process the request
+                    await self._process_tts_request(text, sender_identity)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing queued TTS request: {e}", exc_info=True)
+                
+                finally:
+                    self._is_processing = False
+                    self._request_queue.task_done()
+                    
+        except asyncio.CancelledError:
+            logger.info("TTS request queue worker cancelled")
+        except Exception as e:
+            logger.error(f"Fatal error in TTS request queue worker: {e}", exc_info=True)
     
     async def _setup_audio_track(self) -> bool:
         """
@@ -112,12 +166,14 @@ class TTSManager:
                 self.sample_rate,
                 num_channels=1
             )
+            logger.debug(f"Created AudioSource: sample_rate={self.sample_rate}, channels=1")
             
             # Create local audio track
             self.audio_track = rtc.LocalAudioTrack.create_audio_track(
                 "tts-audio",
                 self.audio_source
             )
+            logger.debug("Created LocalAudioTrack from AudioSource")
             
             # Publish track to room
             options = rtc.TrackPublishOptions()
@@ -127,6 +183,9 @@ class TTSManager:
                 self.audio_track,
                 options
             )
+            
+            # Wait a moment for track to be fully ready
+            await asyncio.sleep(0.1)
             
             self.track_published = True
             logger.info(f"✅ Published TTS audio track: {publication.sid}")
@@ -215,8 +274,36 @@ class TTSManager:
             if "voice" in data:
                 logger.debug(f"TTS voice: {data['voice']}")
             
-            # Process TTS request
-            await self._process_tts_request(text, sender_identity)
+            # Queue TTS request for sequential processing
+            queue_size = self._request_queue.qsize()
+            
+            if queue_size >= 10:
+                logger.warning(f"⚠️ TTS queue full ({queue_size} requests), rejecting new request")
+                await self._send_tts_status("error", {
+                    "error": "TTS queue is full, please try again later",
+                    "queue_size": queue_size
+                })
+                return
+            
+            # Add to queue
+            await self._request_queue.put({
+                "text": text,
+                "sender_identity": sender_identity
+            })
+            
+            self.stats["queued_requests"] += 1
+            
+            logger.info(
+                f"✅ TTS request queued "
+                f"(position={queue_size + 1}, processing={self._is_processing})"
+            )
+            
+            # Send queued status
+            await self._send_tts_status("queued", {
+                "text_length": len(text),
+                "queue_position": queue_size + 1,
+                "is_processing": self._is_processing
+            })
             
         except Exception as e:
             logger.error(f"Error handling TTS data: {e}", exc_info=True)
@@ -320,6 +407,12 @@ class TTSManager:
                 f"'{text[:50]}{'...' if len(text) > 50 else ''}'"
             )
             
+            # Verify track is ready before processing
+            if not self.track_published or not self.audio_source:
+                logger.warning("Audio track not ready, attempting to re-initialize...")
+                if not await self._setup_audio_track():
+                    raise RuntimeError("Failed to setup audio track for TTS")
+            
             # Step 1: Synthesize text to audio
             logger.info("Step 1/2: Synthesizing audio...")
             synthesis_start = time.time()
@@ -370,7 +463,12 @@ class TTSManager:
     
     async def _publish_audio(self, audio_data: np.ndarray):
         """
-        Publish audio to LiveKit room
+        Publish audio to LiveKit room using AudioByteStream for proper chunking
+        
+        This method uses LiveKit's AudioByteStream to ensure:
+        1. Fixed frame size (100ms chunks by default)
+        2. Correct sample alignment
+        3. Buffer management (only emit when enough data)
         
         Args:
             audio_data: Audio samples (float32, [-1.0, 1.0])
@@ -378,49 +476,85 @@ class TTSManager:
         Raises:
             RuntimeError: If audio track not ready
         """
-        if not self.track_published or not self.audio_source:
-            raise RuntimeError("Audio track not ready for publishing")
+        # Validate track state
+        if not self.track_published:
+            raise RuntimeError("Audio track not published")
         
+        if not self.audio_source:
+            raise RuntimeError("Audio source not initialized")
+        
+        if not self.audio_track:
+            raise RuntimeError("Audio track not initialized")
+        
+        # Check if track is still valid (not unpublished)
         try:
-            # Convert float32 to int16 for LiveKit
-            audio_int16 = (audio_data * 32767).astype(np.int16)
-            
-            # Stream audio in 20ms chunks (LiveKit standard)
-            # At 48000 Hz: 20ms = 48000 * 0.02 = 960 samples
-            chunk_size = int(self.sample_rate * 0.02)  # 20ms chunks
-            total_chunks = (len(audio_int16) + chunk_size - 1) // chunk_size
-            
-            logger.debug(
-                f"Streaming {total_chunks} chunks of {chunk_size} samples each "
-                f"({len(audio_int16) / self.sample_rate:.2f}s total)"
+            # Verify the track is still in the local participant's tracks
+            local_tracks = self.ctx.room.local_participant.track_publications
+            track_found = any(
+                pub.track and pub.track.sid == self.audio_track.sid 
+                for pub in local_tracks.values()
             )
             
-            for i in range(0, len(audio_int16), chunk_size):
-                chunk = audio_int16[i:i + chunk_size]
+            if not track_found:
+                logger.error("Audio track no longer published in room")
+                raise RuntimeError("Audio track was unpublished or disconnected")
                 
-                # Pad last chunk if needed to maintain consistent frame size
-                if len(chunk) < chunk_size:
-                    chunk = np.pad(
-                        chunk,
-                        (0, chunk_size - len(chunk)),
-                        mode='constant',
-                        constant_values=0
-                    )
-                
-                # Create and send audio frame with exact parameters
-                frame = rtc.AudioFrame(
-                    data=chunk.tobytes(),
-                    sample_rate=self.sample_rate,
-                    num_channels=1,
-                    samples_per_channel=chunk_size  # Must match chunk size
-                )
-                
-                await self.audio_source.capture_frame(frame)
-                
-                # Small delay to prevent buffer overflow (optional, can be removed if playback is smooth)
-                # await asyncio.sleep(0.001)
+        except Exception as e:
+            logger.error(f"Failed to validate track state: {e}")
+            raise RuntimeError(f"Invalid track state: {e}")
+        
+        try:
+            from livekit.agents import utils
             
-            logger.debug("Audio streaming completed")
+            # Convert float32 to PCM 16-bit (as bytes)
+            # This is the standard format LiveKit expects
+            audio_int16 = np.clip(audio_data * 32767, -32768, 32767).astype(np.int16)
+            audio_bytes = audio_int16.tobytes()
+            
+            logger.debug(
+                f"Publishing audio: {len(audio_int16)} samples "
+                f"({len(audio_int16) / self.sample_rate:.2f}s), "
+                f"{len(audio_bytes)} bytes"
+            )
+            
+            # Create AudioByteStream - This handles proper chunking automatically
+            # Default: 100ms chunks (sample_rate // 10)
+            audio_bstream = utils.audio.AudioByteStream(
+                sample_rate=self.sample_rate,
+                num_channels=1,
+                # samples_per_channel defaults to sample_rate // 10 (100ms)
+                # For 48000 Hz: 4800 samples = 100ms chunks
+            )
+            
+            # Push audio data through bytestream
+            # This automatically creates properly sized AudioFrame objects
+            frames = audio_bstream.push(audio_bytes)
+            
+            logger.debug(f"AudioByteStream generated {len(frames)} frames")
+            
+            # Stream all frames to LiveKit
+            frame_count = 0
+            for frame in frames:
+                try:
+                    await self.audio_source.capture_frame(frame)
+                    frame_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to capture frame {frame_count + 1}/{len(frames)}: {e}")
+                    raise
+            
+            # Flush any remaining data in buffer
+            remaining_frames = audio_bstream.flush()
+            if remaining_frames:
+                logger.debug(f"Flushing {len(remaining_frames)} remaining frames")
+                for frame in remaining_frames:
+                    try:
+                        await self.audio_source.capture_frame(frame)
+                        frame_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to capture flush frame: {e}")
+                        raise
+            
+            logger.debug(f"Audio streaming completed successfully: {frame_count} frames sent")
             
         except Exception as e:
             logger.error(f"Failed to publish audio: {e}", exc_info=True)
@@ -437,6 +571,8 @@ class TTSManager:
         
         return {
             **self.stats,
+            "current_queue_size": self._request_queue.qsize(),
+            "is_processing": self._is_processing,
             "uptime_ms": int(uptime),
             "success_rate": (
                 self.stats["successful_requests"] / self.stats["total_requests"]
@@ -502,17 +638,42 @@ class TTSManager:
         try:
             logger.info("Cleaning up TTS Manager...")
             
-            # Flush audio buffer with silent frame (20ms at 48000 Hz = 960 samples)
+            # Stop request queue worker
+            if self._processing_task and not self._processing_task.done():
+                logger.info("Stopping TTS request queue worker...")
+                # Send shutdown signal
+                await self._request_queue.put(None)
+                
+                try:
+                    # Wait for worker to finish with timeout
+                    await asyncio.wait_for(self._processing_task, timeout=5.0)
+                    logger.info("✅ TTS request queue worker stopped")
+                except asyncio.TimeoutError:
+                    logger.warning("TTS request queue worker did not stop in time, cancelling...")
+                    self._processing_task.cancel()
+                    try:
+                        await self._processing_task
+                    except asyncio.CancelledError:
+                        pass
+            
+            # Flush audio buffer with silent frame using AudioByteStream
             if self.audio_source:
                 try:
-                    chunk_size = int(self.sample_rate * 0.02)  # 20ms
-                    silent_frame = rtc.AudioFrame(
-                        data=np.zeros(chunk_size, dtype=np.int16).tobytes(),
+                    from livekit.agents import utils
+                    
+                    # Create 100ms of silence (standard chunk size)
+                    samples = self.sample_rate // 10  # 100ms
+                    silent_audio = np.zeros(samples, dtype=np.int16).tobytes()
+                    
+                    audio_bstream = utils.audio.AudioByteStream(
                         sample_rate=self.sample_rate,
                         num_channels=1,
-                        samples_per_channel=chunk_size
                     )
-                    await self.audio_source.capture_frame(silent_frame)
+                    
+                    frames = audio_bstream.push(silent_audio)
+                    for frame in frames:
+                        await self.audio_source.capture_frame(frame)
+                    
                 except Exception as e:
                     logger.warning(f"Failed to flush audio buffer: {e}")
             
