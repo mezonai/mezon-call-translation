@@ -1,8 +1,8 @@
-/models
+\models
 *.py[cod]
 venv/
 .env
-/logs
+\logs
 *.mp3
 *.wav
 Architect_MultiClient_Server/demo_test/
