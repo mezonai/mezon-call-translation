@@ -28,8 +28,13 @@ module.exports = async function handleInviteAgent(client, event, account) {
         }
         console.log('Agent invited, API response:', data);
         try {
+
             const sseUrl = `${baseurl}/api/stream_message?appid=${encodeURIComponent(account.appid)}&token=${encodeURIComponent(account.token)}&room=${encodeURIComponent(meeting_code)}`;
             const es = new EventSource(sseUrl);
+            console.log(sseUrl);
+            es.onopen = () => console.log(`[SSE][Room ${meeting_code}] connection opened`);
+            es.onerror = (err) => console.error(`[SSE][Room ${meeting_code}] error`, err);
+
             es.onmessage = (event) => {
                 console.log(`[SSE][Room ${meeting_code}] data:`, event.data);
                 pushSSEMessage(meeting_code, event.data);

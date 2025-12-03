@@ -205,10 +205,10 @@ python -m uvicorn server_vosk.main:app --host 0.0.0.0 --port 8000 --reload
 source venv/bin/activate
 
 # Navigate to server directory
-cd Architect_MultiClient_Server/server_vosk
+cd Architect_MultiClient_Server/
 
 # Run server
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn server_vosk.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### Kiểm Tra Server Đã Chạy
