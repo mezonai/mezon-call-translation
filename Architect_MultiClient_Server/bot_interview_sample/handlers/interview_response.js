@@ -24,7 +24,7 @@ async function processQueueAndCallTTS(ttsApiUrl) {
             if (queue.length >= 5) {
                 const messages = queue.splice(0, 5);
                 const joined = messages.join(' ');
-                const response = `I received your message with length five with content is ${joined}`;
+                const response = `I received your message, and I’m responding now.`;
                 console.log(`[TTS][Batch][Room ${room_name}]`, response);
                 try {
                     const payload = {
