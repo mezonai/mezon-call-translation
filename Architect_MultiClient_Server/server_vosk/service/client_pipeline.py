@@ -320,7 +320,7 @@ class ClientInferencePipeline:
             chunk_size = len(merged_chunk)
             duration_ms = (chunk_size *1000)/ (self.config.audio.sample_rate* 2) 
             processing_ms = (time.time() - start_time) * 1000
-            logger.info(
+            logger.debug(
                 f"Client {self.client_id} | Chunk Size: {chunk_size} bytes | "
                 f"Duration: {duration_ms:.2f} ms | Processing: {processing_ms:.2f} ms | buffer audio: {self.audio_queue.qsize()}"
             )
@@ -331,7 +331,6 @@ class ClientInferencePipeline:
                 # Final result
                 result = json.loads(self.recognizer.Result())
                 text = result.get("text", "").strip()
-                print(text)
                 if len(text) >= self.config.audio.min_text_length:
                     # Format phù hợp với client
                     result_payload = {
@@ -351,7 +350,6 @@ class ClientInferencePipeline:
                 # Partial result
                 partial = json.loads(self.recognizer.PartialResult())
                 text = partial.get("partial", "").strip()
-                print(text)
                 if len(text) >= self.config.audio.min_text_length:
                     # Format phù hợp với client
                     result_payload = {
