@@ -284,7 +284,7 @@ class RealTimeVADProcessor:
         })
 
     def process_chunk(self, chunk_data):
-        """Xử lý một audio chunk"""
+        """Xử lý một audio chunk với logic VAD đã được tối ưu"""
         original_chunk = chunk_data['original']  # 10ms chunk
         analysis_chunk = chunk_data['analysis']  # 30ms chunk
         
@@ -297,7 +297,7 @@ class RealTimeVADProcessor:
             # Kiểm tra xem chunk có phải là speech không (dùng analysis chunk 30ms)
             is_speech = self.zcr_filter.check(analysis_chunk)
 
-        # Thêm chunk hiện tại vào buffer (lưu original chunk 10ms)
+        # Thêm chunk hiện tại vào pre-speech buffer (lưu original chunk 10ms)
         chunk_data_item = {
             'audio': original_chunk.copy(),
             'is_speech': is_speech,
@@ -305,23 +305,12 @@ class RealTimeVADProcessor:
             'chunk_id': self.total_chunks
         }
         self.chunk_buffer.append(chunk_data_item)
-        
-        # ===== THÊM VÀO PROCESSED BUFFER =====
-        # Chỉ lưu chunk khi đã trong speech segment hoặc silence chưa vượt ngưỡng
-        if self.in_speech_segment:
-            # Nếu đang trong speech segment và silence chưa vượt ngưỡng
-            if not is_speech and self.silent_streak > self.silent_threshold:
-                # Không lưu vì đã vượt ngưỡng im lặng
-                pass
-            else:
-                # Lưu chunk vào processed buffer để phục vụ batching
-                self.processed_chunks_buffer.append(original_chunk.copy())
 
         if is_speech:
             self.consecutive_speech_frames += 1
             self.silent_streak = 0  # reset streak khi có tiếng nói
             
-            # Thêm vào temp buffer
+            # Thêm vào temp buffer (candidate speech chưa đủ min frames)
             self.temp_speech_buffer.append(original_chunk.copy())
             
             # Kiểm tra nếu chưa đủ min frames
@@ -329,12 +318,21 @@ class RealTimeVADProcessor:
                 logger.debug(f"🎤 Chunk {self.total_chunks}: SPEECH ✅ (buffering {self.consecutive_speech_frames}/{self.min_speech_frames})")
                 return
             
-            # Nếu đủ min frames và chưa trong speech segment
+            # Đã đủ min frames - xác nhận là speech thật
             if not self.in_speech_segment:
+                # Bắt đầu speech segment mới
                 logger.debug(f"🎯 Speech segment started! Adding buffered chunks ({len(self.chunk_buffer)} pre-speech + {len(self.temp_speech_buffer)} speech)")
                 
+                # Thêm pre-speech buffer vào processed_chunks_buffer
+                for buf_chunk in self.chunk_buffer:
+                    self.processed_chunks_buffer.append(buf_chunk['audio'].copy())
+                
+                # Thêm temp speech buffer vào processed_chunks_buffer
+                for temp_chunk in self.temp_speech_buffer:
+                    self.processed_chunks_buffer.append(temp_chunk.copy())
+                
                 if self.save_chunks:
-                    # Thêm tất cả chunks trong pre-speech buffer
+                    # Thêm tất cả chunks trong pre-speech buffer vào accumulated_speech
                     for buf_chunk in self.chunk_buffer:
                         if len(self.accumulated_speech) == 0 or buf_chunk['chunk_id'] > self.total_chunks - len(self.temp_speech_buffer) - len(self.chunk_buffer):
                             self.accumulated_speech.append(buf_chunk['audio'])
@@ -348,29 +346,34 @@ class RealTimeVADProcessor:
                 self.temp_speech_buffer = []  # Clear temp buffer
                 self.in_speech_segment = True
             else:
-                # Đã trong speech segment, thêm chunk từ temp buffer
+                # Đã trong speech segment, thêm chunks từ temp buffer
+                for temp_chunk in self.temp_speech_buffer:
+                    self.processed_chunks_buffer.append(temp_chunk.copy())
+                
                 if self.save_chunks:
                     for temp_chunk in self.temp_speech_buffer:
                         self.accumulated_speech.append(temp_chunk)
                         self.speech_count += 1
-                self.temp_speech_buffer = []
                 
+                self.temp_speech_buffer = []
                 logger.debug(f"🎤 Chunk {self.total_chunks}: SPEECH ✅")
             
         else:
-            # Không phải speech
+            # Không phải speech - update silent_streak TRƯỚC khi check điều kiện
             self.consecutive_speech_frames = 0
             self.temp_speech_buffer = []  # Clear temp buffer khi gặp silence
             self.silent_streak += 1
             
             if self.in_speech_segment:
-                # Nếu đang trong speech segment
+                # Đang trong speech segment - check ngưỡng im lặng
                 if self.silent_streak <= self.silent_threshold:
                     # Vẫn trong ngưỡng cho phép, thêm chunk silent này
+                    self.processed_chunks_buffer.append(original_chunk.copy())
+                    
                     if self.save_chunks:
                         self.accumulated_speech.append(original_chunk.copy())
                         self.speech_count += 1
-                    logger.debug(f"🔇 Chunk {self.total_chunks}: SILENCE in speech segment ⚠️ (streak {self.silent_streak})")
+                    logger.debug(f"🔇 Chunk {self.total_chunks}: SILENCE in speech segment ⚠️ (streak {self.silent_streak}/{self.silent_threshold})")
                 else:
                     # Vượt quá ngưỡng, kết thúc speech segment
                     self.in_speech_segment = False
