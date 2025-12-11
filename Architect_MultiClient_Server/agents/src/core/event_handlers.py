@@ -101,7 +101,7 @@ class EventHandlers:
             enable_playback=False,
             min_speech_frames=10,    # Cần 100ms liên tiếp mới coi là speech
             save_chunks=False,
-            enable_vad=False
+            enable_vad=True
         )
         
         processor.start_processing()
