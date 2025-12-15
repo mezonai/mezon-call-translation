@@ -226,6 +226,34 @@ class ThreadingConfig:
 
 
 # ============================================================================
+# Transcript Configuration
+# ============================================================================
+
+@dataclass
+class TranscriptConfig:
+    """Transcript manager configuration"""
+    # Silence timeout for batching transcripts (seconds)
+    silence_timeout: float = 3.0
+    
+    # Enable MongoDB storage
+    enable_mongodb: bool = False
+    
+    @classmethod
+    def from_env(cls) -> 'TranscriptConfig':
+        """Create transcript config from environment variables"""
+        return cls(
+            silence_timeout=float(os.getenv('TRANSCRIPT_SILENCE_TIMEOUT', '3.0')),
+            enable_mongodb=os.getenv('ENABLE_MONGODB', 'false').lower() == 'true'
+        )
+    
+    def validate(self) -> bool:
+        """Validate transcript configuration"""
+        if not (0.5 <= self.silence_timeout <= 30.0):
+            return False
+        return True
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -252,6 +280,7 @@ class Config:
         self.websocket = WebSocketConfig.from_env()
         self.buffer = BufferConfig.from_env()
         self.threading = ThreadingConfig.from_env()
+        self.transcript = TranscriptConfig.from_env()
         
         self._initialized = True
         self._validate_all()
@@ -264,6 +293,8 @@ class Config:
             raise ValueError("Invalid VAD configuration")
         if not self.threading.validate():
             raise ValueError("Invalid threading configuration")
+        if not self.transcript.validate():
+            raise ValueError("Invalid transcript configuration")
     
     @classmethod
     def get_instance(cls) -> 'Config':
