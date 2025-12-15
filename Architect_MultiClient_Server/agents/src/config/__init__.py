@@ -10,6 +10,7 @@ from .application_config import (
     WebSocketConfig,
     BufferConfig,
     ThreadingConfig,
+    TranscriptConfig,
     get_config,
     SAMPLE_RATE,
     CHANNELS
@@ -22,6 +23,7 @@ __all__ = [
     'WebSocketConfig',
     'BufferConfig',
     'ThreadingConfig',
+    'TranscriptConfig',
     'get_config',
     'SAMPLE_RATE',
     'CHANNELS'

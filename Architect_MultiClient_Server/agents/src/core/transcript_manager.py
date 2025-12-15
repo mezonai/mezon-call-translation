@@ -8,17 +8,20 @@ from livekit import agents
 
 from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
+from src.config import get_config
 
 class TranscriptManager:
     """Manages transcript entries: sequence tracking, logging, MongoDB storage"""
-    
-    # Time to wait for silence before sending buffered transcripts (seconds)
-    SILENCE_TIMEOUT = 5.0
     
     def __init__(self, ctx: agents.JobContext):
         """Initialize transcript manager with MongoDB and per-participant sequence tracking"""
         self.ctx = ctx
         self.logger = get_logger("transcript_manager")
+        
+        # Load configuration
+        config = get_config()
+        self.silence_timeout = config.transcript.silence_timeout
+        self.enable_mongodb = config.transcript.enable_mongodb
         
         # Incremental sequence number for each participant for client ordering
         self._seq_by_participant = {}
@@ -28,7 +31,6 @@ class TranscriptManager:
         
         # MongoDB service (singleton pattern)
         self.mongodb = get_mongodb_service()
-        self.enable_mongodb = False
         
         # Buffer for batching transcripts per participant
         # Key: participant_identity, Value: {"texts": [], "timer_task": Task, "last_activity": timestamp}
@@ -38,7 +40,7 @@ class TranscriptManager:
         self.logger.info(
             f"TranscriptManager initialized for meeting {self.session_id} "
             f"(MongoDB: {'enabled' if self.enable_mongodb else 'disabled'}, "
-            f"silence_timeout={self.SILENCE_TIMEOUT}s)"
+            f"silence_timeout={self.silence_timeout}s)"
         )
     
     async def send_transcript_entry(
@@ -101,13 +103,13 @@ class TranscriptManager:
                         f"buffer_size={len(buffer['texts'])}"
                     )
                 
-                # Start new timer (will trigger flush after SILENCE_TIMEOUT seconds)
+                # Start new timer (will trigger flush after silence_timeout seconds)
                 if buffer["texts"]:  # Only start timer if there's something to send
                     buffer["timer_task"] = asyncio.create_task(
                         self._flush_after_silence(participant_identity)
                     )
                     self.logger.debug(
-                        f"[BUFFER] Started {self.SILENCE_TIMEOUT}s timer for {participant_identity}"
+                        f"[BUFFER] Started {self.silence_timeout}s timer for {participant_identity}"
                     )
             
             return True
@@ -118,11 +120,11 @@ class TranscriptManager:
     
     async def _flush_after_silence(self, participant_identity: str):
         """
-        Wait for SILENCE_TIMEOUT seconds then flush buffered transcripts.
+        Wait for silence_timeout seconds then flush buffered transcripts.
         This task gets cancelled if new text arrives before timeout.
         """
         try:
-            await asyncio.sleep(self.SILENCE_TIMEOUT)
+            await asyncio.sleep(self.silence_timeout)
             
             # Timeout reached - flush buffer
             async with self._buffer_lock:
@@ -146,7 +148,7 @@ class TranscriptManager:
             
             self.logger.info(
                 f"[FLUSH] {participant_identity}: Sending {buffer_count} buffered texts "
-                f"after {self.SILENCE_TIMEOUT}s silence"
+                f"after {self.silence_timeout}s silence"
             )
             
             # Send combined text to server
