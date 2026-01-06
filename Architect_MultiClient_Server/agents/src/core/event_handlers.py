@@ -98,10 +98,10 @@ class EventHandlers:
             sr=16000, 
             chunk_duration_ms=10,    # Stream 10ms chunks
             overlap_chunks=2,        # Overlap 20ms để tránh mất âm
-            enable_playback=False,
+            enable_playback=True,
             min_speech_frames=10,    # Cần 100ms liên tiếp mới coi là speech
             save_chunks=False,
-            enable_vad=True
+            enable_vad=False
         )
         
         processor.start_processing()

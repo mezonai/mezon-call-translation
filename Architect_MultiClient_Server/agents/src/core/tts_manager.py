@@ -25,7 +25,7 @@ class TTSManager:
         self,
         ctx: agents.JobContext,
         session_id: str,
-        sample_rate: int = 48000,
+        sample_rate: int = 24000,
         model_path: Optional[str] = None
     ):
         """
@@ -34,8 +34,8 @@ class TTSManager:
         Args:
             ctx: LiveKit job context
             session_id: Unique session identifier
-            sample_rate: Audio sample rate in Hz
-            model_path: Path to TTS model (optional)
+            sample_rate: Audio sample rate in Hz (default: 24000 for Kokoro)
+            model_path: Path to TTS model directory (optional)
         """
         self.ctx = ctx
         self.session_id = session_id
@@ -523,7 +523,7 @@ class TTSManager:
                 sample_rate=self.sample_rate,
                 num_channels=1,
                 # samples_per_channel defaults to sample_rate // 10 (100ms)
-                # For 48000 Hz: 4800 samples = 100ms chunks
+                # For 24000 Hz: 2400 samples = 100ms chunks
             )
             
             # Push audio data through bytestream
