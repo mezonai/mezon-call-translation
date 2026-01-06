@@ -13,7 +13,6 @@ import threading
 from livekit import agents
 from src.core.transcript_manager import TranscriptManager
 from src.core.event_handlers import EventHandlers
-# from src.core.agent_manager import AgentManager
 from src.core.tts_manager import TTSManager
 from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
@@ -34,7 +33,7 @@ async def entrypoint(ctx: agents.JobContext):
     """Main agent entrypoint - setup and lifecycle management"""
     from livekit import api
 
-    # tạo token mới tạo để đổi được identity để hiển thị trong room
+    # Create a new token to change the identity displayed in the room
     new_token = api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET"))
     new_token.with_identity("KOMU")
     new_token.with_name("KOMU Agent")
@@ -131,10 +130,6 @@ async def entrypoint(ctx: agents.JobContext):
             # Log incoming data for debugging
             logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
             
-            # Route to appropriate handler based on topic
-            # if topic == "agent_commands":
-            #     logger.debug(f"→ Routing to AgentManager")
-            #     asyncio.create_task(agent_manager.handle_agent_commands(data_packet))
             if topic == "tts_control":
                 if tts_manager:
                     logger.info(f"🎯 Routing to TTSManager")
@@ -149,8 +144,6 @@ async def entrypoint(ctx: agents.JobContext):
     
     ctx.room.on("data_received", on_data_received)
 
-    # await agent_manager.setup_agent_identity()
-    # await agent_manager.announce_agent_ready()
     await transcript_manager.send_welcome_message()
 
     # Log readiness status

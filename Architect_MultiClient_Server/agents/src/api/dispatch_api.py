@@ -126,14 +126,14 @@ async def cancel_dispatch(room_name: str):
 async def api_create_dispatch(body: DispatchRequestModel):
     account = body.account.dict()
     room_name = body.room_name
-    # try:
-    #     is_authenticated = await authenticate_account(account)
-    #     if not is_authenticated:
-    #         raise HTTPException(status_code=401, detail="Authentication failed")
-    # except httpx.TimeoutException:
-    #     raise HTTPException(status_code=504, detail="Authentication service timeout")
-    # except httpx.RequestError as e:
-    #     raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    try:
+        is_authenticated = await authenticate_account(account)
+        if not is_authenticated:
+            raise HTTPException(status_code=401, detail="Authentication failed")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Authentication service timeout")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail="Authentication service unavailable")
     
     result = await ensure_dispatch(room_name)
     if result["status"] == "error":

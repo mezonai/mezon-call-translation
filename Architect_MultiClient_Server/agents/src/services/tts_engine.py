@@ -78,7 +78,7 @@ class TTSEngine:
             os.environ['HF_HOME'] = str(self.model_dir.parent)
             
             # Initialize Kokoro pipeline
-            pipeline = KPipeline(lang_code=self.lang_code)
+            pipeline = KPipeline(lang_code=self.lang_code, repo_id='hexgrad/Kokoro-82M')
             
             logger.debug(f"Kokoro pipeline initialized (lang_code={self.lang_code})")
             return pipeline
