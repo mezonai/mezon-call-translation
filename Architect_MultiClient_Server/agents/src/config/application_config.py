@@ -53,7 +53,7 @@ class AudioConfig:
     
     def validate(self) -> bool:
         """Validate audio configuration"""
-        if self.sample_rate not in [8000, 16000, 32000, 44100, 48000]:
+        if self.sample_rate not in [8000, 16000, 24000, 32000, 44100, 48000]:
             return False
         if self.channels not in [1, 2]:
             return False

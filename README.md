@@ -15,9 +15,12 @@
 ./scripts/setup.sh                    # Linux/macOS
 .\scripts\setup.ps1                    # Windows
 
-# 2. Download Vosk model
-./scripts/download-vosk-model.sh       # Linux/macOS
-.\scripts\download-vosk-model.ps1       # Windows
+# 2. Download models
+./scripts/download-vosk-model.sh       # STT model (Linux/macOS)
+.\scripts\download-vosk-model.ps1       # STT model (Windows)
+
+./scripts/download-kokoro-model.sh     # TTS model (Linux/macOS)
+.\scripts\download-kokoro-model.ps1     # TTS model (Windows)
 
 # 3. Configure environment
 cp env.example .env                    # Edit with your LiveKit credentials
@@ -293,11 +296,23 @@ See [Setup Guide](docs/setup/SETUP-GUIDE.md) for complete configuration options.
 
 **Server won't start**:
 ```bash
-# Check Vosk model exists
+# Check Vosk STT model exists
 ls -la models/vosk-model/
 
 # Download if missing
 ./scripts/download-vosk-model.sh
+```
+
+**Agent TTS not working**:
+```bash
+# Check Kokoro TTS model exists
+ls -la models/kokoro_models/
+
+# Download if missing
+./scripts/download-kokoro-model.sh
+
+# Or download with specific voices
+./scripts/download-kokoro-model.sh -v "af_heart,am_adam"
 ```
 
 **Agent connection failed**:

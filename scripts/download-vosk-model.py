@@ -167,6 +167,69 @@ def verify_model(model_dir: Path) -> bool:
     return True
 
 
+def get_available_models():
+    """Get list of available Vosk models"""
+    return {
+        # English models
+        'vosk-model-small-en-us-0.15': {
+            'size': '40 MB',
+            'description': 'Lightweight US English model (recommended for real-time)',
+            'url': 'https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip'
+        },
+        'vosk-model-en-us-0.22': {
+            'size': '1.8 GB',
+            'description': 'Large US English model (higher accuracy)',
+            'url': 'https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip'
+        },
+        'vosk-model-en-us-0.42-gigaspeech': {
+            'size': '2.3 GB',
+            'description': 'US English model trained on Gigaspeech',
+            'url': 'https://alphacephei.com/vosk/models/vosk-model-en-us-0.42-gigaspeech.zip'
+        },
+        'vosk-model-en-in-0.5': {
+            'size': '1.0 GB',
+            'description': 'Indian English model',
+            'url': 'https://alphacephei.com/vosk/models/vosk-model-en-in-0.5.zip'
+        },
+        # Other languages (examples)
+        'vosk-model-small-cn-0.22': {
+            'size': '42 MB',
+            'description': 'Chinese model',
+            'url': 'https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip'
+        },
+        'vosk-model-small-ja-0.22': {
+            'size': '48 MB',
+            'description': 'Japanese model',
+            'url': 'https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip'
+        },
+        'vosk-model-small-ko-0.22': {
+            'size': '42 MB',
+            'description': 'Korean model',
+            'url': 'https://alphacephei.com/vosk/models/vosk-model-small-ko-0.22.zip'
+        },
+    }
+
+
+def list_models():
+    """Print available models"""
+    models = get_available_models()
+    
+    print()
+    print(f"{Colors.BOLD}Available Vosk Models:{Colors.END}")
+    print("=" * 80)
+    print()
+    
+    for model_name, info in models.items():
+        print(f"{Colors.GREEN}• {model_name}{Colors.END}")
+        print(f"  Size: {info['size']}")
+        print(f"  Description: {info['description']}")
+        print()
+    
+    print("=" * 80)
+    print()
+    print_info("More models available at: https://alphacephei.com/vosk/models")
+
+
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
@@ -174,10 +237,24 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
+  # Download default small model
   python download-vosk-model.py
-  python download-vosk-model.py --output models/vosk-model/
-  python download-vosk-model.py --force
+  
+  # Download large model
+  python download-vosk-model.py --model vosk-model-en-us-0.22
+  
+  # List available models
+  python download-vosk-model.py --list
+  
+  # Custom output directory
+  python download-vosk-model.py --output models/vosk-model/ --force
         '''
+    )
+    
+    parser.add_argument(
+        '--model', '-m',
+        default='vosk-model-small-en-us-0.15',
+        help='Model name to download (default: vosk-model-small-en-us-0.15)'
     )
     
     parser.add_argument(
@@ -198,23 +275,53 @@ Examples:
         help='Skip model verification'
     )
     
+    parser.add_argument(
+        '--list', '-l',
+        action='store_true',
+        help='List available models'
+    )
+    
     args = parser.parse_args()
     
+    # Handle --list flag
+    if args.list:
+        print_header()
+        list_models()
+        return 0
+    
     print_header()
+    
+    # Get available models
+    available_models = get_available_models()
+    model_name = args.model
+    
+    # Check if model is available
+    if model_name not in available_models:
+        print_error(f"Model '{model_name}' not found in available models")
+        print()
+        print_info("Available models:")
+        for name in available_models.keys():
+            print(f"  - {name}")
+        print()
+        print_info("Use --list to see full details")
+        return 1
+    
+    model_info = available_models[model_name]
     
     # Setup paths
     project_root = get_project_root()
     model_dir = project_root / args.output.rstrip('/')
-    model_name = 'vosk-model-small-en-us-0.15'
     model_full_path = model_dir / model_name
     
-    model_url = f"https://alphacephei.com/vosk/models/{model_name}.zip"
+    model_url = model_info['url']
     zip_file = model_dir / f"{model_name}.zip"
     
-    print_info("Configuration:")
-    print(f"  Model URL: {model_url}")
+    print_info("Model Configuration:")
+    print(f"  Model: {model_name}")
+    print(f"  Description: {model_info['description']}")
+    print(f"  Size: ~{model_info['size']}")
+    print(f"  URL: {model_url}")
     print(f"  Extract To: {model_full_path}")
-    print(f"  Model Size: ~40 MB (ZIP)")
     print()
     
     # Check if model already exists

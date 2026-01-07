@@ -326,12 +326,15 @@ class ClientInferencePipeline:
             )
             if(duration_ms < processing_ms):
                 logger.warning(f"Client {self.client_id}: Audio processing time exceeded chunk duration! {processing_ms:.2f} ms > {duration_ms:.2f} ms")
-
+            STOP_WORDS = {
+                    "the", "a", "an", "uh", "um", "ah", "eh"
+                }
             if is_final:
                 # Final result
                 result = json.loads(self.recognizer.Result())
                 text = result.get("text", "").strip()
-                if len(text) >= self.config.audio.min_text_length:
+
+                if text not in STOP_WORDS:
                     # Format phù hợp với client
                     result_payload = {
                         "text": text,
@@ -350,7 +353,7 @@ class ClientInferencePipeline:
                 # Partial result
                 partial = json.loads(self.recognizer.PartialResult())
                 text = partial.get("partial", "").strip()
-                if len(text) >= self.config.audio.min_text_length:
+                if text not in STOP_WORDS:
                     # Format phù hợp với client
                     result_payload = {
                         "text": text,
