@@ -30,22 +30,22 @@ agent_name = os.getenv("LIVEKIT_AGENT_NAME")
 
 
 async def entrypoint(ctx: agents.JobContext):
-    # """Main agent entrypoint - setup and lifecycle management"""
-    # from livekit import api
+    """Main agent entrypoint - setup and lifecycle management"""
+    from livekit import api
 
-    # # Create a new token to change the identity displayed in the room
-    # new_token = api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET"))
-    # new_token.with_identity("KOMU")
-    # new_token.with_name("KOMU Agent")
-    # new_token.with_grants(api.VideoGrants(
-    #     room_join=True,
-    #     room=ctx.room.name,
-    #     can_publish=True,
-    #     can_subscribe=True
-    # ))
+    # Create a new token to change the identity displayed in the room
+    new_token = api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET"))
+    new_token.with_identity("KOMU")
+    new_token.with_name("KOMU Agent")
+    new_token.with_grants(api.VideoGrants(
+        room_join=True,
+        room=ctx.room.name,
+        can_publish=True,
+        can_subscribe=True
+    ))
 
-    # # ghi đè token trong ctx
-    # ctx._info.token = new_token.to_jwt()
+    # ghi đè token trong ctx
+    ctx._info.token = new_token.to_jwt()
     await ctx.connect()
     disconnected = asyncio.Event()
     logger.info(f"✅ Connected to room: {ctx.room.name}")
@@ -176,5 +176,5 @@ if __name__ == "__main__":
 
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=entrypoint,
-        # agent_name=agent_name
+        agent_name=agent_name
     ))
