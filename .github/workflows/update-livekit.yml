@@ -1,0 +1,21 @@
+name: Update LiveKit Env
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update-env:
+    runs-on: livekit_agents
+
+    steps:
+      - name: Update env and restart agent
+        uses: appleboy/ssh-action@v1
+        with:
+          run: |
+            cd /home/nccsoft/projects/mezon-call-translation/Architect_MultiClient_Server/agents
+
+            echo "LIVEKIT_API_KEY=${{ secrets.LIVEKIT_API_KEY }}" > .env
+            echo "LIVEKIT_API_SECRET=${{ secrets.LIVEKIT_API_SECRET }}" >> .env
+            echo "LIVEKIT_URL=${{ secrets.LIVEKIT_URL }}" >>.env
+
+            sudo systemctl restart livekit_agents.service
