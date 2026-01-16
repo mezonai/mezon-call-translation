@@ -372,6 +372,42 @@ class ServerConfig:
 
 
 # ============================================================================
+# MinIO/S3 Configuration
+# ============================================================================
+
+@dataclass
+class MinIOConfig:
+    """MinIO/S3 storage configuration for recordings"""
+    endpoint: str = "http://minio:9000"
+    access_key: str = "minioadmin"
+    secret: str = "minioadmin123"
+    bucket: str = "livekit-recordings"
+    region: str = "us-east-1"
+    enabled: bool = True
+    
+    @classmethod
+    def from_env(cls) -> 'MinIOConfig':
+        """Create MinIO config from environment variables"""
+        return cls(
+            endpoint=os.getenv('MINIO_ENDPOINT', 'http://minio:9000'),
+            access_key=os.getenv('MINIO_ACCESS_KEY', 'minioadmin'),
+            secret=os.getenv('MINIO_SECRET', 'minioadmin123'),
+            bucket=os.getenv('MINIO_BUCKET', 'livekit-recordings'),
+            region=os.getenv('MINIO_REGION', 'us-east-1'),
+            enabled=os.getenv('MINIO_ENABLED', 'true').lower() == 'true',
+        )
+    
+    def validate(self) -> bool:
+        """Validate MinIO configuration"""
+        if self.enabled:
+            if not self.endpoint or not self.access_key or not self.secret:
+                return False
+            if not self.bucket:
+                return False
+        return True
+
+
+# ============================================================================
 # Logger Configuration
 # ============================================================================
 
@@ -421,6 +457,7 @@ class Config:
         self.tts = TTSConfig.from_env()
         self.server = ServerConfig.from_env()
         self.logger = LoggerConfig.from_env()
+        self.minio = MinIOConfig.from_env()
         
         self._initialized = True
         self._validate_all()

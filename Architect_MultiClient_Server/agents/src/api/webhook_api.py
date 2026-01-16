@@ -68,7 +68,7 @@ async def start_track_recording(
     identity: str
 ) -> Optional[str]:
     """
-    Start egress to record a track.
+    Start egress to record a track to MinIO/S3.
     
     Args:
         room_name: Name of the LiveKit room
@@ -91,13 +91,27 @@ async def start_track_recording(
     try:
         lk = get_livekit_client()
         config = get_config()
-        # Create file output path
-        recordings_dir = config.livekit.recordings_dir
+        
+        # Create file path for S3/MinIO
         ext = "ogg" if track_type == "AUDIO" else "webm"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = f"{recordings_dir}/{room_name}-{identity}-{track_type.lower()}-{timestamp}.{ext}"
+        filepath = f"{room_name}/{identity}-{track_type.lower()}-{timestamp}.{ext}"
         
-        file_out = api.DirectFileOutput(filepath=filepath)
+        # Configure S3/MinIO upload
+        s3_upload = api.S3Upload(
+            access_key=config.minio.access_key,
+            secret=config.minio.secret,
+            bucket=config.minio.bucket,
+            region=config.minio.region,
+            endpoint=config.minio.endpoint,
+            force_path_style=True,  # Required for MinIO
+        )
+        
+        # Create DirectFileOutput with S3 upload (Track egress uses DirectFileOutput, not EncodedFileOutput)
+        file_out = api.DirectFileOutput(
+            filepath=filepath,
+            s3=s3_upload,
+        )
         
         req = api.TrackEgressRequest(
             room_name=room_name,
@@ -108,7 +122,7 @@ async def start_track_recording(
         result = await lk.egress.start_track_egress(req)
         active_egresses[track_sid] = result.egress_id
         logger.info(f"✓ Started egress {result.egress_id}")
-        logger.info(f"  File: {filepath}")
+        logger.info(f"  MinIO path: s3://{config.minio.bucket}/{filepath}")
         
         await lk.aclose()
         return result.egress_id
@@ -217,7 +231,7 @@ async def handle_webhook(request: Request):
         
         event_type = event.get("event", "unknown")
         logger.info(f"📥 Received webhook: {event_type}")
-        
+        print(json.dumps(event, indent=2, ensure_ascii=False))
         # Log full event in debug mode
         logger.debug(f"Event payload: {json.dumps(event, indent=2, ensure_ascii=False)}")
         
