@@ -2,12 +2,12 @@
 MongoDB service for storing transcripts
 """
 
-import os
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import PyMongoError
 from src.logger import get_logger
+from src.config.application_config import get_config
 
 logger = get_logger(__name__)
 
@@ -27,10 +27,11 @@ class MongoDBService:
         if self._initialized:
             return
         
-        # MongoDB configuration
-        self.mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
-        self.database_name = os.getenv('MONGODB_DATABASE', 'mezon_transcripts')
-        self.collection_name = os.getenv('MONGODB_COLLECTION', 'transcripts')
+        # MongoDB configuration from centralized config
+        config = get_config()
+        self.mongo_uri = config.mongodb.uri
+        self.database_name = config.mongodb.database
+        self.collection_name = config.mongodb.collection
         
         # Client and collections
         self.client: Optional[AsyncIOMotorClient] = None

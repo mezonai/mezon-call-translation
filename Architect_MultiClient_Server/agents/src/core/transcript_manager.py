@@ -2,13 +2,12 @@
 Transcript lifecycle management - Sequence tracking, MongoDB persistence, data channel publishing
 """
 import asyncio
-import os
 import httpx
 from livekit import agents
 
 from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
-from src.config import get_config
+from src.config.application_config import get_config
 
 class TranscriptManager:
     """Manages transcript entries: sequence tracking, logging, MongoDB storage"""
@@ -173,7 +172,8 @@ class TranscriptManager:
         """Send transcript to API server and optionally MongoDB"""
         try:
             room_name = self.ctx.room.name
-            port = int(os.environ.get("PORT_AGENT", "8002"))
+            config = get_config()
+            port = config.server.port
             api_url = f"http://localhost:{port}/api/push_message"
             
             async with httpx.AsyncClient() as client:

@@ -5,7 +5,6 @@ Handles track_published/track_unpublished events and manages track egress for re
 
 import asyncio
 import json
-import os
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -18,10 +17,8 @@ try:
 except ImportError:
     LIVEKIT_AVAILABLE = False
 
-from dotenv import load_dotenv
-load_dotenv()
-
 from src.logger import get_logger
+from src.config.application_config import get_config
 from src.api.webhook_auth import (
     verify_webhook,
     is_verification_enabled,
@@ -51,18 +48,16 @@ class EgressInfo(BaseModel):
 
 
 def get_livekit_client() -> "api.LiveKitAPI":
-    """Create LiveKit API client from environment variables."""
-    url = os.getenv("LIVEKIT_HTTP_URL")
-    api_key = os.getenv("LIVEKIT_API_KEY")
-    api_secret = os.getenv("LIVEKIT_API_SECRET")
+    """Create LiveKit API client from config."""
+    config = get_config()
     
-    if not api_key or not api_secret:
+    if not config.livekit.api_key or not config.livekit.api_secret:
         raise ValueError("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set")
     
     return api.LiveKitAPI(
-        url=url,
-        api_key=api_key,
-        api_secret=api_secret
+        url=config.livekit.http_url,
+        api_key=config.livekit.api_key,
+        api_secret=config.livekit.api_secret
     )
 
 
@@ -95,8 +90,9 @@ async def start_track_recording(
     
     try:
         lk = get_livekit_client()
+        config = get_config()
         # Create file output path
-        recordings_dir = os.getenv("RECORDINGS_DIR", "/recordings")
+        recordings_dir = config.livekit.recordings_dir
         ext = "ogg" if track_type == "AUDIO" else "webm"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filepath = f"{recordings_dir}/{room_name}-{identity}-{track_type.lower()}-{timestamp}.{ext}"

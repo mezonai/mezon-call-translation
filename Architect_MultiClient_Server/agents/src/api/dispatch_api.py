@@ -5,17 +5,26 @@ try:
     LIVEKIT_AVAILABLE = True
 except ImportError:
     LIVEKIT_AVAILABLE = False
-    
-import os
-from dotenv import load_dotenv
-load_dotenv()
 
 from fastapi import APIRouter, HTTPException
 import httpx
 from pydantic import BaseModel
 from src.api.verify_account import authenticate_account
+from src.config.application_config import get_config
 
 router = APIRouter()
+
+
+def get_livekit_config():
+    """Get LiveKit configuration from centralized config."""
+    config = get_config()
+    return {
+        "url": config.livekit.http_url,
+        "api_key": config.livekit.api_key,
+        "api_secret": config.livekit.api_secret,
+        "agent_name": config.livekit.agent_name,
+    }
+
 
 class AccountModel(BaseModel):
     appid: str
@@ -32,10 +41,11 @@ async def ensure_dispatch(room_name: str):
             "status": "error", 
             "message": "LiveKit API not available. Please install livekit-api package."
         }  
-    url = os.environ.get("LIVEKIT_HTTP_URL")
-    api_key = os.environ.get("LIVEKIT_API_KEY")
-    api_secret = os.environ.get("LIVEKIT_API_SECRET")
-    agent_name = os.environ.get("LIVEKIT_AGENT_NAME")
+    lk_config = get_livekit_config()
+    url = lk_config["url"]
+    api_key = lk_config["api_key"]
+    api_secret = lk_config["api_secret"]
+    agent_name = lk_config["agent_name"]
 
     lkapi = api.LiveKitAPI(
         url=url,
@@ -74,10 +84,11 @@ async def cancel_dispatch(room_name: str):
             "message": "LiveKit API not available. Please install livekit-api package."
         }
 
-    url = os.environ.get("LIVEKIT_HTTP_URL")
-    api_key = os.environ.get("LIVEKIT_API_KEY")
-    api_secret = os.environ.get("LIVEKIT_API_SECRET")
-    agent_name = os.environ.get("LIVEKIT_AGENT_NAME")
+    lk_config = get_livekit_config()
+    url = lk_config["url"]
+    api_key = lk_config["api_key"]
+    api_secret = lk_config["api_secret"]
+    agent_name = lk_config["agent_name"]
 
     lkapi = api.LiveKitAPI(
         url=url,

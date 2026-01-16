@@ -2,7 +2,6 @@
 LiveKit Agent entrypoint - Starts Vosk transcription agent + TTS
 """
 import asyncio
-import os
 from dotenv import load_dotenv
 load_dotenv()
 import uvicorn
@@ -16,12 +15,16 @@ from src.core.event_handlers import EventHandlers
 from src.core.tts_manager import TTSManager
 from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
+from src.config.application_config import get_config
 
 
 from src.api.dispatch_api import router as dispatch_router
 from src.api.tts_api import router as tts_router
 from src.api.stream_message_api import router as stream_router
 from src.api.webhook_api import router as webhook_router
+
+# Load config
+config = get_config()
 
 app = FastAPI(title="LiveKit Agent API")
 
@@ -30,7 +33,6 @@ app.include_router(tts_router, prefix="/api")
 app.include_router(stream_router, prefix="/api")
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
 logger = get_logger(__name__)
-agent_name = os.getenv("LIVEKIT_AGENT_NAME")
 
 
 async def entrypoint(ctx: agents.JobContext):
@@ -38,7 +40,7 @@ async def entrypoint(ctx: agents.JobContext):
     from livekit import api
 
     # Create a new token to change the identity displayed in the room
-    new_token = api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET"))
+    new_token = api.AccessToken(config.livekit.api_key, config.livekit.api_secret)
     new_token.with_identity("KOMU")
     new_token.with_name("KOMU Agent")
     new_token.with_grants(api.VideoGrants(
@@ -56,8 +58,7 @@ async def entrypoint(ctx: agents.JobContext):
     # Get session_id from room name
     session_id = ctx.room.name
     
-    enable_mongodb = os.getenv('ENABLE_MONGODB', 'true').lower() == 'true'
-    if enable_mongodb:
+    if config.mongodb.enabled:
         mongodb = get_mongodb_service()
         await mongodb.connect()
         logger.info("✅ MongoDB initialized for transcript storage")
@@ -68,20 +69,17 @@ async def entrypoint(ctx: agents.JobContext):
     event_handlers = EventHandlers(ctx, transcript_manager)#, agent_manager
 
     # TTS Manager (optional, check if TTS is enabled)
-    enable_tts = os.getenv('ENABLE_TTS', 'true').lower() == 'true'
     tts_manager = None
     
-    if enable_tts:
+    if config.tts.enabled:
         try:
             logger.info("Initializing TTS Manager...")
             
-            # Get model path from environment (Kokoro model directory)
-            model_path = os.getenv('TTS_MODEL_PATH', 'models/kokoro_models')
-            
+            # Get model path from config
             tts_manager = TTSManager(
                 ctx=ctx,
                 session_id=session_id,
-                model_path=model_path
+                model_path=config.tts.model_path
             )
             
             # Initialize TTS (load model, setup track)
@@ -170,8 +168,7 @@ async def entrypoint(ctx: agents.JobContext):
             await tts_manager.cleanup()
 
 def start_api():
-
-    uvicorn.run("main:app", host=os.getenv("AGENT_HOST", "0.0.0.0"), port=int(os.getenv("AGENT_PORT", "8002")), reload=False)
+    uvicorn.run("main:app", host=config.server.host, port=config.server.port, reload=False)
 
 if __name__ == "__main__":
 
@@ -180,5 +177,5 @@ if __name__ == "__main__":
 
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=entrypoint,
-        agent_name=agent_name
+        agent_name=config.livekit.agent_name
     ))

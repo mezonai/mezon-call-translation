@@ -17,9 +17,9 @@ Usage:
 
 from __future__ import annotations
 
-import os
 from typing import Optional, Tuple, Any
 
+from src.config.application_config import get_config
 
 try:
     from livekit.api import TokenVerifier, WebhookReceiver as _WebhookReceiver
@@ -32,15 +32,16 @@ from src.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Environment variable to control webhook verification
-VERIFY_WEBHOOKS = os.getenv("LIVEKIT_VERIFY_WEBHOOKS", "true").lower() == "true"
+# Get config
+_config = get_config()
+VERIFY_WEBHOOKS = _config.livekit.verify_webhooks
 
 
 def get_webhook_receiver() -> Optional[Any]:
     """
     Create a WebhookReceiver instance for verifying webhook signatures.
     
-    Uses LIVEKIT_WEBHOOK_API_KEY and LIVEKIT_WEBHOOK_API_SECRET environment variables.
+    Uses LiveKit webhook API credentials from config.
     
     Returns:
         WebhookReceiver instance or None if not available
@@ -49,8 +50,9 @@ def get_webhook_receiver() -> Optional[Any]:
         logger.warning("livekit-api not installed - webhook verification unavailable")
         return None
     
-    api_key = os.getenv("LIVEKIT_WEBHOOK_API_KEY")
-    api_secret = os.getenv("LIVEKIT_WEBHOOK_API_SECRET")
+    config = get_config()
+    api_key = config.livekit.webhook_api_key
+    api_secret = config.livekit.webhook_api_secret
     
     if not api_key or not api_secret:
         logger.warning("LIVEKIT_WEBHOOK_API_KEY and LIVEKIT_WEBHOOK_API_SECRET must be set for webhook verification")

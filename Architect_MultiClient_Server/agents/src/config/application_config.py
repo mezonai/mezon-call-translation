@@ -254,6 +254,141 @@ class TranscriptConfig:
 
 
 # ============================================================================
+# LiveKit Configuration
+# ============================================================================
+
+@dataclass
+class LiveKitConfig:
+    """LiveKit server and API configuration"""
+    # Server URLs
+    url: str = ""  # WebSocket URL (wss://...)
+    http_url: str = ""  # HTTP URL for API calls
+    
+    # API credentials
+    api_key: str = ""
+    api_secret: str = ""
+    
+    # Agent configuration
+    agent_name: str = "vosk-agent"
+    
+    # Webhook configuration (can use separate credentials)
+    webhook_api_key: str = ""
+    webhook_api_secret: str = ""
+    verify_webhooks: bool = True
+    
+    # Recording
+    recordings_dir: str = "/recordings"
+    
+    @classmethod
+    def from_env(cls) -> 'LiveKitConfig':
+        """Create LiveKit config from environment variables"""
+        return cls(
+            url=os.getenv('LIVEKIT_URL', ''),
+            http_url=os.getenv('LIVEKIT_HTTP_URL', ''),
+            api_key=os.getenv('LIVEKIT_API_KEY', ''),
+            api_secret=os.getenv('LIVEKIT_API_SECRET', ''),
+            agent_name=os.getenv('LIVEKIT_AGENT_NAME', 'vosk-agent'),
+            webhook_api_key=os.getenv('LIVEKIT_WEBHOOK_API_KEY', os.getenv('LIVEKIT_API_KEY', '')),
+            webhook_api_secret=os.getenv('LIVEKIT_WEBHOOK_API_SECRET', os.getenv('LIVEKIT_API_SECRET', '')),
+            verify_webhooks=os.getenv('LIVEKIT_VERIFY_WEBHOOKS', 'true').lower() == 'true',
+            recordings_dir=os.getenv('RECORDINGS_DIR', '/recordings'),
+        )
+    
+    def validate(self) -> bool:
+        """Validate LiveKit configuration"""
+        # API key and secret are required
+        if not self.api_key or not self.api_secret:
+            return False
+        return True
+
+
+# ============================================================================
+# MongoDB Configuration
+# ============================================================================
+
+@dataclass
+class MongoDBConfig:
+    """MongoDB configuration"""
+    uri: str = "mongodb://localhost:27017"
+    database: str = "mezon_transcripts"
+    collection: str = "transcripts"
+    enabled: bool = False
+    
+    @classmethod
+    def from_env(cls) -> 'MongoDBConfig':
+        """Create MongoDB config from environment variables"""
+        return cls(
+            uri=os.getenv('MONGODB_URI', 'mongodb://localhost:27017'),
+            database=os.getenv('MONGODB_DATABASE', 'mezon_transcripts'),
+            collection=os.getenv('MONGODB_COLLECTION', 'transcripts'),
+            enabled=os.getenv('ENABLE_MONGODB', 'false').lower() == 'true',
+        )
+
+
+# ============================================================================
+# TTS Configuration
+# ============================================================================
+
+@dataclass
+class TTSConfig:
+    """Text-to-Speech configuration"""
+    enabled: bool = True
+    model_path: str = "models/kokoro_models"
+    default_language: str = "en"
+    default_voice: str = "default"
+    
+    @classmethod
+    def from_env(cls) -> 'TTSConfig':
+        """Create TTS config from environment variables"""
+        return cls(
+            enabled=os.getenv('ENABLE_TTS', 'true').lower() == 'true',
+            model_path=os.getenv('TTS_MODEL_PATH', 'models/kokoro_models'),
+            default_language=os.getenv('TTS_DEFAULT_LANGUAGE', 'en'),
+            default_voice=os.getenv('TTS_DEFAULT_VOICE', 'default'),
+        )
+
+
+# ============================================================================
+# Server Configuration
+# ============================================================================
+
+@dataclass
+class ServerConfig:
+    """Server configuration"""
+    host: str = "0.0.0.0"
+    port: int = 8002
+    
+    # Authentication
+    authenticate_account_url: str = ""
+    
+    @classmethod
+    def from_env(cls) -> 'ServerConfig':
+        """Create Server config from environment variables"""
+        return cls(
+            host=os.getenv('AGENT_HOST', '0.0.0.0'),
+            port=int(os.getenv('AGENT_PORT', '8002')),
+            authenticate_account_url=os.getenv('AUTHENTICATE_ACCOUNT_URL', ''),
+        )
+
+
+# ============================================================================
+# Logger Configuration
+# ============================================================================
+
+@dataclass
+class LoggerConfig:
+    """Logger configuration"""
+    level: str = "INFO"
+    
+    @classmethod
+    def from_env(cls) -> 'LoggerConfig':
+        """Create Logger config from environment variables"""
+        return cls(
+            level=os.getenv('LOG_LEVEL', 'INFO').upper(),
+        )
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -281,6 +416,11 @@ class Config:
         self.buffer = BufferConfig.from_env()
         self.threading = ThreadingConfig.from_env()
         self.transcript = TranscriptConfig.from_env()
+        self.livekit = LiveKitConfig.from_env()
+        self.mongodb = MongoDBConfig.from_env()
+        self.tts = TTSConfig.from_env()
+        self.server = ServerConfig.from_env()
+        self.logger = LoggerConfig.from_env()
         
         self._initialized = True
         self._validate_all()

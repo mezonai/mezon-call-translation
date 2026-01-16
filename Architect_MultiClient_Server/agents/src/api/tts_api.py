@@ -8,18 +8,25 @@ try:
 except ImportError:
     LIVEKIT_AVAILABLE = False
 
-import os
-from dotenv import load_dotenv
-load_dotenv()
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import json
 import time
 from src.api.verify_account import authenticate_account
+from src.config.application_config import get_config
 
 router = APIRouter()
+
+
+def get_livekit_config():
+    """Get LiveKit configuration from centralized config."""
+    config = get_config()
+    return {
+        "url": config.livekit.url,
+        "api_key": config.livekit.api_key,
+        "api_secret": config.livekit.api_secret,
+    }
 
 
 class AccountModel(BaseModel):
@@ -64,10 +71,11 @@ async def send_tts_to_room(room_name: str, text: str, language: str = "en", voic
             "message": "LiveKit API not available. Please install livekit-api package."
         }
     
-    # Get LiveKit configuration from environment
-    url = os.environ.get("LIVEKIT_URL")
-    api_key = os.environ.get("LIVEKIT_API_KEY")
-    api_secret = os.environ.get("LIVEKIT_API_SECRET")
+    # Get LiveKit configuration from config
+    lk_config = get_livekit_config()
+    url = lk_config["url"]
+    api_key = lk_config["api_key"]
+    api_secret = lk_config["api_secret"]
     
     if not url or not api_key or not api_secret:
         return {
@@ -204,10 +212,11 @@ async def tts_health_check():
             "configured": False,
         }
     
-    # Get credentials from environment
-    url = os.environ.get("LIVEKIT_URL")
-    api_key = os.environ.get("LIVEKIT_API_KEY")
-    api_secret = os.environ.get("LIVEKIT_API_SECRET")
+    # Get credentials from config
+    lk_config = get_livekit_config()
+    url = lk_config["url"]
+    api_key = lk_config["api_key"]
+    api_secret = lk_config["api_secret"]
     
     has_credentials = bool(url and api_key and api_secret)
     
