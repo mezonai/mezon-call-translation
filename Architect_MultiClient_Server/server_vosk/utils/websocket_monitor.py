@@ -14,9 +14,21 @@ from collections import defaultdict
 # Import metrics service for Prometheus integration
 try:
     from ..service.metrics_service import metrics
+    from ..config import get_config
     METRICS_AVAILABLE = True
 except ImportError:
     METRICS_AVAILABLE = False
+
+
+def _is_ws_metrics_enabled() -> bool:
+    """Check if WebSocket metrics are enabled."""
+    if not METRICS_AVAILABLE:
+        return False
+    try:
+        config = get_config()
+        return config.metrics.enabled and config.metrics.ws_metrics
+    except Exception:
+        return False
 
 @dataclass
 class DisconnectEvent:
@@ -42,8 +54,8 @@ class WebSocketMonitor:
         self.connections[client_id] = time.time()
         self.logger.debug(f"Recorded connection for {client_id} in session {session_id}")
         
-        # Update Prometheus metrics
-        if METRICS_AVAILABLE:
+        # Update Prometheus metrics (if enabled)
+        if _is_ws_metrics_enabled():
             try:
                 metrics.ws_connections.inc()
             except Exception as e:
@@ -78,8 +90,8 @@ class WebSocketMonitor:
         # Update stats
         self.disconnect_stats[code] += 1
         
-        # Update Prometheus metrics
-        if METRICS_AVAILABLE:
+        # Update Prometheus metrics (if enabled)
+        if _is_ws_metrics_enabled():
             try:
                 metrics.ws_connections.dec()
                 # Track disconnect by code

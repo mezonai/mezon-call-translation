@@ -244,6 +244,11 @@ class PipelineManager:
     
     async def _metrics_loop(self):
         """Background metrics logging loop"""
+        # Check if metrics are enabled
+        if not self.config.metrics.enabled or not self.config.metrics.stt_metrics:
+            logger.info("Pipeline metrics logging disabled")
+            return
+            
         logger.info("Metrics loop started")
         
         try:

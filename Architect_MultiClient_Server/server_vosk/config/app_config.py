@@ -70,6 +70,38 @@ class LoggingConfig:
     backup_count: int = 5
 
 
+@dataclass
+class MinIOConfig:
+    """MinIO/S3 storage configuration."""
+    endpoint: str = "localhost:9000"
+    access_key: str = "minioadmin"
+    secret_key: str = "minioadmin123"
+    bucket: str = "livekit-recordings"
+    secure: bool = False  # Use HTTPS
+
+
+@dataclass
+class WhisperConfig:
+    """Whisper transcription configuration."""
+    model_size: str = "large-v3"  # tiny, base, small, medium, large-v3
+    device: str = "cuda"  # cuda or cpu
+    compute_type: str = "float16"  # float16, int8, int8_float16
+    beam_size: int = 5
+    vad_filter: bool = True
+    sample_rate: int = 16000
+    language: str = ""  # Empty = auto-detect, or specify: "en", "vi", "ja", etc.
+
+
+@dataclass
+class MetricsConfig:
+    """Prometheus metrics configuration."""
+    enabled: bool = False  # Enable/disable all metrics collection
+    http_metrics: bool = True  # Track HTTP request metrics
+    ws_metrics: bool = True  # Track WebSocket metrics
+    system_metrics: bool = True  # Track CPU/memory metrics
+    stt_metrics: bool = True  # Track STT/transcription metrics
+    update_interval: float = 5.0  # System metrics update interval in seconds
+
 
 @dataclass
 class AppConfig:
@@ -80,6 +112,9 @@ class AppConfig:
     circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    minio: MinIOConfig = field(default_factory=MinIOConfig)
+    whisper: WhisperConfig = field(default_factory=WhisperConfig)
+    metrics: MetricsConfig = field(default_factory=MetricsConfig)
 
     def __post_init__(self):
         """Post-initialization processing."""
@@ -138,6 +173,30 @@ class ConfigManager:
         config.logging.metrics_log_file = os.getenv("LOG_METRICS_FILE", config.logging.metrics_log_file)
         config.logging.max_file_size = int(os.getenv("LOG_MAX_FILE_SIZE", config.logging.max_file_size))
         config.logging.backup_count = int(os.getenv("LOG_BACKUP_COUNT", config.logging.backup_count))
+        
+        # MinIO configuration
+        config.minio.endpoint = os.getenv("MINIO_ENDPOINT", config.minio.endpoint)
+        config.minio.access_key = os.getenv("MINIO_ACCESS_KEY", config.minio.access_key)
+        config.minio.secret_key = os.getenv("MINIO_SECRET_KEY", config.minio.secret_key)
+        config.minio.bucket = os.getenv("MINIO_BUCKET", config.minio.bucket)
+        config.minio.secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
+        
+        # Whisper configuration
+        config.whisper.model_size = os.getenv("WHISPER_MODEL_SIZE", config.whisper.model_size)
+        config.whisper.device = os.getenv("WHISPER_DEVICE", config.whisper.device)
+        config.whisper.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", config.whisper.compute_type)
+        config.whisper.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", config.whisper.beam_size))
+        config.whisper.vad_filter = os.getenv("WHISPER_VAD_FILTER", "true").lower() == "true"
+        config.whisper.sample_rate = int(os.getenv("WHISPER_SAMPLE_RATE", config.whisper.sample_rate))
+        config.whisper.language = os.getenv("WHISPER_LANGUAGE", config.whisper.language)  # "" for auto-detect
+        
+        # Metrics configuration
+        config.metrics.enabled = os.getenv("METRICS_ENABLED", "false").lower() == "true"
+        config.metrics.http_metrics = os.getenv("METRICS_HTTP", "true").lower() == "true"
+        config.metrics.ws_metrics = os.getenv("METRICS_WS", "true").lower() == "true"
+        config.metrics.system_metrics = os.getenv("METRICS_SYSTEM", "true").lower() == "true"
+        config.metrics.stt_metrics = os.getenv("METRICS_STT", "true").lower() == "true"
+        config.metrics.update_interval = float(os.getenv("METRICS_UPDATE_INTERVAL", config.metrics.update_interval))
         
         # Load from config file if specified
         if self.config_file and Path(self.config_file).exists():

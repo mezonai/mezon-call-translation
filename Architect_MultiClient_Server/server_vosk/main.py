@@ -9,8 +9,12 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 # Import relative to Server package
 from server_vosk.controller.ws_vosk_control import router as stt_router
+from server_vosk.controller.transcription_api import router as transcription_router
 from server_vosk.service.migration_controller import pipeline_controller
 from server_vosk.service.health_service import get_health_service
+from server_vosk.service.transcription_queue_service import get_transcription_queue_service
+from server_vosk.service.whisper_transcription_processor import transcribe_task, get_whisper_processor
+from server_vosk.config import get_config
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
 
@@ -37,11 +41,22 @@ async def lifespan(app: FastAPI):
     # Set dispatcher (replaces set_async_result_queue)
     pipeline_controller.set_result_dispatcher(result_dispatcher)
     
+    # Start transcription queue service with Whisper processor
+    transcription_queue = get_transcription_queue_service()
+    transcription_queue.set_processor(transcribe_task)  # Set Whisper processor
+    await transcription_queue.start()
+    
+    # Pre-initialize Whisper model (optional, can be lazy loaded)
+    whisper_processor = get_whisper_processor()
+    await whisper_processor.initialize()
+    
     system_metrics_task = asyncio.create_task(system_metrics_loop())
     
     yield
     
     # Shutdown
+    await transcription_queue.stop()
+    await whisper_processor.shutdown()
     await result_dispatcher.shutdown()
     await pipeline_controller.shutdown_service()
     
@@ -80,25 +95,40 @@ app.add_middleware(
 async def prometheus_http_middleware(request: Request, call_next):
     start_time = time.time()
     response = await call_next(request)
-    try:
-        path = request.url.path
-        method = request.method
-        status = getattr(response, 'status_code', 200)
-        metrics.http_requests_total.labels(method=method, endpoint=path, status=status).inc()
-        duration = time.time() - start_time
-        metrics.http_request_duration.labels(endpoint=path).observe(duration)
-    except Exception as e:
-        logger.debug(f"Prometheus HTTP middleware error: {e}")
+    
+    # Check if HTTP metrics are enabled
+    config = get_config()
+    if config.metrics.enabled and config.metrics.http_metrics:
+        try:
+            path = request.url.path
+            method = request.method
+            status = getattr(response, 'status_code', 200)
+            metrics.http_requests_total.labels(method=method, endpoint=path, status=status).inc()
+            duration = time.time() - start_time
+            metrics.http_request_duration.labels(endpoint=path).observe(duration)
+        except Exception as e:
+            logger.debug(f"Prometheus HTTP middleware error: {e}")
     return response
 
 # System metrics background updater (CPU, memory, queue sizes)
 async def system_metrics_loop():
+    config = get_config()
+    
+    # Skip if metrics disabled
+    if not config.metrics.enabled or not config.metrics.system_metrics:
+        logger.info("System metrics disabled, skipping metrics loop")
+        return
+    
     try:
         import psutil  # optional dependency
         have_psutil = True
     except Exception:
         psutil = None
         have_psutil = False
+        
+    update_interval = config.metrics.update_interval
+    logger.info(f"System metrics loop started (interval: {update_interval}s)")
+    
     while True:
         try:
             if have_psutil:
@@ -136,16 +166,20 @@ async def system_metrics_loop():
                 logger.debug(f"Dispatcher queue metrics error: {e}")
         except Exception as e:
             logger.debug(f"System metrics loop error: {e}")
-        await asyncio.sleep(5.0)
+        await asyncio.sleep(update_interval)
 
 # Prometheus metrics endpoint
 @app.get("/metrics")
 async def prometheus_metrics():
+    config = get_config()
+    if not config.metrics.enabled:
+        return Response("Metrics disabled", status_code=404)
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 
 app.include_router(stt_router)
+app.include_router(transcription_router)
 
 @app.get("/health")
 async def health_check():
