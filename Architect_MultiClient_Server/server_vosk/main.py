@@ -20,17 +20,23 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-
+from server_vosk.service.mongodb_service import get_mongodb_service
 
 
 # Load environment variables
 load_dotenv()
 
-
+mongodb = get_mongodb_service()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup → Shutdown lifecycle."""
+
+    ok = await mongodb.connect()
+    if not ok:
+        raise RuntimeError("❌ MongoDB connection failed on startup")
+    logger.info("✅ MongoDB connected on startup")
+
     # Initialize optimized dispatcher
     from .service.result_dispatcher import get_result_dispatcher
     result_dispatcher = get_result_dispatcher(metrics=metrics)
@@ -59,6 +65,9 @@ async def lifespan(app: FastAPI):
     await whisper_processor.shutdown()
     await result_dispatcher.shutdown()
     await pipeline_controller.shutdown_service()
+    
+    # Disconnect Mongo LAST
+    await mongodb.disconnect()
     
     system_metrics_task.cancel()
     try:
@@ -89,6 +98,7 @@ app.add_middleware(
     allow_methods=["*"],            # GET, POST, PUT, DELETE...
     allow_headers=["*"],            # Cho phép tất cả headers
 )
+
 
 # HTTP metrics middleware for Prometheus
 @app.middleware("http")

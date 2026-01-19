@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from minio import Minio
 from faster_whisper import WhisperModel
 
+from server_vosk.service.mongodb_service import get_mongodb_service
+
 from ..config import get_config
 from .transcription_queue_service import TranscriptionTask
 
@@ -33,12 +35,14 @@ class TranscriptionSegment:
     start: float
     end: float
     text: str
-    
-    def to_dict(self) -> Dict[str, Any]:
+    confidence: float
+
+    def to_dict(self) -> dict:
         return {
             "start": self.start,
             "end": self.end,
             "text": self.text,
+            "confidence": self.confidence,
         }
 
 
@@ -73,7 +77,7 @@ class WhisperTranscriptionProcessor:
             return
         
         logger.info("Initializing WhisperTranscriptionProcessor...")
-        
+        self.mongodb_service = get_mongodb_service()
         # Create temp directory for audio files
         self._temp_dir = Path(tempfile.gettempdir()) / "whisper_transcriptions"
         self._temp_dir.mkdir(parents=True, exist_ok=True)
@@ -220,13 +224,17 @@ class WhisperTranscriptionProcessor:
             return list(segments), info
         
         segments_raw, info = await loop.run_in_executor(None, run_transcription)
-        
+        print(segments_raw)
         # Convert to our segment format
         segments = [
             TranscriptionSegment(
                 start=seg.start,
                 end=seg.end,
                 text=seg.text.strip(),
+                confidence=round(
+                    math.exp(seg.avg_logprob) * (1 - seg.no_speech_prob),
+                    4
+                )
             )
             for seg in segments_raw
         ]
@@ -301,26 +309,39 @@ class WhisperTranscriptionProcessor:
                 f"   Text length: {len(full_text)} chars"
             )
 
-            # task.started_at = 1768550217356673262 (ns)
-            started_at_ns = int(task.started_at)
+            print(segments)
 
-            # Convert nanoseconds → seconds
-            started_at_dt = datetime.fromtimestamp(
-                started_at_ns / 1_000_000_000,
-                tz=timezone.utc
+            # Prepare audio metadata
+            audio_data = {
+                "filename": task.filename,
+                "duration_sec": task.duration,
+                "started_at_ns": task.started_at,  # nanoseconds timestamp
+                "ended_at_ns": task.ended_at
+            }
+            
+            # Prepare transcript data from Vosk STT
+            transcript_data = {
+                "language": info['language'],  # Vietnamese
+                "segments": [seg.to_dict() for seg in segments]
+            }
+            
+            # Save to MongoDB
+            doc_id = await self.mongodb_service.save_track_transcript(
+                egress_id = task.egress_id,
+                track_id = task.track_id,
+                room_name = task.room_name,
+                participant_identity = task.participant_identity,
+                audio = audio_data,
+                transcript = transcript_data,
+                status = "completed"
             )
+            
+            if doc_id:
+                print(f"✅ Transcript saved with ID: {doc_id}")
+            else:
+                print("❌ Failed to save transcript")
 
-            for seg in segments:
-                start_time = started_at_dt + timedelta(seconds=seg.start)
-                end_time = started_at_dt + timedelta(seconds=seg.end)
 
-                print(
-                    "[{} → {}] {}".format(
-                        start_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-                        end_time.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-                        seg.text
-                    )
-                )
             return full_text
             
         except Exception as e:
