@@ -15,7 +15,7 @@ class PipelineServiceController:
     
     def __init__(self):
         # Initialize the new pipeline-based service
-        from server_vosk.service.new_vosk_service import stt_service_new
+        from stt_service.service.new_vosk_service import stt_service_new
         self.pipeline_service = stt_service_new
         self.result_dispatcher = None  # NEW: For optimized dispatch
         

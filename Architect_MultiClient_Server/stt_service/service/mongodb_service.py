@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import PyMongoError
 import logging
-from server_vosk.config.app_config import get_config
+from stt_service.config.app_config import get_config
 
 logger = logging.getLogger(__name__)
 

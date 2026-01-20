@@ -10,12 +10,8 @@ class TranscriptionService:
     """Service sent audio to transcription queue"""
     
     def __init__(self):
-        config = get_config()
-        self.api_url = getattr(
-            config, 
-            'transcribe_api_url', 
-            'http://127.0.0.1:8000/api/transcribe/queue'
-        )
+        self.config = get_config().stt_service
+        self.api_url =(f"ws://{self.config.host}:{self.config.port}/api/transcribe/queue")
         self.timeout = 30.0
     
     async def enqueue(self, egress_info: Dict) -> bool:

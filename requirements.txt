@@ -53,8 +53,8 @@ PyJWT>=2.10.1                  # JSON Web Token for authentication
 # ========================================
 # Notes
 # ========================================
-# - vosk: NOT REQUIRED in agent (server_vosk handles Vosk)
-# - Audio flows: LiveKit → Agent → WebSocket → server_vosk (Vosk)
+# - vosk: NOT REQUIRED in agent (stt_service handles Vosk)
+# - Audio flows: LiveKit → Agent → WebSocket → stt_service (Vosk)
 # - TTS: Agent downloads Silero model from https://models.silero.ai/
 # - MongoDB: Optional (set ENABLE_MONGODB=false to disable)
 

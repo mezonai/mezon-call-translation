@@ -1,4 +1,6 @@
 from google.protobuf.json_format import MessageToDict
+from enum import Enum
+from typing import Dict, Any, Optional
 try:
     from livekit import api
     from livekit.api import twirp_client
@@ -10,154 +12,180 @@ from fastapi import APIRouter, HTTPException
 import httpx
 from pydantic import BaseModel
 from src.api.verify_account import authenticate_account
-from src.config.application_config import get_config
+from src.services.livekit_client import get_livekit_service
 
 router = APIRouter()
 
 
-def get_livekit_config():
-    """Get LiveKit configuration from centralized config."""
-    config = get_config()
-    return {
-        "url": config.livekit.http_url,
-        "api_key": config.livekit.api_key,
-        "api_secret": config.livekit.api_secret,
-        "agent_name": config.livekit.agent_name,
-    }
+class DispatchStatus(str, Enum):
+    """Dispatch operation status codes."""
+    ERROR = "error"
+    EXISTS = "exists"
+    CREATED = "created"
+    NOT_FOUND = "not_found"
+    CANCELLED = "cancelled"
+
+
+class LiveKitError(Exception):
+    """Custom exception for LiveKit operations."""
+    pass
+
+
+def get_livekit_client():
+    """
+    Get LiveKit client and agent name from centralized service.
+    
+    Returns:
+        Tuple of (LiveKitAPI, agent_name)
+    """
+    service = get_livekit_service()
+    if not service.is_available:
+        raise LiveKitError("LiveKit API not available. Please install livekit-api package.")
+    
+    return service.get_client(), service.get_agent_name()
+
+
+async def list_dispatches(room_name: str):
+    """List all dispatches for a room."""
+    client, _ = get_livekit_client()
+    try:
+        return await client.agent_dispatch.list_dispatch(room_name=room_name)
+    except twirp_client.TwirpError as e:
+        raise LiveKitError(f"LiveKit server error: {e}")
+
+
+async def find_agent_dispatch(dispatches, agent_name: str) -> Optional[Any]:
+    """Find dispatch by agent name."""
+    for dispatch in dispatches:
+        if dispatch.agent_name == agent_name:
+            return dispatch
+    return None
 
 
 class AccountModel(BaseModel):
     appid: str
     token: str
 
+
 class DispatchRequestModel(BaseModel):
     account: AccountModel
     room_name: str
 
-async def ensure_dispatch(room_name: str):
 
-    if not LIVEKIT_AVAILABLE:
-        return {
-            "status": "error", 
-            "message": "LiveKit API not available. Please install livekit-api package."
-        }  
-    lk_config = get_livekit_config()
-    url = lk_config["url"]
-    api_key = lk_config["api_key"]
-    api_secret = lk_config["api_secret"]
-    agent_name = lk_config["agent_name"]
-
-    lkapi = api.LiveKitAPI(
-        url=url,
-        api_key=api_key,
-        api_secret=api_secret,
-    )
-
+async def ensure_dispatch(room_name: str) -> Dict[str, Any]:
+    """
+    Ensure a dispatch exists for the given room.
+    Creates one if it doesn't exist.
+    
+    Returns:
+        Dict with status and relevant data
+    """
     try:
-        dispatches = await lkapi.agent_dispatch.list_dispatch(room_name=room_name)
-    except twirp_client.TwirpError as e:
-        await lkapi.aclose()
-        return {"status": "error", "message": f"LiveKit server error: {e}"}
-
-    if any(d.agent_name == agent_name for d in dispatches):
-        await lkapi.aclose()
-        return {"status": "exists", "message": "Dispatch already exists"}
-
-    dispatch = await lkapi.agent_dispatch.create_dispatch(
-        api.CreateAgentDispatchRequest(
-            agent_name=agent_name,
-            room=room_name
+        client, agent_name = get_livekit_client()
+        
+        # Check existing dispatches
+        dispatches = await client.agent_dispatch.list_dispatch(room_name=room_name)
+        
+        # Check if dispatch already exists
+        if await find_agent_dispatch(dispatches, agent_name):
+            return {
+                "status": DispatchStatus.EXISTS,
+                "message": "Dispatch already exists"
+            }
+        
+        # Create new dispatch
+        dispatch = await client.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                agent_name=agent_name,
+                room=room_name
+            )
         )
-    )
-    await lkapi.aclose()
-
-    dispatch_dict = MessageToDict(dispatch, preserving_proto_field_name=True)
-
-    return {"status": "created", "dispatch": dispatch_dict}
-
-
-async def cancel_dispatch(room_name: str):
-
-    if not LIVEKIT_AVAILABLE:
+        
         return {
-            "status": "error",
-            "message": "LiveKit API not available. Please install livekit-api package."
+            "status": DispatchStatus.CREATED,
+            "dispatch": MessageToDict(dispatch, preserving_proto_field_name=True)
         }
-
-    lk_config = get_livekit_config()
-    url = lk_config["url"]
-    api_key = lk_config["api_key"]
-    api_secret = lk_config["api_secret"]
-    agent_name = lk_config["agent_name"]
-
-    lkapi = api.LiveKitAPI(
-        url=url,
-        api_key=api_key,
-        api_secret=api_secret,
-    )
-
-    try:
-        dispatches = await lkapi.agent_dispatch.list_dispatch(room_name=room_name)
+        
+    except LiveKitError as e:
+        return {"status": DispatchStatus.ERROR, "message": str(e)}
     except twirp_client.TwirpError as e:
-        await lkapi.aclose()
-        return {"status": "error", "message": f"LiveKit server error: {e}"}
+        return {"status": DispatchStatus.ERROR, "message": f"LiveKit server error: {e}"}
 
 
-    target_dispatch = None
-    for d in dispatches:
-        if d.agent_name == agent_name:
-            target_dispatch = d
-            break
-
-    if not target_dispatch:
-        await lkapi.aclose()
-        return {
-            "status": "not_found",
-            "message": f"No active dispatch found for agent '{agent_name}'"
-        }
-
+async def cancel_dispatch(room_name: str) -> Dict[str, Any]:
+    """
+    Cancel an existing dispatch for the given room.
+    
+    Returns:
+        Dict with status and relevant data
+    """
     try:
-        await lkapi.agent_dispatch.delete_dispatch(
+        client, agent_name = get_livekit_client()
+        
+        # Get dispatches
+        dispatches = await client.agent_dispatch.list_dispatch(room_name=room_name)
+        
+        # Find target dispatch
+        target_dispatch = await find_agent_dispatch(dispatches, agent_name)
+        
+        if not target_dispatch:
+            return {
+                "status": DispatchStatus.NOT_FOUND,
+                "message": f"No active dispatch found for agent '{agent_name}'"
+            }
+        
+        # Delete dispatch
+        await client.agent_dispatch.delete_dispatch(
             target_dispatch.id,
             target_dispatch.room,
         )
+        
+        return {
+            "status": DispatchStatus.CANCELLED,
+            "message": f"Dispatch for agent '{target_dispatch.agent_name}' has been cancelled.",
+            "dispatch": MessageToDict(target_dispatch, preserving_proto_field_name=True),
+        }
+        
+    except LiveKitError as e:
+        return {"status": DispatchStatus.ERROR, "message": str(e)}
     except twirp_client.TwirpError as e:
-        await lkapi.aclose()
-        return {"status": "error", "message": f"Failed to cancel dispatch: {e}"}
+        return {"status": DispatchStatus.ERROR, "message": f"Failed to cancel dispatch: {e}"}
 
-    await lkapi.aclose()
 
-    return {
-        "status": "cancelled",
-        "message": f"Dispatch for agent '{target_dispatch.agent_name}' has been cancelled.",
-        "dispatch": MessageToDict(target_dispatch, preserving_proto_field_name=True),
-    }
-
-@router.post("/create_dispatch")
-async def api_create_dispatch(body: DispatchRequestModel):
-    account = body.account.dict()
-    room_name = body.room_name
+async def verify_account(account: Dict[str, str]) -> None:
+    """
+    Verify account authentication.
+    Raises HTTPException if authentication fails.
+    """
     try:
         is_authenticated = await authenticate_account(account)
         if not is_authenticated:
             raise HTTPException(status_code=401, detail="Authentication failed")
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Authentication service timeout")
-    except httpx.RequestError as e:
+    except httpx.RequestError:
         raise HTTPException(status_code=503, detail="Authentication service unavailable")
+
+
+@router.post("/create_dispatch")
+async def api_create_dispatch(body: DispatchRequestModel) -> Dict[str, Any]:
+    """Create a dispatch for the specified room."""
+    await verify_account(body.account.dict())
     
-    result = await ensure_dispatch(room_name)
-    if result["status"] == "error":
+    result = await ensure_dispatch(body.room_name)
+    if result["status"] == DispatchStatus.ERROR:
         raise HTTPException(status_code=500, detail=result["message"])
+    
     return result
 
+
 @router.post("/cancel_dispatch")
-async def api_cancel_dispatch(body: DispatchRequestModel):
-    account = body.account.dict()
-    room_name = body.room_name
-    if not await authenticate_account(account):
-        raise HTTPException(status_code=401, detail="Account authentication failed")
-    result = await cancel_dispatch(room_name)
-    if result["status"] == "error":
+async def api_cancel_dispatch(body: DispatchRequestModel) -> Dict[str, Any]:
+    """Cancel a dispatch for the specified room."""
+    await verify_account(body.account.dict())
+    
+    result = await cancel_dispatch(body.room_name)
+    if result["status"] == DispatchStatus.ERROR:
         raise HTTPException(status_code=500, detail=result["message"])
+    
     return result

@@ -14,19 +14,9 @@ from typing import Optional
 import json
 import time
 from src.api.verify_account import authenticate_account
-from src.config.application_config import get_config
+from src.services.livekit_client import get_livekit_service
 
 router = APIRouter()
-
-
-def get_livekit_config():
-    """Get LiveKit configuration from centralized config."""
-    config = get_config()
-    return {
-        "url": config.livekit.url,
-        "api_key": config.livekit.api_key,
-        "api_secret": config.livekit.api_secret,
-    }
 
 
 class AccountModel(BaseModel):
@@ -65,22 +55,12 @@ async def send_tts_to_room(room_name: str, text: str, language: str = "en", voic
     Returns:
         Dict with status and message
     """
-    if not LIVEKIT_AVAILABLE:
+    service = get_livekit_service()
+    
+    if not service.is_available:
         return {
             "status": "error",
             "message": "LiveKit API not available. Please install livekit-api package."
-        }
-    
-    # Get LiveKit configuration from config
-    lk_config = get_livekit_config()
-    url = lk_config["url"]
-    api_key = lk_config["api_key"]
-    api_secret = lk_config["api_secret"]
-    
-    if not url or not api_key or not api_secret:
-        return {
-            "status": "error",
-            "message": "LiveKit credentials not configured. Check LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET"
         }
     
     # Validate text
@@ -90,13 +70,9 @@ async def send_tts_to_room(room_name: str, text: str, language: str = "en", voic
             "message": "Text is required and cannot be empty"
         }
     
-    lkapi = api.LiveKitAPI(
-        url=url,
-        api_key=api_key,
-        api_secret=api_secret,
-    )
-    
     try:
+        lkapi = service.get_client()
+        
         # Prepare TTS payload
         payload = {
             "type": "tts_request",
@@ -116,8 +92,6 @@ async def send_tts_to_room(room_name: str, text: str, language: str = "en", voic
             )
         )
         
-        await lkapi.aclose()
-        
         return {
             "status": "success",
             "message": "TTS request sent successfully",
@@ -127,13 +101,11 @@ async def send_tts_to_room(room_name: str, text: str, language: str = "en", voic
         }
         
     except twirp_client.TwirpError as e:
-        await lkapi.aclose()
         return {
             "status": "error",
             "message": f"LiveKit server error: {e}"
         }
     except Exception as e:
-        await lkapi.aclose()
         return {
             "status": "error",
             "message": f"Failed to send TTS request: {str(e)}"
@@ -205,27 +177,6 @@ async def tts_health_check():
     Returns:
         Health status and configuration info
     """
-    if not LIVEKIT_AVAILABLE:
-        return {
-            "status": "error",
-            "message": "LiveKit API not available",
-            "configured": False,
-        }
-    
-    # Get credentials from config
-    lk_config = get_livekit_config()
-    url = lk_config["url"]
-    api_key = lk_config["api_key"]
-    api_secret = lk_config["api_secret"]
-    
-    has_credentials = bool(url and api_key and api_secret)
-    
-    return {
-        "status": "ok" if has_credentials else "error",
-        "message": "TTS API is ready" if has_credentials else "Missing LiveKit credentials",
-        "configured": has_credentials,
-        "livekit_url": url if url else "Not configured",
-        "has_api_key": bool(api_key),
-        "has_api_secret": bool(api_secret),
-    }
+    service = get_livekit_service()
+    return await service.health_check()
 

@@ -91,7 +91,7 @@ class MongoDBConfig:
 @dataclass
 class WhisperConfig:
     """Whisper transcription configuration."""
-    model_size: str = "large-v3"  # tiny, base, small, medium, large-v3
+    model_size: str = "medium"  # tiny, base, small, medium, large-v3
     device: str = "cuda"  # cuda or cpu
     compute_type: str = "float16"  # float16, int8, int8_float16
     beam_size: int = 5

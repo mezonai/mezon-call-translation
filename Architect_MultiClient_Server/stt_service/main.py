@@ -8,19 +8,19 @@ from .service.metrics_service import metrics
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 # Import relative to Server package
-from server_vosk.controller.ws_vosk_control import router as stt_router
-from server_vosk.controller.transcription_api import router as transcription_router
-from server_vosk.service.migration_controller import pipeline_controller
-from server_vosk.service.health_service import get_health_service
-from server_vosk.service.transcription_queue_service import get_transcription_queue_service
-from server_vosk.service.whisper_transcription_processor import transcribe_task, get_whisper_processor
-from server_vosk.config import get_config
+from stt_service.controller.ws_vosk_control import router as stt_router
+from stt_service.controller.transcription_api import router as transcription_router
+from stt_service.service.migration_controller import pipeline_controller
+from stt_service.service.health_service import get_health_service
+from stt_service.service.transcription_queue_service import get_transcription_queue_service
+from stt_service.service.whisper_transcription_processor import transcribe_task, get_whisper_processor
+from stt_service.config import get_config
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from server_vosk.service.mongodb_service import get_mongodb_service
+from stt_service.service.mongodb_service import get_mongodb_service
 
 
 # Load environment variables

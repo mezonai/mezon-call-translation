@@ -130,7 +130,7 @@ class VADConfig:
 # ============================================================================
 
 @dataclass
-class WebSocketConfig:
+class STTServiceConfig:
     """WebSocket client configuration"""
     # Connection parameters
     host: str = "localhost"
@@ -157,7 +157,7 @@ class WebSocketConfig:
     send_delay: float = 0.01  # 10ms
     
     @classmethod
-    def from_env(cls) -> 'WebSocketConfig':
+    def from_env(cls) -> 'STTServiceConfig':
         """Create WebSocket config from environment variables"""
         return cls(
             host=os.getenv('WS_HOST', 'localhost'),
@@ -448,7 +448,7 @@ class Config:
         # Load all configuration sections
         self.audio = AudioConfig.from_env()
         self.vad = VADConfig.from_env()
-        self.websocket = WebSocketConfig.from_env()
+        self.stt_service = STTServiceConfig.from_env()
         self.buffer = BufferConfig.from_env()
         self.threading = ThreadingConfig.from_env()
         self.transcript = TranscriptConfig.from_env()

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from minio import Minio
 from faster_whisper import WhisperModel
 
-from server_vosk.service.mongodb_service import get_mongodb_service
+from stt_service.service.mongodb_service import get_mongodb_service
 
 from ..config import get_config
 from .transcription_queue_service import TranscriptionTask
@@ -214,27 +214,32 @@ class WhisperTranscriptionProcessor:
         loop = asyncio.get_event_loop()
         
         def run_transcription():
-            # Standard faster-whisper usage: pass file path directly
-            segments, info = self._whisper_model.transcribe(
-                str(audio_path),  # Pass file path as string
-                language=whisper_config.language if whisper_config.language else None,
-                beam_size=whisper_config.beam_size,
-                vad_filter=whisper_config.vad_filter,
-            )
-            return list(segments), info
+            try:
+                # Standard faster-whisper usage: pass file path directly
+                segments, info = self._whisper_model.transcribe(
+                    str(audio_path),  # Pass file path as string
+                    language=whisper_config.language if whisper_config.language else None,
+                    beam_size=whisper_config.beam_size,
+                    vad_filter=whisper_config.vad_filter,
+                )
+                segments_list = []
+                for seg in segments:
+                    print(seg)
+                    segments_list.append(seg)
+                
+                return segments_list, info
+            except Exception as e:
+                logger.error(f"Whisper transcription failed: {e}")
+                raise RuntimeError(f"Transcription failed: {e}") from e
         
         segments_raw, info = await loop.run_in_executor(None, run_transcription)
-        print(segments_raw)
         # Convert to our segment format
         segments = [
             TranscriptionSegment(
                 start=seg.start,
                 end=seg.end,
                 text=seg.text.strip(),
-                confidence=round(
-                    math.exp(seg.avg_logprob) * (1 - seg.no_speech_prob),
-                    4
-                )
+                confidence=round(math.exp(seg.avg_logprob), 4)
             )
             for seg in segments_raw
         ]
@@ -308,9 +313,7 @@ class WhisperTranscriptionProcessor:
                 f"   Segments: {len(segments)}\n"
                 f"   Text length: {len(full_text)} chars"
             )
-
             print(segments)
-
             # Prepare audio metadata
             audio_data = {
                 "filename": task.filename,
@@ -337,9 +340,9 @@ class WhisperTranscriptionProcessor:
             )
             
             if doc_id:
-                print(f"✅ Transcript saved with ID: {doc_id}")
+                logger.info(f"✅ Transcript saved with ID: {doc_id}")
             else:
-                print("❌ Failed to save transcript")
+                logger.warning("❌ Failed to save transcript")
 
 
             return full_text

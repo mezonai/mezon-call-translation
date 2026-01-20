@@ -5,6 +5,7 @@ from datetime import datetime
 from livekit import api
 from src.logger import get_logger
 from src.config.application_config import get_config
+from src.services.livekit_client import get_livekit_service
 
 logger = get_logger(__name__)
 
@@ -14,21 +15,11 @@ class EgressService:
     
     def __init__(self):
         self.active_egresses: Dict[str, str] = {}
-        self._lk_client: Optional[api.LiveKitAPI] = None
-    
+        self._s3_upload: Optional[api.S3Upload] = None
+
     def _get_client(self) -> api.LiveKitAPI:
-        """Lazy initialization for LiveKit client"""
-        if self._lk_client is None:
-            config = get_config()
-            if not config.livekit.api_key or not config.livekit.api_secret:
-                raise ValueError("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set")
-            
-            self._lk_client = api.LiveKitAPI(
-                url=config.livekit.http_url,
-                api_key=config.livekit.api_key,
-                api_secret=config.livekit.api_secret
-            )
-        return self._lk_client
+        """Get LiveKit client from centralized service"""
+        return get_livekit_service().get_client()
     
     def _build_filepath(self, room_name: str, identity: str, source: str, 
                        track_type: str) -> str:
@@ -37,17 +28,18 @@ class EgressService:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"{room_name}/{identity}-{source}-{track_type.lower()}-{timestamp}.{ext}"
     
-    def _create_s3_upload(self) -> api.S3Upload:
-        """Create S3Upload config from MinIO settings"""
-        config = get_config()
-        return api.S3Upload(
-            access_key=config.minio.access_key,
-            secret=config.minio.secret,
-            bucket=config.minio.bucket,
-            region=config.minio.region,
-            endpoint=config.minio.endpoint,
-            force_path_style=True,
-        )
+    def _get_s3_upload(self) -> api.S3Upload:
+        if self._s3_upload is None:
+            config = get_config()
+            self._s3_upload = api.S3Upload(
+                access_key=config.minio.access_key,
+                secret=config.minio.secret,
+                bucket=config.minio.bucket,
+                region=config.minio.region,
+                endpoint=config.minio.endpoint,
+                force_path_style=True,
+            )
+        return self._s3_upload
     
     async def start_recording(
         self,
@@ -73,7 +65,7 @@ class EgressService:
             config = get_config()
             
             filepath = self._build_filepath(room_name, identity, source, track_type)
-            s3_upload = self._create_s3_upload()
+            s3_upload = self._get_s3_upload()
             
             file_out = api.DirectFileOutput(filepath=filepath, s3=s3_upload)
             req = api.TrackEgressRequest(
@@ -146,7 +138,9 @@ class EgressService:
         return self.active_egresses.copy()
     
     async def cleanup(self):
-        """Cleanup resources"""
-        if self._lk_client:
-            await self._lk_client.aclose()
-            self._lk_client = None
+        """Cleanup resources (client managed by LiveKitClientService)"""
+        # Stop all active egresses before cleanup
+        if self.active_egresses:
+            logger.info(f"Stopping {len(self.active_egresses)} active egresses before cleanup")
+            await self.stop_all()
+        # Note: LiveKit client cleanup is handled by LiveKitClientService

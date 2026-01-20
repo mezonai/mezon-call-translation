@@ -118,6 +118,7 @@ async def queue_transcription(request: TranscriptionRequest):
         except Exception:
             # Queue full, use blocking version with timeout
             task_id = await queue_service.enqueue(task)
+            logging.warning("Queue full, used blocking enqueue for task %s", task_id)
         
         stats = queue_service.get_stats()
         

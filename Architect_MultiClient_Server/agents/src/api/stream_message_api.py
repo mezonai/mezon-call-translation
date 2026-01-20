@@ -7,7 +7,8 @@ from src.api.verify_account import authenticate_account
 import os
 import asyncio
 import queue
-
+from src.logger import get_logger
+logger = get_logger(__name__)
 router = APIRouter()
 manager = StreamMessageManager()
 
@@ -19,7 +20,7 @@ class PushMessageRequest(BaseModel):
 async def push_message_api(req: PushMessageRequest):
     # Kiểm tra có client nào đang listen không
     if not manager.has_active_connections(req.room_name):
-        print(f"[WARN] No active connections for room {req.room_name}, message may be lost")
+        logger.warning(f"No active connections for room {req.room_name}, message may be lost")
     
     q = manager.get_queue(req.room_name)
     q.put(req.message)
@@ -38,7 +39,7 @@ async def event_generator(room_name: str, connection_id: str):
     - Proper cleanup khi connection đóng
     - Heartbeat để giữ connection alive
     """
-    print(f"[SSE] Connection started: {connection_id} for room: {room_name}")
+    logger.info(f"[SSE] Connection started: {connection_id} for room: {room_name}")
     q = manager.get_queue(room_name)
     loop = asyncio.get_event_loop()
     
@@ -56,7 +57,7 @@ async def event_generator(room_name: str, connection_id: str):
                     loop.run_in_executor(None, lambda: q.get(timeout=1.0)),
                     timeout=2.0
                 )
-                print(f"[SSE] Sending to {connection_id}: {text[:50]}...")
+                logger.info(f"[SSE] Sending to {connection_id}: {text[:50]}...")
                 yield f"data: {text}\n\n"
                 
             except (asyncio.TimeoutError, queue.Empty):
@@ -69,15 +70,15 @@ async def event_generator(room_name: str, connection_id: str):
                 
             except asyncio.CancelledError:
                 # Client disconnect
-                print(f"[SSE] Connection cancelled: {connection_id}")
+                logger.info(f"[SSE] Connection cancelled: {connection_id}")
                 break
                 
     except GeneratorExit:
-        print(f"[SSE] Generator exit: {connection_id}")
+        logger.info(f"[SSE] Generator exit: {connection_id}")
     finally:
         # Cleanup khi connection đóng
         manager.unregister_connection(room_name, connection_id)
-        print(f"[SSE] Connection closed and unregistered: {connection_id}")
+        logger.info(f"[SSE] Connection closed and unregistered: {connection_id}")
 
 
 @router.get("/stream_message")
@@ -89,7 +90,7 @@ async def sse_endpoint(appid: str, token: str, room: str):
 
     # Đăng ký connection mới
     connection_id = manager.register_connection(room)
-    print(f"[SSE] New connection registered: {connection_id}, total for room {room}: {manager.get_connection_count(room)}")
+    logger.info(f"[SSE] New connection registered: {connection_id}, total for room {room}: {manager.get_connection_count(room)}")
 
     return StreamingResponse(
         event_generator(room, connection_id),

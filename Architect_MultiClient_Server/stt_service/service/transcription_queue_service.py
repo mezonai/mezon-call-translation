@@ -220,7 +220,7 @@ class TranscriptionQueueService:
                 break
             except Exception as e:
                 logger.error(f"Consumer loop error: {e}", exc_info=True)
-                await asyncio.sleep(1)  # Prevent tight loop on repeated errors
+                await asyncio.sleep(100)  # Prevent tight loop on repeated errors
     
     async def _process_task(self, task: TranscriptionTask):
         """Process a single transcription task."""

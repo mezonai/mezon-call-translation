@@ -52,7 +52,7 @@ async def handle_webhook(request: Request):
     Handle webhook events từ LiveKit
     
     Webhook verification:
-    - LIVEKIT_VERIFY_WEBHOOKS=true: enable signature verification (mặc định)
+    - LIVEKIT_VERIFY_WEBHOOKS=true: enable signature verification (default)
     - LIVEKIT_VERIFY_WEBHOOKS=false: skip verification (dev only)
     """
     try:
@@ -83,8 +83,8 @@ async def handle_webhook(request: Request):
         logger.error(f"✗ Error processing webhook: {e}")
         return WebhookResponse(received=False, error=str(e))
 
-
-@router.post("/egress/stop/{track_sid}")
+# This api use for testing purposes only
+@router.post("/egress/stop/{track_sid}")  
 async def stop_egress(track_sid: str):
     """Manually stop egress cho track"""
     if not LIVEKIT_AVAILABLE:
@@ -98,7 +98,7 @@ async def stop_egress(track_sid: str):
         return {"status": "stopped", "track_sid": track_sid}
     raise HTTPException(500, "Failed to stop egress")
 
-
+# This api use for testing purposes only
 @router.post("/egress/stop-all")
 async def stop_all_egresses():
     """Stop tất cả egress"""

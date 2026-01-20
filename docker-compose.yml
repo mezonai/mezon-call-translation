@@ -3,11 +3,11 @@ services:
   server-vosk:
     build:
       context: .
-      dockerfile: Dockerfile.server_vosk
+      dockerfile: Dockerfile.stt_service
     ports:
       - "8000"   # let Docker assign internal port
     env_file:
-      - Architect_MultiClient_Server/server_vosk/.env
+      - Architect_MultiClient_Server/stt_service/.env
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1

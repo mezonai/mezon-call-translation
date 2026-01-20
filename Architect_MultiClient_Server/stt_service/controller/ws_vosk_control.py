@@ -1,8 +1,8 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from server_vosk.service.migration_controller import pipeline_controller
-from server_vosk.session_manager import session_manager
-from server_vosk.utils.websocket_monitor import websocket_monitor
-from server_vosk.service.metrics_service import metrics
+from stt_service.service.migration_controller import pipeline_controller
+from stt_service.session_manager import session_manager
+from stt_service.utils.websocket_monitor import websocket_monitor
+from stt_service.service.metrics_service import metrics
 import asyncio
 import time
 from typing import Optional

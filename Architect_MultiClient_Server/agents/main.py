@@ -16,23 +16,36 @@ from src.core.tts_manager import TTSManager
 from src.logger import get_logger
 from src.services.mongodb_service import get_mongodb_service
 from src.config.application_config import get_config
-
+from contextlib import asynccontextmanager
 
 from src.api.dispatch_api import router as dispatch_router
 from src.api.tts_api import router as tts_router
 from src.api.stream_message_api import router as stream_router
-from src.api.webhook_api import router as webhook_router
+from src.api.webhook_api import router as webhook_router, egress_service
+from src.services.livekit_client import cleanup_livekit_service
 
 # Load config
 config = get_config()
+logger = get_logger(__name__)
 
-app = FastAPI(title="LiveKit Agent API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ===== STARTUP =====
+    logger.info("FastAPI startup")
+    yield
+    # ===== SHUTDOWN =====
+    logger.info("FastAPI shutting down, cleaning up resources...")
+    await egress_service.cleanup()
+    await cleanup_livekit_service()
+    logger.info("All services cleanup completed")
+
+app = FastAPI(title="LiveKit Agent API", lifespan=lifespan)
 
 app.include_router(dispatch_router, prefix="/api")
 app.include_router(tts_router, prefix="/api")
 app.include_router(stream_router, prefix="/api")
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
-logger = get_logger(__name__)
+
 
 
 async def entrypoint(ctx: agents.JobContext):
@@ -166,7 +179,6 @@ async def entrypoint(ctx: agents.JobContext):
         # Cleanup TTS if enabled
         if tts_manager:
             await tts_manager.cleanup()
-
 def start_api():
     uvicorn.run("main:app", host=config.server.host, port=config.server.port, reload=False)
 
