@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from typing import Optional
 import json
 import time
-from src.api.verify_account import authenticate_account
+from src.auth.verify_account import authenticate_account
 from src.services.livekit_client import get_livekit_service
 
 router = APIRouter()

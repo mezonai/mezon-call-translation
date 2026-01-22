@@ -3,7 +3,7 @@ from fastapi import APIRouter, Request, HTTPException
 from datetime import datetime
 
 from src.logger import get_logger
-from src.api.webhook_auth import verify_webhook, is_verification_enabled
+from src.auth.webhook_auth import verify_webhook, is_verification_enabled
 from src.services.egress_service import EgressService
 from src.services.transcription_service import TranscriptionService
 from src.core.webhook_handler import WebhookHandler

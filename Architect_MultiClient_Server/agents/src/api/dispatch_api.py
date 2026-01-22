@@ -11,7 +11,7 @@ except ImportError:
 from fastapi import APIRouter, HTTPException
 import httpx
 from pydantic import BaseModel
-from src.api.verify_account import authenticate_account
+from src.auth.verify_account import authenticate_account
 from src.services.livekit_client import get_livekit_service
 
 router = APIRouter()

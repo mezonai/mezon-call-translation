@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from src.api.stream_message_manager import StreamMessageManager
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from src.api.verify_account import authenticate_account
+from src.auth.verify_account import authenticate_account
 import os
 import asyncio
 import queue

@@ -114,6 +114,7 @@ class WebhookHandler:
         """Handle when a room finishes"""
         room_name = event.get("room", {}).get("name", "unknown")
         logger.info(f"  Room finished: {room_name}")
+        await self.transcription_service.final_room(room_name)
         return WebhookResponse(received=True, action="room_finished_logged")
     
     async def _handle_egress_ended(self, event: Dict) -> WebhookResponse:

@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from bson import ObjectId
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class TranscriptionTask:
 
     # New fields for richer context
     egress_id: Optional[str] = None
-    room_name: Optional[str] = None
+    room_id: ObjectId = None
     participant_identity: Optional[str] = None
     track_id: Optional[str] = None
     track_type: Optional[str] = None
@@ -67,7 +68,7 @@ class TranscriptionTask:
             "size": self.size,
             "location": self.location,
             "egress_id": self.egress_id,
-            "room_name": self.room_name,
+            "room_id": self.room_id,
             "participant_identity": self.participant_identity,
             "track_id": self.track_id,
             "track_type": self.track_type,
@@ -98,7 +99,7 @@ class TranscriptionQueueService:
         self._consumer_task: Optional[asyncio.Task] = None
         self._running = False
         self._processor: Optional[Callable] = None
-        
+        self.mongodb_service = None
         # Task tracking
         self._tasks: Dict[str, TranscriptionTask] = {}
         self._max_history = 1000  # Keep last N completed tasks

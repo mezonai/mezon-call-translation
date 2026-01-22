@@ -1,35 +1,30 @@
 """
-Transcript lifecycle management - Sequence tracking, MongoDB persistence, data channel publishing
+Transcript lifecycle management - Sequence tracking, data channel publishing
 """
 import asyncio
 import httpx
 from livekit import agents
 
 from src.logger import get_logger
-from src.services.mongodb_service import get_mongodb_service
 from src.config.application_config import get_config
 
 class TranscriptManager:
-    """Manages transcript entries: sequence tracking, logging, MongoDB storage"""
+    """Manages transcript entries: sequence tracking, logging"""
     
     def __init__(self, ctx: agents.JobContext):
-        """Initialize transcript manager with MongoDB and per-participant sequence tracking"""
+        """Initialize transcript manager and per-participant sequence tracking"""
         self.ctx = ctx
         self.logger = get_logger("transcript_manager")
         
         # Load configuration
         config = get_config()
         self.silence_timeout = config.transcript.silence_timeout
-        self.enable_mongodb = config.transcript.enable_mongodb
         
         # Incremental sequence number for each participant for client ordering
         self._seq_by_participant = {}
 
         # Session ID = room name (meeting code)
         self.session_id = ctx.room.name
-        
-        # MongoDB service (singleton pattern)
-        self.mongodb = get_mongodb_service()
         
         # Buffer for batching transcripts per participant
         # Key: participant_identity, Value: {"texts": [], "timer_task": Task, "last_activity": timestamp}
@@ -38,7 +33,6 @@ class TranscriptManager:
 
         self.logger.info(
             f"TranscriptManager initialized for meeting {self.session_id} "
-            f"(MongoDB: {'enabled' if self.enable_mongodb else 'disabled'}, "
             f"silence_timeout={self.silence_timeout}s)"
         )
     
@@ -169,7 +163,7 @@ class TranscriptManager:
         participant_identity: str,
         participant_name: str
     ):
-        """Send transcript to API server and optionally MongoDB"""
+        """Send transcript to API server"""
         try:
             room_name = self.ctx.room.name
             config = get_config()
@@ -189,29 +183,6 @@ class TranscriptManager:
                 )
         except Exception as e:
             self.logger.error(f"[API] Failed to push text via API: {e}")
-
-        # MongoDB persistence
-        if self.enable_mongodb:
-            seq = self._seq_by_participant.get(participant_identity, 0)
-            doc_id = await self.mongodb.save_transcript(
-                session_id=self.session_id,
-                participant_identity=participant_identity,
-                participant_name=participant_name,
-                text=text,
-                is_final=True,
-                segments=None,
-                language=None,
-                seq=seq,
-                metadata={
-                    "room_name": self.ctx.room.name,
-                    "agent_name": "Vosk-Transcription-Agent",
-                    "batched": True
-                }
-            )
-            if doc_id:
-                self.logger.info(f"💾 Saved to MongoDB: doc_id={doc_id}")
-            else:
-                self.logger.warning("Failed to save transcript to MongoDB")
     
     def create_transcription_callback(self, participant_identity: str, participant_name: str):
         """
@@ -253,7 +224,7 @@ class TranscriptManager:
         self.logger.info("Vosk transcription agent is ready!")
     
     async def cleanup(self):
-        """Cleanup sequence tracking, flush remaining buffers, and close MongoDB connection"""
+        """Cleanup sequence tracking, flush remaining buffers"""
         self.logger.info("Cleaning up TranscriptManager...")
         
         # Flush all remaining buffered transcripts before cleanup
@@ -283,9 +254,5 @@ class TranscriptManager:
             self._transcript_buffer.clear()
         
         self._seq_by_participant.clear()
-        
-        # Disconnect MongoDB connection pool
-        if self.enable_mongodb:
-            await self.mongodb.disconnect()
         
         self.logger.info("TranscriptManager cleaned up")

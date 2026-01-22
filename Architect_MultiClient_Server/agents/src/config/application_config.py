@@ -308,20 +308,23 @@ class LiveKitConfig:
 
 @dataclass
 class MongoDBConfig:
-    """MongoDB configuration"""
-    uri: str = "mongodb://localhost:27017"
+    host: str = "localhost"  # hoặc "mongodb" nếu chạy trong Docker
+    port: int = 27017
+    username: str = "root"
+    password: str = "rootpassword"
     database: str = "mezon_transcripts"
     collection: str = "transcripts"
-    enabled: bool = False
     
     @classmethod
     def from_env(cls) -> 'MongoDBConfig':
         """Create MongoDB config from environment variables"""
         return cls(
-            uri=os.getenv('MONGODB_URI', 'mongodb://localhost:27017'),
+            host=os.getenv('MONGODB_HOST', 'localhost'),
+            port=int(os.getenv('MONGODB_PORT', '27017')),
+            username=os.getenv('MONGODB_USERNAME', 'root'),
+            password=os.getenv('MONGODB_PASSWORD', 'rootpassword'),
             database=os.getenv('MONGODB_DATABASE', 'mezon_transcripts'),
             collection=os.getenv('MONGODB_COLLECTION', 'transcripts'),
-            enabled=os.getenv('ENABLE_MONGODB', 'false').lower() == 'true',
         )
 
 

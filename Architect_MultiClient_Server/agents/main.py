@@ -22,6 +22,9 @@ from src.api.dispatch_api import router as dispatch_router
 from src.api.tts_api import router as tts_router
 from src.api.stream_message_api import router as stream_router
 from src.api.webhook_api import router as webhook_router, egress_service
+from src.api.room_api import router as room_router
+from src.api.track_api import router as track_router
+from src.api.transcript_api import router as transcript_router
 from src.services.livekit_client import cleanup_livekit_service
 
 # Load config
@@ -32,11 +35,20 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     # ===== STARTUP =====
     logger.info("FastAPI startup")
+    mongodb = get_mongodb_service()
+    ok = await mongodb.connect()
+    if not ok:
+        raise RuntimeError("❌ MongoDB connection failed on startup")
+    logger.info("✅ MongoDB connected on startup")
+
     yield
     # ===== SHUTDOWN =====
     logger.info("FastAPI shutting down, cleaning up resources...")
     await egress_service.cleanup()
     await cleanup_livekit_service()
+    
+    # Disconnect Mongo LAST
+    await mongodb.disconnect()
     logger.info("All services cleanup completed")
 
 app = FastAPI(title="LiveKit Agent API", lifespan=lifespan)
@@ -45,6 +57,9 @@ app.include_router(dispatch_router, prefix="/api")
 app.include_router(tts_router, prefix="/api")
 app.include_router(stream_router, prefix="/api")
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
+app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
+app.include_router(track_router)  # Has prefix="/api/transcripts/tracks"
+app.include_router(transcript_router)  # Has prefix="/api/transcripts"
 
 
 
@@ -70,12 +85,6 @@ async def entrypoint(ctx: agents.JobContext):
     logger.info(f"✅ Connected to room: {ctx.room.name}")
     # Get session_id from room name
     session_id = ctx.room.name
-    
-    if config.mongodb.enabled:
-        mongodb = get_mongodb_service()
-        await mongodb.connect()
-        logger.info("✅ MongoDB initialized for transcript storage")
-
 
     transcript_manager = TranscriptManager(ctx)
     # agent_manager = AgentManager(ctx)
