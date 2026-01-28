@@ -1,8 +1,8 @@
 """
-MongoDB service for storing STT transcripts
-- rooms collection: thông tin về room và trạng thái xử lý
-- tracks collection: metadata của audio track (reference đến room)
-- transcript_chunks collection: segments được chia thành chunks (max 200 items/chunk)
+MongoDB service for storing STT transcripts:
+- Rooms collection: Information about rooms and processing status
+- Tracks collection: Metadata of audio tracks (reference to rooms)
+- Transcript_chunks collection: Segments divided into chunks (max 200 items/chunk)
 """
 
 from datetime import datetime
@@ -177,12 +177,10 @@ class MongoDBService:
         count: int = 1
     ) -> bool:
         """
-        Tăng số lượng remain_tracks khi có track mới
-        
+        Increase the number of remain_tracks when a new track is added.
         Args:
             room_ref_id: Room reference ID
-            count: Số lượng tracks cần tăng (default: 1)
-            
+            count: Number of tracks to increase (default: 1)
         Returns:
             True if successful
         """
@@ -194,7 +192,7 @@ class MongoDBService:
                 {"_id": room_ref_id},
                 {
                     "$inc": {"remain_tracks": count},
-                    "$set": {"status": "processing"}  # Chuyển sang processing nếu đang pending
+                    "$set": {"status": "processing"}  
                 }
             )
             
@@ -212,14 +210,14 @@ class MongoDBService:
         room_ref_id: ObjectId
     ) -> bool:
         """
-        Cập nhật khi 1 track hoàn thành:
-        - Giảm remain_tracks
-        - Tăng completed_tracks
-        - Tự động update status nếu remain_tracks = 0
-        
+        Update when 1 track is completed:
+        - Decrement remain_tracks
+        - Increment completed_tracks
+        - Automatically update status if remain_tracks = 0
+
         Args:
             room_ref_id: Room reference ID
-            
+
         Returns:
             True if successful
         """
@@ -439,6 +437,7 @@ class MongoDBService:
                 "started_at_ns": audio_info.get("started_at_ns"),
                 "ended_at_ns": audio_info.get("ended_at_ns"),
             },
+            "chunk_count": 0,
             "status": status,
             "created_at": datetime.utcnow(),
         }
@@ -463,55 +462,6 @@ class MongoDBService:
     # ==========================================================
     # 🔥 TRANSCRIPT CHUNKS METHODS (Unchanged)
     # ==========================================================
-
-    async def save_transcript_chunks(
-        self,
-        track_ref_id: ObjectId,
-        segments: List[Dict[str, Any]],
-    ) -> bool:
-        """
-        Save transcript segments as chunks (max 200 segments per chunk)
-        
-        Args:
-            track_ref_id: Reference to track document _id
-            segments: List of transcript segments with {start, end, text, confidence}
-            
-        Returns:
-            True if all chunks saved successfully, False otherwise
-        """
-        if not self.connected and not await self.connect():
-            logger.error("Cannot save transcript chunks: MongoDB not connected")
-            return False
-
-        if not segments:
-            logger.warning(f"No segments to save for track_ref_id={track_ref_id}")
-            return True
-
-        try:
-            chunks = self._split_into_chunks(segments)
-            chunk_documents = []
-            
-            for chunk_index, chunk_segments in enumerate(chunks):
-                chunk_doc = self._create_chunk_document(
-                    track_ref_id=track_ref_id,
-                    chunk_index=chunk_index,
-                    segments=chunk_segments
-                )
-                chunk_documents.append(chunk_doc)
-
-            if chunk_documents:
-                result = await self.chunks_collection.insert_many(chunk_documents)
-                logger.info(
-                    f"✅ Saved {len(result.inserted_ids)} transcript chunks "
-                    f"for track_ref_id={track_ref_id} (total segments: {len(segments)})"
-                )
-                return True
-            
-            return False
-
-        except PyMongoError as e:
-            logger.error(f"Failed to save transcript chunks: {e}")
-            return False
 
     def _split_into_chunks(self, segments: List[Dict]) -> List[List[Dict]]:
         """Split segments into chunks of CHUNK_SIZE"""
@@ -551,7 +501,7 @@ class MongoDBService:
         status: str
     ) -> bool:
         """
-        Update track status và tự động update room counters
+        Update track status and automatically update room counters.
         
         Args:
             track_ref_id: Track reference ID
@@ -628,6 +578,15 @@ class MongoDBService:
         try:
             if chunk_documents:
                 await self.chunks_collection.insert_many(chunk_documents)
+                
+                # Update chunk_count in tracks collection
+                await self.tracks_collection.update_one(
+                    {"_id": track_ref_id},
+                    {
+                        "$inc": {"chunk_count": 1}
+                    }
+                )
+
                 logger.info(
                     f"✅ Appended {len(chunk_documents)} chunks "
                     f"for track_ref_id={track_ref_id}"

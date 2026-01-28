@@ -13,7 +13,7 @@ from .application_config import (
     TranscriptConfig,
     get_config,
     SAMPLE_RATE,
-    CHANNELS
+    CHANNELS,
 )
 
 __all__ = [
@@ -26,6 +26,6 @@ __all__ = [
     'TranscriptConfig',
     'get_config',
     'SAMPLE_RATE',
-    'CHANNELS'
+    'CHANNELS',
 ]
 

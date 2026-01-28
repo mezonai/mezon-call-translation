@@ -4,63 +4,18 @@ LiveKit Agent entrypoint - Starts Vosk transcription agent + TTS
 import asyncio
 from dotenv import load_dotenv
 load_dotenv()
-import uvicorn
-from fastapi import FastAPI
-import threading
-
 
 from livekit import agents
 from src.core.transcript_manager import TranscriptManager
 from src.core.event_handlers import EventHandlers
 from src.core.tts_manager import TTSManager
 from src.logger import get_logger
-from src.services.mongodb_service import get_mongodb_service
 from src.config.application_config import get_config
-from contextlib import asynccontextmanager
 
-from src.api.dispatch_api import router as dispatch_router
-from src.api.tts_api import router as tts_router
-from src.api.stream_message_api import router as stream_router
-from src.api.webhook_api import router as webhook_router, egress_service
-from src.api.room_api import router as room_router
-from src.api.track_api import router as track_router
-from src.api.transcript_api import router as transcript_router
-from src.services.livekit_client import cleanup_livekit_service
 
 # Load config
 config = get_config()
 logger = get_logger(__name__)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # ===== STARTUP =====
-    logger.info("FastAPI startup")
-    mongodb = get_mongodb_service()
-    ok = await mongodb.connect()
-    if not ok:
-        raise RuntimeError("❌ MongoDB connection failed on startup")
-    logger.info("✅ MongoDB connected on startup")
-
-    yield
-    # ===== SHUTDOWN =====
-    logger.info("FastAPI shutting down, cleaning up resources...")
-    await egress_service.cleanup()
-    await cleanup_livekit_service()
-    
-    # Disconnect Mongo LAST
-    await mongodb.disconnect()
-    logger.info("All services cleanup completed")
-
-app = FastAPI(title="LiveKit Agent API", lifespan=lifespan)
-
-app.include_router(dispatch_router, prefix="/api")
-app.include_router(tts_router, prefix="/api")
-app.include_router(stream_router, prefix="/api")
-app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
-app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
-app.include_router(track_router)  # Has prefix="/api/transcripts/tracks"
-app.include_router(transcript_router)  # Has prefix="/api/transcripts"
-
 
 
 async def entrypoint(ctx: agents.JobContext):
@@ -104,6 +59,30 @@ async def entrypoint(ctx: agents.JobContext):
                 model_path=config.tts.model_path
             )
             
+            def on_data_received(data_packet):
+                """Central DataChannel dispatcher - routes messages to appropriate handlers"""
+                try:
+                    topic = data_packet.topic
+                    participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
+                    
+                    # Log incoming data for debugging
+                    logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
+                    
+                    if topic == "tts_control":
+                        if tts_manager:
+                            logger.info(f"🎯 Routing to TTSManager")
+                            asyncio.create_task(tts_manager.handle_tts_data(data_packet))
+                        else:
+                            logger.warning("⚠️ Received TTS request but TTS is not enabled")
+                    else:
+                        logger.debug(f"Unhandled DataChannel topic: {topic}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error in DataChannel dispatcher: {e}", exc_info=True)
+            
+            ctx.room.on("data_received", on_data_received)
+
+
             # Initialize TTS (load model, setup track)
             if await tts_manager.initialize():
                 logger.info("✅ TTS Manager initialized successfully")
@@ -145,28 +124,7 @@ async def entrypoint(ctx: agents.JobContext):
     ctx.room.on("disconnected", lambda: asyncio.create_task(on_disconnected()))
 
  
-    def on_data_received(data_packet):
-        """Central DataChannel dispatcher - routes messages to appropriate handlers"""
-        try:
-            topic = data_packet.topic
-            participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
-            
-            # Log incoming data for debugging
-            logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
-            
-            if topic == "tts_control":
-                if tts_manager:
-                    logger.info(f"🎯 Routing to TTSManager")
-                    asyncio.create_task(tts_manager.handle_tts_data(data_packet))
-                else:
-                    logger.warning("⚠️ Received TTS request but TTS is not enabled")
-            else:
-                logger.debug(f"Unhandled DataChannel topic: {topic}")
-                
-        except Exception as e:
-            logger.error(f"❌ Error in DataChannel dispatcher: {e}", exc_info=True)
-    
-    ctx.room.on("data_received", on_data_received)
+
 
     await transcript_manager.send_welcome_message()
 
@@ -188,13 +146,8 @@ async def entrypoint(ctx: agents.JobContext):
         # Cleanup TTS if enabled
         if tts_manager:
             await tts_manager.cleanup()
-def start_api():
-    uvicorn.run("main:app", host=config.server.host, port=config.server.port, reload=False)
 
 if __name__ == "__main__":
-
-    api_thread = threading.Thread(target=start_api, daemon=True)
-    api_thread.start()
 
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=entrypoint,

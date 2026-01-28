@@ -20,22 +20,16 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from stt_service.service.mongodb_service import get_mongodb_service
 
 
 # Load environment variables
 load_dotenv()
 
-mongodb = get_mongodb_service()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup → Shutdown lifecycle."""
 
-    ok = await mongodb.connect()
-    if not ok:
-        raise RuntimeError("❌ MongoDB connection failed on startup")
-    logger.info("✅ MongoDB connected on startup")
 
     # Initialize optimized dispatcher
     from .service.result_dispatcher import get_result_dispatcher
@@ -47,27 +41,35 @@ async def lifespan(app: FastAPI):
     # Set dispatcher (replaces set_async_result_queue)
     pipeline_controller.set_result_dispatcher(result_dispatcher)
     
-    # Start transcription queue service with Whisper processor
-    transcription_queue = get_transcription_queue_service()
-    transcription_queue.set_processor(transcribe_task)  # Set Whisper processor
-    await transcription_queue.start()
-    
-    # Pre-initialize Whisper model (optional, can be lazy loaded)
-    whisper_processor = get_whisper_processor()
-    await whisper_processor.initialize()
+    # Initialize Whisper transcription if enabled
+    if os.getenv('PHASE_2', 'false').upper() == 'TRUE':                  # Removed when moving to phase 2.
+        logger.info("✅ Whisper transcription enabled - initializing...")           # Removed when moving to phase 2.
+        # Start transcription queue service with Whisper processor
+        transcription_queue = get_transcription_queue_service()
+        transcription_queue.set_processor(transcribe_task)  # Set Whisper processor
+        await transcription_queue.start()
+        
+        # Pre-initialize Whisper model (optional, can be lazy loaded)
+        whisper_processor = get_whisper_processor()
+        await whisper_processor.initialize()
+        logger.info("✅ Whisper transcription initialized successfully")           # Removed when moving to phase 2.
+    else:   # Removed when moving to phase 2.
+        logger.info("⚠️ Whisper transcription disabled - skipping initialization")   # Removed when moving to phase 2.
+        transcription_queue = None                                                     # Removed when moving to phase 2.
+        whisper_processor = None                                                        # Removed when moving to phase 2.
     
     system_metrics_task = asyncio.create_task(system_metrics_loop())
     
     yield
     
     # Shutdown
-    await transcription_queue.stop()
-    await whisper_processor.shutdown()
+    if transcription_queue is not None:     # Removed when moving to phase 2.
+        await transcription_queue.stop()
+    if whisper_processor is not None:       # Removed when moving to phase 2.
+        await whisper_processor.shutdown()
     await result_dispatcher.shutdown()
     await pipeline_controller.shutdown_service()
     
-    # Disconnect Mongo LAST
-    await mongodb.disconnect()
     
     system_metrics_task.cancel()
     try:

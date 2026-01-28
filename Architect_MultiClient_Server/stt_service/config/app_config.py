@@ -198,6 +198,7 @@ class ConfigManager:
         config.mongodb.collection = os.getenv("MONGODB_COLLECTION", config.mongodb.collection)
 
         # Whisper configuration
+        config.whisper.enabled = os.getenv("ENABLE_WHISPER", "true").lower() == "true"
         config.whisper.model_size = os.getenv("WHISPER_MODEL_SIZE", config.whisper.model_size)
         config.whisper.device = os.getenv("WHISPER_DEVICE", config.whisper.device)
         config.whisper.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", config.whisper.compute_type)
