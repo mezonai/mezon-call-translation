@@ -79,6 +79,29 @@ async def entrypoint(ctx: agents.JobContext):
                 session_id=session_id,
                 model_path=model_path
             )
+
+            def on_data_received(data_packet):
+                """Central DataChannel dispatcher - routes messages to appropriate handlers"""
+                try:
+                    topic = data_packet.topic
+                    participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
+                    
+                    # Log incoming data for debugging
+                    logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
+                    
+                    if topic == "tts_control":
+                        if tts_manager:
+                            logger.info(f"🎯 Routing to TTSManager")
+                            asyncio.create_task(tts_manager.handle_tts_data(data_packet))
+                        else:
+                            logger.warning("⚠️ Received TTS request but TTS is not enabled")
+                    else:
+                        logger.debug(f"Unhandled DataChannel topic: {topic}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error in DataChannel dispatcher: {e}", exc_info=True)
+            
+            ctx.room.on("data_received", on_data_received)
             
             # Initialize TTS (load model, setup track)
             if await tts_manager.initialize():
@@ -120,29 +143,7 @@ async def entrypoint(ctx: agents.JobContext):
     ctx.room.on("participant_disconnected", event_handlers.on_participant_disconnected)
     ctx.room.on("disconnected", lambda: asyncio.create_task(on_disconnected()))
 
- 
-    def on_data_received(data_packet):
-        """Central DataChannel dispatcher - routes messages to appropriate handlers"""
-        try:
-            topic = data_packet.topic
-            participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
-            
-            # Log incoming data for debugging
-            logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
-            
-            if topic == "tts_control":
-                if tts_manager:
-                    logger.info(f"🎯 Routing to TTSManager")
-                    asyncio.create_task(tts_manager.handle_tts_data(data_packet))
-                else:
-                    logger.warning("⚠️ Received TTS request but TTS is not enabled")
-            else:
-                logger.debug(f"Unhandled DataChannel topic: {topic}")
-                
-        except Exception as e:
-            logger.error(f"❌ Error in DataChannel dispatcher: {e}", exc_info=True)
-    
-    ctx.room.on("data_received", on_data_received)
+
 
     await transcript_manager.send_welcome_message()
 
