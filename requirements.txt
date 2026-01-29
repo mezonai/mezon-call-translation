@@ -33,7 +33,7 @@ pyaudio>=0.2.13                # Audio I/O (VAD processor)
 # ========================================
 torch>=2.0.0                   # PyTorch for Silero TTS model
 torchaudio>=2.0.0              # Audio I/O for PyTorch
-
+kokoro
 # ========================================
 # Database & Storage
 # ========================================

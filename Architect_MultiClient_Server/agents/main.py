@@ -66,6 +66,10 @@ async def entrypoint(ctx: agents.JobContext):
     # TTS Manager (optional, check if TTS is enabled)
     enable_tts = os.getenv('ENABLE_TTS', 'true').lower() == 'true'
     tts_manager = None
+
+    ctx.room.on("track_subscribed", event_handlers.on_track_subscribed)
+    ctx.room.on("track_unsubscribed", event_handlers.on_track_unsubscribed)
+    ctx.room.on("participant_disconnected", event_handlers.on_participant_disconnected)
     
     if enable_tts:
         try:
@@ -138,9 +142,7 @@ async def entrypoint(ctx: agents.JobContext):
         disconnected.set()
 
 
-    ctx.room.on("track_subscribed", event_handlers.on_track_subscribed)
-    ctx.room.on("track_unsubscribed", event_handlers.on_track_unsubscribed)
-    ctx.room.on("participant_disconnected", event_handlers.on_participant_disconnected)
+
     ctx.room.on("disconnected", lambda: asyncio.create_task(on_disconnected()))
 
 
