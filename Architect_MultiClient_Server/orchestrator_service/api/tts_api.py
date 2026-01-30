@@ -1,12 +1,9 @@
 """
 TTS API endpoints for sending TTS requests via DataChannel
 """
-try:
-    from livekit import api, rtc
-    from livekit.api import twirp_client
-    LIVEKIT_AVAILABLE = True
-except ImportError:
-    LIVEKIT_AVAILABLE = False
+from livekit import api
+from livekit.api import twirp_client
+from livekit.protocol.models import DataPacket
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -87,7 +84,7 @@ async def send_tts_to_room(room_name: str, text: str, language: str = "en", voic
             api.SendDataRequest(
                 room=room_name,
                 data=json.dumps(payload).encode("utf-8"),
-                kind=rtc.DataPacketKind.KIND_RELIABLE,
+                kind=DataPacket.Kind.RELIABLE,
                 topic="tts_control",
             )
         )

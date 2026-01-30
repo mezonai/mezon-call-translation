@@ -177,7 +177,7 @@ validate_setup() {
 }
 
 # Default options
-SERVICE_USER="${SUDO_USER:-$USER}"
+SERVICE_USER="${SUDO_USER:-${USER:-$(whoami)}}"
 SERVICE_GROUP=$(id -gn "$SERVICE_USER")
 ENABLE_SERVICES=false
 START_SERVICES=false
