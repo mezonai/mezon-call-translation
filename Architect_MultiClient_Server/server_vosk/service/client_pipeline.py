@@ -313,7 +313,6 @@ class ClientInferencePipeline:
             self.accumulated_size = 0
             
             start_time = time.time()
-
             # Process with Vosk (DIRECT call in dedicated thread)
             is_final = self.recognizer.AcceptWaveform(merged_chunk)
             
@@ -327,7 +326,7 @@ class ClientInferencePipeline:
             if(duration_ms < processing_ms):
                 logger.warning(f"Client {self.client_id}: Audio processing time exceeded chunk duration! {processing_ms:.2f} ms > {duration_ms:.2f} ms")
             STOP_WORDS = {
-                    "the", "a", "an", "uh", "um", "ah", "eh"
+                    "the", "a", "an", "uh", "um", "ah", "eh", "huh"
                 }
             if is_final:
                 # Final result
