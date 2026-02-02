@@ -12,3 +12,4 @@ application.log
 vad_log.txt
 examples/
 Architect_MultiClient_Server/stress_test_server/
+.env.backup.*
