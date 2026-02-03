@@ -8,12 +8,7 @@ from orchestrator_service.services.egress_service import EgressService
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.controller.webhook_handler import WebhookHandler
 from orchestrator_service.models.webhook_models import WebhookResponse
-
-try:
-    from livekit import api
-    LIVEKIT_AVAILABLE = True
-except ImportError:
-    LIVEKIT_AVAILABLE = False
+from livekit import api
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -30,7 +25,6 @@ async def health_check():
     return {
         "status": "ok",
         "service": "livekit-webhook-handler",
-        "livekit_available": LIVEKIT_AVAILABLE,
         "active_egresses": egress_service.get_active_count(),
         "timestamp": datetime.now().isoformat()
     }
@@ -87,9 +81,6 @@ async def handle_webhook(request: Request):
 @router.post("/egress/stop/{track_sid}")  
 async def stop_egress(track_sid: str):
     """Manually stop egress cho track"""
-    if not LIVEKIT_AVAILABLE:
-        raise HTTPException(503, "LiveKit API not available")
-    
     if track_sid not in egress_service.get_all_active():
         raise HTTPException(404, f"No active egress for {track_sid}")
     
@@ -102,9 +93,6 @@ async def stop_egress(track_sid: str):
 @router.post("/egress/stop-all")
 async def stop_all_egresses():
     """Stop tất cả egress"""
-    if not LIVEKIT_AVAILABLE:
-        raise HTTPException(503, "LiveKit API not available")
-    
     if egress_service.get_active_count() == 0:
         return {"status": "ok", "message": "No active egresses", "stopped": 0}
     
