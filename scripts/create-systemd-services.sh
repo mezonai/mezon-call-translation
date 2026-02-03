@@ -12,13 +12,13 @@ CYAN='\033[96m' GREEN='\033[92m' YELLOW='\033[93m'
 RED='\033[91m' BOLD='\033[1m' NC='\033[0m'
 
 # Directories
-SCRIPT_DIR="$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)"
-PROJECT_ROOT=\"$(dirname \"$SCRIPT_DIR\")\"
-ARCH_DIR=\"$PROJECT_ROOT/Architect_MultiClient_Server\"
-STT_SERVICE_DIR=\"$ARCH_DIR/stt_service\"
-ORCHESTRATOR_DIR=\"$ARCH_DIR/orchestrator_service\"
-AGENTS_DIR=\"$ARCH_DIR/agents\"
-SYSTEMD_DIR=\"/etc/systemd/system\"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
+STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
+AGENTS_DIR="$ARCH_DIR/agents"
+SYSTEMD_DIR="/etc/systemd/system"
 
 # Default options
 SERVICE_USER="${SUDO_USER:-${USER:-$(whoami)}}"
@@ -80,7 +80,7 @@ validate_setup() {
     print_section "Validating Setup"
     
     # Check directories and virtual environments
-    for dir in \"$STT_SERVICE_DIR\" \"$ORCHESTRATOR_DIR\" \"$AGENTS_DIR\"; do
+    for dir in "$STT_SERVICE_DIR" "$ORCHESTRATOR_DIR" "$AGENTS_DIR"; do
         [ ! -d "$dir" ] && print_error "Directory not found: $dir" && ((errors++)) && continue
         print_success "Found: $(basename "$dir")"
         
@@ -119,8 +119,8 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 WorkingDirectory=$AGENTS_DIR
-Environment=\"PATH=$AGENTS_DIR/venv/bin\"
-Environment=\"PYTHONPATH=$AGENTS_DIR\"
+Environment="PATH=$AGENTS_DIR/venv/bin"
+Environment="PYTHONPATH=$AGENTS_DIR"
 ExecStart=$AGENTS_DIR/venv/bin/python $AGENTS_DIR/main.py start
 Restart=on-failure
 RestartSec=5s
@@ -151,8 +151,8 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 WorkingDirectory=$ARCH_DIR
-Environment=\"PATH=$STT_SERVICE_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin\"
-Environment=\"PYTHONUNBUFFERED=1\"
+Environment="PATH=$STT_SERVICE_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
 ExecStart=$STT_SERVICE_DIR/venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=10
@@ -195,8 +195,8 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 WorkingDirectory=$ARCH_DIR
-Environment=\"PATH=$ORCHESTRATOR_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin\"
-Environment=\"PYTHONUNBUFFERED=1\"
+Environment="PATH=$ORCHESTRATOR_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
 ExecStart=$ORCHESTRATOR_DIR/venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8002
 Restart=always
 RestartSec=10
