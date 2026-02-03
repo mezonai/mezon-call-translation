@@ -12,12 +12,13 @@ CYAN='\033[96m' GREEN='\033[92m' YELLOW='\033[93m'
 RED='\033[91m' BOLD='\033[1m' NC='\033[0m'
 
 # Directories
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
-SERVER_VOSK_DIR="$ARCH_DIR/server_vosk"
-AGENTS_DIR="$ARCH_DIR/agents"
-SYSTEMD_DIR="/etc/systemd/system"
+SCRIPT_DIR="$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)"
+PROJECT_ROOT=\"$(dirname \"$SCRIPT_DIR\")\"
+ARCH_DIR=\"$PROJECT_ROOT/Architect_MultiClient_Server\"
+STT_SERVICE_DIR=\"$ARCH_DIR/stt_service\"
+ORCHESTRATOR_DIR=\"$ARCH_DIR/orchestrator_service\"
+AGENTS_DIR=\"$ARCH_DIR/agents\"
+SYSTEMD_DIR=\"/etc/systemd/system\"
 
 # Default options
 SERVICE_USER="${SUDO_USER:-${USER:-$(whoami)}}"
@@ -79,7 +80,7 @@ validate_setup() {
     print_section "Validating Setup"
     
     # Check directories and virtual environments
-    for dir in "$SERVER_VOSK_DIR" "$AGENTS_DIR"; do
+    for dir in \"$STT_SERVICE_DIR\" \"$ORCHESTRATOR_DIR\" \"$AGENTS_DIR\"; do
         [ ! -d "$dir" ] && print_error "Directory not found: $dir" && ((errors++)) && continue
         print_success "Found: $(basename "$dir")"
         
@@ -110,17 +111,17 @@ create_agents_service() {
     print_info "Creating service file: mezon-agents-service.service"
     
     local content="[Unit]
-Description=LiveKit Agents Service
+Description=Mezon Call Translation - Agents Service
 After=network.target
 
 [Service]
 Type=simple
-User=nccsoft
-Group=nccsoft
-WorkingDirectory=$PROJECT_ROOT
-Environment=\"PATH=$PROJECT_ROOT/venv/bin\"
-Environment=\"PYTHONPATH=$ARCH_DIR\"
-ExecStart=$PROJECT_ROOT/venv/bin/python $ARCH_DIR/agents/main.py start
+User=$SERVICE_USER
+Group=$SERVICE_GROUP
+WorkingDirectory=$AGENTS_DIR
+Environment=\"PATH=$AGENTS_DIR/venv/bin\"
+Environment=\"PYTHONPATH=$AGENTS_DIR\"
+ExecStart=$AGENTS_DIR/venv/bin/python $AGENTS_DIR/main.py start
 Restart=on-failure
 RestartSec=5s
 
@@ -136,12 +137,12 @@ WantedBy=multi-user.target
     fi
 }
 
-create_vosk_service() {
-    local service_file="$SYSTEMD_DIR/mezon-server-vosk-service.service"
-    print_info "Creating service file: mezon-server-vosk-service.service"
+create_stt_service() {
+    local service_file="$SYSTEMD_DIR/mezon-stt-service.service"
+    print_info "Creating service file: mezon-stt-service.service"
     
     local content="[Unit]
-Description=Mezon Call Translation - Server Vosk STT Service
+Description=Mezon Call Translation - STT Service
 After=network.target
 Wants=network-online.target
 
@@ -150,14 +151,58 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 WorkingDirectory=$ARCH_DIR
-Environment=\"PATH=$SERVER_VOSK_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin\"
+Environment=\"PATH=$STT_SERVICE_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin\"
 Environment=\"PYTHONUNBUFFERED=1\"
-ExecStart=$SERVER_VOSK_DIR/venv/bin/python -m uvicorn server_vosk.main:app --host 0.0.0.0 --port 8000
+ExecStart=$STT_SERVICE_DIR/venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=mezon-server-vosk-service
+SyslogIdentifier=mezon-stt-service
+
+# Security settings
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=$PROJECT_ROOT
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
+"
+    
+    if [ "$DRY_RUN" = true ]; then
+        echo -e "${YELLOW}[DRY RUN] Would create: $service_file${NC}\n$content\n"
+    else
+        echo "$content" > "$service_file" && chmod 644 "$service_file"
+        print_success "Created: $service_file"
+    fi
+}
+
+create_orchestrator_service() {
+    local service_file="$SYSTEMD_DIR/mezon-orchestrator-service.service"
+    print_info "Creating service file: mezon-orchestrator-service.service"
+    
+    local content="[Unit]
+Description=Mezon Call Translation - Orchestrator Service
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_GROUP
+WorkingDirectory=$ARCH_DIR
+Environment=\"PATH=$ORCHESTRATOR_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin\"
+Environment=\"PYTHONUNBUFFERED=1\"
+ExecStart=$ORCHESTRATOR_DIR/venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8002
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mezon-orchestrator-service
 
 # Security settings
 ProtectSystem=strict
@@ -182,7 +227,7 @@ WantedBy=multi-user.target
 
 manage_services() {
     local action=$1
-    local services=("mezon-server-vosk-service" "mezon-agents-service")
+    local services=("mezon-stt-service" "mezon-orchestrator-service" "mezon-agents-service")
     
     for service in "${services[@]}"; do
         print_info "${action^}ing $service..."
@@ -210,7 +255,8 @@ show_summary() {
     
     echo -e "${GREEN}${BOLD}Systemd services created successfully!${NC}\n"
     echo -e "${CYAN}${BOLD}Created Services:${NC}"
-    echo -e "  ${GREEN}✓${NC} mezon-server-vosk-service (Port 8000)"
+    echo -e "  ${GREEN}✓${NC} mezon-stt-service (Port 8000)"
+    echo -e "  ${GREEN}✓${NC} mezon-orchestrator-service (Port 8002)"
     echo -e "  ${GREEN}✓${NC} mezon-agents-service\n"
     
     [ "$ENABLE_SERVICES" = true ] && echo -e "  ${GREEN}✓${NC} Services enabled to start on boot"
@@ -221,14 +267,14 @@ show_summary() {
 ${CYAN}${BOLD}Useful Commands:${NC}
 
   # Service management
-  ${CYAN}sudo systemctl status mezon-server-vosk-service${NC}
-  ${CYAN}sudo systemctl start mezon-server-vosk-service mezon-agents-service${NC}
-  ${CYAN}sudo systemctl stop mezon-server-vosk-service mezon-agents-service${NC}
-  ${CYAN}sudo systemctl restart mezon-server-vosk-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl status mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl start mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl stop mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl restart mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
 
   # Auto-start management
-  ${CYAN}sudo systemctl enable mezon-server-vosk-service mezon-agents-service${NC}
-  ${CYAN}sudo systemctl disable mezon-server-vosk-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl enable mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl disable mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
 
   # View logs
   ${CYAN}sudo journalctl -u mezon-server-vosk-service -u mezon-agents-service -f${NC}
@@ -267,9 +313,10 @@ echo
 
 # Validate and create
 [ "$SKIP_VALIDATION" = false ] && validate_setup || print_warning "Skipping setup validation"
-
+    
 print_section "Creating Systemd Service Files"
-create_vosk_service
+create_stt_service
+create_orchestrator_service
 create_agents_service
 
 # Reload systemd
@@ -282,7 +329,7 @@ if [ "$DRY_RUN" = false ]; then
     [ "$START_SERVICES" = true ] && { print_section "Starting Services"; manage_services "start"; }
     [ "$START_SERVICES" = true ] && { 
         echo && print_section "Service Status"
-        systemctl status mezon-server-vosk-service mezon-agents-service --no-pager -l || true
+        systemctl status mezon-stt-service mezon-orchestrator-service mezon-agents-service --no-pager -l || true
     }
 fi
 

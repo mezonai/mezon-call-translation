@@ -196,7 +196,7 @@ VOSK_MIN_TEXT_LENGTH=2
 cd Architect_MultiClient_Server
 
 # Run server
-python -m uvicorn server_vosk.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 #### Linux/macOS
@@ -208,7 +208,7 @@ source venv/bin/activate
 cd Architect_MultiClient_Server/
 
 # Run server
-python -m uvicorn server_vosk.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### Kiểm Tra Server Đã Chạy
@@ -234,8 +234,8 @@ Khi server chạy thành công, bạn sẽ thấy:
 ```
 INFO:     Started server process [12345]
 INFO:     Waiting for application startup.
-2024-11-07 10:30:15 | INFO | server_vosk.main | Vosk model loaded successfully
-2024-11-07 10:30:15 | INFO | server_vosk.main | Server starting on http://0.0.0.0:8000
+2024-11-07 10:30:15 | INFO | stt_service.main | Vosk model loaded successfully
+2024-11-07 10:30:15 | INFO | stt_service.main | Server starting on http://0.0.0.0:8000
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
@@ -568,7 +568,7 @@ LOG_LEVEL=ERROR
 **Terminal 1 - Vosk Server:**
 ```bash
 source venv/bin/activate
-cd Architect_MultiClient_Server/server_vosk
+cd Architect_MultiClient_Server/stt_service
 python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -584,7 +584,7 @@ python main.py dev
 **Terminal 1 - Vosk Server:**
 ```bash
 source venv/bin/activate
-cd Architect_MultiClient_Server/server_vosk
+cd Architect_MultiClient_Server/stt_service
 python -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 

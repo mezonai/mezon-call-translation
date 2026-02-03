@@ -1,0 +1,318 @@
+#!/bin/bash
+# Health check script for Mezon Call Translation Services
+# Checks if all components are properly set up and running
+
+set -e
+
+# Colors
+CYAN='\033[96m'
+GREEN='\033[92m'
+YELLOW='\033[93m'
+RED='\033[91m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# Get script directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
+
+# Service directories
+STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
+AGENTS_DIR="$ARCH_DIR/agents"
+
+# Model directories
+MODELS_DIR="$PROJECT_ROOT/models"
+VOSK_MODEL_DIR="$MODELS_DIR/vosk-model"
+KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
+
+# Counters
+TOTAL_CHECKS=0
+PASSED_CHECKS=0
+FAILED_CHECKS=0
+WARNING_CHECKS=0
+
+# Functions
+print_header() {
+    echo ""
+    echo -e "${CYAN}${BOLD}============================================================${NC}"
+    echo -e "${CYAN}${BOLD}    Mezon Call Translation - Health Check${NC}"
+    echo -e "${CYAN}${BOLD}============================================================${NC}"
+    echo ""
+}
+
+print_section() {
+    echo ""
+    echo -e "${CYAN}${BOLD}------------------------------------------------------------${NC}"
+    echo -e "${CYAN}${BOLD}  $1${NC}"
+    echo -e "${CYAN}${BOLD}------------------------------------------------------------${NC}"
+    echo ""
+}
+
+check_pass() {
+    echo -e "${GREEN}✅ $1${NC}"
+    ((PASSED_CHECKS++))
+    ((TOTAL_CHECKS++))
+}
+
+check_fail() {
+    echo -e "${RED}❌ $1${NC}"
+    ((FAILED_CHECKS++))
+    ((TOTAL_CHECKS++))
+}
+
+check_warn() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+    ((WARNING_CHECKS++))
+    ((TOTAL_CHECKS++))
+}
+
+print_info() {
+    echo -e "${CYAN}   $1${NC}"
+}
+
+# Print header
+print_header
+
+# ============================================================================
+# Check Python Installation
+# ============================================================================
+print_section "Python Installation"
+
+if command -v python3 &> /dev/null; then
+    PYTHON_VERSION=$(python3 --version 2>&1)
+    check_pass "Python3 installed: $PYTHON_VERSION"
+elif command -v python &> /dev/null; then
+    PYTHON_VERSION=$(python --version 2>&1)
+    check_warn "Python installed: $PYTHON_VERSION (python3 recommended)"
+else
+    check_fail "Python not found"
+fi
+
+# ============================================================================
+# Check Models
+# ============================================================================
+print_section "Models"
+
+# Check Vosk models
+if [ -d "$VOSK_MODEL_DIR" ]; then
+    vosk_models=$(find "$VOSK_MODEL_DIR" -maxdepth 1 -type d -name "vosk-model-*" | wc -l)
+    if [ "$vosk_models" -gt 0 ]; then
+        check_pass "Vosk models found: $vosk_models model(s)"
+        find "$VOSK_MODEL_DIR" -maxdepth 1 -type d -name "vosk-model-*" -exec basename {} \; | while read model; do
+            print_info "  - $model"
+        done
+    else
+        check_fail "No Vosk models found in $VOSK_MODEL_DIR"
+        print_info "  Run: ./scripts/download-vosk-model.sh"
+    fi
+else
+    check_fail "Vosk model directory not found: $VOSK_MODEL_DIR"
+    print_info "  Run: ./scripts/download-vosk-model.sh"
+fi
+
+# Check Kokoro model
+if [ -f "$KOKORO_MODEL_DIR/kokoro.onnx" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
+    check_pass "Kokoro model found: kokoro-v0_19.pth"
+
+    # Check voices
+    if [ -d "$KOKORO_MODEL_DIR/voices" ]; then
+        voice_count=$(find "$KOKORO_MODEL_DIR/voices" -name "*.pt" 2>/dev/null | wc -l)
+        if [ "$voice_count" -gt 0 ]; then
+            check_pass "Kokoro voices found: $voice_count voice(s)"
+        else
+            check_warn "No Kokoro voices downloaded"
+            print_info "  Run: ./scripts/download-kokoro-model.sh"
+        fi
+    else
+        check_warn "Kokoro voices directory not found"
+    fi
+else
+    check_fail "Kokoro model not found: $KOKORO_MODEL_DIR/kokoro-v0_19.pth"
+    print_info "  Run: ./scripts/download-kokoro-model.sh"
+fi
+
+# ============================================================================
+# Check Service Directories
+# ============================================================================
+print_section "Service Directories"
+
+check_service_dir() {
+    local service_name=$1
+    local service_dir=$2
+    
+    if [ -d "$service_dir" ]; then
+        check_pass "$service_name directory exists"
+    else
+        check_fail "$service_name directory not found: $service_dir"
+    fi
+}
+
+check_service_dir "STT Service" "$STT_SERVICE_DIR"
+check_service_dir "Orchestrator Service" "$ORCHESTRATOR_DIR"
+check_service_dir "Agents Service" "$AGENTS_DIR"
+
+# ============================================================================
+# Check Virtual Environments
+# ============================================================================
+print_section "Virtual Environments"
+
+check_venv() {
+    local service_name=$1
+    local venv_dir=$2
+    
+    if [ -d "$venv_dir" ]; then
+        if [ -f "$venv_dir/bin/python" ] || [ -f "$venv_dir/Scripts/python.exe" ]; then
+            check_pass "$service_name venv exists"
+        else
+            check_fail "$service_name venv corrupted (no python executable)"
+        fi
+    else
+        check_fail "$service_name venv not found"
+        print_info "  Run: ./scripts/setup.sh"
+    fi
+}
+
+check_venv "STT Service" "$STT_SERVICE_DIR/venv"
+check_venv "Orchestrator Service" "$ORCHESTRATOR_DIR/venv"
+check_venv "Agents Service" "$AGENTS_DIR/venv"
+
+# ============================================================================
+# Check .env Files
+# ============================================================================
+print_section "Environment Configuration"
+
+check_env_file() {
+    local service_name=$1
+    local env_file=$2
+    local env_example=$3
+    
+    if [ -f "$env_file" ]; then
+        check_pass "$service_name .env exists"
+    else
+        if [ -f "$env_example" ]; then
+            check_warn "$service_name .env not found (but .env.example exists)"
+            print_info "  Run: cp $env_example $env_file"
+        else
+            check_fail "$service_name .env and .env.example not found"
+        fi
+    fi
+}
+
+check_env_file "STT Service" "$STT_SERVICE_DIR/.env" "$STT_SERVICE_DIR/.env.example"
+check_env_file "Orchestrator Service" "$ORCHESTRATOR_DIR/.env" "$ORCHESTRATOR_DIR/.env.example"
+check_env_file "Agents Service" "$AGENTS_DIR/.env" "$AGENTS_DIR/.env.example"
+
+# ============================================================================
+# Check Requirements Files
+# ============================================================================
+print_section "Requirements Files"
+
+check_requirements() {
+    local service_name=$1
+    local req_file=$2
+    
+    if [ -f "$req_file" ]; then
+        check_pass "$service_name requirements.txt exists"
+    else
+        check_fail "$service_name requirements.txt not found"
+    fi
+}
+
+check_requirements "STT Service" "$STT_SERVICE_DIR/requirements-server.txt"
+check_requirements "Orchestrator Service" "$ORCHESTRATOR_DIR/requirements-orchestrator.txt"
+check_requirements "Agents Service" "$AGENTS_DIR/requirements-agent.txt"
+
+# ============================================================================
+# Check Systemd Services (if running on Linux)
+# ============================================================================
+if command -v systemctl &> /dev/null; then
+    print_section "Systemd Services"
+    
+    check_systemd_service() {
+        local service_name=$1
+        
+        if systemctl list-unit-files | grep -q "$service_name"; then
+            if systemctl is-active --quiet "$service_name"; then
+                check_pass "$service_name is installed and running"
+            elif systemctl is-enabled --quiet "$service_name"; then
+                check_warn "$service_name is installed and enabled but not running"
+                print_info "  Start with: sudo systemctl start $service_name"
+            else
+                check_warn "$service_name is installed but not enabled"
+                print_info "  Enable with: sudo systemctl enable $service_name"
+            fi
+        else
+            check_warn "$service_name not installed"
+            print_info "  Install with: sudo ./scripts/create-systemd-services.sh"
+        fi
+    }
+    
+    check_systemd_service "mezon-stt-service"
+    check_systemd_service "mezon-orchestrator-service"
+    check_systemd_service "mezon-agents-service"
+fi
+
+# ============================================================================
+# Check Network Ports
+# ============================================================================
+print_section "Network Ports"
+
+check_port() {
+    local port=$1
+    local service_name=$2
+    
+    if command -v netstat &> /dev/null; then
+        if netstat -tuln 2>/dev/null | grep -q ":$port "; then
+            check_pass "Port $port is in use (likely $service_name)"
+        else
+            check_warn "Port $port is not in use ($service_name not running?)"
+        fi
+    elif command -v ss &> /dev/null; then
+        if ss -tuln 2>/dev/null | grep -q ":$port "; then
+            check_pass "Port $port is in use (likely $service_name)"
+        else
+            check_warn "Port $port is not in use ($service_name not running?)"
+        fi
+    else
+        check_warn "Cannot check port $port (netstat/ss not available)"
+    fi
+}
+
+check_port "8000" "STT Service"
+check_port "8001" "Orchestrator Service"
+check_port "8002" "Agents Service"
+
+# ============================================================================
+# Summary
+# ============================================================================
+print_section "Summary"
+
+echo -e "${BOLD}Health Check Results:${NC}"
+echo ""
+echo -e "  ${GREEN}✅ Passed:  $PASSED_CHECKS${NC}"
+echo -e "  ${YELLOW}⚠️  Warnings: $WARNING_CHECKS${NC}"
+echo -e "  ${RED}❌ Failed:  $FAILED_CHECKS${NC}"
+echo -e "  ${CYAN}━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "  ${BOLD}Total:    $TOTAL_CHECKS${NC}"
+echo ""
+
+if [ "$FAILED_CHECKS" -eq 0 ] && [ "$WARNING_CHECKS" -eq 0 ]; then
+    echo -e "${GREEN}${BOLD}🎉 All checks passed! System is ready.${NC}"
+    exit 0
+elif [ "$FAILED_CHECKS" -eq 0 ]; then
+    echo -e "${YELLOW}${BOLD}⚠️  System is mostly ready, but has some warnings.${NC}"
+    exit 0
+else
+    echo -e "${RED}${BOLD}❌ System has critical issues that need to be fixed.${NC}"
+    echo ""
+    echo -e "${CYAN}${BOLD}Recommended Actions:${NC}"
+    echo ""
+    echo -e "  1. Run setup script to fix most issues:"
+    echo -e "     ${CYAN}./scripts/setup.sh${NC}"
+    echo ""
+    echo -e "  2. Review the failed checks above and fix them manually"
+    echo ""
+    exit 1
+fi

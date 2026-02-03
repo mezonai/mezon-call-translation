@@ -22,11 +22,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 
-# Service directories (adapted to current codebase)
-SERVER_VOSK_DIR="$ARCH_DIR/server_vosk"
+# Service directories
+STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
 
-# Model directories (top-level models folder as described in docs)
+# Model directories
 MODELS_DIR="$PROJECT_ROOT/models"
 VOSK_MODEL_DIR="$MODELS_DIR/vosk-model"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
@@ -224,36 +225,32 @@ print_success "Using Python: $PYTHON_VERSION"
 # ============================================================================
 if [ "$SKIP_MODELS" = false ]; then
     print_section "Step 1: Downloading Models"
-
-    # Ensure base models directory exists
-    mkdir -p "$MODELS_DIR"
-
-    # Download Vosk model (STT) into models/vosk-model as in docs
+    
+    # Download Vosk model
     print_info "Downloading Vosk STT model: $VOSK_MODEL"
     if [ -d "$VOSK_MODEL_DIR/$VOSK_MODEL" ]; then
         print_warning "Vosk model already exists. Skipping download."
     else
         bash "$SCRIPT_DIR/download-vosk-model.sh" --model "$VOSK_MODEL" --output "models/vosk-model"
     fi
-
-    # Optional: download Kokoro model (used by agents TTS)
-    print_info "Downloading Kokoro TTS model (optional, used by agents)..."
-    mkdir -p "$KOKORO_MODEL_DIR"
+    
+    # Download Kokoro model
+    print_info "Downloading Kokoro TTS model..."
     KOKORO_ARGS=("$SCRIPT_DIR/download-kokoro-model.sh" "--output" "models/kokoro_models")
-
+    
     if [ "$ALL_KOKORO_VOICES" = true ]; then
         KOKORO_ARGS+=("--all-voices")
     elif [ -n "$KOKORO_VOICES" ]; then
         KOKORO_ARGS+=("--voices" "$KOKORO_VOICES")
     fi
-
+    
     if [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
         print_warning "Kokoro model already exists. Checking for new voices..."
         KOKORO_ARGS+=("--force")
     fi
-
+    
     bash "${KOKORO_ARGS[@]}"
-
+    
     print_success "Models downloaded successfully!"
 else
     print_section "Step 1: Skipping Model Downloads"
@@ -261,118 +258,74 @@ else
 fi
 
 # ============================================================================
-# Step 2: Backup and Create .env Files (root-level + per service)
+# Step 2: Backup and Create .env Files
 # ============================================================================
 if [ "$SKIP_ENV" = false ]; then
     print_section "Step 2: Setting up .env Files"
-
-    ROOT_ENV_FILE="$PROJECT_ROOT/.env"
-    ROOT_ENV_EXAMPLE="$PROJECT_ROOT/env.example"
-
-    # 2.1 Root .env (for Docker / global config)
-    if [ ! -f "$ROOT_ENV_EXAMPLE" ]; then
-        print_warning "env.example not found at project root. Skipping root .env creation."
-    else
-        print_info "Setting up root .env from env.example..."
-
-        # Backup existing .env
-        if [ -f "$ROOT_ENV_FILE" ]; then
-            backup_file="$ROOT_ENV_FILE.backup.$(date +%Y%m%d_%H%M%S)"
-            cp "$ROOT_ENV_FILE" "$backup_file"
-            print_success "Backed up existing .env to: $(basename "$backup_file")"
-        fi
-
-        # Copy env.example to .env
-        cp "$ROOT_ENV_EXAMPLE" "$ROOT_ENV_FILE"
-        print_success "Created .env from env.example at project root"
-    fi
-
-    # Update model paths in root .env
-    if [ -f "$ROOT_ENV_FILE" ]; then
-        print_info "Updating model paths in root .env..."
-
-        VOSK_MODEL_PATH="$VOSK_MODEL_DIR/$VOSK_MODEL"
-        KOKORO_MODEL_PATH="$KOKORO_MODEL_DIR"
-
-        # Update or append VOSK_MODEL_PATH
-        if grep -q "^VOSK_MODEL_PATH=" "$ROOT_ENV_FILE"; then
-            sed -i.tmp "s|^VOSK_MODEL_PATH=.*|VOSK_MODEL_PATH=$VOSK_MODEL_PATH|" "$ROOT_ENV_FILE"
-            rm -f "$ROOT_ENV_FILE.tmp"
-        else
-            echo "VOSK_MODEL_PATH=$VOSK_MODEL_PATH" >> "$ROOT_ENV_FILE"
-        fi
-
-        # Update or append TTS_MODEL_PATH (for agents / TTS usage)
-        if grep -q "^TTS_MODEL_PATH=" "$ROOT_ENV_FILE"; then
-            sed -i.tmp "s|^TTS_MODEL_PATH=.*|TTS_MODEL_PATH=$KOKORO_MODEL_PATH|" "$ROOT_ENV_FILE"
-            rm -f "$ROOT_ENV_FILE.tmp"
-        else
-            echo "TTS_MODEL_PATH=$KOKORO_MODEL_PATH" >> "$ROOT_ENV_FILE"
-        fi
-
-        print_success "Updated model paths in root .env"
-    fi
-
-    # 2.2 Helper: setup .env for a specific service from its .env.example
+    
+    # Function to backup and create .env
     setup_env_file() {
         local service_dir=$1
         local service_name=$2
-        local env_example_name=${3:-.env.example}
-
         local env_file="$service_dir/.env"
-        local env_example="$service_dir/$env_example_name"
-
+        local env_example="$service_dir/.env.example"
+        
         print_info "Setting up .env for $service_name..."
-
+        
+        # Check if .env.example exists
         if [ ! -f "$env_example" ]; then
-            print_warning "$env_example_name not found for $service_name at $service_dir. Skipping."
+            print_warning ".env.example not found for $service_name. Skipping."
             return
         fi
-
+        
         # Backup existing .env
         if [ -f "$env_file" ]; then
-            local backup_file="$env_file.backup.$(date +%Y%m%d_%H%M%S)"
+            backup_file="$env_file.backup.$(date +%Y%m%d_%H%M%S)"
             cp "$env_file" "$backup_file"
-            print_success "Backed up existing .env for $service_name to: $(basename "$backup_file")"
+            print_success "Backed up existing .env to: $(basename "$backup_file")"
         fi
-
+        
+        # Copy .env.example to .env
         cp "$env_example" "$env_file"
-        print_success "Created .env from $env_example_name for $service_name"
+        print_success "Created .env from .env.example for $service_name"
     }
-
-    # 2.3 Create .env for each service (server_vosk, agents)
-    if [ -d "$SERVER_VOSK_DIR" ]; then
-        setup_env_file "$SERVER_VOSK_DIR" "Server Vosk Service"
-
-        # Update VOSK_MODEL_PATH in server_vosk .env if present
-        if [ -f "$SERVER_VOSK_DIR/.env" ]; then
-            VOSK_MODEL_PATH="$VOSK_MODEL_DIR/$VOSK_MODEL"
-            if grep -q "^VOSK_MODEL_PATH=" "$SERVER_VOSK_DIR/.env"; then
-                sed -i.tmp "s|^VOSK_MODEL_PATH=.*|VOSK_MODEL_PATH=$VOSK_MODEL_PATH|" "$SERVER_VOSK_DIR/.env"
-                rm -f "$SERVER_VOSK_DIR/.env.tmp"
-            else
-                echo "VOSK_MODEL_PATH=$VOSK_MODEL_PATH" >> "$SERVER_VOSK_DIR/.env"
-            fi
-            print_success "Updated VOSK_MODEL_PATH in Server Vosk .env"
+    
+    # Setup .env for each service
+    setup_env_file "$STT_SERVICE_DIR" "STT Service"
+    setup_env_file "$ORCHESTRATOR_DIR" "Orchestrator Service"
+    setup_env_file "$AGENTS_DIR" "Agents Service"
+    
+    # Update model paths in .env files
+    print_info "Updating model paths in .env files..."
+    
+    # Get absolute paths for models
+    VOSK_MODEL_PATH="$VOSK_MODEL_DIR/$VOSK_MODEL"
+    KOKORO_MODEL_PATH="$KOKORO_MODEL_DIR"
+    
+    # Update STT Service .env
+    if [ -f "$STT_SERVICE_DIR/.env" ]; then
+        # Update VOSK_MODEL_PATH
+        if grep -q "^VOSK_MODEL_PATH=" "$STT_SERVICE_DIR/.env"; then
+            sed -i.tmp "s|^VOSK_MODEL_PATH=.*|VOSK_MODEL_PATH=$VOSK_MODEL_PATH|" "$STT_SERVICE_DIR/.env"
+            rm -f "$STT_SERVICE_DIR/.env.tmp"
+        else
+            echo "VOSK_MODEL_PATH=$VOSK_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
         fi
+        print_success "Updated VOSK_MODEL_PATH in STT Service"
     fi
-
-    if [ -d "$AGENTS_DIR" ]; then
-        setup_env_file "$AGENTS_DIR" "Agents Service"
-
-        # Update TTS_MODEL_PATH in agents .env if present
-        if [ -f "$AGENTS_DIR/.env" ]; then
-            KOKORO_MODEL_PATH="$KOKORO_MODEL_DIR"
-            if grep -q "^TTS_MODEL_PATH=" "$AGENTS_DIR/.env"; then
-                sed -i.tmp "s|^TTS_MODEL_PATH=.*|TTS_MODEL_PATH=$KOKORO_MODEL_PATH|" "$AGENTS_DIR/.env"
-                rm -f "$AGENTS_DIR/.env.tmp"
-            else
-                echo "TTS_MODEL_PATH=$KOKORO_MODEL_PATH" >> "$AGENTS_DIR/.env"
-            fi
-            print_success "Updated TTS_MODEL_PATH in Agents .env"
+    
+    # Update Agents .env
+    if [ -f "$AGENTS_DIR/.env" ]; then
+        # Update TTS_MODEL_PATH
+        if grep -q "^TTS_MODEL_PATH=" "$AGENTS_DIR/.env"; then
+            sed -i.tmp "s|^TTS_MODEL_PATH=.*|TTS_MODEL_PATH=$KOKORO_MODEL_PATH|" "$AGENTS_DIR/.env"
+            rm -f "$AGENTS_DIR/.env.tmp"
+        else
+            echo "TTS_MODEL_PATH=$KOKORO_MODEL_PATH" >> "$AGENTS_DIR/.env"
         fi
+        print_success "Updated TTS_MODEL_PATH in Agents Service"
     fi
-
+    
     print_success ".env files configured successfully!"
 else
     print_section "Step 2: Skipping .env Setup"
@@ -384,7 +337,7 @@ fi
 # ============================================================================
 if [ "$SKIP_VENV" = false ]; then
     print_section "Step 3: Setting up Virtual Environments"
-
+    
     # Function to create venv and install dependencies
     setup_venv() {
         local service_dir=$1
@@ -392,15 +345,15 @@ if [ "$SKIP_VENV" = false ]; then
         local req_filename=${3:-requirements.txt}
         local venv_dir="$service_dir/venv"
         local requirements_file="$service_dir/$req_filename"
-
+        
         print_info "Setting up virtual environment for $service_name..."
-
+        
         # Check if requirements file exists
         if [ ! -f "$requirements_file" ]; then
             print_warning "$req_filename not found for $service_name. Skipping."
             return
         fi
-
+        
         # Create virtual environment
         if [ -d "$venv_dir" ]; then
             print_warning "Virtual environment already exists for $service_name. Skipping creation."
@@ -408,36 +361,26 @@ if [ "$SKIP_VENV" = false ]; then
             $PYTHON_CMD -m venv "$venv_dir"
             print_success "Created virtual environment for $service_name"
         fi
-
+        
         # Activate and install dependencies
         print_info "Installing dependencies for $service_name..."
-        # POSIX-style activation (this script is intended for Linux/macOS)
-        # shellcheck source=/dev/null
         source "$venv_dir/bin/activate"
-
+        
         # Upgrade pip
         pip install --upgrade pip > /dev/null 2>&1
-
+        
         # Install requirements
         pip install -r "$requirements_file"
-
+        
         deactivate
         print_success "Dependencies installed for $service_name"
     }
-
-    # Setup venv for each service that exists in Architect_MultiClient_Server
-    if [ -d "$SERVER_VOSK_DIR" ]; then
-        setup_venv "$SERVER_VOSK_DIR" "Server Vosk Service" "requirements-server.txt"
-    else
-        print_warning "Server Vosk directory not found at $SERVER_VOSK_DIR. Skipping."
-    fi
-
-    if [ -d "$AGENTS_DIR" ]; then
-        setup_venv "$AGENTS_DIR" "Agents Service" "requirements-agent.txt"
-    else
-        print_warning "Agents directory not found at $AGENTS_DIR. Skipping."
-    fi
-
+    
+    # Setup venv for each service
+    setup_venv "$STT_SERVICE_DIR" "STT Service" "requirements-server.txt"
+    setup_venv "$ORCHESTRATOR_DIR" "Orchestrator Service" "requirements-orchestrator.txt"
+    setup_venv "$AGENTS_DIR" "Agents Service" "requirements-agent.txt"
+    
     print_success "Virtual environments configured successfully!"
 else
     print_section "Step 3: Skipping Virtual Environment Setup"
@@ -453,25 +396,24 @@ echo -e "${GREEN}${BOLD}Summary:${NC}"
 echo ""
 echo -e "  ${GREEN}✓${NC} Models downloaded to: $MODELS_DIR"
 echo -e "  ${GREEN}✓${NC} Vosk model: $VOSK_MODEL"
-echo -e "  ${GREEN}✓${NC} Kokoro model (if requested): kokoro_models"
+echo -e "  ${GREEN}✓${NC} Kokoro model: kokoro_models"
 echo ""
-echo -e "  ${GREEN}✓${NC} Root .env created and configured (if env.example present)"
-echo -e "  ${GREEN}✓${NC} Virtual environments set up for available services (server_vosk, agents)"
+echo -e "  ${GREEN}✓${NC} .env files created and configured"
+echo -e "  ${GREEN}✓${NC} Virtual environments set up for all services"
 echo ""
 echo -e "${CYAN}${BOLD}Next Steps:${NC}"
 echo ""
-echo -e "  1. Review and update root .env with your specific configuration:"
-echo -e "     - $PROJECT_ROOT/.env"
+echo -e "  1. Review and update .env files with your specific configuration:"
+echo -e "     - $STT_SERVICE_DIR/.env"
+echo -e "     - $ORCHESTRATOR_DIR/.env"
+echo -e "     - $AGENTS_DIR/.env"
 echo ""
-echo -e "  2. (Optional) Create systemd services:"
+echo -e "  2. Create systemd services (optional):"
 echo -e "     ${CYAN}sudo ./scripts/create-systemd-services.sh${NC}"
 echo ""
-echo -e "  3. Start the services manually (non-Docker):"
-if [ -d "$SERVER_VOSK_DIR" ]; then
-    echo -e "     ${CYAN}cd $SERVER_VOSK_DIR && ./venv/bin/python -m uvicorn server_vosk.main:app --host 0.0.0.0 --port 8000${NC}"
-fi
-if [ -d "$AGENTS_DIR" ]; then
-    echo -e "     ${CYAN}cd $AGENTS_DIR && ./venv/bin/python main.py dev${NC}"
-fi
+echo -e "  3. Start the services manually:"
+echo -e "     ${CYAN}cd $STT_SERVICE_DIR && ./venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000${NC}"
+echo -e "     ${CYAN}cd $ORCHESTRATOR_DIR && ./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8001${NC}"
+echo -e "     ${CYAN}cd $AGENTS_DIR && ./venv/bin/python src/main.py${NC}"
 echo ""
 print_success "Setup completed successfully! 🎉"

@@ -6,24 +6,22 @@
 # ========================================
 # Core LiveKit & Real-time Communication
 # ========================================
-livekit-agents          # LiveKit agents framework for real-time applications>=0.5.0
-livekit                # LiveKit client SDK for WebRTC communication=0.9.0 
-websockets>=11.0.3             # WebSocket client for STT/TTS server communication
-livekit-api                   #==0.5.2  
+livekit-agents>=0.9.0          # LiveKit agents framework for real-time applications
+livekit>=0.17.0                # LiveKit client SDK for WebRTC communication
+livekit-api>=0.7.0             # LiveKit server API for room/token management
+websockets>=11.0.0             # WebSocket client for STT/TTS server communication
+protobuf>=4.25.0               # Protocol buffers (for LiveKit)
 
 # ========================================
-# Web Framework & API
+# API
 # ========================================
-fastapi>=0.104.0               # FastAPI web framework for dispatch API
-uvicorn[standard]>=0.24.0      # ASGI server for FastAPI
 pydantic>=2.0.0                # Data validation and settings management
 httpx>=0.25.0                  # HTTP client for API calls
-protobuf>=4.25.0               # Protocol buffers (for LiveKit)
 
 # ========================================
 # Audio Processing & Analysis
 # ========================================
-numpy>=1.24.0                  # Numerical computing for audio buffers
+numpy>=1.24.0,<2.0.0           # Numerical computing for audio buffers
 scipy>=1.11.0                  # Scientific computing for signal processing
 librosa>=0.10.0                # Audio analysis and feature extraction
 pyaudio>=0.2.13                # Audio I/O (VAD processor)
@@ -31,9 +29,10 @@ pyaudio>=0.2.13                # Audio I/O (VAD processor)
 # ========================================
 # Text-to-Speech (TTS)
 # ========================================
-torch>=2.0.0                   # PyTorch for Silero TTS model
+torch>=2.0.0                   # PyTorch for neural TTS models
 torchaudio>=2.0.0              # Audio I/O for PyTorch
-kokoro >=0.9.4
+# kokoro-onnx>=0.1.0             # Kokoro TTS model (82M parameter model)
+kokoro>=0.9.4                  # Kokoro TTS model (82M parameter model)
 
 # ========================================
 # Database & Storage
@@ -49,13 +48,6 @@ python-dotenv>=1.0.0           # Load environment variables from .env
 # ========================================
 # Authentication & Security
 # ========================================
-PyJWT>=2.10.1                  # JSON Web Token for authentication
+PyJWT>=2.8.0                   # JSON Web Token for authentication
 
-# ========================================
-# Notes
-# ========================================
-# - vosk: NOT REQUIRED in agent (server_vosk handles Vosk)
-# - Audio flows: LiveKit → Agent → WebSocket → server_vosk (Vosk)
-# - TTS: Agent downloads Silero model from https://models.silero.ai/
-# - MongoDB: Optional (set ENABLE_MONGODB=false to disable)
 

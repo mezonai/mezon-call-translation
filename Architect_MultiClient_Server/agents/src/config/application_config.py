@@ -126,11 +126,11 @@ class VADConfig:
 
 
 # ============================================================================
-# WebSocket Configuration
+# Stt Configuration
 # ============================================================================
 
 @dataclass
-class WebSocketConfig:
+class STTServiceConfig:
     """WebSocket client configuration"""
     # Connection parameters
     host: str = "localhost"
@@ -157,7 +157,7 @@ class WebSocketConfig:
     send_delay: float = 0.01  # 10ms
     
     @classmethod
-    def from_env(cls) -> 'WebSocketConfig':
+    def from_env(cls) -> 'STTServiceConfig':
         """Create WebSocket config from environment variables"""
         return cls(
             host=os.getenv('WS_HOST', 'localhost'),
@@ -233,17 +233,13 @@ class ThreadingConfig:
 class TranscriptConfig:
     """Transcript manager configuration"""
     # Silence timeout for batching transcripts (seconds)
-    silence_timeout: float = 3.0
-    
-    # Enable MongoDB storage
-    enable_mongodb: bool = False
+    silence_timeout: float = 5.0
     
     @classmethod
     def from_env(cls) -> 'TranscriptConfig':
         """Create transcript config from environment variables"""
         return cls(
-            silence_timeout=float(os.getenv('TRANSCRIPT_SILENCE_TIMEOUT', '3.0')),
-            enable_mongodb=os.getenv('ENABLE_MONGODB', 'false').lower() == 'true'
+            silence_timeout=float(os.getenv('TRANSCRIPT_SILENCE_TIMEOUT', '5.0')),
         )
     
     def validate(self) -> bool:
@@ -251,6 +247,91 @@ class TranscriptConfig:
         if not (0.5 <= self.silence_timeout <= 30.0):
             return False
         return True
+
+
+# ============================================================================
+# LiveKit Configuration
+# ============================================================================
+
+@dataclass
+class LiveKitConfig:
+    """LiveKit server and API configuration"""
+    # Server URLs
+    url: str = ""  # WebSocket URL (wss://...)
+    http_url: str = ""  # HTTP URL for API calls
+    
+    # API credentials
+    api_key: str = ""
+    api_secret: str = ""
+    
+    # Agent configuration
+    agent_name: str = "vosk-agent"
+    
+    # Webhook configuration (can use separate credentials)
+    webhook_api_key: str = ""
+    webhook_api_secret: str = ""
+    verify_webhooks: bool = True
+    
+    # Recording
+    recordings_dir: str = "/recordings"
+    
+    @classmethod
+    def from_env(cls) -> 'LiveKitConfig':
+        """Create LiveKit config from environment variables"""
+        return cls(
+            url=os.getenv('LIVEKIT_URL', ''),
+            http_url=os.getenv('LIVEKIT_HTTP_URL', ''),
+            api_key=os.getenv('LIVEKIT_API_KEY', ''),
+            api_secret=os.getenv('LIVEKIT_API_SECRET', ''),
+            agent_name=os.getenv('LIVEKIT_AGENT_NAME', 'vosk-agent'),
+        )
+    
+    def validate(self) -> bool:
+        """Validate LiveKit configuration"""
+        # API key and secret are required
+        if not self.api_key or not self.api_secret:
+            return False
+        return True
+
+
+# ============================================================================
+# TTS Configuration
+# ============================================================================
+
+@dataclass
+class TTSConfig:
+    """Text-to-Speech configuration"""
+    enabled: bool = True
+    model_path: str = "models/kokoro_models"
+    default_language: str = "en"
+    default_voice: str = "default"
+    
+    @classmethod
+    def from_env(cls) -> 'TTSConfig':
+        """Create TTS config from environment variables"""
+        return cls(
+            enabled=os.getenv('ENABLE_TTS', 'true').lower() == 'true',
+            model_path=os.getenv('TTS_MODEL_PATH', 'models/kokoro_models'),
+            default_language=os.getenv('TTS_DEFAULT_LANGUAGE', 'en'),
+            default_voice=os.getenv('TTS_DEFAULT_VOICE', 'default'),
+        )
+    
+
+# ============================================================================
+# Logger Configuration
+# ============================================================================
+
+@dataclass
+class LoggerConfig:
+    """Logger configuration"""
+    level: str = "INFO"
+    
+    @classmethod
+    def from_env(cls) -> 'LoggerConfig':
+        """Create Logger config from environment variables"""
+        return cls(
+            level=os.getenv('LOG_LEVEL', 'INFO').upper(),
+        )
 
 
 # ============================================================================
@@ -277,10 +358,13 @@ class Config:
         # Load all configuration sections
         self.audio = AudioConfig.from_env()
         self.vad = VADConfig.from_env()
-        self.websocket = WebSocketConfig.from_env()
+        self.stt_service = STTServiceConfig.from_env()
         self.buffer = BufferConfig.from_env()
         self.threading = ThreadingConfig.from_env()
         self.transcript = TranscriptConfig.from_env()
+        self.livekit = LiveKitConfig.from_env()
+        self.tts = TTSConfig.from_env()
+        self.logger = LoggerConfig.from_env()
         
         self._initialized = True
         self._validate_all()
