@@ -48,6 +48,7 @@ class TranscriptManager:
     ):
         """
         Core transcript processing - sends immediately without buffering
+        Core transcript processing - sends immediately without buffering
         """
         try:
             # Auto-increment sequence for participant
@@ -70,6 +71,14 @@ class TranscriptManager:
                     participant_name=participant_name,
                     seq=seq
                 )
+            # Send immediately if final and has content
+            if is_final and text.strip():
+                await self._send_to_server(
+                    text=text.strip(),
+                    participant_identity=participant_identity,
+                    participant_name=participant_name,
+                    seq=seq
+                )
             
             return True
             
@@ -81,6 +90,8 @@ class TranscriptManager:
         self,
         text: str,
         participant_identity: str,
+        participant_name: str,
+        seq: int
         participant_name: str,
         seq: int
     ):
@@ -95,6 +106,7 @@ class TranscriptManager:
                 resp = await client.post(
                     api_url,
                     json={"room_name": room_name, "message": text},
+                    timeout=5.0
                     timeout=5.0
                 )
                 self.logger.info(
@@ -141,6 +153,7 @@ class TranscriptManager:
     
     async def send_welcome_message(self):
         """Send welcome message when agent is ready (optional)"""
+        import asyncio
         import asyncio
         await asyncio.sleep(2)
         self.logger.info("Vosk transcription agent is ready!")
