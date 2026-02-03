@@ -44,7 +44,7 @@ class STTWebSocketClient(BaseWebSocketClient):
             participant_identity: Participant identity for logging
         """
         # Configuration
-        self.config = get_config().websocket
+        self.config = get_config().stt_service
         
         # Build WebSocket URL
         url = (

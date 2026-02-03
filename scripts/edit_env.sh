@@ -1,8 +1,9 @@
 #!/bin/bash
 
-# Configuration Paths (updated to match actual project structure)
+# Configuration Paths
 AGENT_ENV="../Architect_MultiClient_Server/agents/.env"
-SERVER_VOSK_ENV="../Architect_MultiClient_Server/server_vosk/.env"
+ORCHESTRATOR_ENV="../Architect_MultiClient_Server/orchestrator_service/.env"
+STT_ENV="../Architect_MultiClient_Server/stt_service/.env"
 
 # Current target content
 TARGET_FILE=""
@@ -13,13 +14,11 @@ print_usage() {
     echo ""
     echo "Targets:"
     echo "  --agent         Target Agent .env ($AGENT_ENV)"
-    echo "  --server-vosk   Target Server Vosk .env ($SERVER_VOSK_ENV)"
-    echo "  --stt           Alias for --server-vosk (for backward compatibility)"
+    echo "  --orchestrator  Target Orchestrator .env ($ORCHESTRATOR_ENV)"
+    echo "  --stt           Target STT .env ($STT_ENV)"
     echo ""
-    echo "Examples:"
+    echo "Example:"
     echo "  ./edit_env.sh --agent LIVEKIT_API_KEY=foo LIVEKIT_API_SECRET=bar"
-    echo "  ./edit_env.sh --server-vosk VOSK_MODEL_PATH=/path/to/model"
-    echo "  ./edit_env.sh --stt SERVER_PORT=8000"
 }
 
 # Function to escape string for sed replacement
@@ -75,13 +74,12 @@ while [[ $# -gt 0 ]]; do
             TARGET_FILE="$AGENT_ENV"
             shift
             ;;
-        --server-vosk|--server)
-            TARGET_FILE="$SERVER_VOSK_ENV"
+        --orchestrator)
+            TARGET_FILE="$ORCHESTRATOR_ENV"
             shift
             ;;
         --stt)
-            # Backward compatibility: --stt maps to server_vosk
-            TARGET_FILE="$SERVER_VOSK_ENV"
+            TARGET_FILE="$STT_ENV"
             shift
             ;;
         --help|-h)
@@ -91,7 +89,7 @@ while [[ $# -gt 0 ]]; do
         *=*)
             if [ -z "$TARGET_FILE" ]; then
                 echo "Error: No target specified for variable $1"
-                echo "Please specify --agent, --server-vosk, or --stt first."
+                echo "Please specify --agent, --orchestrator, or --stt first."
                 exit 1
             fi
             

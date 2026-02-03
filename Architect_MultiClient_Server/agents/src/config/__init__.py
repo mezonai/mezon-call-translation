@@ -7,25 +7,25 @@ from .application_config import (
     Config,
     AudioConfig,
     VADConfig,
-    WebSocketConfig,
+    STTServiceConfig,
     BufferConfig,
     ThreadingConfig,
     TranscriptConfig,
     get_config,
     SAMPLE_RATE,
-    CHANNELS
+    CHANNELS,
 )
 
 __all__ = [
     'Config',
     'AudioConfig',
     'VADConfig',
-    'WebSocketConfig',
+    'STTServiceConfig',
     'BufferConfig',
     'ThreadingConfig',
     'TranscriptConfig',
     'get_config',
     'SAMPLE_RATE',
-    'CHANNELS'
+    'CHANNELS',
 ]
 

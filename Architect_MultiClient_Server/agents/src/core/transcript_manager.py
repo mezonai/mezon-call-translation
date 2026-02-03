@@ -1,25 +1,24 @@
 """
-Transcript lifecycle management - Sequence tracking, MongoDB persistence, data channel publishing
+Transcript lifecycle management - Sequence tracking, data channel publishing
 """
-import os
+import asyncio
 import httpx
 from livekit import agents
 
 from src.logger import get_logger
-from src.services.mongodb_service import get_mongodb_service
-from src.config import get_config
+from src.config.application_config import get_config
 
 class TranscriptManager:
-    """Manages transcript entries: sequence tracking, logging, MongoDB storage"""
+    """Manages transcript entries: sequence tracking, logging"""
     
     def __init__(self, ctx: agents.JobContext):
-        """Initialize transcript manager with MongoDB and per-participant sequence tracking"""
+        """Initialize transcript manager and per-participant sequence tracking"""
         self.ctx = ctx
         self.logger = get_logger("transcript_manager")
         
         # Load configuration
         config = get_config()
-        self.enable_mongodb = config.transcript.enable_mongodb
+        self.silence_timeout = config.transcript.silence_timeout
         
         # Incremental sequence number for each participant for client ordering
         self._seq_by_participant = {}
@@ -27,12 +26,14 @@ class TranscriptManager:
         # Session ID = room name (meeting code)
         self.session_id = ctx.room.name
         
-        # MongoDB service (singleton pattern)
-        self.mongodb = get_mongodb_service()
+        # Buffer for batching transcripts per participant
+        # Key: participant_identity, Value: {"texts": [], "timer_task": Task, "last_activity": timestamp}
+        self._transcript_buffer = {}
+        self._buffer_lock = asyncio.Lock()
 
         self.logger.info(
             f"TranscriptManager initialized for meeting {self.session_id} "
-            f"(MongoDB: {'enabled' if self.enable_mongodb else 'disabled'})"
+            f"silence_timeout={self.silence_timeout}s)"
         )
     
     async def send_transcript_entry(
@@ -46,6 +47,7 @@ class TranscriptManager:
         seq: int | None = None,
     ):
         """
+        Core transcript processing - sends immediately without buffering
         Core transcript processing - sends immediately without buffering
         """
         try:
@@ -69,6 +71,14 @@ class TranscriptManager:
                     participant_name=participant_name,
                     seq=seq
                 )
+            # Send immediately if final and has content
+            if is_final and text.strip():
+                await self._send_to_server(
+                    text=text.strip(),
+                    participant_identity=participant_identity,
+                    participant_name=participant_name,
+                    seq=seq
+                )
             
             return True
             
@@ -82,17 +92,21 @@ class TranscriptManager:
         participant_identity: str,
         participant_name: str,
         seq: int
+        participant_name: str,
+        seq: int
     ):
-        """Send transcript to API server and optionally MongoDB"""
+        """Send transcript to API server"""
         try:
             room_name = self.ctx.room.name
-            port = int(os.environ.get("PORT_AGENT", "8002"))
+            config = get_config()
+            port = config.server.port
             api_url = f"http://localhost:{port}/api/push_message"
             
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     api_url,
                     json={"room_name": room_name, "message": text},
+                    timeout=5.0
                     timeout=5.0
                 )
                 self.logger.info(
@@ -102,27 +116,6 @@ class TranscriptManager:
                 )
         except Exception as e:
             self.logger.error(f"[API] Failed to push text via API: {e}")
-
-        # MongoDB persistence
-        if self.enable_mongodb:
-            doc_id = await self.mongodb.save_transcript(
-                session_id=self.session_id,
-                participant_identity=participant_identity,
-                participant_name=participant_name,
-                text=text,
-                is_final=True,
-                segments=None,
-                language=None,
-                seq=seq,
-                metadata={
-                    "room_name": self.ctx.room.name,
-                    "agent_name": "Vosk-Transcription-Agent",
-                }
-            )
-            if doc_id:
-                self.logger.info(f"💾 Saved to MongoDB: doc_id={doc_id}")
-            else:
-                self.logger.warning("Failed to save transcript to MongoDB")
     
     def create_transcription_callback(self, participant_identity: str, participant_name: str):
         """
@@ -161,17 +154,14 @@ class TranscriptManager:
     async def send_welcome_message(self):
         """Send welcome message when agent is ready (optional)"""
         import asyncio
+        import asyncio
         await asyncio.sleep(2)
         self.logger.info("Vosk transcription agent is ready!")
     
     async def cleanup(self):
-        """Cleanup sequence tracking and close MongoDB connection"""
+        """Cleanup sequence tracking, flush remaining buffers"""
         self.logger.info("Cleaning up TranscriptManager...")
         
         self._seq_by_participant.clear()
-        
-        # Disconnect MongoDB connection pool
-        if self.enable_mongodb:
-            await self.mongodb.disconnect()
         
         self.logger.info("TranscriptManager cleaned up")

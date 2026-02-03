@@ -1,0 +1,29 @@
+# ============================================================================
+# Orchestrator Service Requirements
+# FastAPI-based REST API orchestrator for LiveKit room/agent management
+# ============================================================================
+
+# ========================================
+# Core LiveKit API
+# ========================================
+livekit-api>=0.7.0             # LiveKit server API for room/token/egress management
+protobuf>=4.25.0               # Protocol buffers (required by livekit-api)
+
+# ========================================
+# Web Framework & API
+# ========================================
+fastapi>=0.104.0               # FastAPI web framework for REST API
+uvicorn[standard]>=0.24.0      # ASGI server for FastAPI
+pydantic>=2.0.0                # Data validation and settings management
+httpx>=0.25.0                  # HTTP client for external API calls
+
+# ========================================
+# Database & Storage
+# ========================================
+motor>=3.3.0                   # Async MongoDB driver
+pymongo>=4.5.0                 # MongoDB Python driver (sync operations)
+
+# ========================================
+# Configuration & Environment
+# ========================================
+python-dotenv>=1.0.0           # Load environment variables from .env
