@@ -417,3 +417,4 @@ echo -e "     ${CYAN}cd $ORCHESTRATOR_DIR && ./venv/bin/python -m uvicorn orches
 echo -e "     ${CYAN}cd $AGENTS_DIR && ./venv/bin/python src/main.py${NC}"
 echo ""
 print_success "Setup completed successfully! 🎉"
+print_success "Setup completed successfully! 🎉"

@@ -237,7 +237,6 @@ class EventHandlers:
                     await client.disconnect()
                     self.active_clients.pop(pid, None)
                     logger.info(f"Cleaned up disconnected participant {pid}")
-        
         asyncio.create_task(cleanup_participant())
 
     async def safe_disconnect_all(self):

@@ -36,14 +36,27 @@ async def entrypoint(ctx: agents.JobContext):
     # ghi đè token trong ctx
     ctx._info.token = new_token.to_jwt()
     await ctx.connect()
+
     disconnected = asyncio.Event()
     logger.info(f"✅ Connected to room: {ctx.room.name}")
     # Get session_id from room name
     session_id = ctx.room.name
 
     transcript_manager = TranscriptManager(ctx)
-    # agent_manager = AgentManager(ctx)
-    event_handlers = EventHandlers(ctx, transcript_manager)#, agent_manager
+    event_handlers = EventHandlers(ctx, transcript_manager)
+
+    
+    for participant in ctx.room.remote_participants.values():
+        for pub in participant.track_publications.values():
+
+            if not pub.subscribed:
+
+                pub.set_subscribed(True)
+
+                track = pub.track
+                if track:
+                    # ✅ reuse handler
+                    event_handlers.on_track_subscribed(track, pub, participant)
 
     # TTS Manager (optional, check if TTS is enabled)
     tts_manager = None
@@ -118,9 +131,7 @@ async def entrypoint(ctx: agents.JobContext):
         disconnected.set()
 
 
-    ctx.room.on("track_subscribed", event_handlers.on_track_subscribed)
-    ctx.room.on("track_unsubscribed", event_handlers.on_track_unsubscribed)
-    ctx.room.on("participant_disconnected", event_handlers.on_participant_disconnected)
+
     ctx.room.on("disconnected", lambda: asyncio.create_task(on_disconnected()))
 
  
