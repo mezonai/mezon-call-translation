@@ -1,6 +1,6 @@
 #!/bin/bash
 # Download Vosk STT Model
-# Shell script for Linux/macOS
+# Pure Bash implementation
 
 set -e
 
@@ -13,10 +13,11 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # Default values
-MODEL="vosk-model-small-en-us-0.15"
+MODEL_NAME="vosk-model-small-en-us-0.15"
 OUTPUT_DIR="models/vosk-model"
 FORCE=false
 LIST=false
+BASE_URL="https://alphacephei.com/vosk/models"
 
 # Functions
 print_header() {
@@ -54,7 +55,7 @@ OPTIONS:
     -m, --model <name>      Model name to download (default: vosk-model-small-en-us-0.15)
     -o, --output <path>     Output directory (default: models/vosk-model)
     -f, --force             Force re-download even if model exists
-    -l, --list              List available models
+    -l, --list              List available models (links to website)
     -h, --help              Show this help message
 
 EXAMPLES:
@@ -63,9 +64,6 @@ EXAMPLES:
 
     # Download large model
     ./scripts/download-vosk-model.sh -m vosk-model-en-us-0.22
-
-    # List available models
-    ./scripts/download-vosk-model.sh --list
 
     # Force re-download
     ./scripts/download-vosk-model.sh --force
@@ -77,7 +75,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case $1 in
         -m|--model)
-            MODEL="$2"
+            MODEL_NAME="$2"
             shift 2
             ;;
         -o|--output)
@@ -105,61 +103,99 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Handle list
+if [ "$LIST" = true ]; then
+    print_header
+    echo "Available models can be found at:"
+    echo -e "${CYAN}https://alphacephei.com/vosk/models${NC}"
+    echo ""
+    echo "Common models:"
+    echo "  - vosk-model-small-en-us-0.15 (Lightweight, ~40MB)"
+    echo "  - vosk-model-en-us-0.22 (Accurate, ~1.8GB)"
+    echo "  - vosk-model-cn-0.22 (Chinese, ~1.3GB)"
+    exit 0
+fi
+
 # Get project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Print header
+# Resolve absolute path for output dir
+if [[ "$OUTPUT_DIR" != /* ]]; then
+    OUTPUT_DIR="$PROJECT_ROOT/$OUTPUT_DIR"
+fi
+
 print_header
 
-# Check Python
-print_info "Checking Python installation..."
-if ! command -v python3 &> /dev/null; then
-    if ! command -v python &> /dev/null; then
-        print_error "Python not found. Please install Python 3.8 or higher."
+# Check tools
+if ! command -v wget &> /dev/null && ! command -v curl &> /dev/null; then
+    print_error "Neither wget nor curl found. Please install one of them."
+    exit 1
+fi
+
+if ! command -v unzip &> /dev/null; then
+    print_error "unzip not found. Please install unzip."
+    exit 1
+fi
+
+# Target directory
+TARGET_MODEL_DIR="$OUTPUT_DIR/$MODEL_NAME"
+
+print_info "Model: $MODEL_NAME"
+print_info "Output: $OUTPUT_DIR"
+
+# Check if model exists
+if [ -d "$TARGET_MODEL_DIR" ]; then
+    if [ "$FORCE" = true ]; then
+        print_warning "Model directory exists, removing for re-download..."
+        rm -rf "$TARGET_MODEL_DIR"
+    else
+        print_success "Model already exists at: $TARGET_MODEL_DIR"
+        exit 0
+    fi
+fi
+
+# Create temp dir
+TEMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TEMP_DIR"' EXIT
+
+# Download
+print_info "Downloading model archive..."
+ARCHIVE_URL="$BASE_URL/$MODEL_NAME.zip"
+ARCHIVE_FILE="$TEMP_DIR/$MODEL_NAME.zip"
+
+if command -v wget &> /dev/null; then
+    wget -q --show-progress "$ARCHIVE_URL" -O "$ARCHIVE_FILE" || {
+        print_error "Download failed. Check model name or internet connection."
+        exit 1
+    }
+else
+    curl -L "$ARCHIVE_URL" -o "$ARCHIVE_FILE" || {
+        print_error "Download failed. Check model name or internet connection."
+        exit 1
+    }
+fi
+
+# Unzip
+print_info "Extracting model..."
+unzip -q "$ARCHIVE_FILE" -d "$TEMP_DIR"
+
+# Move to final destination
+mkdir -p "$OUTPUT_DIR"
+if [ -d "$TEMP_DIR/$MODEL_NAME" ]; then
+    # Some archives contain a folder with the model name
+    mv "$TEMP_DIR/$MODEL_NAME" "$OUTPUT_DIR/"
+else
+    # Some might extract contents directly? Usually they have a folder.
+    # Let's try to find the folder relative to unzipped root
+    EXTRACTED_DIR=$(find "$TEMP_DIR" -maxdepth 1 -type d ! -path "$TEMP_DIR" | head -n 1)
+    if [ -n "$EXTRACTED_DIR" ]; then
+        mv "$EXTRACTED_DIR" "$OUTPUT_DIR/$MODEL_NAME"
+    else
+        print_error "Could not find extracted model directory."
         exit 1
     fi
-    PYTHON_CMD="python"
-else
-    PYTHON_CMD="python3"
 fi
 
-PYTHON_VERSION=$($PYTHON_CMD --version 2>&1)
-print_success "Python: $PYTHON_VERSION"
-
-echo ""
-
-# Build command arguments
-PYTHON_SCRIPT="$PROJECT_ROOT/scripts/download-vosk-model.py"
-ARGS=("$PYTHON_SCRIPT")
-
-if [ -n "$MODEL" ]; then
-    ARGS+=("--model" "$MODEL")
-fi
-
-if [ -n "$OUTPUT_DIR" ]; then
-    ARGS+=("--output" "$OUTPUT_DIR")
-fi
-
-if [ "$FORCE" = true ]; then
-    ARGS+=("--force")
-fi
-
-if [ "$LIST" = true ]; then
-    ARGS+=("--list")
-fi
-
-# Run Python script
-print_info "Running download script..."
-echo ""
-
-if $PYTHON_CMD "${ARGS[@]}"; then
-    echo ""
-    print_success "Script completed successfully!"
-    exit 0
-else
-    EXIT_CODE=$?
-    echo ""
-    print_error "Script failed with exit code: $EXIT_CODE"
-    exit $EXIT_CODE
-fi
+print_success "Model installed successfully!"
+echo "Path: $OUTPUT_DIR/$MODEL_NAME"

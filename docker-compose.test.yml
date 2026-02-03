@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  test-environment:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: mezon-call-translation-test:latest
+    container_name: mezon-test
+    stdin_open: true
+    tty: true
+
+    ports:
+      - "8000:8000"
+      - "8002:8002"
+
+    volumes:
+      - .:/home/testuser/mezon-call-translation
+      # Mount models directory to persist downloads
+      - ./models:/home/testuser/mezon-call-translation/models
+    working_dir: /home/testuser/mezon-call-translation
+    command: /bin/bash
+
