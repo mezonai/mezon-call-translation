@@ -18,6 +18,8 @@ from orchestrator_service.utils.transcript_validators import (
     TrackIdPath,
     ChunkIndexPath,
     SearchQuery,
+    LimitQuery,
+    SkipQuery,
     validate_time_range,
     validate_confidence_range
 )
@@ -34,20 +36,29 @@ logger = get_logger(__name__)
 async def get_chunks_by_track(
     track_id: TrackIdPath,
     sorted_by_index: bool = Query(True, description="Sort chunks by index"),
+    limit: LimitQuery = VC.LIMIT_TRANSCRIPT_CHUNKS,
+    skip: SkipQuery = VC.DEFAULT_SKIP,
     auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
-    Get all transcript chunks for a track.
+    Get transcript chunks for a track with pagination.
     
     - **track_id**: The MongoDB ObjectId of the track
     - **sorted_by_index**: Whether to sort chunks by index (default: True)
+    - **limit**: Maximum number of chunks to return
+    - **skip**: Number of records to skip for pagination
     """
     try:
         mongodb = get_mongodb_service()
         if not mongodb.connected:
             await mongodb.connect()
         
-        chunks = await mongodb.get_chunks_by_track(track_id, sorted_by_index=sorted_by_index)
+        chunks = await mongodb.get_chunks_by_track(
+            track_id, 
+            sorted_by_index=sorted_by_index,
+            limit=limit,
+            skip=skip
+        )
         count = await mongodb.count_chunks_by_track(track_id)
         
         for chunk in chunks:
@@ -59,6 +70,8 @@ async def get_chunks_by_track(
             "status": "ok",
             "track_id": track_id,
             "total_chunks": count,
+            "limit": limit,
+            "skip": skip,
             "chunks": chunks
         }
     except Exception as e:

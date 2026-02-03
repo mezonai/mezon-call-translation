@@ -21,12 +21,8 @@ from typing import Optional, Tuple, Any
 
 from orchestrator_service.config.application_config import get_config
 
-try:
-    from livekit.api import TokenVerifier, WebhookReceiver as _WebhookReceiver
-    WEBHOOK_AUTH_AVAILABLE = True
-except ImportError:
-    WEBHOOK_AUTH_AVAILABLE = False
-    _WebhookReceiver = None
+
+from livekit.api import TokenVerifier, WebhookReceiver as _WebhookReceiver
 
 from orchestrator_service.utils.logger import get_logger
 
@@ -46,9 +42,6 @@ def get_webhook_receiver() -> Optional[Any]:
     Returns:
         WebhookReceiver instance or None if not available
     """
-    if not WEBHOOK_AUTH_AVAILABLE:
-        logger.warning("livekit-api not installed - webhook verification unavailable")
-        return None
     
     config = get_config()
     api_key = config.livekit.webhook_api_key
@@ -91,6 +84,3 @@ def is_verification_enabled() -> bool:
     return VERIFY_WEBHOOKS
 
 
-def is_auth_available() -> bool:
-    """Check if webhook authentication is available."""
-    return WEBHOOK_AUTH_AVAILABLE

@@ -61,7 +61,7 @@ async def handle_webhook(request: Request):
         auth_header = request.headers.get("Authorization", "")
         
         # Verify signature
-        if is_verification_enabled:
+        if is_verification_enabled():
             is_valid, error = verify_webhook(body_str, auth_header)
             if not is_valid:
                 logger.warning(f"⚠️ Verification failed: {error}")

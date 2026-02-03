@@ -12,23 +12,16 @@ from dataclasses import dataclass
 from collections import defaultdict
 
 # Import metrics service for Prometheus integration
-try:
-    from ..service.metrics_service import metrics
-    from ..config import get_config
-    METRICS_AVAILABLE = True
-except ImportError:
-    METRICS_AVAILABLE = False
+
+from ..service.metrics_service import metrics
+from ..config import get_config
+
 
 
 def _is_ws_metrics_enabled() -> bool:
     """Check if WebSocket metrics are enabled."""
-    if not METRICS_AVAILABLE:
-        return False
-    try:
-        config = get_config()
-        return config.metrics.enabled and config.metrics.ws_metrics
-    except Exception:
-        return False
+    config = get_config()
+    return config.metrics.enabled and config.metrics.ws_metrics
 
 @dataclass
 class DisconnectEvent:

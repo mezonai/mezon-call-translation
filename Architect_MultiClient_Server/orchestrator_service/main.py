@@ -33,16 +33,12 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ===== STARTUP =====
-    logger.info("FastAPI startup")
-    if os.getenv("PHASE_2", "flase").upper() == "TRUE":             # Removed when moving to phase 2.  
-        mongodb = get_mongodb_service()
-        ok = await mongodb.connect()
-        if not ok:
-            raise RuntimeError("❌ MongoDB connection failed on startup")
-        logger.info("✅ MongoDB connected on startup")
-    else:                                                           # Removed when moving to phase 2.  
-        logger.info("❌ MongoDB not connected on startup")          # Removed when moving to phase 2.
-        mongodb = None                                              # Removed when moving to phase 2.
+    logger.info("FastAPI startup") 
+    mongodb = get_mongodb_service()
+    ok = await mongodb.connect()
+    if not ok:
+        raise RuntimeError("❌ MongoDB connection failed on startup")
+    logger.info("✅ MongoDB connected on startup")
     yield
     # ===== SHUTDOWN =====
     logger.info("FastAPI shutting down, cleaning up resources...")
@@ -50,27 +46,13 @@ async def lifespan(app: FastAPI):
     await cleanup_livekit_service()
     
     # Disconnect Mongo LAST
-    if mongodb is not None:                                          # Removed when moving to phase 2.  
+    if mongodb is not None:
         await mongodb.disconnect()
     logger.info("All services cleanup completed")
 
 
-# Cho phép frontend gọi API
-origins = [
-    "http://localhost:4200",   # Angular / React dev server
-    "http://127.0.0.1:4200",
-    "http://localhost:3000",   # React default
-]
-
 app = FastAPI(title="LiveKit Orchestrator API", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Include routers
 app.include_router(dispatch_router, prefix="/api")

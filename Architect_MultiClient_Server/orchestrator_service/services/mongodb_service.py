@@ -328,13 +328,19 @@ class MongoDBService:
     # ========================================
 
     async def get_chunks_by_track(self, track_id: str, 
-                                 sorted_by_index: bool = True) -> List[Dict[str, Any]]:
-        """Get all chunks for a track"""
+                                 sorted_by_index: bool = True,
+                                 limit: int = None,
+                                 skip: int = 0) -> List[Dict[str, Any]]:
+        """Get chunks for a track with optional pagination"""
         try:
             query = {"track_ref_id": ObjectId(track_id)}
             cursor = self.chunks_collection.find(query)
             if sorted_by_index:
                 cursor = cursor.sort("chunk_index", 1)
+            if skip > 0:
+                cursor = cursor.skip(skip)
+            if limit is not None:
+                cursor = cursor.limit(limit)
             return await cursor.to_list(None)
         except Exception as e:
             logger.error(f"Failed to get chunks by track: {e}")

@@ -42,30 +42,22 @@ async def lifespan(app: FastAPI):
     pipeline_controller.set_result_dispatcher(result_dispatcher)
     
     # Initialize Whisper transcription if enabled
-    if os.getenv('PHASE_2', 'false').upper() == 'TRUE':                  # Removed when moving to phase 2.
-        logger.info("✅ Whisper transcription enabled - initializing...")           # Removed when moving to phase 2.
-        # Start transcription queue service with Whisper processor
-        transcription_queue = get_transcription_queue_service()
-        transcription_queue.set_processor(transcribe_task)  # Set Whisper processor
-        await transcription_queue.start()
+    transcription_queue = get_transcription_queue_service()
+    transcription_queue.set_processor(transcribe_task)  # Set Whisper processor
+    await transcription_queue.start()
         
-        # Pre-initialize Whisper model (optional, can be lazy loaded)
-        whisper_processor = get_whisper_processor()
-        await whisper_processor.initialize()
-        logger.info("✅ Whisper transcription initialized successfully")           # Removed when moving to phase 2.
-    else:   # Removed when moving to phase 2.
-        logger.info("⚠️ Whisper transcription disabled - skipping initialization")   # Removed when moving to phase 2.
-        transcription_queue = None                                                     # Removed when moving to phase 2.
-        whisper_processor = None                                                        # Removed when moving to phase 2.
+    # Pre-initialize Whisper model (optional, can be lazy loaded)
+    whisper_processor = get_whisper_processor()
+    await whisper_processor.initialize()
     
     system_metrics_task = asyncio.create_task(system_metrics_loop())
     
     yield
     
     # Shutdown
-    if transcription_queue is not None:     # Removed when moving to phase 2.
+    if transcription_queue is not None:
         await transcription_queue.stop()
-    if whisper_processor is not None:       # Removed when moving to phase 2.
+    if whisper_processor is not None:
         await whisper_processor.shutdown()
     await result_dispatcher.shutdown()
     await pipeline_controller.shutdown_service()
@@ -86,41 +78,7 @@ setup_logging(level=log_level)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(lifespan=lifespan)
-# Cho phép frontend gọi API
-origins = [
-    "http://localhost:4200",   # Angular / React dev server
-    "http://127.0.0.1:4200",   # nếu chạy khác host
-    "http://localhost:3000",   # nếu dùng React default
-]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,          # domain được phép
-    allow_credentials=True,
-    allow_methods=["*"],            # GET, POST, PUT, DELETE...
-    allow_headers=["*"],            # Cho phép tất cả headers
-)
-
-
-# HTTP metrics middleware for Prometheus
-@app.middleware("http")
-async def prometheus_http_middleware(request: Request, call_next):
-    start_time = time.time()
-    response = await call_next(request)
-    
-    # Check if HTTP metrics are enabled
-    config = get_config()
-    if config.metrics.enabled and config.metrics.http_metrics:
-        try:
-            path = request.url.path
-            method = request.method
-            status = getattr(response, 'status_code', 200)
-            metrics.http_requests_total.labels(method=method, endpoint=path, status=status).inc()
-            duration = time.time() - start_time
-            metrics.http_request_duration.labels(endpoint=path).observe(duration)
-        except Exception as e:
-            logger.debug(f"Prometheus HTTP middleware error: {e}")
-    return response
 
 # System metrics background updater (CPU, memory, queue sizes)
 async def system_metrics_loop():
@@ -224,13 +182,3 @@ async def simple_health_check():
         "timestamp": time.time()
     }
 
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=False
-    )

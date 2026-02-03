@@ -87,14 +87,15 @@ class MongoDBConfig:
     password: str = "rootpassword"
     database: str = "mezon_transcripts"
     collection: str = "transcripts"
+    chunk_size: int = 50  # Maximum segments per chunk
 
 @dataclass
 class WhisperConfig:
     """Whisper transcription configuration."""
     model_size: str = "medium"  # tiny, base, small, medium, large-v3
-    device: str = "cuda"  # cuda or cpu
-    compute_type: str = "float16"  # float16, int8, int8_float16
-    beam_size: int = 5
+    device: str = "cpu"  # cuda or cpu
+    compute_type: str = "int8"  # float16, int8, int8_float16
+    beam_size: int = 1
     vad_filter: bool = True
     sample_rate: int = 16000
     language: str = ""  # Empty = auto-detect, or specify: "en", "vi", "ja", etc.
@@ -196,7 +197,8 @@ class ConfigManager:
         config.mongodb.password = os.getenv("MONGODB_PASSWORD", config.mongodb.password)
         config.mongodb.database = os.getenv("MONGODB_DATABASE", config.mongodb.database)
         config.mongodb.collection = os.getenv("MONGODB_COLLECTION", config.mongodb.collection)
-
+        config.mongodb.chunk_size = int(os.getenv("MONGODB_CHUNK_SIZE", config.mongodb.chunk_size))
+        
         # Whisper configuration
         config.whisper.enabled = os.getenv("ENABLE_WHISPER", "true").lower() == "true"
         config.whisper.model_size = os.getenv("WHISPER_MODEL_SIZE", config.whisper.model_size)

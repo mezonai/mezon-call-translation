@@ -45,6 +45,7 @@ class TranscriptValidationConfig:
     MIN_LIMIT: int = 1
     MAX_LIMIT: int = 500
     DEFAULT_LIMIT: int = 100
+    LIMIT_TRANSCRIPT_CHUNKS: int = 10
     MIN_SKIP: int = 0
     MAX_SKIP: int = 100000
     DEFAULT_SKIP: int = 0

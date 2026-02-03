@@ -8,7 +8,7 @@ MongoDB service for storing STT transcripts:
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo.errors import PyMongoError, DuplicateKeyError
+from pymongo.errors import PyMongoError
 from bson import ObjectId
 import logging
 from stt_service.config.app_config import get_config
@@ -20,7 +20,7 @@ class MongoDBService:
     """Service for storing track-based transcripts in MongoDB"""
 
     _instance = None
-    CHUNK_SIZE = 200  # Maximum segments per chunk
+    CHUNK_SIZE = 50  # Maximum segments per chunk
 
     def __new__(cls):
         if cls._instance is None:
@@ -37,7 +37,8 @@ class MongoDBService:
         # Build MongoDB URI with authentication
         self.mongo_uri = self._build_mongo_uri()
         self.database_name = self.config.mongodb.database
-        
+        self.CHUNK_SIZE = self.config.mongodb.chunk_size
+
         # Collection names
         self.rooms_collection_name = "rooms"
         self.tracks_collection_name = "tracks"
@@ -426,34 +427,43 @@ class MongoDBService:
             logger.error("Cannot save track metadata: MongoDB not connected")
             return None
 
-        document = {
-            "egress_id": egress_id,
-            "track_id": track_id,
-            "room_ref_id": room_ref_id,
-            "participant_identity": participant_identity,
-            "audio_info": {
-                "filename": audio_info.get("filename"),
-                "duration_sec": audio_info.get("duration_sec"),
-                "started_at_ns": audio_info.get("started_at_ns"),
-                "ended_at_ns": audio_info.get("ended_at_ns"),
-            },
-            "chunk_count": 0,
-            "status": status,
-            "created_at": datetime.utcnow(),
-        }
-
+        # Use find_one_and_update with upsert for atomic operation
+        # This avoids race conditions and is more efficient than insert-then-catch
         try:
-            result = await self.tracks_collection.insert_one(document)
-            logger.info(
-                f"📝 Track metadata saved: egress={egress_id}, "
-                f"track={track_id}, room_ref={room_ref_id}, _id={result.inserted_id}"
+            from pymongo import ReturnDocument
+            
+            result = await self.tracks_collection.find_one_and_update(
+                {"egress_id": egress_id},
+                {
+                    "$setOnInsert": {
+                        "egress_id": egress_id,
+                        "track_id": track_id,
+                        "room_ref_id": room_ref_id,
+                        "participant_identity": participant_identity,
+                        "audio_info": {
+                            "filename": audio_info.get("filename"),
+                            "duration_sec": audio_info.get("duration_sec"),
+                            "started_at_ns": audio_info.get("started_at_ns"),
+                            "ended_at_ns": audio_info.get("ended_at_ns"),
+                        },
+                        "chunk_count": 0,
+                        "status": status,
+                        "created_at": datetime.utcnow(),
+                    }
+                },
+                upsert=True,
+                return_document=ReturnDocument.AFTER
             )
-            return result.inserted_id
-
-        except DuplicateKeyError:
-            logger.warning(f"Track metadata already exists: egress={egress_id}")
-            existing = await self.tracks_collection.find_one({"egress_id": egress_id})
-            return existing["_id"] if existing else None
+            
+            if result:
+                logger.info(
+                    f"📝 Track metadata saved: egress={egress_id}, "
+                    f"track={track_id}, room_ref={room_ref_id}, _id={result['_id']}"
+                )
+                return result["_id"]
+            else:
+                logger.warning(f"Track metadata operation returned None: egress={egress_id}")
+                return None
 
         except PyMongoError as e:
             logger.error(f"Failed to save track metadata: {e}")
@@ -580,10 +590,11 @@ class MongoDBService:
                 await self.chunks_collection.insert_many(chunk_documents)
                 
                 # Update chunk_count in tracks collection
+                # Increment by the actual number of chunks inserted
                 await self.tracks_collection.update_one(
                     {"_id": track_ref_id},
                     {
-                        "$inc": {"chunk_count": 1}
+                        "$inc": {"chunk_count": len(chunk_documents)}
                     }
                 )
 
