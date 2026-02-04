@@ -61,13 +61,20 @@ class SummaryService:
         Generate a summary for the given room_id.
         
         Currently implements a concatenation strategy:
-        1. Fetch all tracks for the room.
-        2. Fetch all transcript chunks for each track.
-        3. Merge and sort segments by time.
-        4. Concatenate text.
+        1. Verify room exists.
+        2. Get all tracks.
+        3. Collect all segments.
+        4. Sort by absolute time.
+        5. Collect Full Text and Participants.
+        6. Generate Summary via LLM.
+        7. Create Summary Object.
+        8. Save summary to DB.
         """
         # 1. Verify room exists
-        # room = await self.mongodb.get_room_by_id(room_id) # Optional check
+        room = await self.mongodb.get_room_by_id(room_id)
+        if not room:
+            logger.warning(f"Room not found: {room_id}")
+            return None
         
         # 2. Get all tracks
         tracks = await self.mongodb.get_tracks_by_room(room_id)
@@ -149,7 +156,7 @@ class SummaryService:
             total_segments=len(all_segments)
         )
         
-        # 7. Save to DB
+        # 8. Save to DB
         saved_id = await self.mongodb.save_room_summary(summary_data.model_dump())
         
         if saved_id:
