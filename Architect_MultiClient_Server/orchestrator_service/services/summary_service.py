@@ -148,7 +148,7 @@ class SummaryService:
         # 7. Create Summary Object
         summary_data = RoomSummary(
             room_id=room_id,
-            room_name=tracks[0].get("room_name", "Unknown") if tracks else "Unknown",
+            room_name=room.get("room_name", "Unknown"),
             participants=list(unique_participants),
             summary_text=summary_text,
             full_text=full_text,

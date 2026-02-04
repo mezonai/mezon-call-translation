@@ -394,6 +394,8 @@ class MongoDBService:
             )
             
             logger.info(f"🔒 Room finalized: {room_name} → {new_status}")
+            if new_status == "completed":
+                asyncio.create_task(self._trigger_summary_api(str(room["_id"])))
             return True
 
         except PyMongoError as e:
@@ -806,6 +808,7 @@ class MongoDBService:
     async def _trigger_summary_api(self, room_id: str):
         """Call Orchestrator API to generate summary for the closed room."""
         try:
+            logger.info(f"Triggering summary API for room {room_id}")
             config = get_config()
             orchestrator_url = config.orchestrator.url
             api_key = config.orchestrator.internal_api_key
