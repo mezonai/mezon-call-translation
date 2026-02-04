@@ -41,6 +41,8 @@ class SummaryService:
             You are an AI assistant skilled at summarizing information.
             Please summarize the following conversation concisely, highlighting key points and conclusions (if any).
             
+            Also, please extract and list all actionable tasks/to-dos mentioned in the conversation for each person. Format this as a separate section titled "Action Items".
+
             Important: Automatically detect the language of the conversation and return the summary in THAT SAME LANGUAGE.
 
             Conversation content:
