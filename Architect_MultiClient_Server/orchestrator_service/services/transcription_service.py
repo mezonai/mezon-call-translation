@@ -1,10 +1,7 @@
 import httpx
-import asyncio
 from typing import Dict
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.mongodb_service import get_mongodb_service
-from orchestrator_service.services.summary_service import get_summary_service
 
 logger = get_logger(__name__)
 
@@ -70,10 +67,6 @@ class TranscriptionService:
                 if response.status_code == 200:
                     logger.info(f"✓ Finalized room: {room_name}")
                     logger.debug(f"Response: {response.json()}")
-                    
-                    # Trigger summary generation
-                    asyncio.create_task(self._trigger_summary(room_name))
-                    
                     return True
                 else:
                     logger.error(f"✗ Finalize room failed. Status: {response.status_code}")
@@ -86,24 +79,3 @@ class TranscriptionService:
         except Exception as e:
             logger.error(f"✗ Error notifying final room: {e}")
             return False
-
-    async def _trigger_summary(self, room_name: str):
-        """Trigger summary generation for the finalized room."""
-        try:
-            # Look up room ID by name
-            mongodb_service = get_mongodb_service()
-            room = await mongodb_service.get_room_by_name(room_name)
-            
-            if not room:
-                logger.warning(f"Could not find room to summarize: {room_name}")
-                return
-            
-            room_id = str(room["_id"])
-            logger.info(f"Triggering summary for room {room_name} ({room_id})")
-            
-            # Start summary generation in background
-            summary_service = get_summary_service()
-            asyncio.create_task(summary_service.generate_summary(room_id))
-            
-        except Exception as e:
-            logger.error(f"Failed to trigger summary for {room_name}: {e}")
