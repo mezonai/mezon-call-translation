@@ -113,6 +113,13 @@ class MetricsConfig:
 
 
 @dataclass
+class OrchestratorConfig:
+    """Orchestrator service configuration."""
+    url: str = "http://localhost:8002"
+    internal_api_key: str = ""
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -125,6 +132,7 @@ class AppConfig:
     mongodb: MongoDBConfig = field(default_factory=MongoDBConfig)
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
+    orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
 
     def __post_init__(self):
         """Post-initialization processing."""
@@ -217,6 +225,10 @@ class ConfigManager:
         config.metrics.stt_metrics = os.getenv("METRICS_STT", "true").lower() == "true"
         config.metrics.update_interval = float(os.getenv("METRICS_UPDATE_INTERVAL", config.metrics.update_interval))
         
+        # Orchestrator configuration
+        config.orchestrator.url = os.getenv("ORCHESTRATOR_URL", config.orchestrator.url)
+        config.orchestrator.internal_api_key = os.getenv("ORCHESTRATOR_INTERNAL_API_KEY", config.orchestrator.internal_api_key)
+        
         # Load from config file if specified
         if self.config_file and Path(self.config_file).exists():
             self._load_from_file(config)
@@ -280,6 +292,10 @@ class ConfigManager:
                 "metrics_log_file": config.logging.metrics_log_file,
                 "max_file_size": config.logging.max_file_size,
                 "backup_count": config.logging.backup_count
+            },
+            "orchestrator": {
+                "url": config.orchestrator.url,
+                "internal_api_key": "***" if config.orchestrator.internal_api_key else ""
             }
 
         }

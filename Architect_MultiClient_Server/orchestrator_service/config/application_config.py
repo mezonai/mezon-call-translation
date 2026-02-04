@@ -151,6 +151,7 @@ class ServerConfig:
     
     # Authentication
     authenticate_account_url: str = ""
+    internal_api_key: str = ""
     
     @classmethod
     def from_env(cls) -> 'ServerConfig':
@@ -159,6 +160,7 @@ class ServerConfig:
             host=os.getenv('AGENT_HOST', '0.0.0.0'),
             port=int(os.getenv('AGENT_PORT', '8002')),
             authenticate_account_url=os.getenv('AUTHENTICATE_ACCOUNT_URL', ''),
+            internal_api_key=os.getenv('INTERNAL_API_KEY', 'my-secret-internal-key'),
         )
 
 
@@ -216,6 +218,28 @@ class LoggerConfig:
 
 
 # ============================================================================
+# LLM Configuration
+# ============================================================================
+
+@dataclass
+class LLMConfig:
+    """Configuration for LLM services (Gemini, OpenAI, etc.)"""
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    
+    @classmethod
+    def from_env(cls) -> 'LLMConfig':
+        return cls(
+            gemini_api_key=os.getenv('GEMINI_API_KEY', ''),
+            gemini_model=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash'),
+        )
+    
+    def validate(self) -> bool:
+        # Optional validation if needed
+        return True
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -243,6 +267,7 @@ class Config:
         self.server = ServerConfig.from_env()
         self.logger = LoggerConfig.from_env()
         self.minio = MinIOConfig.from_env()
+        self.llm = LLMConfig.from_env()
         
         self._initialized = True
         self._validate_all()
