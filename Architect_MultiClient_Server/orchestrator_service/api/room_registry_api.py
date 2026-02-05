@@ -73,22 +73,21 @@ async def register_room(
     try:
         registry = get_room_registry()
         
-        # Tạo ISO string timestamp duy nhất tại thời điểm này
+        # create actual_start_time string in ISO format
         if request.start_time is not None:
-            # Nếu được cung cấp, convert float timestamp sang ISO string
-            actual_start_time = datetime.fromtimestamp(request.start_time).isoformat()
+            # if provided, use the given start_time
+            actual_start_time = datetime.fromtimestamp(request.start_time).strftime("%Y%m%d_%H%M%S")
         else:
-            # Nếu không, dùng thời gian hiện tại
-            actual_start_time = datetime.utcnow().isoformat()
-        
-        # Register room vào registry với ISO string
+            # If not provided, use the current time
+            actual_start_time = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+        # Register room in registry 
         if not registry.register_room(request.room_name, actual_start_time):
             raise HTTPException(
                 status_code=409,
                 detail=f"Room '{request.room_name}' is already registered"
             )
-        print(f"Room '{request.room_name}' registered with start_time: {registry.get_room_start_time(request.room_name)}")
-        # Lấy tất cả tracks đang có trong room và bắt đầu recording
+        # get all tracks in the room and start recording for audio tracks
         tracks_started = 0
         try:
             livekit_service = get_livekit_service()
@@ -177,12 +176,12 @@ async def unregister_room(
     auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
-    Unregister một room khỏi registry.
+    Unregister a room from the registry.
     
-    Sau khi unregister, webhook sẽ không xử lý các events của room này nữa.
-    Đồng thời:
-    - Dừng tất cả egress recordings đang chạy
-    - Finalize room status trong STT service
+    After unregistering, the webhook will no longer process events for this room.
+    Additionally:
+    - Stop all running egress recordings
+    - Finalize room status in the STT service
     
     **Example:**
     ```json
@@ -194,7 +193,7 @@ async def unregister_room(
     try:
         registry = get_room_registry()
         
-        # Lấy start_session_time trước khi unregister (ISO string, luôn có giá trị)
+        # get start_session_time after unregister (ISO string)
         start_session_time = registry.get_room_start_time(request.room_name)
         
         # Unregister room from registry
@@ -254,9 +253,9 @@ async def get_room_status(
     auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
-    Kiểm tra trạng thái registration của một room.
+    Check status registration for a room.
     
-    Returns thông tin về room bao gồm start_time và duration nếu room đã được register.
+    Returns information about the room including start_time and duration if the room is registered.
     """
     try:
         registry = get_room_registry()
@@ -284,9 +283,9 @@ async def list_registered_rooms(
     auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
-    Lấy danh sách tất cả rooms đang được register.
+    Get a list of all currently registered rooms.
     
-    Returns dictionary với key là room_name và value là start_time.
+    Returns a dictionary with keys as room_name and values as start_time.
     """
     try:
         registry = get_room_registry()
@@ -310,9 +309,9 @@ async def clear_all_rooms(
     auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
-    Clear tất cả rooms khỏi registry (dùng cho testing hoặc cleanup).
+    clear all registered rooms from the registry.
     
-    **Cảnh báo**: Action này sẽ xóa tất cả rooms đang được register.
+    **Warning**: This action will delete all currently registered rooms.
     """
     try:
         registry = get_room_registry()

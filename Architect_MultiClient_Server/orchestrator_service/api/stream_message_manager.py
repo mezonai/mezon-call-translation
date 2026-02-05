@@ -21,14 +21,14 @@ class StreamMessageManager:
         self._connection_counter = 0
 
     def get_queue(self, room_id: str) -> queue.Queue:
-        """Lấy queue cho room, tạo mới nếu chưa có"""
+        """Get queue for room, and create if not exists"""
         with self._lock:
             if room_id not in self.queues:
                 self.queues[room_id] = queue.Queue()
             return self.queues[room_id]
     
     def register_connection(self, room_id: str) -> str:
-        """Đăng ký một connection mới, trả về connection_id"""
+        """Register a new connection, return connection_id"""
         with self._lock:
             self._connection_counter += 1
             connection_id = f"{room_id}_{self._connection_counter}_{int(time.time())}"
@@ -40,16 +40,16 @@ class StreamMessageManager:
             return connection_id
     
     def unregister_connection(self, room_id: str, connection_id: str):
-        """Hủy đăng ký connection khi client disconnect"""
+        """Unregister connection when client disconnects"""
         with self._lock:
             if room_id in self.connections:
                 self.connections[room_id].discard(connection_id)
                 
-                # Nếu không còn connection nào, xóa queue để tránh memory leak
+                # If no more connections, delete queue to avoid memory leak
                 if not self.connections[room_id]:
                     del self.connections[room_id]
                     if room_id in self.queues:
-                        # Clear queue trước khi xóa
+                        # Clear queue before deleting
                         q = self.queues[room_id]
                         while not q.empty():
                             try:
@@ -59,12 +59,12 @@ class StreamMessageManager:
                         del self.queues[room_id]
     
     def has_active_connections(self, room_id: str) -> bool:
-        """Kiểm tra room có connection active không"""
+        """Check if room has active connections"""
         with self._lock:
             return room_id in self.connections and len(self.connections[room_id]) > 0
     
     def get_connection_count(self, room_id: str) -> int:
-        """Lấy số connection active của room"""
+        """Get number of active connections for room"""
         with self._lock:
             return len(self.connections.get(room_id, set()))
 

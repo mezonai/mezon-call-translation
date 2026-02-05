@@ -126,10 +126,6 @@ class WebhookHandler:
         room_name = event.get("room", {}).get("name", "unknown")
         logger.info(f"  Room finished: {room_name}")
         
-        # Get start_session_time from registry (ISO string)
-        start_session_time = self.room_registry.get_room_start_time(room_name)
-        
-        await self.transcription_service.final_room(room_name, start_session_time)
         return WebhookResponse(received=True, action="room_finished_logged")
     
     async def _handle_egress_ended(self, event: Dict) -> WebhookResponse:
@@ -165,7 +161,7 @@ class WebhookHandler:
         """Build EgressInfo object from event data"""
         egress_data = {
             "egressId": egress.get("egressId", "unknown"),
-            "room": {"name": egress.get("roomName", ""), "start_session_time": parsed.get("timestamp_iso")},
+            "room": {"name": egress.get("roomName", ""), "start_session_time": parsed.get("timestamp")},
             "participant": {"identity": parsed.get("identity", "unknown")},
             "track": {
                 "id": egress.get("track", {}).get("trackId", "unknown"),
