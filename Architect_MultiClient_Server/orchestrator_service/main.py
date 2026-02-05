@@ -55,6 +55,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LiveKit Orchestrator API", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,  # Allow cookies to be included in cross-origin requests
+    allow_methods=["*"],     # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],     # Allow all headers
+)
 
 
 # Include routers
