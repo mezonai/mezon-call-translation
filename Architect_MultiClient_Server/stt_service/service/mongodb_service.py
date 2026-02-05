@@ -163,6 +163,7 @@ class MongoDBService:
                         "completed_tracks": 0,
                         "status": status,
                         "start_session_time": start_session_time,
+                        "created_at": datetime.strptime(start_session_time, "%Y%m%d_%H%M%S"),
                         "completed_at": None
                     },
                     "$inc": {
