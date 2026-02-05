@@ -24,6 +24,11 @@ motor>=3.3.0                   # Async MongoDB driver
 pymongo>=4.5.0                 # MongoDB Python driver (sync operations)
 
 # ========================================
+# AI & LLM Services
+# ========================================
+google-genai>=0.3.0            # Google Gemini API SDK
+
+# ========================================
 # Configuration & Environment
 # ========================================
 python-dotenv>=1.0.0           # Load environment variables from .env

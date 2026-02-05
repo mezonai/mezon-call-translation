@@ -11,6 +11,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import PyMongoError
 from bson import ObjectId
 import logging
+import asyncio
+import aiohttp
 from stt_service.config.app_config import get_config
 from pymongo import ReturnDocument
 
@@ -265,6 +267,9 @@ class MongoDBService:
                     }
                 )
                 logger.info(f"🎉 All tracks completed for room_id={room_ref_id}")
+                
+                # Trigger summary generation
+                asyncio.create_task(self._trigger_summary_api(str(room_ref_id)))
             
             return True
 
@@ -400,6 +405,8 @@ class MongoDBService:
             )
             
             logger.info(f"🔒 Room finalized: {room_name} → {new_status}")
+            if new_status == "completed":
+                asyncio.create_task(self._trigger_summary_api(str(room["_id"])))
             return True
 
         except PyMongoError as e:
@@ -808,6 +815,39 @@ class MongoDBService:
     def get_instance(cls) -> "MongoDBService":
         """Get singleton instance"""
         return cls()
+
+    async def _trigger_summary_api(self, room_id: str):
+        """Call Orchestrator API to generate summary for the closed room."""
+        try:
+            logger.info(f"Triggering summary API for room {room_id}")
+            config = get_config()
+            orchestrator_url = config.orchestrator.url
+            api_key = config.orchestrator.internal_api_key
+            
+            if not orchestrator_url or not api_key:
+                logger.warning("Summary trigger skipped: Orchestrator URL or API Key missing")
+                return
+
+            endpoint = f"{orchestrator_url.rstrip('/')}/api/internal/summary"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    endpoint,
+                    json={"room_id": room_id},
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-internal-api-key": api_key
+                    },
+                    timeout=10
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        logger.info(f"Summary triggered successfully for room {room_id}: {data}")
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Failed to trigger summary for room {room_id}: {response.status} - {error_text}")
+        except Exception as e:
+            logger.error(f"Error triggering summary API for room {room_id}: {e}")
 
 
 def get_mongodb_service() -> MongoDBService:

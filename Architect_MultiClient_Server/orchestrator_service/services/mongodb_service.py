@@ -44,18 +44,20 @@ class MongoDBService:
         self.rooms_collection_name = "rooms"
         self.tracks_collection_name = "tracks"
         self.chunks_collection_name = "transcript_chunks"
+        self.summary_collection_name = "rooms_summary"
 
         self.client: Optional[AsyncIOMotorClient] = None
         self.db = None
         self.rooms_collection = None
         self.tracks_collection = None
         self.chunks_collection = None
+        self.summary_collection = None
         self.connected = False
 
         self._initialized = True
         logger.info(
             f"MongoDBService initialized (DB={self.database_name}, "
-            f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, {self.chunks_collection_name})"
+            f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, {self.chunks_collection_name}, {self.summary_collection_name})"
         )
 
     def _build_mongo_uri(self) -> str:
@@ -82,6 +84,7 @@ class MongoDBService:
             self.rooms_collection = self.db[self.rooms_collection_name]
             self.tracks_collection = self.db[self.tracks_collection_name]
             self.chunks_collection = self.db[self.chunks_collection_name]
+            self.summary_collection = self.db[self.summary_collection_name]
             
             # Test connection
             await self.client.admin.command("ping")
@@ -437,6 +440,81 @@ class MongoDBService:
         except Exception as e:
             logger.error(f"Failed to get participant statistics: {e}")
             return {}
+
+    # ========================================
+    # 📝 ROOM SUMMARY QUERIES
+    # ========================================
+
+    async def save_room_summary(self, summary_data: Dict[str, Any]) -> str:
+        """Save or update room summary"""
+        try:
+            room_id = summary_data.get("room_id")
+            if not room_id:
+                return None
+                
+            result = await self.summary_collection.update_one(
+                {"room_id": room_id},
+                {"$set": summary_data},
+                upsert=True
+            )
+            
+            if result.upserted_id:
+                return str(result.upserted_id)
+            
+            # If updated an existing document, we need to find its ID
+            if result.matched_count > 0:
+                doc = await self.summary_collection.find_one({"room_id": room_id}, {"_id": 1})
+                if doc:
+                    return str(doc["_id"])
+                    
+            return None
+        except Exception as e:
+            logger.error(f"Failed to save room summary: {e}")
+            return None
+
+    async def get_room_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
+        """Get summary for a room"""
+        try:
+            return await self.summary_collection.find_one(
+                {"room_id": room_id},
+                sort=[("created_at", -1)]
+            )
+        except Exception as e:
+            logger.error(f"Failed to get room summary: {e}")
+            return None
+
+    async def get_summaries_by_participant(self, participant_id: str, limit: int = 50, skip: int = 0) -> List[Dict[str, Any]]:
+        """Get all summaries where the user participated"""
+        try:
+            cursor = self.summary_collection.find(
+                {"participants": participant_id}
+            ).sort("created_at", -1).skip(skip).limit(limit)
+            return await cursor.to_list(length=limit)
+        except Exception as e:
+            logger.error(f"Failed to get summaries by participant: {e}")
+            return []
+
+    async def get_summary_by_room_name(self, room_name: str, start_time: Optional[datetime], end_time: Optional[datetime]) -> List[Dict[str, Any]]:
+        """Get summary by room name"""
+        try:
+            # 1. get room list
+            query = {"room_name": room_name}
+            if start_time:
+                query["created_at"] = {"$gte": start_time}
+            if end_time:
+                query["created_at"] = {"$lte": end_time}
+            cursor = self.rooms_collection.find(query).sort("created_at", -1)
+            room_list = await cursor.to_list(None)
+            room_ids = [str(room["_id"]) for room in room_list]
+
+            # 2. get summary list
+            summary_list = await self.summary_collection.find(
+                {"room_id": {"$in": room_ids}}
+            ).sort("created_at", -1).to_list(None)
+            return summary_list
+        except Exception as e:
+            logger.error(f"Failed to get summary by room name: {e}")
+            return []
 
     # ========================================
     # 🏭 SINGLETON PATTERN
