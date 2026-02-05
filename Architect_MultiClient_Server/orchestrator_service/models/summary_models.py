@@ -11,7 +11,7 @@ class RoomSummary(BaseModel):
     room_id: str
     room_name: str
     participants: List[str] = []
-    summary_text: str
+    summary_data: Dict[str, Any]
     full_text: str
     created_at: datetime = Field(default_factory=datetime.now)
     total_segments: int = 0

@@ -4,6 +4,7 @@ Service for generating room summaries
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+import json
 
 from orchestrator_service.services.mongodb_service import get_mongodb_service
 from orchestrator_service.models.summary_models import RoomSummary
@@ -26,12 +27,13 @@ class SummaryService:
             except Exception as e:
                 logger.error(f"Failed to initialize Gemini client: {e}")
 
-    def summarize_conversation(self, conversation_text: str) -> str:
+    def summarize_conversation(self, conversation_text: str) -> Dict[str, Any]:
         """
         Summarize conversation using Google Gemini (New SDK).
+        Returns a dictionary with 'summary' and 'action_items'.
         """
         if not self.genai_client:
-            return "Summarization unavailable: Gemini API key not configured or SDK missing."
+            return {"summary": "Summarization unavailable: Gemini API key not configured or SDK missing.", "action_items": {}}
 
         try:
             # Using Gemini 2.0 Flash model (or from config)
@@ -41,7 +43,18 @@ class SummaryService:
             You are an AI assistant skilled at summarizing information.
             Please summarize the following conversation concisely, highlighting key points and conclusions (if any).
             
-            Also, please extract and list all actionable tasks/to-dos mentioned in the conversation for each person. Format this as a separate section titled "Action Items".
+            Also, please extract and list all actionable tasks/to-dos mentioned in the conversation for each person.
+
+            Return the output in the following JSON format:
+            {{
+                "summary": "Summary content",
+                "action_items": {{
+                    "user_name1": ["task1", "task2"],
+                    "user_name2": ["task1", "task2"]
+                }}
+            }}
+            
+            If there are no action items, "action_items" should be an empty object {{}}.
 
             Important: Automatically detect the language of the conversation and return the summary in THAT SAME LANGUAGE.
 
@@ -53,10 +66,27 @@ class SummaryService:
                 model=model_name,
                 contents=prompt
             )
-            return response.text
+            
+            text_response = response.text
+            # Clean up markdown code blocks if present
+            if text_response.startswith("```json"):
+                text_response = text_response[7:]
+            elif text_response.startswith("```"):
+                text_response = text_response[3:]
+            if text_response.endswith("```"):
+                text_response = text_response[:-3]
+                
+            
+            try:
+                # parse json
+                return json.loads(text_response.strip())
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse Gemini response as JSON: {text_response}")
+                return {"summary": text_response, "action_items": {}}
+
         except Exception as e:
             logger.error(f"Gemini summarization error: {e}")
-            return f"An error occurred during summarization: {e}"
+            return {"summary": f"An error occurred during summarization: {e}", "action_items": {}}
 
     async def generate_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -130,6 +160,8 @@ class SummaryService:
         text_lines = []
         unique_participants = set()
         
+        last_participant = None
+
         for seg in all_segments:
             participant = seg.get("participant", "Unknown")
             if participant != "Unknown":
@@ -138,32 +170,37 @@ class SummaryService:
             text = seg.get("text", "").strip() # Use text from segment
             
             if text:
-                dt = datetime.fromtimestamp(seg["absolute_start_ns"] / 1_000_000_000)
-                time_str = dt.strftime("%H:%M:%S")
-                text_lines.append(f"[{time_str}] {participant}: {text}")
+                if participant == last_participant:
+                    text_lines.append(text)
+                else:
+                    dt = datetime.fromtimestamp(seg["absolute_start_ns"] / 1_000_000_000)
+                    time_str = dt.strftime("%H:%M:%S")
+                    text_lines.append(f"[{time_str}] {participant}: {text}")
+                
+                last_participant = participant
         
         full_text = "\n".join(text_lines)
         
         # 6. Generate Summary via LLM
-        summary_text = self.summarize_conversation(full_text)
+        summary_data_result = self.summarize_conversation(full_text)
         
         # 7. Create Summary Object
-        summary_data = RoomSummary(
+        summary_model = RoomSummary(
             room_id=room_id,
             room_name=room.get("room_name", "Unknown"),
             participants=list(unique_participants),
-            summary_text=summary_text,
+            summary_data=summary_data_result,
             full_text=full_text,
             created_at=datetime.now(),
             total_segments=len(all_segments)
         )
         
         # 8. Save to DB
-        saved_id = await self.mongodb.save_room_summary(summary_data.model_dump())
+        saved_id = await self.mongodb.save_room_summary(summary_model.model_dump())
         
         if saved_id:
             logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
-            result = summary_data.model_dump()
+            result = summary_model.model_dump()
             result["_id"] = saved_id
             return result
         
