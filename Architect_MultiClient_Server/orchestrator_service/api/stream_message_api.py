@@ -18,7 +18,7 @@ class PushMessageRequest(BaseModel):
 
 @router.post("/push_message")
 async def push_message_api(req: PushMessageRequest):
-    # Kiểm tra có client nào đang listen không
+    # check room has active connections
     if not manager.has_active_connections(req.room_name):
         logger.warning(f"No active connections for room {req.room_name}, message may be lost")
     
@@ -34,25 +34,26 @@ async def push_message_api(req: PushMessageRequest):
 
 async def event_generator(room_name: str, connection_id: str):
     """
-    Generator SSE với:
-    - Timeout để detect client disconnect
-    - Proper cleanup khi connection đóng
-    - Heartbeat để giữ connection alive
+    Generator SSE events for a specific room and connection.
+    Features:
+    - Timeout to detect client disconnect
+    - Proper cleanup when connection closes
+    - Heartbeat to keep connection alive
     """
     logger.info(f"[SSE] Connection started: {connection_id} for room: {room_name}")
     q = manager.get_queue(room_name)
     loop = asyncio.get_event_loop()
     
-    # Gửi event đầu tiên để confirm connection
+    # Send initial event to confirm connection
     yield f"event: connected\ndata: {connection_id}\n\n"
     
-    heartbeat_interval = 15  # Gửi heartbeat mỗi 15 giây
+    heartbeat_interval = 15  # Send heartbeat every 15 seconds
     last_heartbeat = asyncio.get_event_loop().time()
     
     try:
         while True:
             try:
-                # Sử dụng timeout để có thể check connection và gửi heartbeat
+                # Use timeout to check connection and send heartbeat
                 text = await asyncio.wait_for(
                     loop.run_in_executor(None, lambda: q.get(timeout=1.0)),
                     timeout=2.0
@@ -61,7 +62,7 @@ async def event_generator(room_name: str, connection_id: str):
                 yield f"data: {text}\n\n"
                 
             except (asyncio.TimeoutError, queue.Empty):
-                # Không có message mới - kiểm tra có cần gửi heartbeat không
+                # No new message - check if heartbeat needs to be sent
                 current_time = asyncio.get_event_loop().time()
                 if current_time - last_heartbeat >= heartbeat_interval:
                     yield f"event: heartbeat\ndata: ping\n\n"
@@ -76,7 +77,7 @@ async def event_generator(room_name: str, connection_id: str):
     except GeneratorExit:
         logger.info(f"[SSE] Generator exit: {connection_id}")
     finally:
-        # Cleanup khi connection đóng
+        # Cleanup when connection closes
         manager.unregister_connection(room_name, connection_id)
         logger.info(f"[SSE] Connection closed and unregistered: {connection_id}")
 

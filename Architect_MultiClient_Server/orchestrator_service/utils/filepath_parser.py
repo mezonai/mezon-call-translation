@@ -32,12 +32,4 @@ class FilepathParser:
         
         result = match.groupdict()
         
-        # Convert timestamp from "YYYYmmdd_HHMMSS" to ISO format "YYYY-MM-DDTHH:MM:SS"
-        try:
-            timestamp_str = result.get("timestamp", "")
-            dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
-            result["timestamp_iso"] = dt.isoformat()
-        except (ValueError, AttributeError):
-            result["timestamp_iso"] = None
-        
         return result

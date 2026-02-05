@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/transcribe", tags=["transcription"])
 
 class RoomInfo(BaseModel):
     name: str
-    start_session_time: Optional[str]
+    start_session_time: str
 
 class ParticipantInfo(BaseModel):
     identity: str

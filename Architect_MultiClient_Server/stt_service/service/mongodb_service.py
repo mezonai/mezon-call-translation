@@ -345,6 +345,12 @@ class MongoDBService:
             return None
         return await self.rooms_collection.find_one({"room_name": room_name})
 
+    async def get_room_session_by_name(self, room_name: str, start_session_time: str) -> Optional[Dict]:
+        """Get room by name"""
+        if not self.connected:
+            return None
+        return await self.rooms_collection.find_one({"room_name": room_name, "start_session_time": start_session_time})
+
     async def update_room_status(
         self,
         room_ref_id: ObjectId,
@@ -370,18 +376,18 @@ class MongoDBService:
             logger.error(f"Failed to update room status: {e}")
             return False
 
-    async def final_room_status(self, room_name: str, start_session_time: Optional[str]) -> bool:
+    async def final_room_status(self, room_name: str, start_session_time: str) -> bool:
 
         if not self.connected:
             return False
 
         try:
-            room = await self.get_room_by_name(room_name)
+            room = await self.get_room_session_by_name(room_name, start_session_time)
             if not room:
                 logger.error(f"Room not found: {room_name}")
                 return False
             
-            # Chỉ update nếu chưa finalized
+            # only update when status not finalized
             if room["status"] in ["final_room", "completed"]:
                 logger.warning(f"Room already finalized: {room_name}")
                 return True
@@ -393,11 +399,6 @@ class MongoDBService:
                     "finalized_at": datetime.utcnow()
                 }
             }
-            
-            # Chỉ update start_session_time nếu được cung cấp VÀ room chưa có
-            if start_session_time and not room.get("start_session_time"):
-                update_doc["$set"]["start_session_time"] = start_session_time
-                logger.info(f"Setting start_session_time for room {room_name}: {start_session_time}")
             
             await self.rooms_collection.update_one(
                 {"_id": room["_id"]},

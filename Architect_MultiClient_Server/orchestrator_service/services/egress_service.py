@@ -29,15 +29,8 @@ class EgressService:
         ext = "ogg" if track_type == "AUDIO" else "webm"
         
         # Parse ISO string và format lại thành YYYYmmdd_HHMMSS
-        try:
-            dt = datetime.fromisoformat(room_start_time)
-            timestamp = dt.strftime("%Y%m%d_%H%M%S")
-        except (ValueError, AttributeError):
-            # Fallback nếu parse thất bại
-            logger.warning(f"Failed to parse room_start_time: {room_start_time}, using current time")
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        return f"{room_name}/{identity}-{source}-{track_type.lower()}-{timestamp}.{ext}"
+        return f"{room_name}/{identity}-{source}-{track_type.lower()}-{room_start_time}.{ext}"
     
     def _get_s3_upload(self) -> api.S3Upload:
         if self._s3_upload is None:

@@ -47,13 +47,13 @@ class TranscriptionService:
             logger.error(f"✗ Error sending to queue: {e}")
             return False
 
-    async def final_room(self, room_name: str, start_session_time: str = None) -> bool:
+    async def final_room(self, room_name: str, start_session_time: str ) -> bool:
         """
         Notify transcription service to finalize room
         
         Args:
             room_name: Name of the room to finalize
-            start_session_time: Optional start session time
+            start_session_time: start session time
             
         Returns:
             True if successful, False if failed
