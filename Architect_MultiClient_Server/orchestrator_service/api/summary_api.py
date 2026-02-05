@@ -83,6 +83,7 @@ async def get_summary_by_room_name(
     for summary in summaries:
         summary.pop("_id", None)
         summary.pop("room_id", None)
+        summary.pop("summary_text", None)
     return {
         "status": "ok",
         "data": summaries,
