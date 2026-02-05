@@ -529,6 +529,28 @@ class MongoDBService:
             logger.error(f"Failed to get summaries by participant: {e}")
             return []
 
+    async def get_summary_by_room_name(self, room_name: str, start_time: Optional[datetime], end_time: Optional[datetime]) -> List[Dict[str, Any]]:
+        """Get summary by room name"""
+        try:
+            # 1. get room list
+            query = {"room_name": room_name}
+            if start_time:
+                query["created_at"] = {"$gte": start_time}
+            if end_time:
+                query["created_at"] = {"$lte": end_time}
+            cursor = self.rooms_collection.find(query).sort("created_at", -1)
+            room_list = await cursor.to_list(None)
+            room_ids = [str(room["_id"]) for room in room_list]
+
+            # 2. get summary list
+            summary_list = await self.summary_collection.find(
+                {"room_id": {"$in": room_ids}}
+            ).sort("created_at", -1).to_list(None)
+            return summary_list
+        except Exception as e:
+            logger.error(f"Failed to get summary by room name: {e}")
+            return []
+
     # ========================================
     # 🏭 SINGLETON PATTERN
     # ========================================

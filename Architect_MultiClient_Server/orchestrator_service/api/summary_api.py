@@ -1,11 +1,12 @@
 """
 Internal API endpoints for room summary
 """
-from fastapi import APIRouter, HTTPException, Body, Depends, Header
+from fastapi import APIRouter, HTTPException, Body, Depends, Header, Query
 from pydantic import BaseModel
 from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.config.application_config import get_config
-
+from datetime import datetime
+from typing import Optional
 from orchestrator_service.services.mongodb_service import get_mongodb_service
 
 internal_router = APIRouter(prefix="/api/internal", tags=["Internal"])
@@ -65,4 +66,25 @@ async def get_user_summaries(user_id: str):
         "status": "ok",
         "count": len(summaries),
         "data": summaries
+    }
+
+@client_router.get("/room/{room_name}", response_description="Get summary by room ID")
+async def get_summary_by_room_name(
+    room_name: str,
+    start_time: Optional[datetime] = Query(None, description="Start time for room summary (ISO format: 2024-01-01T00:00:00)"),
+    end_time: Optional[datetime] = Query(None, description="End time for room summary (ISO format: 2024-01-31T23:59:59)"),
+    ):
+    """
+    Get summary by room name.
+    """
+    mongodb = get_mongodb_service()
+    summaries = await mongodb.get_summary_by_room_name(room_name, start_time, end_time)
+    # remove unnecessary fields
+    for summary in summaries:
+        summary.pop("_id", None)
+        summary.pop("room_id", None)
+    return {
+        "status": "ok",
+        "data": summaries,
+        "count": len(summaries)
     }
