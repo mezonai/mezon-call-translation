@@ -47,20 +47,29 @@ class TranscriptionService:
             logger.error(f"✗ Error sending to queue: {e}")
             return False
 
-    async def final_room(self, room_name: str) -> bool:
+    async def final_room(self, room_name: str, start_session_time: str = None) -> bool:
         """
         Notify transcription service to finalize room
         
+        Args:
+            room_name: Name of the room to finalize
+            start_session_time: Optional start session time
+            
         Returns:
             True if successful, False if failed
         """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                url = f"{self.api_url}/rooms/{room_name}/end"
-                logger.info(f"📤 Notifying final room: {url}")
+                url = f"{self.api_url}/rooms/end"
+                payload = {
+                    "name": room_name,
+                    "start_session_time": start_session_time
+                }
+                logger.info(f"📤 Notifying final room: {url} with payload: {payload}")
                 
                 response = await client.put(
                     url,
+                    json=payload,
                     headers={"Content-Type": "application/json"}
                 )
                 

@@ -12,6 +12,7 @@ from pymongo.errors import PyMongoError
 from bson import ObjectId
 import logging
 from stt_service.config.app_config import get_config
+from pymongo import ReturnDocument
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class MongoDBService:
         """Create indexes for all collections"""
         try:
             # Indexes for rooms collection
-            await self.rooms_collection.create_index("room_name", unique=True)
+            await self.rooms_collection.create_index("room_name")
             await self.rooms_collection.create_index("status")
             await self.rooms_collection.create_index("created_at")
 
@@ -139,7 +140,8 @@ class MongoDBService:
     async def create_or_get_room(
         self,
         room_name: str,
-        initial_track_count: int = 1
+        initial_track_count: int = 1,
+        start_session_time: Optional[str] = None
     ) -> Optional[ObjectId]:
 
         if not self.connected and not await self.connect():
@@ -147,26 +149,28 @@ class MongoDBService:
             return None
 
         try:
-            result = await self.rooms_collection.update_one(
-                {"room_name": room_name},
+            room = await self.rooms_collection.find_one_and_update(
+                {
+                    "room_name": room_name,
+                    "start_session_time": start_session_time
+                },
                 {
                     "$setOnInsert": {
                         "room_name": room_name,
                         "completed_tracks": 0,
                         "status": "pending",
-                        "created_at": datetime.utcnow(),
+                        "start_session_time": start_session_time,
                         "completed_at": None
                     },
                     "$inc": {
                         "remain_tracks": initial_track_count
                     }
                 },
-                upsert=True
+                upsert=True,
+                return_document=ReturnDocument.AFTER  # ⭐ quan trọng
             )
 
-            room = await self.rooms_collection.find_one({"room_name": room_name})
             return room["_id"]
-
         except PyMongoError as e:
             logger.error(f"Failed to create/get room: {e}")
             return None
@@ -361,7 +365,7 @@ class MongoDBService:
             logger.error(f"Failed to update room status: {e}")
             return False
 
-    async def final_room_status(self, room_name: str) -> bool:
+    async def final_room_status(self, room_name: str, start_session_time: Optional[str]) -> bool:
 
         if not self.connected:
             return False
@@ -378,14 +382,21 @@ class MongoDBService:
                 return True
             new_status = "final_room" if room["remain_tracks"] > 0 else "completed"
             
+            update_doc = {
+                "$set": {
+                    "status": new_status,
+                    "finalized_at": datetime.utcnow()
+                }
+            }
+            
+            # Chỉ update start_session_time nếu được cung cấp VÀ room chưa có
+            if start_session_time and not room.get("start_session_time"):
+                update_doc["$set"]["start_session_time"] = start_session_time
+                logger.info(f"Setting start_session_time for room {room_name}: {start_session_time}")
+            
             await self.rooms_collection.update_one(
                 {"_id": room["_id"]},
-                {
-                    "$set": {
-                        "status": new_status,
-                        "finalized_at": datetime.utcnow()  # Đổi tên field cho đúng nghĩa
-                    }
-                }
+                update_doc
             )
             
             logger.info(f"🔒 Room finalized: {room_name} → {new_status}")

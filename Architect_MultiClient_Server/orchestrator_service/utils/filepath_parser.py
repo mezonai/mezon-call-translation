@@ -1,10 +1,11 @@
 import re
 from typing import Dict
+from datetime import datetime
 
 
 class FilepathParser:
     """Parser for filepath from egress"""
-    
+
     PATTERN = re.compile(
         r"""
         ^(?P<room>[^/]+)/                              # room
@@ -16,16 +17,27 @@ class FilepathParser:
         """,
         re.VERBOSE
     )
-    
+
     @classmethod
     def parse(cls, filepath: str) -> Dict[str, str]:
         """
-        Parse filepath into components
-        
+        Parse filepath into components and convert timestamp to ISO format
+
         Raises:
             ValueError: If filepath does not match format
         """
         match = cls.PATTERN.match(filepath)
         if not match:
             raise ValueError(f"Invalid filepath format: {filepath}")
-        return match.groupdict()
+        
+        result = match.groupdict()
+        
+        # Convert timestamp from "YYYYmmdd_HHMMSS" to ISO format "YYYY-MM-DDTHH:MM:SS"
+        try:
+            timestamp_str = result.get("timestamp", "")
+            dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+            result["timestamp_iso"] = dt.isoformat()
+        except (ValueError, AttributeError):
+            result["timestamp_iso"] = None
+        
+        return result

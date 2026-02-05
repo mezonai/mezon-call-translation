@@ -1,10 +1,12 @@
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Dict, Any
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.egress_service import EgressService
 from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.utils.filepath_parser import FilepathParser
 from orchestrator_service.models.webhook_models import WebhookResponse, TrackInfo, EgressInfo
 
@@ -21,6 +23,7 @@ class WebhookHandler:
     ):
         self.egress_service = egress_service
         self.transcription_service = transcription_service
+        self.room_registry = get_room_registry()
     
     async def handle_event(self, event: Dict[str, Any]) -> WebhookResponse:
         """
@@ -35,6 +38,14 @@ class WebhookHandler:
         event_type = event.get("event", "unknown")
         logger.info(f"📥 Received: {event_type}")
         logger.debug(f"Payload: {json.dumps(event, indent=2, ensure_ascii=False)}")
+        # get room name from event
+        room_name = event.get("room", {}).get("name", "")
+        
+        # Check if room is registered
+        if room_name and not self.room_registry.is_registered(room_name):
+            logger.info(f"  ⏭ Room '{room_name}' not registered, skipping event")
+            return WebhookResponse(received=True, action="room_not_registered")
+        
         
         handlers = {
             "track_published": self._handle_track_published,
@@ -114,7 +125,11 @@ class WebhookHandler:
         """Handle when a room finishes"""
         room_name = event.get("room", {}).get("name", "unknown")
         logger.info(f"  Room finished: {room_name}")
-        await self.transcription_service.final_room(room_name)
+        
+        # Get start_session_time from registry (ISO string)
+        start_session_time = self.room_registry.get_room_start_time(room_name)
+        
+        await self.transcription_service.final_room(room_name, start_session_time)
         return WebhookResponse(received=True, action="room_finished_logged")
     
     async def _handle_egress_ended(self, event: Dict) -> WebhookResponse:
@@ -148,25 +163,27 @@ class WebhookHandler:
     def _build_egress_info(self, egress: Dict, file_data: Dict, 
                           parsed: Dict) -> EgressInfo:
         """Build EgressInfo object from event data"""
-        return EgressInfo(
-            egressId=egress.get("egressId", "unknown"),
-            room={"name": egress.get("roomName", "")},
-            participant={"identity": parsed.get("identity", "unknown")},
-            track={
+        egress_data = {
+            "egressId": egress.get("egressId", "unknown"),
+            "room": {"name": egress.get("roomName", ""), "start_session_time": parsed.get("timestamp_iso")},
+            "participant": {"identity": parsed.get("identity", "unknown")},
+            "track": {
                 "id": egress.get("track", {}).get("trackId", "unknown"),
                 "type": parsed.get("track_type", "unknown"),
                 "source": parsed.get("source", "unknown")
             },
-            audio={
+            "audio": {
                 "filename": file_data.get("filename", ""),
                 "location": file_data.get("location", ""),
                 "duration": file_data.get("duration", 0)
             },
-            timeline={
+            "timeline": {
                 "startedAt": file_data.get("startedAt", ""),
                 "endedAt": file_data.get("endedAt", "")
             }
-        )
+        }
+        
+        return EgressInfo(**egress_data)
     
     def _log_egress_info(self, info: EgressInfo):
         """Log egress information"""

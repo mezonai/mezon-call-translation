@@ -318,6 +318,31 @@ class TTSConfig:
     
 
 # ============================================================================
+# Orchestrator Configuration
+# ============================================================================
+
+@dataclass
+class OrchestratorConfig:
+    """Orchestrator service configuration"""
+    base_url: str = "http://localhost:8002"
+    api_key: str = ""
+    
+    @classmethod
+    def from_env(cls) -> 'OrchestratorConfig':
+        """Create Orchestrator config from environment variables"""
+        return cls(
+            base_url=os.getenv('ORCHESTRATOR_BASE_URL', 'http://localhost:8002'),
+            api_key=os.getenv('ORCHESTRATOR_API_KEY', ''),
+        )
+    
+    def validate(self) -> bool:
+        """Validate Orchestrator configuration"""
+        if not self.base_url:
+            return False
+        return True
+
+
+# ============================================================================
 # Logger Configuration
 # ============================================================================
 
@@ -364,6 +389,7 @@ class Config:
         self.transcript = TranscriptConfig.from_env()
         self.livekit = LiveKitConfig.from_env()
         self.tts = TTSConfig.from_env()
+        self.orchestrator = OrchestratorConfig.from_env()
         self.logger = LoggerConfig.from_env()
         
         self._initialized = True
@@ -379,6 +405,8 @@ class Config:
             raise ValueError("Invalid threading configuration")
         if not self.transcript.validate():
             raise ValueError("Invalid transcript configuration")
+        if not self.orchestrator.validate():
+            raise ValueError("Invalid orchestrator configuration")
     
     @classmethod
     def get_instance(cls) -> 'Config':

@@ -153,7 +153,7 @@ Group=$SERVICE_GROUP
 WorkingDirectory=$ARCH_DIR
 Environment="PATH=$STT_SERVICE_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=$STT_SERVICE_DIR/venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000
+ExecStart=$STT_SERVICE_DIR/venv/bin/python -m uvicorn stt_service.main:app --host localhost --port 8000
 Restart=always
 RestartSec=10
 StandardOutput=journal

@@ -9,9 +9,11 @@ from livekit import agents
 from src.core.transcript_manager import TranscriptManager
 from src.core.event_handlers import EventHandlers
 from src.core.tts_manager import TTSManager
+from src.core.agent_control_state import AgentControlState
 from src.logger import get_logger
 from src.config.application_config import get_config
-
+from src.services import orchestrator_client
+from livekit import api
 
 # Load config
 config = get_config()
@@ -20,7 +22,6 @@ logger = get_logger(__name__)
 
 async def entrypoint(ctx: agents.JobContext):
     """Main agent entrypoint - setup and lifecycle management"""
-    from livekit import api
 
     # Create a new token to change the identity displayed in the room
     new_token = api.AccessToken(config.livekit.api_key, config.livekit.api_secret)
@@ -37,33 +38,36 @@ async def entrypoint(ctx: agents.JobContext):
     ctx._info.token = new_token.to_jwt()
     await ctx.connect()
 
-
-    disconnected = asyncio.Event()
     logger.info(f"✅ Connected to room: {ctx.room.name}")
     # Get session_id from room name
     session_id = ctx.room.name
 
     transcript_manager = TranscriptManager(ctx)
-    event_handlers = EventHandlers(ctx, transcript_manager)
-    
+    control_state = AgentControlState(transcription_enabled=False)
+    event_handlers = EventHandlers(ctx, transcript_manager, control_state=control_state)
+
     ctx.room.on("track_subscribed", event_handlers.on_track_subscribed)
     ctx.room.on("track_unsubscribed", event_handlers.on_track_unsubscribed)
     ctx.room.on("participant_disconnected", event_handlers.on_participant_disconnected)
-    
-    for participant in ctx.room.remote_participants.values():
-        for pub in participant.track_publications.values():
+        
+    async def cleanup():
+        """Cleanup when agent shuts down"""
+        logger.info("🧹 Agent shutdown: cleaning resources...")
 
-            if not pub.subscribed:
+        try:
+            await orchestrator_client.unregister_room(session_id)
+        except Exception as e:
+            logger.error(f"unregister failed: {e}")
 
-                pub.set_subscribed(True)
+        await event_handlers.safe_disconnect_all()
+        await transcript_manager.cleanup()
 
-                track = pub.track
-                if track:
-                    # ✅ reuse handler
-                    event_handlers.on_track_subscribed(track, pub, participant)
-    event_handlers = EventHandlers(ctx, transcript_manager)
+        if tts_manager:
+            await tts_manager.cleanup()
 
-    
+    # Register cleanup callback
+    ctx.add_shutdown_callback(lambda: asyncio.create_task(cleanup()))
+
     for participant in ctx.room.remote_participants.values():
         for pub in participant.track_publications.values():
 
@@ -78,7 +82,99 @@ async def entrypoint(ctx: agents.JobContext):
 
     # TTS Manager (optional, check if TTS is enabled)
     tts_manager = None
-    
+
+    def _parse_json_bytes(data: bytes):
+        import json
+        try:
+            if data is None:
+                return None
+            if isinstance(data, (bytes, bytearray)):
+                s = bytes(data).decode("utf-8", errors="strict")
+            else:
+                s = str(data)
+            return json.loads(s)
+        except Exception:
+            return None
+
+    async def _send_agent_control_ack(status: str, details: dict | None = None):
+        import json, time
+        msg = {
+            "type": "agent_control_ack",
+            "status": status,
+            "timestamp": int(time.time() * 1000),
+            "details": details or {},
+        }
+        try:
+            await ctx.room.local_participant.publish_data(
+                json.dumps(msg).encode("utf-8"),
+                reliable=True,
+                topic="agent_control_ack",
+            )
+        except Exception as e:
+            logger.debug(f"Failed to send agent_control_ack: {e}")
+
+    async def _handle_agent_control(data_packet):
+        payload = _parse_json_bytes(getattr(data_packet, "data", None))
+        sender = data_packet.participant.identity if data_packet.participant else "unknown"
+        if not payload:
+            logger.warning(f"agent_control: invalid payload from {sender}")
+            await _send_agent_control_ack("error", {"error": "invalid_payload"})
+            return
+
+        action = payload.get("action") or payload.get("type")
+        if not action:
+            await _send_agent_control_ack("error", {"error": "missing_action"})
+            return
+
+        action = str(action).lower()
+        if action in ("start_transcription", "start", "enable_transcription", "enable"):
+            changed = await control_state.set_transcription_enabled(True)
+            started = await event_handlers.start_transcription_for_all_pending()
+            logger.info(
+                f"agent_control: transcription_enabled=True by {sender} (changed={changed}, started={started})"
+            )
+            await _send_agent_control_ack("ok", {"transcription_enabled": True, "started": started, "changed": changed})
+        elif action in ("stop_transcription", "stop", "disable_transcription", "disable"):
+            changed = await control_state.set_transcription_enabled(False)
+            stopped = await event_handlers.stop_transcription_for_all()
+            logger.info(
+                f"agent_control: transcription_enabled=False by {sender} (changed={changed}, stopped={stopped})"
+            )
+            await _send_agent_control_ack("ok", {"transcription_enabled": False, "stopped": stopped, "changed": changed})
+        elif action in ("status", "get_status"):
+            enabled = await control_state.get_transcription_enabled()
+            await _send_agent_control_ack("ok", {"transcription_enabled": enabled})
+        else:
+            await _send_agent_control_ack("error", {"error": "unknown_action", "action": action})
+
+    def on_data_received(data_packet):
+        """Central DataChannel dispatcher - routes messages to appropriate handlers"""
+        try:
+            topic = data_packet.topic
+            participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
+            logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
+
+            if topic == "tts_control":
+                if tts_manager:
+                    logger.info("🎯 Routing to TTSManager")
+                    asyncio.create_task(tts_manager.handle_tts_data(data_packet))
+                else:
+                    logger.warning("⚠️ Received TTS request but TTS is not enabled")
+            elif topic == "agent_control":
+                asyncio.create_task(_handle_agent_control(data_packet))
+            else:
+                logger.debug(f"Unhandled DataChannel topic: {topic}")
+        except Exception as e:
+            logger.error(f"❌ Error in DataChannel dispatcher: {e}", exc_info=True)
+
+    # Always register dispatcher (even if TTS is disabled)
+    ctx.room.on("data_received", on_data_received)
+
+    # Register room with orchestrator for webhook processing
+    await orchestrator_client.register_room(session_id)
+
+
+
     if config.tts.enabled:
         try:
             logger.info("Initializing TTS Manager...")
@@ -89,30 +185,6 @@ async def entrypoint(ctx: agents.JobContext):
                 session_id=session_id,
                 model_path=config.tts.model_path
             )
-            
-            def on_data_received(data_packet):
-                """Central DataChannel dispatcher - routes messages to appropriate handlers"""
-                try:
-                    topic = data_packet.topic
-                    participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
-                    
-                    # Log incoming data for debugging
-                    logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
-                    
-                    if topic == "tts_control":
-                        if tts_manager:
-                            logger.info(f"🎯 Routing to TTSManager")
-                            asyncio.create_task(tts_manager.handle_tts_data(data_packet))
-                        else:
-                            logger.warning("⚠️ Received TTS request but TTS is not enabled")
-                    else:
-                        logger.debug(f"Unhandled DataChannel topic: {topic}")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Error in DataChannel dispatcher: {e}", exc_info=True)
-            
-            ctx.room.on("data_received", on_data_received)
-
 
             # Initialize TTS (load model, setup track)
             if await tts_manager.initialize():
@@ -135,26 +207,6 @@ async def entrypoint(ctx: agents.JobContext):
         logger.info("TTS disabled (set ENABLE_TTS=true to enable)")
 
 
-    async def on_disconnected():
-        """Cleanup when room disconnects"""
-        logger.info("Room disconnected, cleaning up all clients")
-        await event_handlers.safe_disconnect_all()
-        # await agent_manager.cleanup()
-        await transcript_manager.cleanup()
-        
-        # Cleanup TTS if enabled
-        if tts_manager:
-            await tts_manager.cleanup()
-        
-        disconnected.set()
-
-
-
-
-    ctx.room.on("disconnected", lambda: asyncio.create_task(on_disconnected()))
-
- 
-
 
     await transcript_manager.send_welcome_message()
 
@@ -164,18 +216,8 @@ async def entrypoint(ctx: agents.JobContext):
     else:
         logger.info("🎤 Vosk Agent ready and waiting for participants...")
     
-    try:
-        await disconnected.wait()
-    except KeyboardInterrupt:
-        logger.info("Received interrupt signal")
-    finally:
-        logger.info("Shutting down agent...")
-        await event_handlers.safe_disconnect_all()
-        await transcript_manager.cleanup()
-        
-        # Cleanup TTS if enabled
-        if tts_manager:
-            await tts_manager.cleanup()
+    # Keep agent alive forever (cleanup callback will be called on shutdown)
+    await asyncio.Future()
 
 if __name__ == "__main__":
 
