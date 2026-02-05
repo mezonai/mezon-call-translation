@@ -143,7 +143,8 @@ class MongoDBService:
         self,
         room_name: str,
         initial_track_count: int = 1,
-        start_session_time: Optional[str] = None
+        start_session_time: str = "",
+        status: str =  "pending"
     ) -> Optional[ObjectId]:
 
         if not self.connected and not await self.connect():
@@ -160,7 +161,7 @@ class MongoDBService:
                     "$setOnInsert": {
                         "room_name": room_name,
                         "completed_tracks": 0,
-                        "status": "pending",
+                        "status": status,
                         "start_session_time": start_session_time,
                         "completed_at": None
                     },
@@ -172,7 +173,7 @@ class MongoDBService:
                 return_document=ReturnDocument.AFTER  # ⭐ quan trọng
             )
 
-            return room["_id"]
+            return room
         except PyMongoError as e:
             logger.error(f"Failed to create/get room: {e}")
             return None
@@ -347,9 +348,10 @@ class MongoDBService:
 
     async def get_room_session_by_name(self, room_name: str, start_session_time: str) -> Optional[Dict]:
         """Get room by name"""
+        print(f"room_name={room_name}, start_session_time={start_session_time}")
         if not self.connected:
             return None
-        return await self.rooms_collection.find_one({"room_name": room_name, "start_session_time": start_session_time})
+        return await self.rooms_collection.find_one({"room_name": room_name, "start_session_time": start_session_time.strip()})
 
     async def update_room_status(
         self,
@@ -382,11 +384,8 @@ class MongoDBService:
             return False
 
         try:
-            room = await self.get_room_session_by_name(room_name, start_session_time)
-            if not room:
-                logger.error(f"Room not found: {room_name}")
-                return False
-            
+            room = await self.create_or_get_room(room_name,0, start_session_time ,"final_room")
+            logger.info(f"Finalizing room: {room_name},{start_session_time} with _id={room["_id"]}")
             # only update when status not finalized
             if room["status"] in ["final_room", "completed"]:
                 logger.warning(f"Room already finalized: {room_name}")

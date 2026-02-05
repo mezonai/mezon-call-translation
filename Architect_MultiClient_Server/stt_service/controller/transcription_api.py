@@ -102,11 +102,12 @@ async def queue_transcription(request: TranscriptionRequest):
         if request.room.name:
             try:
                 mongodb_service = get_mongodb_service()
-                room_ref_id = await mongodb_service.create_or_get_room(
+                room = await mongodb_service.create_or_get_room(
                     room_name=request.room.name,
                     initial_track_count=1,
-                    start_session_time=request.room.start_session_time
+                    start_session_time=request.room.start_session_time.strip()
                 )
+                room_ref_id = room["_id"]
                 if room_ref_id:
                     logger.info(f"Room created/updated: room={request.room.name}, room_id={room_ref_id}")
                 else:
@@ -157,7 +158,7 @@ async def queue_transcription(request: TranscriptionRequest):
 @router.put("/rooms/end",response_model=dict)
 async def end_room_transcription(request: RoomInfo):
     mongodb_service = get_mongodb_service()
-
+    logger.info(f"Ending transcription for room: {request.name}, start_session_time: {request.start_session_time}")
     try:
         updated = await mongodb_service.final_room_status(
             room_name=request.name,

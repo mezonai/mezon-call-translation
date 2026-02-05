@@ -327,18 +327,18 @@ class EventHandlers:
                 if task:
                     task.cancel()
             
-            # Check the number of remaining remote participants
-            remaining_participants = len(self.ctx.room.remote_participants)
-            logger.info(f"Remaining remote participants: {remaining_participants}")
+            # # Check the number of remaining remote participants
+            # remaining_participants = len(self.ctx.room.remote_participants)
+            # logger.info(f"Remaining remote participants: {remaining_participants}")
             
-            # If no one is left in the room, the agent will disconnect
-            if remaining_participants == 0:
-                logger.info("No participants remaining in room, agent disconnecting...")
-                try:
-                    await self.ctx.room.disconnect()
-                    logger.info("Agent successfully disconnected from room")
-                except Exception as e:
-                    logger.error(f"Error disconnecting agent from room: {e}")
+            # # If no one is left in the room, the agent will disconnect
+            # if remaining_participants == 0:
+            #     logger.info("No participants remaining in room, agent disconnecting...")
+            #     try:
+            #         await self.ctx.room.disconnect()
+            #         logger.info("Agent successfully disconnected from room")
+            #     except Exception as e:
+            #         logger.error(f"Error disconnecting agent from room: {e}")
         
         asyncio.create_task(cleanup_participant())
 

@@ -207,7 +207,6 @@ async def unregister_room(
         egress_result = {"stopped": 0, "failed": 0}
         try:
             egress_result = await egress_service.stop_all_by_room(request.room_name)
-            logger.info(f"Stopped {egress_result['stopped']} egresses for room '{request.room_name}'")
         except Exception as e:
             logger.error(f"Error stopping egresses for room '{request.room_name}': {e}", exc_info=True)
             # Don't fail unregistration if egress stopping fails

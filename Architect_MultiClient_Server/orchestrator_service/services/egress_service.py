@@ -155,7 +155,7 @@ class EgressService:
         if not track_sids_to_stop:
             logger.info(f"No active egresses found for room '{room_name}'")
             return {"stopped": 0, "failed": 0}
-        
+        logger.info(f"Found {len(track_sids_to_stop)} active egresses for room '{room_name}'")
         logger.info(f"Stopping {len(track_sids_to_stop)} egresses for room '{room_name}'")
         
         # Stop each egress
