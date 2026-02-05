@@ -12,6 +12,7 @@ from src.core.websocket.stt_client import STTWebSocketClient
 from src.core.transcript_manager import TranscriptManager
 from src.logger import get_logger
 from src.core.vad_processor import RealTimeVADProcessor
+from src.core.agent_control_state import AgentControlState
 
 logger = get_logger(__name__)
 
@@ -19,11 +20,14 @@ logger = get_logger(__name__)
 class EventHandlers:
     """Handles room events: track subscription, participant disconnect, audio streaming"""
     
-    def __init__(self, ctx, transcript_manager: TranscriptManager, agent_manager=None):
+    def __init__(self, ctx, transcript_manager: TranscriptManager, control_state: AgentControlState, agent_manager=None):
         self.ctx = ctx
         self.transcript_manager = transcript_manager
+        self.control_state = control_state
         self.agent_manager = agent_manager
         self.active_clients = {}  # {participant_id: WebSocketClient}
+        self.transcription_tasks = {}  # {speaker_id: asyncio.Task}
+        self.pending_tracks = {}  # {speaker_id: (track, publication, participant)}
         self.cleanup_lock = asyncio.Lock()
         self.logger = get_logger("event_handlers")
 
@@ -76,11 +80,7 @@ class EventHandlers:
         Core audio processing pipeline:
         LiveKit track -> VAD processor -> WebSocket -> Vosk server
         """
-        # Phân biệt audio từ mic vs screen share
-        if publication.source == 4:  # Screen share audio
-            speaker_id = f"{participant.identity}-screen"
-        else:
-            speaker_id = participant.identity
+        speaker_id = self._speaker_id_from_publication(participant, publication)
 
         sid = self.session_id_from_room()
         logger.info(f"Starting transcription for {speaker_id} (session={sid})")
@@ -165,26 +165,103 @@ class EventHandlers:
             
             logger.info(f"Audio stream ended for {speaker_id} ({frames_processed} frames processed)")
             
+        except asyncio.CancelledError:
+            logger.info(f"Transcription task cancelled for {speaker_id}")
+            raise
         except Exception as e:
             logger.error(f"Error during audio streaming for {speaker_id}: {e}")
         finally:
             # Cleanup resources
+            try:
+                processor.stop_processing()
+                logger.info(f"Stopped VAD processing for {speaker_id}")
+            except Exception:
+                pass
+
+            try:
+                await ws_client.disconnect()
+            except Exception:
+                pass
+
             async with self.cleanup_lock:
-                if speaker_id in self.active_clients:
-                    processor.stop_processing()
-                    logger.info(f"Stopped VAD processing for {speaker_id}")
-                    
-                    await ws_client.disconnect()
-                    self.active_clients.pop(speaker_id, None)
-                    logger.info(f"Cleaned up transcription for {speaker_id}")
-                    
-                    # Thông báo agent manager về client removal
-                    if self.agent_manager:
-                        await self.agent_manager.announce_agent_status("client_removed", {
-                            "participant_removed": speaker_id,
-                            "total_clients": len(self.active_clients),
-                            "clients": list(self.active_clients.keys())
-                        })
+                self.active_clients.pop(speaker_id, None)
+                self.transcription_tasks.pop(speaker_id, None)
+
+            logger.info(f"Cleaned up transcription for {speaker_id}")
+
+            # Thông báo agent manager về client removal
+            if self.agent_manager:
+                try:
+                    await self.agent_manager.announce_agent_status("client_removed", {
+                        "participant_removed": speaker_id,
+                        "total_clients": len(self.active_clients),
+                        "clients": list(self.active_clients.keys())
+                    })
+                except Exception:
+                    pass
+
+    def _speaker_id_from_publication(self, participant: rtc.RemoteParticipant, publication: rtc.TrackPublication) -> str:
+        # Phân biệt audio từ mic vs screen share
+        if publication.source == 4:  # Screen share audio
+            return f"{participant.identity}-screen"
+        return participant.identity
+
+    async def _start_transcription_for_speaker_id(self, speaker_id: str) -> bool:
+        """Start transcription task for a pending speaker_id if available."""
+        async with self.cleanup_lock:
+            if speaker_id in self.transcription_tasks:
+                return False
+            pending = self.pending_tracks.get(speaker_id)
+            if not pending:
+                return False
+            track, publication, participant = pending
+            task = asyncio.create_task(self.manage_speaker_transcription(track, publication, participant))
+            self.transcription_tasks[speaker_id] = task
+            return True
+
+    async def start_transcription_for_all_pending(self) -> int:
+        """Start transcription for all currently pending tracks (best-effort)."""
+        async with self.cleanup_lock:
+            speaker_ids = list(self.pending_tracks.keys())
+        started = 0
+        for sid in speaker_ids:
+            try:
+                if await self._start_transcription_for_speaker_id(sid):
+                    started += 1
+            except Exception as e:
+                logger.error(f"Failed to start transcription for {sid}: {e}")
+        return started
+
+    async def stop_transcription_for_all(self) -> int:
+        """Stop all active transcription tasks (best-effort)."""
+        async with self.cleanup_lock:
+            tasks = list(self.transcription_tasks.items())
+            self.transcription_tasks.clear()
+            # Also remove active clients so streams break quickly
+            self.active_clients.clear()
+
+        stopped = 0
+        for speaker_id, task in tasks:
+            try:
+                task.cancel()
+                stopped += 1
+            except Exception:
+                pass
+        return stopped
+
+    async def get_gate_stats(self) -> dict:
+        """Small helper for debug/log/health."""
+        async with self.cleanup_lock:
+            pending = len(self.pending_tracks)
+            active = len(self.active_clients)
+            running_tasks = len(self.transcription_tasks)
+        enabled = await self.control_state.get_transcription_enabled()
+        return {
+            "transcription_enabled": enabled,
+            "pending_tracks": pending,
+            "active_clients": active,
+            "running_tasks": running_tasks,
+        }
 
     def on_track_subscribed(
         self, 
@@ -194,10 +271,17 @@ class EventHandlers:
     ):
         """Handle new audio track subscription"""
         if track.kind == rtc.TrackKind.KIND_AUDIO:
-            logger.info(f"New audio track from {participant.identity}")
-            asyncio.create_task(
-                self.manage_speaker_transcription(track, publication, participant)
-            )
+            speaker_id = self._speaker_id_from_publication(participant, publication)
+            logger.info(f"New audio track from {speaker_id} (registered; gated)")
+
+            async def register_and_maybe_start():
+                async with self.cleanup_lock:
+                    self.pending_tracks[speaker_id] = (track, publication, participant)
+                enabled = await self.control_state.get_transcription_enabled()
+                if enabled:
+                    await self._start_transcription_for_speaker_id(speaker_id)
+
+            asyncio.create_task(register_and_maybe_start())
 
     def on_track_unsubscribed(
         self, 
@@ -207,21 +291,20 @@ class EventHandlers:
     ):
         """Cleanup khi unsubscribe track"""
         if getattr(track, "kind", None) == rtc.TrackKind.KIND_AUDIO:
-            # Handle screen share audio separately
-            if publication.source == 4:
-                pid = f"{participant.identity}-screen"
-            else:
-                pid = participant.identity
-
+            pid = self._speaker_id_from_publication(participant, publication)
             logger.info(f"Audio track unsubscribed for {pid}")
             
             async def cleanup_client():
                 async with self.cleanup_lock:
+                    self.pending_tracks.pop(pid, None)
                     client = self.active_clients.get(pid)
                     if client:
                         await client.disconnect()
                         self.active_clients.pop(pid, None)
                         logger.info(f"Cleaned up client for {pid}")
+                    task = self.transcription_tasks.pop(pid, None)
+                    if task:
+                        task.cancel()
             
             asyncio.create_task(cleanup_client())
 
@@ -237,10 +320,30 @@ class EventHandlers:
                     await client.disconnect()
                     self.active_clients.pop(pid, None)
                     logger.info(f"Cleaned up disconnected participant {pid}")
+                
+                # Cleanup pending tracks and tasks for this participant
+                self.pending_tracks.pop(pid, None)
+                task = self.transcription_tasks.pop(pid, None)
+                if task:
+                    task.cancel()
+            
+            # Check the number of remaining remote participants
+            remaining_participants = len(self.ctx.room.remote_participants)
+            logger.info(f"Remaining remote participants: {remaining_participants}")
+            
+            # If no one is left in the room, the agent will disconnect
+            if remaining_participants == 0:
+                logger.info("No participants remaining in room, agent disconnecting...")
+                try:
+                    await self.ctx.room.disconnect()
+                    logger.info("Agent successfully disconnected from room")
+                except Exception as e:
+                    logger.error(f"Error disconnecting agent from room: {e}")
+        
         asyncio.create_task(cleanup_participant())
 
     async def safe_disconnect_all(self):
-        """Disconnect tất cả clients với timeout protection"""
+        """Disconnect all clients with timeout protection"""
         async with self.cleanup_lock:
             if not self.active_clients:
                 return
@@ -253,7 +356,7 @@ class EventHandlers:
                 for client in list(self.active_clients.values())
             ]
             
-            # Wait với timeout để tránh hang
+            # Wait with timeout to avoid hanging
             if tasks:
                 try:
                     await asyncio.wait_for(

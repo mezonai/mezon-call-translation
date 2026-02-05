@@ -88,7 +88,6 @@ class MongoDBService:
             
             # Test connection
             await self.client.admin.command("ping")
-            await self._create_indexes()
 
             self.connected = True
             logger.info("✅ Connected to MongoDB with authentication")
@@ -99,40 +98,6 @@ class MongoDBService:
             self.connected = False
             return False
 
-    async def _create_indexes(self):
-        """Create indexes for all collections"""
-        try:
-            # Indexes for rooms collection
-            await self.rooms_collection.create_index("room_name", unique=True)
-            await self.rooms_collection.create_index("status")
-            await self.rooms_collection.create_index("created_at")
-
-            # Indexes for tracks collection
-            await self.tracks_collection.create_index("egress_id", unique=True)
-            await self.tracks_collection.create_index("track_id")
-            await self.tracks_collection.create_index("room_ref_id")
-            await self.tracks_collection.create_index("participant_identity")
-            await self.tracks_collection.create_index("created_at")
-
-            # Indexes for transcript_chunks collection
-            await self.chunks_collection.create_index("track_ref_id")
-            await self.chunks_collection.create_index(
-                [("track_ref_id", 1), ("chunk_index", 1)],
-                unique=True
-            )
-            await self.chunks_collection.create_index("start_time")
-            await self.chunks_collection.create_index("end_time")
-            await self.chunks_collection.create_index("item_count")
-
-            # Indexes for rooms_summary collection
-            await self.summary_collection.create_index("room_id")
-            await self.summary_collection.create_index("created_at")
-            await self.summary_collection.create_index("participants")
-
-            logger.info("✅ MongoDB indexes created for all collections")
-
-        except Exception as e:
-            logger.warning(f"Failed to create indexes: {e}")
 
     async def disconnect(self):
         """Close MongoDB connection"""

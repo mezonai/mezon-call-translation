@@ -20,6 +20,8 @@ from orchestrator_service.api.webhook_api import router as webhook_router, egres
 from orchestrator_service.api.room_api import router as room_router
 from orchestrator_service.api.track_api import router as track_router
 from orchestrator_service.api.transcript_api import router as transcript_router
+from orchestrator_service.api.agent_control_api import router as agent_control_router
+from orchestrator_service.api.room_registry_api import router as room_registry_router
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
 from orchestrator_service.api.summary_api import internal_router as summary_internal_router, client_router as summary_client_router
 
@@ -63,6 +65,8 @@ app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
 app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
 app.include_router(track_router)  # Has prefix="/api/transcripts/tracks"
 app.include_router(transcript_router)  # Has prefix="/api/transcripts"
+app.include_router(agent_control_router)  # Has prefix="/api/agent-control"
+app.include_router(room_registry_router)  # Has prefix="/api/room-registry"
 app.include_router(summary_internal_router)
 app.include_router(summary_client_router)
 

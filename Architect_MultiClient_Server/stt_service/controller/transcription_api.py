@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/transcribe", tags=["transcription"])
 
 class RoomInfo(BaseModel):
     name: str
+    start_session_time: Optional[str]
 
 class ParticipantInfo(BaseModel):
     identity: str
@@ -51,7 +52,6 @@ class TranscriptionRequest(BaseModel):
     track: TrackInfo
     audio: AudioInfo
     timeline: TimelineInfo
-
 
 class TranscriptionResponse(BaseModel):
     """Response model for queued task."""
@@ -104,7 +104,8 @@ async def queue_transcription(request: TranscriptionRequest):
                 mongodb_service = get_mongodb_service()
                 room_ref_id = await mongodb_service.create_or_get_room(
                     room_name=request.room.name,
-                    initial_track_count=1
+                    initial_track_count=1,
+                    start_session_time=request.room.start_session_time
                 )
                 if room_ref_id:
                     logger.info(f"Room created/updated: room={request.room.name}, room_id={room_ref_id}")
@@ -153,24 +154,25 @@ async def queue_transcription(request: TranscriptionRequest):
             detail=f"Failed to queue task: {str(e)}"
         )
 
-@router.put("/rooms/{room_name}/end",response_model=dict)
-async def end_room_transcription(room_name: str):
+@router.put("/rooms/end",response_model=dict)
+async def end_room_transcription(request: RoomInfo):
     mongodb_service = get_mongodb_service()
 
     try:
         updated = await mongodb_service.final_room_status(
-            room_name=room_name,
+            room_name=request.name,
+            start_session_time=request.start_session_time
         )
 
         if not updated:
             raise HTTPException(
                 status_code=404,
-                detail=f"Room {room_name} not found or already ended"
+                detail=f"Room {request.name} not found or already ended"
             )
 
         return {
             "success": True,
-            "message": f"Room {room_name} ended successfully"
+            "message": f"Room {request.name} ended successfully"
         }
 
     except HTTPException:

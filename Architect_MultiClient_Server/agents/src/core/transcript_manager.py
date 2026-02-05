@@ -92,8 +92,6 @@ class TranscriptManager:
         participant_identity: str,
         participant_name: str,
         seq: int
-        participant_name: str,
-        seq: int
     ):
         """Send transcript to API server"""
         try:
@@ -106,7 +104,6 @@ class TranscriptManager:
                 resp = await client.post(
                     api_url,
                     json={"room_name": room_name, "message": text},
-                    timeout=5.0
                     timeout=5.0
                 )
                 self.logger.info(
