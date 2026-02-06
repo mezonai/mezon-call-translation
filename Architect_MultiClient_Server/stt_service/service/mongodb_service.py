@@ -393,21 +393,21 @@ class MongoDBService:
             logger.info(f"Finalizing room: {room_name},{start_session_time} with _id={room["_id"]}")
             # only update when status not finalized
             
-            if(room["remain_tracks"] <= 0):
+            # if(room["remain_tracks"] <= 0):
                 
-                await self.rooms_collection.update_one(
-                    {"_id": room["_id"]},
-                    {
-                    "$set": {
-                        "status": "completed",
-                        "finalized_at": datetime.utcnow()
-                    }
-                }
-                )
-                logger.info(f"🔒 Room finalized: {room_name} → completed")
+            #     await self.rooms_collection.update_one(
+            #         {"_id": room["_id"]},
+            #         {
+            #         "$set": {
+            #             "status": "completed",
+            #             "finalized_at": datetime.utcnow()
+            #         }
+            #     }
+            #     )
+            #     logger.info(f"🔒 Room finalized: {room_name} → completed")
 
-                # Trigger summary generation
-                asyncio.create_task(self._trigger_summary_api(str(room["_id"])))
+            #     # Trigger summary generation
+            #     asyncio.create_task(self._trigger_summary_api(str(room["_id"])))
             return True
 
         except PyMongoError as e:
