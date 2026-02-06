@@ -26,7 +26,7 @@ async def health_check():
         "status": "ok",
         "service": "livekit-webhook-handler",
         "active_egresses": egress_service.get_active_count(),
-        "timestamp": datetime.now().isoformat()
+        "timestamp":  datetime.utcnow()
     }
 
 

@@ -191,7 +191,7 @@ class SummaryService:
             participants=list(unique_participants),
             summary_data=summary_data_result,
             full_text=full_text,
-            created_at=datetime.now(),
+            created_at= datetime.utcnow(),
             total_segments=len(all_segments)
         )
         

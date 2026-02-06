@@ -287,7 +287,7 @@ async def health_check():
             "status": "ok" if connected else "degraded",
             "service": "transcript-api",
             "mongodb_connected": connected,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.utcnow()
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -296,5 +296,5 @@ async def health_check():
             "service": "transcript-api",
             "mongodb_connected": False,
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
+            "timestamp":  datetime.utcnow()
         }

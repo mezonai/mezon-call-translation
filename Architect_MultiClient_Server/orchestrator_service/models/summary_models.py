@@ -13,6 +13,6 @@ class RoomSummary(BaseModel):
     participants: List[str] = []
     summary_data: Dict[str, Any]
     full_text: str
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory= datetime.utcnow())
     total_segments: int = 0
     metadata: Optional[Dict[str, Any]] = None
