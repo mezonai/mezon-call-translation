@@ -505,12 +505,18 @@ class MongoDBService:
                 query["created_at"] = {"$lte": end_time}
             cursor = self.rooms_collection.find(query).sort("created_at", -1)
             room_list = await cursor.to_list(None)
+            room_dict = {str(room["_id"]): room for room in room_list}
             room_ids = [str(room["_id"]) for room in room_list]
 
             # 2. get summary list
             summary_list = await self.summary_collection.find(
                 {"room_id": {"$in": room_ids}}
             ).sort("created_at", -1).to_list(None)
+
+            # Override created_at and completed_at
+            for summary in summary_list:
+                summary["created_at"] = room_dict.get(str(summary["room_id"])).get("created_at")
+                summary["completed_at"] = room_dict.get(str(summary["room_id"])).get("completed_at")
             return summary_list
         except Exception as e:
             logger.error(f"Failed to get summary by room name: {e}")
