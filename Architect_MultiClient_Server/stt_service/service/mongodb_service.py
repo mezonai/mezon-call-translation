@@ -5,7 +5,7 @@ MongoDB service for storing STT transcripts:
 - Transcript_chunks collection: Segments divided into chunks (max 200 items/chunk)
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import PyMongoError
@@ -144,7 +144,8 @@ class MongoDBService:
         room_name: str,
         initial_track_count: int = 1,
         start_session_time: str = "",
-        status: str =  "pending"
+        status: str =  "pending",
+        completed_at: Optional[datetime] = None
     ) -> Optional[ObjectId]:
 
         if not self.connected and not await self.connect():
@@ -152,6 +153,8 @@ class MongoDBService:
             return None
 
         try:
+            dt = datetime.strptime(start_session_time, "%Y%m%d_%H%M%S")
+            dt = dt.replace(tzinfo=timezone.utc)
             room = await self.rooms_collection.find_one_and_update(
                 {
                     "room_name": room_name,
@@ -163,8 +166,8 @@ class MongoDBService:
                         "completed_tracks": 0,
                         "status": status,
                         "start_session_time": start_session_time,
-                        "created_at": datetime.strptime(start_session_time, "%Y%m%d_%H%M%S"),
-                        "completed_at": None
+                        "created_at": dt,
+                        "completed_at": completed_at
                     },
                     "$inc": {
                         "remain_tracks": initial_track_count
@@ -264,7 +267,7 @@ class MongoDBService:
                     {
                         "$set": {
                             "status": "completed",
-                            "completed_at": datetime.utcnow()
+                            "finalized_at": datetime.utcnow()
                         }
                     }
                 )
@@ -385,28 +388,25 @@ class MongoDBService:
             return False
 
         try:
-            room = await self.create_or_get_room(room_name,0, start_session_time ,"final_room")
+            completed_at = datetime.utcnow()
+            room = await self.create_or_get_room(room_name,0, start_session_time ,"final_room", completed_at)
             logger.info(f"Finalizing room: {room_name},{start_session_time} with _id={room["_id"]}")
             # only update when status not finalized
-            if room["status"] in ["final_room", "completed"]:
-                logger.warning(f"Room already finalized: {room_name}")
-                return True
-            new_status = "final_room" if room["remain_tracks"] > 0 else "completed"
             
-            update_doc = {
-                "$set": {
-                    "status": new_status,
-                    "finalized_at": datetime.utcnow()
+            if(room["remain_tracks"] <= 0):
+                
+                await self.rooms_collection.update_one(
+                    {"_id": room["_id"]},
+                    {
+                    "$set": {
+                        "status": "completed",
+                        "finalized_at": datetime.utcnow()
+                    }
                 }
-            }
-            
-            await self.rooms_collection.update_one(
-                {"_id": room["_id"]},
-                update_doc
-            )
-            
-            logger.info(f"🔒 Room finalized: {room_name} → {new_status}")
-            if new_status == "completed":
+                )
+                logger.info(f"🔒 Room finalized: {room_name} → completed")
+
+                # Trigger summary generation
                 asyncio.create_task(self._trigger_summary_api(str(room["_id"])))
             return True
 

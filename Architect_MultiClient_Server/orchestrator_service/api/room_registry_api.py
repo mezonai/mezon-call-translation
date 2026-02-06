@@ -28,7 +28,6 @@ transcription_service = TranscriptionService()
 class RoomRegisterRequest(BaseModel):
     """Request model for room registration"""
     room_name: str = Field(..., description="Room name to register")
-    start_time: Optional[float] = Field(None, description="Start time (Unix timestamp). If not provided, current time is used.")
     
     class Config:
         json_schema_extra = {
@@ -66,20 +65,14 @@ async def register_room(
     ```json
     {
         "room_name": "my-room-123",
-        "start_time": null
     }
     ```
     """
     try:
         registry = get_room_registry()
         
-        # create actual_start_time string in ISO format
-        if request.start_time is not None:
-            # if provided, use the given start_time
-            actual_start_time = datetime.fromtimestamp(request.start_time).strftime("%Y%m%d_%H%M%S")
-        else:
-            # If not provided, use the current time
-            actual_start_time = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        # If not provided, use the current time
+        actual_start_time = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
         # Register room in registry 
         if not registry.register_room(request.room_name, actual_start_time):
