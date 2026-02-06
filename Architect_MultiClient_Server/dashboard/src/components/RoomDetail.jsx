@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
-  getRoomByName, 
-  getRoomStatistics, 
-  getSummaryByRoom
+  getRoomById, 
+  getRoomStatisticsById, 
+  getSummaryByRoomId
 } from '../services/api';
 
 const RoomDetail = () => {
-  const { roomName } = useParams();
+  const { roomId } = useParams();
   const navigate = useNavigate();
   
   const [room, setRoom] = useState(null);
@@ -19,7 +19,7 @@ const RoomDetail = () => {
 
   useEffect(() => {
     fetchRoomData();
-  }, [roomName]);
+  }, [roomId]);
 
   const fetchRoomData = async () => {
     try {
@@ -28,9 +28,9 @@ const RoomDetail = () => {
 
       // Fetch room details, statistics, and summaries in parallel
       const [roomData, statsData, summaryData] = await Promise.all([
-        getRoomByName(roomName),
-        getRoomStatistics(roomName),
-        getSummaryByRoom(roomName)
+        getRoomById(roomId),
+        getRoomStatisticsById(roomId),
+        getSummaryByRoomId(roomId)
       ]);
 
       setRoom(roomData.room);
@@ -174,7 +174,7 @@ const RoomDetail = () => {
           >
             ← Back
           </button>
-          <h2 className="text-3xl font-bold text-gray-900">{roomName}</h2>
+          <h2 className="text-3xl font-bold text-gray-900">{room.room_name}</h2>
           {getStatusBadge(room.status)}
         </div>
         <button

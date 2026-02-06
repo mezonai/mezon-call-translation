@@ -141,7 +141,7 @@ const RoomList = () => {
                   <tr 
                     key={room._id} 
                     className="hover:bg-gray-50 cursor-pointer transition"
-                    onClick={() => navigate(`/room/${room.room_name}`)}
+                    onClick={() => navigate(`/room/${room._id}`)}
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
@@ -161,7 +161,7 @@ const RoomList = () => {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          navigate(`/room/${room.room_name}`);
+                          navigate(`/room/${room._id}`);
                         }}
                         className="text-blue-600 hover:text-blue-900 font-medium"
                       >

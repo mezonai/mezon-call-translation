@@ -79,10 +79,24 @@ async def get_summary_by_room_name(
     """
     mongodb = get_mongodb_service()
     summaries = await mongodb.get_summary_by_room_name(room_name, start_time, end_time)
+    return {
+        "status": "ok",
+        "data": summaries,
+        "count": len(summaries)
+    }
+
+@client_router.get("/room/id/{room_id}", response_description="Get summary by room ID")
+async def get_summary_by_room_id(
+    room_id: str,
+    ):
+    """
+    Get summary by room id.
+    """
+    mongodb = get_mongodb_service()
+    summaries = await mongodb.get_summary_by_room_id(room_id)
     # remove unnecessary fields
     for summary in summaries:
         summary.pop("_id", None)
-        summary.pop("room_id", None)
         summary.pop("summary_text", None)
     return {
         "status": "ok",

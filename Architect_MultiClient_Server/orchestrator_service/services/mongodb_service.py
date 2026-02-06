@@ -410,6 +410,43 @@ class MongoDBService:
             logger.error(f"Failed to get room statistics: {e}")
             return {}
 
+    async def get_room_statistics_by_id(self, room_id: str) -> Dict[str, Any]:
+        """Get detailed statistics for a room by ID"""
+        try:
+            room = await self.get_room_by_id(room_id)
+            if not room:
+                return {}
+            
+            tracks = await self.get_tracks_by_room(room_id)
+            
+            total_duration = 0
+            total_segments = 0
+            
+            for track in tracks:
+                chunks = await self.get_chunks_by_track(str(track["_id"]))
+                for chunk in chunks:
+                    total_segments += chunk.get("item_count", 0)
+                
+                audio_info = track.get("audio_info", {})
+                duration_ns = int(audio_info.get("duration_sec", "0"))
+                total_duration += duration_ns / 1_000_000_000  # Convert to seconds
+            
+            return {
+                "room_id": room_id,
+                "room_name": room.get("room_name"),
+                "status": room.get("status"),
+                "total_tracks": len(tracks),
+                "completed_tracks": room.get("completed_tracks", 0),
+                "remain_tracks": room.get("remain_tracks", 0),
+                "total_duration_sec": total_duration,
+                "total_segments": total_segments,
+                "created_at": room.get("created_at"),
+                "completed_at": room.get("completed_at")
+            }
+        except Exception as e:
+            logger.error(f"Failed to get room statistics by ID: {e}")
+            return {}
+
     async def get_participant_statistics(self, participant_identity: str) -> Dict[str, Any]:
         """Get statistics for a participant across all rooms"""
         try:
@@ -499,10 +536,12 @@ class MongoDBService:
         try:
             # 1. get room list
             query = {"room_name": room_name}
-            if start_time:
-                query["created_at"] = {"$gte": start_time}
-            if end_time:
-                query["created_at"] = {"$lte": end_time}
+            if start_time or end_time:
+                query["created_at"] = {}
+                if start_time:
+                    query["created_at"]["$gte"] = start_time
+                if end_time:
+                    query["created_at"]["$lte"] = end_time
             cursor = self.rooms_collection.find(query).sort("created_at", -1)
             room_list = await cursor.to_list(None)
             room_dict = {str(room["_id"]): room for room in room_list}
@@ -515,11 +554,34 @@ class MongoDBService:
 
             # Override created_at and completed_at
             for summary in summary_list:
-                summary["created_at"] = room_dict.get(str(summary["room_id"])).get("created_at")
-                summary["completed_at"] = room_dict.get(str(summary["room_id"])).get("completed_at")
+                created_at = room_dict.get(str(summary["room_id"])).get("created_at")
+                completed_at = room_dict.get(str(summary["room_id"])).get("completed_at")
+                
+                # Format datetime to ISO 8601 with Z suffix (UTC) and rounded to seconds
+                if isinstance(created_at, datetime):
+                    summary["created_at"] = created_at.replace(microsecond=0).isoformat() + 'Z'
+                else:
+                    summary["created_at"] = created_at
+                
+                if isinstance(completed_at, datetime):
+                    summary["completed_at"] = completed_at.replace(microsecond=0).isoformat() + 'Z'
+                else:
+                    summary["completed_at"] = completed_at
+                
+                summary.pop("_id", None)
+                summary.pop("room_id", None)
+                summary.pop("summary_text", None)
             return summary_list
         except Exception as e:
             logger.error(f"Failed to get summary by room name: {e}")
+            return []
+
+    async def get_summary_by_room_id(self, room_id: str) -> List[Dict[str, Any]]:
+        """Get summary by room id"""
+        try:
+            return await self.summary_collection.find({"room_id": room_id}).to_list(None)
+        except Exception as e:
+            logger.error(f"Failed to get summary by room id: {e}")
             return []
 
     # ========================================

@@ -29,8 +29,18 @@ export const getRoomByName = async (roomName) => {
   return response.data;
 };
 
+export const getRoomById = async (roomId) => {
+  const response = await apiClient.get(`/api/transcripts/rooms/id/${roomId}`);
+  return response.data;
+};
+
 export const getRoomStatistics = async (roomName) => {
   const response = await apiClient.get(`/api/transcripts/rooms/${roomName}/statistics`);
+  return response.data;
+};
+
+export const getRoomStatisticsById = async (roomId) => {
+  const response = await apiClient.get(`/api/transcripts/rooms/id/${roomId}/statistics`);
   return response.data;
 };
 
@@ -43,6 +53,11 @@ export const getSummaryByRoom = async (roomName, startTime = null, endTime = nul
   const query = queryParams.toString();
   const url = `/api/summary/room/${roomName}${query ? `?${query}` : ''}`;
   const response = await apiClient.get(url);
+  return response.data;
+};
+
+export const getSummaryByRoomId = async (roomId) => {
+  const response = await apiClient.get(`/api/summary/room/id/${roomId}`);
   return response.data;
 };
 

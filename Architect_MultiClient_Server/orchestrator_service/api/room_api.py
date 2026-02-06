@@ -20,6 +20,7 @@ from orchestrator_service.utils.transcript_validators import (
     SkipQuery,
     validate_date_range
 )
+from bson import ObjectId
 
 router = APIRouter(prefix="/api/transcripts/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
@@ -160,6 +161,85 @@ async def get_room_statistics(
         stats = await mongodb.get_room_statistics(room_name)
         if not stats:
             raise HTTPException(status_code=404, detail=f"Room '{room_name}' not found")
+        
+        return {
+            "status": "ok",
+            "statistics": stats
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get room statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/id/{room_id}", response_description="Get room by ID")
+async def get_room_by_id(
+    room_id: str,
+    auth: Dict[str, Any] = Depends(verify_api_key)
+):
+    """
+    Get room details by room ID.
+    
+    - **room_id**: The ObjectId of the room to retrieve
+    """
+    try:
+        mongodb = get_mongodb_service()
+        if not mongodb.connected:
+            await mongodb.connect()
+        
+        # Validate ObjectId format
+        try:
+            ObjectId(room_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
+        
+        room = await mongodb.get_room_by_id(room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+        
+        room["_id"] = str(room["_id"])
+        
+        return {
+            "status": "ok",
+            "room": room
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get room: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
+async def get_room_statistics_by_id(
+    room_id: str,
+    auth: Dict[str, Any] = Depends(verify_api_key)
+):
+    """
+    Get detailed statistics for a specific room by ID.
+    
+    - **room_id**: The ObjectId of the room
+    
+    Returns:
+    - Total tracks, completed/remaining tracks
+    - Total duration in seconds
+    - Total transcript segments
+    """
+    try:
+        mongodb = get_mongodb_service()
+        if not mongodb.connected:
+            await mongodb.connect()
+        
+        # Validate ObjectId format
+        try:
+            ObjectId(room_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
+        
+        stats = await mongodb.get_room_statistics_by_id(room_id)
+        if not stats:
+            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
         
         return {
             "status": "ok",
