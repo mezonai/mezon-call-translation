@@ -166,8 +166,8 @@ class MongoDBService:
                         "completed_tracks": 0,
                         "status": status,
                         "start_session_time": start_session_time,
-                        "created_at": dt,
-                        "completed_at": completed_at
+                        "completed_at": None
+
                     },
                     "$inc": {
                         "remain_tracks": initial_track_count
