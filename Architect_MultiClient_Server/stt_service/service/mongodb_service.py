@@ -165,6 +165,7 @@ class MongoDBService:
                         "room_name": room_name,
                         "completed_tracks": 0,
                         "status": status,
+                        "created_at": dt,
                         "start_session_time": start_session_time,
                         "completed_at": completed_at
 
