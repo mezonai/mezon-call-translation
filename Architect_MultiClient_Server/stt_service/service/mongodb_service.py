@@ -165,9 +165,10 @@ class MongoDBService:
                         "room_name": room_name,
                         "completed_tracks": 0,
                         "status": status,
-                        "start_session_time": start_session_time,
                         "created_at": dt,
+                        "start_session_time": start_session_time,
                         "completed_at": completed_at
+
                     },
                     "$inc": {
                         "remain_tracks": initial_track_count
@@ -391,23 +392,27 @@ class MongoDBService:
             completed_at = datetime.utcnow()
             room = await self.create_or_get_room(room_name,0, start_session_time ,"final_room", completed_at)
             logger.info(f"Finalizing room: {room_name},{start_session_time} with _id={room["_id"]}")
-            # only update when status not finalized
             
-            # if(room["remain_tracks"] <= 0):
-                
-            #     await self.rooms_collection.update_one(
-            #         {"_id": room["_id"]},
-            #         {
-            #         "$set": {
-            #             "status": "completed",
-            #             "finalized_at": datetime.utcnow()
-            #         }
-            #     }
-            #     )
-            #     logger.info(f"🔒 Room finalized: {room_name} → completed")
+            if room["status"] in ["final_room", "completed"]:
+                logger.warning(f"Room already finalized: {room_name}")
+                return True
+            new_status = "final_room" if room["remain_tracks"] > 0 else "completed"
 
-            #     # Trigger summary generation
-            #     asyncio.create_task(self._trigger_summary_api(str(room["_id"])))
+            update_doc = {
+                "$set": {
+                    "status": new_status,
+                    "finalized_at": datetime.utcnow()
+                }
+            }
+            
+            await self.rooms_collection.update_one(
+                {"_id": room["_id"]},
+                update_doc
+            )
+            
+            logger.info(f"🔒 Room finalized: {room_name} → {new_status}")
+            if new_status == "completed":
+                asyncio.create_task(self._trigger_summary_api(str(room["_id"])))
             return True
 
         except PyMongoError as e:
