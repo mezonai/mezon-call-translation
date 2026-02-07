@@ -55,6 +55,7 @@ class WebhookHandler:
             "room_started": self._handle_room_started,
             "room_finished": self._handle_room_finished,
             "egress_ended": self._handle_egress_ended,
+            "egress_started": self._handle_egress_started
         }
         
         handler = handlers.get(event_type)
@@ -128,6 +129,13 @@ class WebhookHandler:
         
         return WebhookResponse(received=True, action="room_finished_logged")
     
+    async def _handle_egress_started(self, event: Dict) -> WebhookResponse:
+        """Handle when an egress starts"""
+        egress_id = event.get("egressInfo", {}).get("egressId", "unknown")
+        room_name = event.get("room", {}).get("name", "unknown")
+        logger.info(f"  Egress started: {egress_id} for room {room_name}")
+        return WebhookResponse(received=True, action="egress_started_logged")
+
     async def _handle_egress_ended(self, event: Dict) -> WebhookResponse:
         """Handle when an egress ends"""
         egress = event.get("egressInfo", {})

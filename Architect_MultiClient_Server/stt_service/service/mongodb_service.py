@@ -139,6 +139,31 @@ class MongoDBService:
     # 🏠 ROOM METHODS
     # ==========================================================
 
+    async def create_room_session(
+        self,
+        room_name: str,
+        status: str = "pending",
+    ) -> Optional[ObjectId]:
+        
+        if not self.connected and not await self.connect():
+            logger.error("Cannot create room: MongoDB not connected")
+            return None
+        try:
+            room_data = {
+                "room_name": room_name,
+                "status": status,
+                "created_at": datetime.utcnow(),
+            }
+            
+            result = await self.rooms_collection.insert_one(room_data)
+            logger.info(f"📁 Room created: room={room_name}, _id={result.inserted_id}")
+            return result.inserted_id
+            
+        except PyMongoError as e:
+            logger.error(f"Failed to create room: {e}")
+            return None
+
+
     async def create_or_get_room(
         self,
         room_name: str,

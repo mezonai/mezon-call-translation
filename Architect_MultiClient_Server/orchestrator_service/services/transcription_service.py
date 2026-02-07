@@ -88,3 +88,43 @@ class TranscriptionService:
         except Exception as e:
             logger.error(f"✗ Error notifying final room: {e}")
             return False
+        
+    async def start_room(self, room_name: str ) -> bool:
+        """
+        Notify transcription service to start room
+        
+        Args:
+            room_name: Name of the room to start
+
+        Returns:
+            True if successful, False if failed
+        """
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                url = f"{self.api_url}/rooms/start"
+                payload = {
+                    "room_name": room_name,
+                }
+                logger.info(f"📤 Notifying final room: {url} with payload: {payload}")
+                
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"✓ Finalized room: {room_name}")
+                    logger.debug(f"Response: {response.json()}")
+                    return True
+                else:
+                    logger.error(f"✗ Finalize room failed. Status: {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    return False
+                    
+        except httpx.TimeoutException:
+            logger.error("✗ Timeout notifying final room")
+            return False
+        except Exception as e:
+            logger.error(f"✗ Error notifying final room: {e}")
+            return False

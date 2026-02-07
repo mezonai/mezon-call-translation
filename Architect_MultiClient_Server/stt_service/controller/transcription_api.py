@@ -25,7 +25,10 @@ router = APIRouter(prefix="/api/transcribe", tags=["transcription"])
 
 class RoomInfo(BaseModel):
     name: str
-    start_session_time: str
+    start_session_time: str = ""
+
+class SessionInfo(BaseModel):
+    room_name: str
 
 class ParticipantInfo(BaseModel):
     identity: str
@@ -155,6 +158,25 @@ async def queue_transcription(request: TranscriptionRequest):
             detail=f"Failed to queue task: {str(e)}"
         )
 
+@router.post("/rooms/start",response_model=dict)
+async def start_room_transcription(request: SessionInfo):
+    mongodb_service = get_mongodb_service()
+    try:
+        room_id =  await mongodb_service.create_room_session(
+            room_name=request.room_name
+        )
+        return {
+            "success": True,
+            "message": f"Room {request.room_name} started successfully",
+            "room_id": str(room_id)
+        }
+    except Exception as e:
+        logger.exception("Failed to start room transcription")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
+    
 @router.put("/rooms/end",response_model=dict)
 async def end_room_transcription(request: RoomInfo):
     mongodb_service = get_mongodb_service()

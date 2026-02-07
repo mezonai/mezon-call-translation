@@ -33,7 +33,6 @@ class RoomRegisterRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "room_name": "my-room-123",
-                "start_time": None
             }
         }
 
@@ -50,117 +49,97 @@ class RoomStatusResponse(BaseModel):
     start_time: Optional[float] = None
     duration: Optional[float] = None
 
-
 @router.post("/register", response_description="Register a room for webhook processing")
 async def register_room(
     request: RoomRegisterRequest,
     auth: Dict[str, Any] = Depends(verify_api_key)
 ):
-    """
-    Register a room in the registry so that webhooks can handle events for that room.
-
-    Only registered rooms can process webhook events.
-    
+    """Register a room in the registry so that webhooks can handle events for that room.
     **Example:**
     ```json
     {
-        "room_name": "my-room-123",
+        "room_name": "my-room-123"
     }
     ```
     """
+    
+    registry = get_room_registry()
+    stt_room_id = None
+    tracks_started = 0
+    
+    # 1. Start room in STT service FIRST
     try:
-        registry = get_room_registry()
-        
-        # If not provided, use the current time
-        actual_start_time = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-
-        # Register room in registry 
-        if not registry.register_room(request.room_name, actual_start_time):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Room '{request.room_name}' is already registered"
-            )
-        # get all tracks in the room and start recording for audio tracks
-        tracks_started = 0
-        try:
-            livekit_service = get_livekit_service()
-            if livekit_service.is_available:
-                client = livekit_service.get_client()
-                
-                # List all participants in room
-                participants_response = await client.room.list_participants(
-                    api.ListParticipantsRequest(room=request.room_name)
-                )
-                
-                logger.info(f"Found {len(participants_response.participants)} participants in room '{request.room_name}'")
-                
-                # Iterate through each participant
-                for participant in participants_response.participants:
-                    identity = participant.identity
-                    logger.info(f"Processing participant: {identity}")
-                    
-                    # Iterate through tracks of participant
-                    for track in participant.tracks:
-                        track_sid = track.sid
-                        track_type = track.type  # 0=AUDIO, 1=VIDEO, 2=DATA
-                        source = track.source  # 0=UNKNOWN, 1=CAMERA, 2=MICROPHONE, 3=SCREEN_SHARE, 4=SCREEN_SHARE_AUDIO
-                        
-                        # Check if it's an audio track (AUDIO type or SCREEN_SHARE_AUDIO source)
-                        is_audio = track_type == 0 or source == 4
-                        
-                        if is_audio:
-                            # Determine track type and source string
-                            if source == 4:  # Screen share audio
-                                track_type_str = "AUDIO"
-                                source_str = "SCREEN_SHARE_AUDIO"
-                            elif source == 2:  # Microphone
-                                track_type_str = "AUDIO"
-                                source_str = "MICROPHONE"
-                            else:
-                                track_type_str = "AUDIO"
-                                source_str = "UNKNOWN"
-                            
-                            logger.info(f"Starting recording for track {track_sid} (participant: {identity}, source: {source_str})")
-                            
-                            # Start recording asynchronously
-                            asyncio.create_task(
-                                egress_service.start_recording(
-                                    request.room_name,
-                                    track_sid,
-                                    track_type_str,
-                                    source_str,
-                                    identity
-                                )
-                            )
-                            tracks_started += 1
-                        else:
-                            logger.debug(f"Skipping non-audio track {track_sid} (type: {track_type}, source: {source})")
-                
-                logger.info(f"Started recording for {tracks_started} audio tracks in room '{request.room_name}'")
-            else:
-                logger.warning("LiveKit API not available, skipping track recording setup")
-        
-        except Exception as e:
-            logger.error(f"Error setting up recordings for existing tracks: {e}", exc_info=True)
-            # Don't fail registration if track recording fails
-            logger.warning("Room registered but some tracks may not be recording")
-        
-        return {
-            "status": "ok",
-            "message": f"Room '{request.room_name}' registered successfully",
-            "room_name": request.room_name,
-            "start_time": registry.get_room_start_time(request.room_name),
-            "tracks_started": tracks_started
-        }
-        
-    except HTTPException:
-        raise
+        stt_response = await transcription_service.start_room(request.room_name)
+        if stt_response.get("success"):
+            stt_room_id = stt_response.get("room_id")
+            logger.info(f"✅ Room '{request.room_name}' started in STT service")
+        else:
+            logger.warning(f"⚠️ Failed to start room in STT service")
     except Exception as e:
-        logger.error(f"Error registering room: {e}", exc_info=True)
+        logger.error(f"Error starting room in STT: {e}", exc_info=True)
+    
+    # 2. Register room in registry
+    if not registry.register_room(request.room_name, stt_room_id):
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to register room: {str(e)}"
+            status_code=409,
+            detail=f"Room '{request.room_name}' is already registered"
         )
+    
+    # 3. Start recording for existing tracks (best effort)
+    try:
+        livekit_service = get_livekit_service()
+        if livekit_service.is_available:
+            client = livekit_service.get_client()
+            
+            participants_response = await client.room.list_participants(
+                api.ListParticipantsRequest(room=request.room_name)
+            )
+            
+            logger.info(f"Found {len(participants_response.participants)} participants")
+            
+            for participant in participants_response.participants:
+                for track in participant.tracks:
+                    # Check if audio track
+                    is_audio = track.type == 0 or track.source == 4
+                    
+                    if is_audio:
+                        source_str = {
+                            4: "SCREEN_SHARE_AUDIO",
+                            2: "MICROPHONE"
+                        }.get(track.source, "UNKNOWN")
+                        
+                        logger.info(
+                            f"Starting recording: track={track.sid}, "
+                            f"participant={participant.identity}, source={source_str}"
+                        )
+                        
+                        asyncio.create_task(
+                            egress_service.start_recording(
+                                request.room_name,
+                                track.sid,
+                                "AUDIO",
+                                source_str,
+                                participant.identity
+                            )
+                        )
+                        tracks_started += 1
+            
+            logger.info(f"Started {tracks_started} audio track recordings")
+        else:
+            logger.warning("LiveKit API not available")
+    
+    except Exception as e:
+        logger.error(f"Error setting up recordings: {e}", exc_info=True)
+        # Continue - room is already registered
+    
+    return {
+        "status": "ok",
+        "message": f"Room '{request.room_name}' registered successfully",
+        "room_name": request.room_name,
+        "start_time": registry.get_room_start_time(request.room_name),
+        "tracks_started": tracks_started
+    }       
+
 
 
 @router.post("/unregister", response_description="Unregister a room")

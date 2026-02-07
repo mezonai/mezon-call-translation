@@ -30,13 +30,13 @@ class RoomRegistry:
         self._initialized = True
         logger.info("RoomRegistry initialized")
     
-    def register_room(self, room_name: str, start_time: Optional[str]) -> bool:
+    def register_room(self, room_name: str, room_id: str) -> bool:
         """
         Register một room vào registry.
         
         Args:
             room_name: Tên room cần register
-            start_time: Thời gian bắt đầu (ISO format string). 
+            room_id: ID của room 
             
         Returns:
             True nếu register thành công, False nếu room đã tồn tại
@@ -45,8 +45,8 @@ class RoomRegistry:
             logger.warning(f"Room '{room_name}' already registered")
             return False
         
-        self._rooms[room_name] = start_time
-        logger.info(f"Room '{room_name}' registered at {start_time}")
+        self._rooms[room_name] = room_id
+        logger.info(f"Room '{room_name}' registered at {room_id}")
         return True
     
     def unregister_room(self, room_name: str) -> bool:
