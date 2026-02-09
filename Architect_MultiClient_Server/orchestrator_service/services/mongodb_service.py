@@ -8,11 +8,9 @@ MongoDB service for storing STT records:
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo.errors import PyMongoError, DuplicateKeyError
 from bson import ObjectId
 import logging
-import sys
-import os
+
 
 from orchestrator_service.config.application_config import get_config
 

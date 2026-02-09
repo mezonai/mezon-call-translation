@@ -3,6 +3,7 @@ from typing import Optional, Dict
 from datetime import datetime
 
 from livekit import api
+from orchestrator_service.utils.filepath import Filepath
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.livekit_client import get_livekit_service
@@ -23,12 +24,6 @@ class EgressService:
         """Get LiveKit client from centralized service"""
         return get_livekit_service().get_client()
     
-    def _build_filepath(self, room_name: str, identity: str, source: str, 
-                       track_type: str, room_id: str) -> str:
-        """Create filepath for MinIO storage using room start time"""
-        ext = "ogg" if track_type == "AUDIO" else "webm"
-        
-        return f"{room_name}/{identity}-{source}-{track_type.lower()}-{room_id}.{ext}"
     
     def _get_s3_upload(self) -> api.S3Upload:
         if self._s3_upload is None:
@@ -74,7 +69,7 @@ class EgressService:
                 raise ValueError(f"Room '{room_name}' not registered")
             
 
-            filepath = self._build_filepath(room_name, identity, source, track_type, room_id)
+            filepath = Filepath.build(identity, source, track_type, room_id)
             s3_upload = self._get_s3_upload()
             
             file_out = api.DirectFileOutput(filepath=filepath, s3=s3_upload)

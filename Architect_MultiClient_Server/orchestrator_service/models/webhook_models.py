@@ -31,4 +31,5 @@ class EgressInfo(BaseModel):
     duration: str
     startedAt: str
     endedAt: str
+    source: Optional[str] = None
 

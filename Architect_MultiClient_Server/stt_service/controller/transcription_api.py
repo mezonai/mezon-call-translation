@@ -47,6 +47,7 @@ class TranscriptionRequest(BaseModel):
     duration: str
     startedAt: str
     endedAt: str
+    source: Optional[str] = None
 
 class TranscriptionResponse(BaseModel):
     """Response model for queued task."""
@@ -161,6 +162,7 @@ async def queue_transcription(request: TranscriptionRequest):
             duration=request.duration,
             location=request.location,
             egress_id=request.egressId,
+            source=request.source,
         )
         
         # Enqueue (non-blocking)

@@ -32,6 +32,7 @@ class TranscriptionTask:
     ended_at: str
     duration: str
     location: str
+    source: Optional[str] = None
 
     # Optional fields
     egress_id: Optional[str] = None

@@ -366,6 +366,7 @@ class WhisperTranscriptionProcessor:
                             "started_at_ns": task.started_at,
                             "ended_at_ns": task.ended_at,
                             "location": task.location,
+                            "source": task.source,
                         },
                     )
                     logger.info(f"✅ Track metadata updated: egress={task.egress_id}")

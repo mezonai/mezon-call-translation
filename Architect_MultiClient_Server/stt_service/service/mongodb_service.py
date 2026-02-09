@@ -87,10 +87,10 @@ class MongoDBService:
             
             # Test connection
             await self.client.admin.command("ping")
-            await self._create_indexes()
 
             self.connected = True
             logger.info("✅ Connected to MongoDB with authentication")
+            logger.info("ℹ️  Note: Run 'python -m scripts.migrate_mongodb' to create/update indexes")
             return True
 
         except Exception as e:
@@ -98,34 +98,32 @@ class MongoDBService:
             self.connected = False
             return False
 
-    async def _create_indexes(self):
-        """Create indexes for all collections"""
+    async def _verify_indexes(self):
+        """
+        Verify that required indexes exist (lightweight check).
+        
+        Note: Index creation/migration should be done via:
+            python -m scripts.migrate_mongodb
+        
+        This method only logs warnings if critical indexes are missing.
+        """
         try:
-            # Indexes for rooms collection
-            await self.rooms_collection.create_index("room_name")
-            await self.rooms_collection.create_index("status")
-            await self.rooms_collection.create_index("created_at")
-
-            # Indexes for tracks collection (_id is egress_id, already indexed)
-            await self.tracks_collection.create_index("track_id")
-            await self.tracks_collection.create_index("room_ref_id")
-            await self.tracks_collection.create_index("participant_identity")
-            await self.tracks_collection.create_index("created_at")
-
-            # Indexes for transcript_chunks collection
-            await self.chunks_collection.create_index("track_ref_id")
-            await self.chunks_collection.create_index(
-                [("track_ref_id", 1), ("chunk_index", 1)],
-                unique=True
+            # Check for critical unique index on transcript_chunks
+            chunk_indexes = await self.chunks_collection.index_information()
+            has_unique_track_chunk = any(
+                idx.get('unique') and 
+                idx.get('key') == [('track_ref_id', 1), ('chunk_index', 1)]
+                for idx in chunk_indexes.values()
             )
-            await self.chunks_collection.create_index("start_time")
-            await self.chunks_collection.create_index("end_time")
-            await self.chunks_collection.create_index("item_count")
-
-            logger.info("✅ MongoDB indexes created for all collections")
+            
+            if not has_unique_track_chunk:
+                logger.warning(
+                    "⚠️  Missing critical index on transcript_chunks. "
+                    "Run: python -m scripts.migrate_mongodb"
+                )
 
         except Exception as e:
-            logger.warning(f"Failed to create indexes: {e}")
+            logger.debug(f"Index verification skipped: {e}")
 
     async def disconnect(self):
         """Close MongoDB connection"""
@@ -162,50 +160,6 @@ class MongoDBService:
             logger.error(f"Failed to create room: {e}")
             return None
 
-
-    async def create_or_get_room(
-        self,
-        room_name: str,
-        initial_track_count: int = 1,
-        start_session_time: str = "",
-        status: str =  "pending",
-        completed_at: Optional[datetime] = None
-    ) -> Optional[ObjectId]:
-
-        if not self.connected and not await self.connect():
-            logger.error("Cannot create/get room: MongoDB not connected")
-            return None
-
-        try:
-            dt = datetime.strptime(start_session_time, "%Y%m%d_%H%M%S")
-            dt = dt.replace(tzinfo=timezone.utc)
-            room = await self.rooms_collection.find_one_and_update(
-                {
-                    "room_name": room_name,
-                    "start_session_time": start_session_time
-                },
-                {
-                    "$setOnInsert": {
-                        "room_name": room_name,
-                        "completed_tracks": 0,
-                        "status": status,
-                        "created_at": dt,
-                        "start_session_time": start_session_time,
-                        "completed_at": completed_at
-
-                    },
-                    "$inc": {
-                        "remain_tracks": initial_track_count
-                    }
-                },
-                upsert=True,
-                return_document=ReturnDocument.AFTER  # ⭐ quan trọng
-            )
-
-            return room
-        except PyMongoError as e:
-            logger.error(f"Failed to create/get room: {e}")
-            return None
 
 
     async def increment_remain_tracks(
@@ -733,12 +687,6 @@ class MongoDBService:
         ).sort("created_at", 1)
         return await cursor.to_list(None)
 
-    async def get_room_tracks_by_name(self, room_name: str) -> List[Dict]:
-        """Get all tracks for a room by room name"""
-        room = await self.get_room_by_name(room_name)
-        if not room:
-            return []
-        return await self.get_room_tracks(room["_id"])
 
     # ==========================================================
     # 🔍 QUERY METHODS - CHUNKS (Unchanged)

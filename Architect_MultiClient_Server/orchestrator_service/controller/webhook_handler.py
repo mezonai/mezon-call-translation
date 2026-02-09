@@ -7,7 +7,7 @@ from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.egress_service import EgressService
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.utils.filepath_parser import FilepathParser
+from orchestrator_service.utils.filepath import Filepath
 from orchestrator_service.models.webhook_models import WebhookResponse, TrackInfo, EgressInfo
 
 logger = get_logger(__name__)
@@ -153,7 +153,7 @@ class WebhookHandler:
         
         if filepath:
             try:
-                parsed = FilepathParser.parse(filepath)
+                parsed = Filepath.parse(filepath)
                 participant_identity = parsed.get("identity")
                 logger.debug(f"Parsed participant identity '{participant_identity}' from filepath: {filepath}")
             except ValueError as e:
@@ -208,9 +208,12 @@ class WebhookHandler:
     
     def _build_egress_info(self, egress: Dict, file_data: Dict) -> EgressInfo:
         """Build EgressInfo object from event data (simplified)"""
+        filepath = file_data.get("filename")
+        parsed = Filepath.parse(filepath)
         return EgressInfo(
             egressId=egress.get("egressId"),
             filename=file_data.get("filename"),
+            source=parsed.get("source", ""),
             location=file_data.get("location", ""),
             duration=file_data.get("duration", 0),
             startedAt=file_data.get("startedAt"),
