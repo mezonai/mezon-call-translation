@@ -103,6 +103,7 @@ class SummaryService:
         8. Save summary to DB.
         """
         # 1. Verify room exists
+        logger.info(f"Generating summary for room {repr(room_id)}")
         room = await self.mongodb.get_room_by_id(room_id)
         if not room:
             logger.warning(f"Room not found: {room_id}")

@@ -204,7 +204,7 @@ class WhisperTranscriptionProcessor:
     async def _transcribe_with_progressive_saving(
         self,
         audio_path: Path,
-        track_ref_id: ObjectId,
+        track_ref_id: str,
     ) -> tuple[str, int, Dict[str, Any]]:
         """
         Transcribe audio file with progressive chunk saving.
@@ -330,10 +330,9 @@ class WhisperTranscriptionProcessor:
         Main entry point that orchestrates the entire transcription flow:
         1. Initialize resources
         2. Download audio from MinIO
-        3. Save track metadata (status: "processing")
-        4. Transcribe with progressive chunk saving
-        5. Update status to "completed"
-        6. Cleanup temp files
+        3. Transcribe with progressive chunk saving
+        4. Update status to "completed"
+        5. Cleanup temp files
         
         Args:
             task: TranscriptionTask with file information
@@ -349,43 +348,35 @@ class WhisperTranscriptionProcessor:
         logger.info(f"🎯 Processing transcription task: {task.filename}")
         logger.info(
             f"   Egress: {task.egress_id}\n"
-            f"   Track: {task.track_id}\n"
-            f"   Room_id: {task.room_id}\n"
-            f"   Participant: {task.participant_identity}"
         )
         
         local_file: Optional[Path] = None
-        track_ref_id: Optional[ObjectId] = None
+        track_ref_id = task.egress_id
         
         try:
+            # STEP 0: Update track metadata with audio info and set status to processing
+            if task.egress_id:
+                logger.info("📝 Updating track metadata with audio info...")
+                try:
+                    await self.mongodb_service.save_track_metadata(
+                        egress_id=task.egress_id,
+                        audio_info={
+                            "filename": task.filename,
+                            "duration_sec": task.duration,
+                            "started_at_ns": task.started_at,
+                            "ended_at_ns": task.ended_at,
+                            "location": task.location,
+                        },
+                    )
+                    logger.info(f"✅ Track metadata updated: egress={task.egress_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to update track metadata: {e}")
+                    # Continue processing even if metadata update fails
+            
             # STEP 1: Download audio from MinIO
             local_file, file_size_mb = await self._download_from_minio(task.filename)
             
-            # STEP 2: Save track metadata immediately
-            audio_data = {
-                "filename": task.filename,
-                "duration_sec": task.duration,
-                "started_at_ns": task.started_at,
-                "ended_at_ns": task.ended_at
-            }
-            
-            logger.info("💾 Saving track metadata (status: processing)...")
-            
-            track_ref_id = await self.mongodb_service.save_track_metadata(
-                egress_id=task.egress_id,
-                track_id=task.track_id,
-                room_ref_id=task.room_id,
-                participant_identity=task.participant_identity,
-                audio_info=audio_data,
-                status="processing"
-            )
-            
-            if not track_ref_id:
-                raise RuntimeError("Failed to save track metadata")
-            
-            logger.info(f"✅ Track metadata saved: track_ref_id={track_ref_id}")
-            
-            # STEP 3: Transcribe with progressive saving
+            # STEP 2: Transcribe with progressive saving
             full_text, num_segments, info = await self._transcribe_with_progressive_saving(
                 audio_path=local_file,
                 track_ref_id=track_ref_id
@@ -396,7 +387,6 @@ class WhisperTranscriptionProcessor:
             
             success = await self.mongodb_service.update_track_status(
                 track_ref_id=track_ref_id,
-                room_ref_id=task.room_id,
                 status="completed"
             )
             
@@ -434,7 +424,6 @@ class WhisperTranscriptionProcessor:
                 try:
                     await self.mongodb_service.update_track_status(
                         track_ref_id=track_ref_id,
-                        room_ref_id=task.room_id,
                         status="failed"
                     )
                 except Exception as update_error:

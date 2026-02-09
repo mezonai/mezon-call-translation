@@ -4,15 +4,16 @@ Transcription API Controller
 Provides REST endpoints for transcription queue management.
 """
 
+import asyncio
 import logging
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional
+from bson import ObjectId
 
 from ..service.transcription_queue_service import (
     get_transcription_queue_service,
     TranscriptionTask,
-    TaskStatus,
 )
 
 from stt_service.service.mongodb_service import get_mongodb_service
@@ -25,36 +26,27 @@ router = APIRouter(prefix="/api/transcribe", tags=["transcription"])
 
 class RoomInfo(BaseModel):
     name: str
-    start_session_time: str = ""
+    room_id: str
 
 class SessionInfo(BaseModel):
     room_name: str
 
-class ParticipantInfo(BaseModel):
-    identity: str
+class TrackMetadataRequest(BaseModel):
+    """Request model for saving track metadata."""
+    egress_id: str
+    track_id: str
+    room_ref_id: str
+    participant_identity: str
 
-class TrackInfo(BaseModel):
-    id: str
-    type: str
-    source: str
 
-class AudioInfo(BaseModel):
+class TranscriptionRequest(BaseModel):
+    """Request model for queueing a transcription task (simplified structure)."""
+    egressId: str
     filename: str
     location: str
     duration: str
-
-class TimelineInfo(BaseModel):
     startedAt: str
     endedAt: str
-
-class TranscriptionRequest(BaseModel):
-    """Request model for queueing a transcription task (nested structure)."""
-    egressId: str
-    room: RoomInfo
-    participant: ParticipantInfo
-    track: TrackInfo
-    audio: AudioInfo
-    timeline: TimelineInfo
 
 class TranscriptionResponse(BaseModel):
     """Response model for queued task."""
@@ -88,6 +80,64 @@ class QueueStatsResponse(BaseModel):
     processing_tasks: int
 
 
+@router.post("/tracks/metadata", response_model=dict)
+async def save_track_metadata(request: TrackMetadataRequest):
+    """
+    Save track metadata using egress_id as _id.
+    Creates the room if it doesn't exist, then inserts the track document.
+    """
+    try:
+        mongodb_service = get_mongodb_service()
+        if not mongodb_service.connected:
+            await mongodb_service.connect()
+
+        # Convert room_ref_id string to ObjectId
+        try:
+            room_ref_id = ObjectId(request.room_ref_id)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid room_ref_id: {request.room_ref_id}",
+            )
+
+        # Check if room exists
+        room = await mongodb_service.get_room_by_id(room_ref_id)
+        if not room:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Room not found: {request.room_ref_id}",
+            )
+
+        track_id_result = await mongodb_service.save_track_metadata(
+            egress_id=request.egress_id,
+            track_id=request.track_id,
+            room_ref_id=room_ref_id,
+            participant_identity=request.participant_identity,
+            status="pending",
+        )
+
+        if not track_id_result:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save track metadata",
+            )
+
+        return {
+            "success": True,
+            "message": "Track metadata saved successfully",
+            "track_id": str(track_id_result),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to save track metadata: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save track metadata: {str(e)}",
+        )
+
+
 @router.post("/queue", response_model=TranscriptionResponse)
 async def queue_transcription(request: TranscriptionRequest):
     """
@@ -101,46 +151,35 @@ async def queue_transcription(request: TranscriptionRequest):
     """
     try:
         queue_service = get_transcription_queue_service()
-                # Create or get room in MongoDB if room_name is provided
-        if request.room.name:
-            try:
-                mongodb_service = get_mongodb_service()
-                room = await mongodb_service.create_or_get_room(
-                    room_name=request.room.name,
-                    initial_track_count=1,
-                    start_session_time=request.room.start_session_time.strip()
-                )
-                room_ref_id = room["_id"]
-                if room_ref_id:
-                    logger.info(f"Room created/updated: room={request.room.name}, room_id={room_ref_id}")
-                else:
-                    logger.warning(f"Failed to create/get room: room={request.room.name}")
-            except Exception as e:
-                logger.error(f"Error creating/getting room: {e}")
-
-        # Extract fields from nested request
+        
+        # Create transcription task with all necessary info
+        # Track metadata will be updated in the processor when task starts processing
         task = TranscriptionTask(
-            filename=request.audio.filename,
-            started_at=request.timeline.startedAt,
-            ended_at=request.timeline.endedAt,
-            duration=request.audio.duration,
-            size=None, 
-            location=request.audio.location,
+            filename=request.filename,
+            started_at=request.startedAt,
+            ended_at=request.endedAt,
+            duration=request.duration,
+            location=request.location,
             egress_id=request.egressId,
-            room_id=room_ref_id,
-            participant_identity=request.participant.identity,
-            track_id=request.track.id,
-            track_type=request.track.type,
-            track_source=request.track.source,
         )
         
         # Enqueue (non-blocking)
+        task_id = None
         try:
             task_id = queue_service.enqueue_nowait(task)
-        except Exception:
-            # Queue full, use blocking version with timeout
-            task_id = await queue_service.enqueue(task)
-            logging.warning("Queue full, used blocking enqueue for task %s", task_id)
+            logger.info(f"Task {task_id} enqueued immediately")
+        except asyncio.QueueFull:
+            # Queue full, use blocking version with 5s timeout
+            logger.warning(f"Queue full, trying blocking enqueue with timeout for {task.filename}")
+            try:
+                task_id = await queue_service.enqueue(task, timeout=5.0)
+                logger.info(f"Task {task_id} enqueued after waiting")
+            except asyncio.TimeoutError:
+                logger.error(f"Failed to enqueue {task.filename}: Queue full and timeout after 5s")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Transcription queue is full. Please try again later."
+                )
         
         stats = queue_service.get_stats()
         
@@ -150,9 +189,11 @@ async def queue_transcription(request: TranscriptionRequest):
             message="Task queued successfully",
             queue_size=stats["queue_size"],
         )
-        
+    
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to queue transcription task: {e}")
+        logger.error(f"Failed to queue transcription task: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to queue task: {str(e)}"
@@ -180,11 +221,11 @@ async def start_room_transcription(request: SessionInfo):
 @router.put("/rooms/end",response_model=dict)
 async def end_room_transcription(request: RoomInfo):
     mongodb_service = get_mongodb_service()
-    logger.info(f"Ending transcription for room: {request.name}, start_session_time: {request.start_session_time}")
+    logger.info(f"Ending transcription for room: {request.name}")
     try:
         updated = await mongodb_service.final_room_status(
             room_name=request.name,
-            start_session_time=request.start_session_time
+            room_id=request.room_id
         )
 
         if not updated:
@@ -201,7 +242,7 @@ async def end_room_transcription(request: RoomInfo):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Failed to end room transcription")
+        logger.exception("Failed to end room transcription: %s", e)
         raise HTTPException(
             status_code=500,
             detail="Internal server error"

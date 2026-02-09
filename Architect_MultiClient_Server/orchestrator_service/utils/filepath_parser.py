@@ -9,10 +9,10 @@ class FilepathParser:
     PATTERN = re.compile(
         r"""
         ^(?P<room>[^/]+)/                              # room
-        (?P<identity>[^-]+)-                           # identity
+        (?P<identity>.+?)[-_]{1,2}                     # identity (flexible separator: - or __ or _)
         (?P<source>[^-]+)-                             # source
         (?P<track_type>audio|video)-                   # track type
-        (?P<timestamp>\d{8}_\d{6})                     # timestamp
+        (?P<timestamp>[^.]+)                           # timestamp
         \.(?P<ext>ogg|webm)$                           # extension
         """,
         re.VERBOSE
@@ -21,7 +21,7 @@ class FilepathParser:
     @classmethod
     def parse(cls, filepath: str) -> Dict[str, str]:
         """
-        Parse filepath into components and convert timestamp to ISO format
+        Parse filepath into components using regex.
 
         Raises:
             ValueError: If filepath does not match format

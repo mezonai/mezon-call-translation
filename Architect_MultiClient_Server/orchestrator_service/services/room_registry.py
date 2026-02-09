@@ -1,7 +1,6 @@
 """
 Room Registry Service - Singleton để quản lý active rooms
 """
-import time
 from typing import Optional, Dict
 from orchestrator_service.utils.logger import get_logger
 
@@ -26,7 +25,7 @@ class RoomRegistry:
         if self._initialized:
             return
         
-        self._rooms: Dict[str, str] = {}  # {room_name: str}
+        self._rooms: Dict[str, str] = {}  # {room_name: room_id}
         self._initialized = True
         logger.info("RoomRegistry initialized")
     
@@ -63,8 +62,8 @@ class RoomRegistry:
             logger.warning(f"Room '{room_name}' not found in registry")
             return False
         
-        start_time = self._rooms.pop(room_name)
-        logger.info(f"Room '{room_name}' unregistered (started at: {start_time})")
+        room_id = self._rooms.pop(room_name)
+        logger.info(f"Room '{room_name}' unregistered (room_id: {room_id})")
         return True
     
     def is_registered(self, room_name: str) -> bool:
@@ -79,39 +78,24 @@ class RoomRegistry:
         """
         return room_name in self._rooms
     
-    def get_room_start_time(self, room_name: str) -> Optional[str]:
+    def get_room_id(self, room_name: str) -> Optional[str]:
         """
-        Lấy thời gian bắt đầu của room.
+        Lấy room_id của room.
         
         Args:
             room_name: Tên room
             
         Returns:
-            start time type IOS string
+            room_id string hoặc None nếu room không tồn tại
         """
         return self._rooms.get(room_name)
     
-    def get_room_duration(self, room_name: str) -> Optional[float]:
-        """
-        Tính thời gian tồn tại của room (giây).
-        
-        Args:
-            room_name: Tên room
-            
-        Returns:
-            Số giây từ khi room được register, hoặc None nếu room không tồn tại
-        """
-        start_time = self._rooms.get(room_name)
-        if start_time is None:
-            return None
-        return time.time() - start_time
-    
-    def list_rooms(self) -> Dict[str, float]:
+    def list_rooms(self) -> Dict[str, str]:
         """
         Lấy danh sách tất cả rooms đang active.
         
         Returns:
-            Dictionary {room_name: time_start}
+            Dictionary {room_name: room_id}
         """
         return self._rooms.copy()
     

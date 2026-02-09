@@ -13,6 +13,7 @@ from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.services.mongodb_service import get_mongodb_service
 from orchestrator_service.auth.transcript_auth import verify_api_key
 
 # Import để có thể access egress_service
@@ -46,8 +47,7 @@ class RoomStatusResponse(BaseModel):
     """Response model for room status"""
     room_name: str
     registered: bool
-    start_time: Optional[float] = None
-    duration: Optional[float] = None
+    room_id: Optional[str] = None
 
 @router.post("/register", response_description="Register a room for webhook processing")
 async def register_room(
@@ -136,7 +136,7 @@ async def register_room(
         "status": "ok",
         "message": f"Room '{request.room_name}' registered successfully",
         "room_name": request.room_name,
-        "start_time": registry.get_room_start_time(request.room_name),
+        "room_id": stt_room_id,
         "tracks_started": tracks_started
     }       
 
@@ -165,8 +165,14 @@ async def unregister_room(
     try:
         registry = get_room_registry()
         
-        # get start_session_time after unregister (ISO string)
-        start_session_time = registry.get_room_start_time(request.room_name)
+        # Get room_id from registry
+        room_id = registry.get_room_id(request.room_name)
+        if not room_id:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Room '{request.room_name}' not found in registry"
+            )
+        
         
         # Unregister room from registry
         if not registry.unregister_room(request.room_name):
@@ -188,7 +194,7 @@ async def unregister_room(
         try:
             final_room_success = await transcription_service.final_room(
                 request.room_name, 
-                start_session_time
+                room_id
             )
             if final_room_success:
                 logger.info(f"✅ Room '{request.room_name}' finalized in STT service")
@@ -226,20 +232,18 @@ async def get_room_status(
     """
     Check status registration for a room.
     
-    Returns information about the room including start_time and duration if the room is registered.
+    Returns information about the room including room_id if the room is registered.
     """
     try:
         registry = get_room_registry()
         
         is_registered = registry.is_registered(room_name)
-        start_time = registry.get_room_start_time(room_name)
-        duration = registry.get_room_duration(room_name)
+        room_id = registry.get_room_id(room_name) if is_registered else None
         
         return RoomStatusResponse(
             room_name=room_name,
             registered=is_registered,
-            start_time=start_time,
-            duration=duration
+            room_id=room_id
         )
     except Exception as e:
         logger.error(f"Error getting room status: {e}", exc_info=True)
@@ -256,7 +260,7 @@ async def list_registered_rooms(
     """
     Get a list of all currently registered rooms.
     
-    Returns a dictionary with keys as room_name and values as start_time.
+    Returns a dictionary with keys as room_name and values as room_id.
     """
     try:
         registry = get_room_registry()

@@ -1,6 +1,5 @@
-from typing import Optional, Dict
+from typing import Optional
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
 
 class WebhookResponse(BaseModel):
     """Response model cho webhook"""
@@ -25,11 +24,11 @@ class TrackInfo(BaseModel):
 
 
 class EgressInfo(BaseModel):
-    """Egress information để gửi đi"""
+    """Egress information để gửi đi (simplified to match TranscriptionRequest)"""
     egressId: str
-    room: Dict[str, str]
-    participant: Dict[str, str]
-    track: Dict[str, str]
-    audio: Dict[str, Any]
-    timeline: Dict[str, str]
+    filename: str
+    location: str
+    duration: str
+    startedAt: str
+    endedAt: str
 

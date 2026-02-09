@@ -24,13 +24,11 @@ class EgressService:
         return get_livekit_service().get_client()
     
     def _build_filepath(self, room_name: str, identity: str, source: str, 
-                       track_type: str, room_start_time: str) -> str:
+                       track_type: str, room_id: str) -> str:
         """Create filepath for MinIO storage using room start time"""
         ext = "ogg" if track_type == "AUDIO" else "webm"
         
-        # Parse ISO string và format lại thành YYYYmmdd_HHMMSS
-        
-        return f"{room_name}/{identity}-{source}-{track_type.lower()}-{room_start_time}.{ext}"
+        return f"{room_name}/{identity}-{source}-{track_type.lower()}-{room_id}.{ext}"
     
     def _get_s3_upload(self) -> api.S3Upload:
         if self._s3_upload is None:
@@ -68,11 +66,15 @@ class EgressService:
             lk = self._get_client()
             config = get_config()
             
-            # Get room start time from registry
+            # Get room_id from registry
             registry = get_room_registry()
-            room_start_time = registry.get_room_start_time(room_name)
+            room_id = registry.get_room_id(room_name)
+            if not room_id:
+                logger.error(f"Room '{room_name}' not found in registry")
+                raise ValueError(f"Room '{room_name}' not registered")
             
-            filepath = self._build_filepath(room_name, identity, source, track_type, room_start_time)
+
+            filepath = self._build_filepath(room_name, identity, source, track_type, room_id)
             s3_upload = self._get_s3_upload()
             
             file_out = api.DirectFileOutput(filepath=filepath, s3=s3_upload)

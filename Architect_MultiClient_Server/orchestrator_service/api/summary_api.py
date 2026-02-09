@@ -34,7 +34,6 @@ async def generate_room_summary(request: SummaryRequest = Body(...)):
     Input: {"room_id": "..."}
     """
     service = get_summary_service()
-    
     result = await service.generate_summary(request.room_id)
     
     if not result:
