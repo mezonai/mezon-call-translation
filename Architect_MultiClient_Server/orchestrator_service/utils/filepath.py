@@ -38,5 +38,4 @@ class Filepath:
             raise ValueError(f"Invalid filepath format: {filepath}")
         
         result = match.groupdict()
-        print(result)
         return result

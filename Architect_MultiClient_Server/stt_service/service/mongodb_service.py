@@ -329,12 +329,6 @@ class MongoDBService:
             return None
         return await self.rooms_collection.find_one({"room_name": room_name})
 
-    async def get_room_session_by_name(self, room_name: str, start_session_time: str) -> Optional[Dict]:
-        """Get room by name"""
-        print(f"room_name={room_name}, start_session_time={start_session_time}")
-        if not self.connected:
-            return None
-        return await self.rooms_collection.find_one({"room_name": room_name, "start_session_time": start_session_time.strip()})
 
     async def update_room_status(
         self,
@@ -382,7 +376,7 @@ class MongoDBService:
             
             logger.info(f"🔒 Room finalized: {room_name} → final_room")
             # Check if room should be completed (if status changed from pending)
-            asyncio.create_task(self.check_and_complete_room(room_id))
+            await self.check_and_complete_room(room_id)
             
             return True
 
@@ -605,7 +599,7 @@ class MongoDBService:
             logger.info(f"📝 Track status updated: {old_status} → {status} (track_id={track_ref_id})")
             
             # Check if room should be completed (if status changed from processing)
-            asyncio.create_task(self.check_and_complete_room(room_ref_id))
+            await self.check_and_complete_room(room_ref_id)
             
             return True
 

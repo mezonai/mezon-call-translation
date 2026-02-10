@@ -7,13 +7,11 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from livekit import api
-import time
 
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.transcription_service import TranscriptionService
-from orchestrator_service.services.mongodb_service import get_mongodb_service
 from orchestrator_service.auth.transcript_auth import verify_api_key
 
 # Import để có thể access egress_service

@@ -1,5 +1,5 @@
 """
-Room Registry Service - Singleton để quản lý active rooms
+Room Registry Service - Singleton for managing active rooms
 """
 from typing import Optional, Dict
 from orchestrator_service.utils.logger import get_logger
@@ -9,8 +9,8 @@ logger = get_logger(__name__)
 
 class RoomRegistry:
     """
-    Singleton service để lưu trữ và quản lý active rooms.
-    Chỉ các rooms được register mới được xử lý webhook events.
+    Singleton service save and manage active rooms.
+    Only registered rooms are allowed to process webhook events.
     """
     
     _instance: Optional["RoomRegistry"] = None
@@ -31,14 +31,14 @@ class RoomRegistry:
     
     def register_room(self, room_name: str, room_id: str) -> bool:
         """
-        Register một room vào registry.
+        Register a room in the registry.
         
         Args:
-            room_name: Tên room cần register
-            room_id: ID của room 
+            room_name: Name of the room to register
+            room_id: ID of the room 
             
         Returns:
-            True nếu register thành công, False nếu room đã tồn tại
+            True if registration is successful, False if the room already exists
         """
         if room_name in self._rooms:
             logger.warning(f"Room '{room_name}' already registered")
@@ -50,13 +50,13 @@ class RoomRegistry:
     
     def unregister_room(self, room_name: str) -> bool:
         """
-        Unregister một room khỏi registry.
+        Register a room in the registry.
         
         Args:
-            room_name: Tên room cần unregister
+            room_name: name of the room to unregister
             
         Returns:
-            True nếu unregister thành công, False nếu room không tồn tại
+            True if unregistration is successful, False if the room does not exist
         """
         if room_name not in self._rooms:
             logger.warning(f"Room '{room_name}' not found in registry")
@@ -68,31 +68,31 @@ class RoomRegistry:
     
     def is_registered(self, room_name: str) -> bool:
         """
-        Kiểm tra xem room có được register hay không.
+        Check if a room is registered.
         
         Args:
-            room_name: Tên room cần kiểm tra
+            room_name: Name of the room to check
             
         Returns:
-            True nếu room đã được register, False nếu chưa
+            True if the room is registered, False otherwise
         """
         return room_name in self._rooms
     
     def get_room_id(self, room_name: str) -> Optional[str]:
         """
-        Lấy room_id của room.
+        Get the room_id of a room.
         
         Args:
-            room_name: Tên room
+            room_name: Name of the room
             
         Returns:
-            room_id string hoặc None nếu room không tồn tại
+            room_id string or None if the room does not exist
         """
         return self._rooms.get(room_name)
     
     def list_rooms(self) -> Dict[str, str]:
         """
-        Lấy danh sách tất cả rooms đang active.
+        Get a list of all active rooms.
         
         Returns:
             Dictionary {room_name: room_id}
@@ -101,15 +101,15 @@ class RoomRegistry:
     
     def count_rooms(self) -> int:
         """
-        Đếm số lượng rooms đang active.
+        Count the number of active rooms.
         
         Returns:
-            Số lượng rooms
+            Number of rooms
         """
         return len(self._rooms)
     
     def clear_all(self):
-        """Clear tất cả rooms (dùng cho testing hoặc cleanup)"""
+        """Clear all rooms (used for testing or cleanup)"""
         count = len(self._rooms)
         self._rooms.clear()
         logger.info(f"Cleared all {count} rooms from registry")
