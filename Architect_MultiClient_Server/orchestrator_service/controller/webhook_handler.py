@@ -55,10 +55,6 @@ class WebhookHandler:
         handlers = {
             "track_published": self._handle_track_published,
             "track_unpublished": self._handle_track_unpublished,
-            # "participant_joined": self._handle_participant_joined,
-            # "participant_left": self._handle_participant_left,
-            # "room_started": self._handle_room_started,
-            # "room_finished": self._handle_room_finished,
             "egress_started": self._handle_egress_started,
             "egress_ended": self._handle_egress_ended
             
@@ -107,33 +103,6 @@ class WebhookHandler:
             return WebhookResponse(received=True, action="egress_removed")
         
         return WebhookResponse(received=True, action="no_active_egress")
-    
-    async def _handle_participant_joined(self, event: Dict) -> WebhookResponse:
-        """Handle when a participant joins"""
-        identity = event.get("participant", {}).get("identity", "unknown")
-        room_name = event.get("room", {}).get("name", "unknown")
-        logger.info(f"  Participant joined: {identity} in {room_name}")
-        return WebhookResponse(received=True, action="participant_joined_logged")
-    
-    async def _handle_participant_left(self, event: Dict) -> WebhookResponse:
-        """Handle when a participant leaves"""
-        identity = event.get("participant", {}).get("identity", "unknown")
-        room_name = event.get("room", {}).get("name", "unknown")
-        logger.info(f"  Participant left: {identity} from {room_name}")
-        return WebhookResponse(received=True, action="participant_left_logged")
-    
-    async def _handle_room_started(self, event: Dict) -> WebhookResponse:
-        """Handle when a room starts"""
-        room_name = event.get("room", {}).get("name", "unknown")
-        logger.info(f"  Room started: {room_name}")
-        return WebhookResponse(received=True, action="room_started_logged")
-    
-    async def _handle_room_finished(self, event: Dict) -> WebhookResponse:
-        """Handle when a room finishes"""
-        room_name = event.get("room", {}).get("name", "unknown")
-        logger.info(f"  Room finished: {room_name}")
-        
-        return WebhookResponse(received=True, action="room_finished_logged")
     
     async def _handle_egress_started(self, event: Dict) -> WebhookResponse:
         """Handle when an egress starts - create track metadata"""
