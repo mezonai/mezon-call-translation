@@ -8,11 +8,9 @@ MongoDB service for storing STT records:
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo.errors import PyMongoError, DuplicateKeyError
 from bson import ObjectId
 import logging
-import sys
-import os
+
 
 from orchestrator_service.config.application_config import get_config
 
@@ -191,17 +189,17 @@ class MongoDBService:
     # ========================================
 
     async def get_track_by_egress_id(self, egress_id: str) -> Optional[Dict[str, Any]]:
-        """Get track by egress_id"""
+        """Get track by egress_id (which is _id)"""
         try:
-            return await self.tracks_collection.find_one({"egress_id": egress_id})
+            return await self.tracks_collection.find_one({"_id": egress_id})
         except Exception as e:
             logger.error(f"Failed to get track: {e}")
             return None
 
     async def get_track_by_id(self, track_id: str) -> Optional[Dict[str, Any]]:
-        """Get track by ObjectId"""
+        """Get track by _id (egress_id string)"""
         try:
-            return await self.tracks_collection.find_one({"_id": ObjectId(track_id)})
+            return await self.tracks_collection.find_one({"_id": track_id})
         except Exception as e:
             logger.error(f"Failed to get track by ID: {e}")
             return None
@@ -306,7 +304,7 @@ class MongoDBService:
                                  skip: int = 0) -> List[Dict[str, Any]]:
         """Get chunks for a track with optional pagination"""
         try:
-            query = {"track_ref_id": ObjectId(track_id)}
+            query = {"track_ref_id": track_id}
             cursor = self.chunks_collection.find(query)
             if sorted_by_index:
                 cursor = cursor.sort("chunk_index", 1)
@@ -323,7 +321,7 @@ class MongoDBService:
         """Get a specific chunk by track and index"""
         try:
             return await self.chunks_collection.find_one({
-                "track_ref_id": ObjectId(track_id),
+                "track_ref_id": track_id,
                 "chunk_index": chunk_index
             })
         except Exception as e:
@@ -336,7 +334,7 @@ class MongoDBService:
         """Get chunks within a time range"""
         try:
             query = {
-                "track_ref_id": ObjectId(track_id),
+                "track_ref_id": track_id,
                 "$or": [
                     {"start_time": {"$lte": end_time}, "end_time": {"$gte": start_time}}
                 ]
@@ -351,7 +349,7 @@ class MongoDBService:
         """Count total chunks for a track"""
         try:
             return await self.chunks_collection.count_documents({
-                "track_ref_id": ObjectId(track_id)
+                "track_ref_id": track_id
             })
         except Exception as e:
             logger.error(f"Failed to count chunks: {e}")

@@ -1,7 +1,6 @@
 """
 Service for generating room summaries
 """
-import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 import json
@@ -11,7 +10,9 @@ from orchestrator_service.models.summary_models import RoomSummary
 from orchestrator_service.config.application_config import get_config
 from google import genai
 
-logger = logging.getLogger(__name__)
+from orchestrator_service.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class SummaryService:
     """Service to handle room summarization logic"""
@@ -103,6 +104,7 @@ class SummaryService:
         8. Save summary to DB.
         """
         # 1. Verify room exists
+        logger.info(f"Generating summary for room {repr(room_id)}")
         room = await self.mongodb.get_room_by_id(room_id)
         if not room:
             logger.warning(f"Room not found: {room_id}")

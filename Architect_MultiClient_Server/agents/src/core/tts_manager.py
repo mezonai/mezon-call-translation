@@ -78,7 +78,10 @@ class TTSManager:
     
     async def initialize(self) -> bool:
         """
-        Initialize TTS system: load model and setup audio track
+        Initialize TTS system: load model and prepare for requests
+        
+        Note: Audio track setup is deferred until first TTS request (lazy initialization)
+        This prevents microphone icon from appearing until TTS is actually used.
         
         Returns:
             True if successful, False otherwise
@@ -87,22 +90,19 @@ class TTSManager:
             logger.info("Initializing TTS Manager...")
             
             # Step 1: Load TTS model
-            logger.info("Step 1/2: Loading TTS model...")
+            logger.info("Loading TTS model...")
             if not await self.tts_engine.load():
                 logger.error("Failed to load TTS model")
                 return False
             
-            # Step 2: Setup audio track
-            logger.info("Step 2/2: Setting up audio track...")
-            if not await self._setup_audio_track():
-                logger.error("Failed to setup audio track")
-                return False
-            
-            logger.info("✅ TTS Manager initialized successfully")
+            # Step 2: Audio track setup is deferred to first TTS request (lazy initialization)
+            logger.info("✅ TTS model loaded (audio track will be setup on first use)")
             
             # Start request processing worker
             self._processing_task = asyncio.create_task(self._process_request_queue())
             logger.info("✅ TTS request queue worker started")
+            
+            logger.info("✅ TTS Manager initialized successfully (lazy track setup enabled)")
             
             return True
             
@@ -155,7 +155,10 @@ class TTSManager:
     
     async def _setup_audio_track(self) -> bool:
         """
-        Setup persistent audio track for TTS output
+        Setup persistent audio track for TTS output (lazy initialization)
+        
+        Called automatically on first TTS request to avoid displaying microphone
+        icon until TTS is actually needed.
         
         Returns:
             True if successful, False otherwise
@@ -177,7 +180,7 @@ class TTSManager:
             
             # Publish track to room
             options = rtc.TrackPublishOptions()
-            options.source = rtc.TrackSource.SOURCE_MICROPHONE
+            options.source = rtc.TrackSource.SOURCE_UNKNOWN  # Not a microphone, generic audio output
             
             publication = await self.ctx.room.local_participant.publish_track(
                 self.audio_track,
@@ -407,11 +410,12 @@ class TTSManager:
                 f"'{text[:50]}{'...' if len(text) > 50 else ''}'"
             )
             
-            # Verify track is ready before processing
+            # Lazy initialization: Setup track on first use
             if not self.track_published or not self.audio_source:
-                logger.warning("Audio track not ready, attempting to re-initialize...")
+                logger.info("🎬 First TTS request - setting up audio track...")
                 if not await self._setup_audio_track():
                     raise RuntimeError("Failed to setup audio track for TTS")
+                logger.info("✅ Audio track ready for TTS output")
             
             # Step 1: Synthesize text to audio
             logger.info("Step 1/2: Synthesizing audio...")

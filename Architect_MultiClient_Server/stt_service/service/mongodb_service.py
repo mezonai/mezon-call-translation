@@ -87,10 +87,10 @@ class MongoDBService:
             
             # Test connection
             await self.client.admin.command("ping")
-            await self._create_indexes()
 
             self.connected = True
             logger.info("✅ Connected to MongoDB with authentication")
+            logger.info("ℹ️  Note: Run 'python -m scripts.migrate_mongodb' to create/update indexes")
             return True
 
         except Exception as e:
@@ -98,35 +98,32 @@ class MongoDBService:
             self.connected = False
             return False
 
-    async def _create_indexes(self):
-        """Create indexes for all collections"""
+    async def _verify_indexes(self):
+        """
+        Verify that required indexes exist (lightweight check).
+        
+        Note: Index creation/migration should be done via:
+            python -m scripts.migrate_mongodb
+        
+        This method only logs warnings if critical indexes are missing.
+        """
         try:
-            # Indexes for rooms collection
-            await self.rooms_collection.create_index("room_name")
-            await self.rooms_collection.create_index("status")
-            await self.rooms_collection.create_index("created_at")
-
-            # Indexes for tracks collection
-            await self.tracks_collection.create_index("egress_id", unique=True)
-            await self.tracks_collection.create_index("track_id")
-            await self.tracks_collection.create_index("room_ref_id")
-            await self.tracks_collection.create_index("participant_identity")
-            await self.tracks_collection.create_index("created_at")
-
-            # Indexes for transcript_chunks collection
-            await self.chunks_collection.create_index("track_ref_id")
-            await self.chunks_collection.create_index(
-                [("track_ref_id", 1), ("chunk_index", 1)],
-                unique=True
+            # Check for critical unique index on transcript_chunks
+            chunk_indexes = await self.chunks_collection.index_information()
+            has_unique_track_chunk = any(
+                idx.get('unique') and 
+                idx.get('key') == [('track_ref_id', 1), ('chunk_index', 1)]
+                for idx in chunk_indexes.values()
             )
-            await self.chunks_collection.create_index("start_time")
-            await self.chunks_collection.create_index("end_time")
-            await self.chunks_collection.create_index("item_count")
-
-            logger.info("✅ MongoDB indexes created for all collections")
+            
+            if not has_unique_track_chunk:
+                logger.warning(
+                    "⚠️  Missing critical index on transcript_chunks. "
+                    "Run: python -m scripts.migrate_mongodb"
+                )
 
         except Exception as e:
-            logger.warning(f"Failed to create indexes: {e}")
+            logger.debug(f"Index verification skipped: {e}")
 
     async def disconnect(self):
         """Close MongoDB connection"""
@@ -139,49 +136,30 @@ class MongoDBService:
     # 🏠 ROOM METHODS
     # ==========================================================
 
-    async def create_or_get_room(
+    async def create_room_session(
         self,
         room_name: str,
-        initial_track_count: int = 1,
-        start_session_time: str = "",
-        status: str =  "pending",
-        completed_at: Optional[datetime] = None
+        status: str = "pending",
     ) -> Optional[ObjectId]:
-
+        
         if not self.connected and not await self.connect():
-            logger.error("Cannot create/get room: MongoDB not connected")
+            logger.error("Cannot create room: MongoDB not connected")
             return None
-
         try:
-            dt = datetime.strptime(start_session_time, "%Y%m%d_%H%M%S")
-            dt = dt.replace(tzinfo=timezone.utc)
-            room = await self.rooms_collection.find_one_and_update(
-                {
-                    "room_name": room_name,
-                    "start_session_time": start_session_time
-                },
-                {
-                    "$setOnInsert": {
-                        "room_name": room_name,
-                        "completed_tracks": 0,
-                        "status": status,
-                        "created_at": dt,
-                        "start_session_time": start_session_time,
-                        "completed_at": completed_at
-
-                    },
-                    "$inc": {
-                        "remain_tracks": initial_track_count
-                    }
-                },
-                upsert=True,
-                return_document=ReturnDocument.AFTER  # ⭐ quan trọng
-            )
-
-            return room
+            room_data = {
+                "room_name": room_name,
+                "status": status,
+                "created_at": datetime.utcnow(),
+            }
+            
+            result = await self.rooms_collection.insert_one(room_data)
+            logger.info(f"📁 Room created: room={room_name}, _id={result.inserted_id}")
+            return result.inserted_id
+            
         except PyMongoError as e:
-            logger.error(f"Failed to create/get room: {e}")
+            logger.error(f"Failed to create room: {e}")
             return None
+
 
 
     async def increment_remain_tracks(
@@ -351,12 +329,6 @@ class MongoDBService:
             return None
         return await self.rooms_collection.find_one({"room_name": room_name})
 
-    async def get_room_session_by_name(self, room_name: str, start_session_time: str) -> Optional[Dict]:
-        """Get room by name"""
-        print(f"room_name={room_name}, start_session_time={start_session_time}")
-        if not self.connected:
-            return None
-        return await self.rooms_collection.find_one({"room_name": room_name, "start_session_time": start_session_time.strip()})
 
     async def update_room_status(
         self,
@@ -383,40 +355,99 @@ class MongoDBService:
             logger.error(f"Failed to update room status: {e}")
             return False
 
-    async def final_room_status(self, room_name: str, start_session_time: str) -> bool:
+    async def final_room_status(self, room_name: str, room_id: str) -> bool:
 
         if not self.connected:
             return False
 
         try:
-            completed_at = datetime.utcnow()
-            room = await self.create_or_get_room(room_name,0, start_session_time ,"final_room", completed_at)
-            logger.info(f"Finalizing room: {room_name},{start_session_time} with _id={room["_id"]}")
-            
-            if room["status"] in ["final_room", "completed"]:
-                logger.warning(f"Room already finalized: {room_name}")
-                return True
-            new_status = "final_room" if room["remain_tracks"] > 0 else "completed"
-
+            room_id = ObjectId(room_id)
             update_doc = {
                 "$set": {
-                    "status": new_status,
+                    "status": "final_room",
                     "finalized_at": datetime.utcnow()
                 }
             }
             
             await self.rooms_collection.update_one(
-                {"_id": room["_id"]},
+                {"_id": room_id},
                 update_doc
             )
             
-            logger.info(f"🔒 Room finalized: {room_name} → {new_status}")
-            if new_status == "completed":
-                asyncio.create_task(self._trigger_summary_api(str(room["_id"])))
+            logger.info(f"🔒 Room finalized: {room_name} → final_room")
+            # Check if room should be completed (if status changed from pending)
+            await self.check_and_complete_room(room_id)
+            
             return True
 
         except PyMongoError as e:
             logger.error(f"Failed to finalize room: {e}")
+            return False
+
+    async def check_and_complete_room(
+        self,
+        room_ref_id: ObjectId
+    ) -> bool:
+        """
+        Check if room should be completed:
+        - Room status must be "final_room"
+        - No tracks with status "pending"
+        
+        If conditions met, update room status to "completed" and trigger summary.
+        
+        Args:
+            room_ref_id: Room reference ID
+            
+        Returns:
+            True if room was completed, False otherwise
+        """
+        if not self.connected:
+            return False
+
+        try:
+            # Get room
+            room = await self.rooms_collection.find_one({"_id": room_ref_id})
+            
+            if not room:
+                logger.error(f"Room not found: room_id={room_ref_id}")
+                return False
+            
+            # Check if room is in final_room status
+            if room.get("status") != "final_room":
+                logger.debug(f"Room not in final_room status: {room.get('status')}")
+                return False
+            
+            # Count pending tracks
+            pending_count = await self.tracks_collection.count_documents({
+                "room_ref_id": room_ref_id,
+                "status": "pending"
+            })
+            
+            # If there are still pending tracks, don't complete
+            if pending_count > 0:
+                logger.info(f"Room still has {pending_count} pending tracks")
+                return False
+            
+            # All tracks completed (or none pending), mark room as completed
+            await self.rooms_collection.update_one(
+                {"_id": room_ref_id},
+                {
+                    "$set": {
+                        "status": "completed",
+                        "completed_at": datetime.utcnow()
+                    }
+                }
+            )
+            
+            logger.info(f"🎉 Room completed: room_id={room_ref_id} (all tracks processed)")
+            
+            # Trigger summary generation
+            asyncio.create_task(self._trigger_summary_api(str(room_ref_id)))
+            
+            return True
+
+        except PyMongoError as e:
+            logger.error(f"Failed to check and complete room: {e}")
             return False
 
     # ==========================================================
@@ -427,53 +458,52 @@ class MongoDBService:
         self,
         *,
         egress_id: str,
-        track_id: str,
-        room_ref_id: ObjectId,
-        participant_identity: str,
-        audio_info: Dict[str, Any],
-        status: str = "processing",
-    ) -> Optional[ObjectId]:
+        track_id: Optional[str] = None,
+        room_ref_id: Optional[ObjectId] = None,
+        participant_identity: Optional[str] = None,
+        audio_info: Optional[Dict[str, Any]] = None,
+        status: str = "pending",
+    ) -> Optional[str]:
         """
-        Save track metadata with room reference
+        Save track metadata using egress_id as _id.
         
         Args:
-            egress_id: Unique egress identifier
+            egress_id: Unique egress identifier (used as _id)
             track_id: Track identifier
             room_ref_id: Reference to room document _id
             participant_identity: Participant identity
-            audio_info: Dict containing {filename, duration_sec, started_at_ns, ended_at_ns}
-            status: Track status (default: "processing")
+            audio_info: Dict containing {filename, ...}
+            status: Track status (default: "pending")
             
         Returns:
-            ObjectId of inserted document, or None if failed
+            egress_id (the _id) of inserted/updated document, or None if failed
         """
         if not self.connected and not await self.connect():
             logger.error("Cannot save track metadata: MongoDB not connected")
             return None
 
-        # Use find_one_and_update with upsert for atomic operation
-        # This avoids race conditions and is more efficient than insert-then-catch
         try:
-            from pymongo import ReturnDocument
+            
+            # Build $set operation - only include audio_info if provided
+            set_fields = {
+                "status": status,
+                "updated_at": datetime.utcnow()
+            }
+            if audio_info is not None:
+                set_fields["audio_info"] = audio_info
             
             result = await self.tracks_collection.find_one_and_update(
-                {"egress_id": egress_id},
+                {"_id": egress_id},
                 {
                     "$setOnInsert": {
-                        "egress_id": egress_id,
+                        "_id": egress_id,
                         "track_id": track_id,
                         "room_ref_id": room_ref_id,
                         "participant_identity": participant_identity,
-                        "audio_info": {
-                            "filename": audio_info.get("filename"),
-                            "duration_sec": audio_info.get("duration_sec"),
-                            "started_at_ns": audio_info.get("started_at_ns"),
-                            "ended_at_ns": audio_info.get("ended_at_ns"),
-                        },
                         "chunk_count": 0,
-                        "status": status,
                         "created_at": datetime.utcnow(),
-                    }
+                    },
+                    "$set": set_fields
                 },
                 upsert=True,
                 return_document=ReturnDocument.AFTER
@@ -481,9 +511,9 @@ class MongoDBService:
             
             if result:
                 logger.info(
-                    f"📝 Track metadata saved: egress={egress_id}, "
-                    f"track={track_id}, room_ref={room_ref_id}, _id={result['_id']}"
+                    f"📝 Track metadata saved: _id(egress)={egress_id} "
                 )
+                
                 return result["_id"]
             else:
                 logger.warning(f"Track metadata operation returned None: egress={egress_id}")
@@ -492,7 +522,6 @@ class MongoDBService:
         except PyMongoError as e:
             logger.error(f"Failed to save track metadata: {e}")
             return None
-
     # ==========================================================
     # 🔥 TRANSCRIPT CHUNKS METHODS (Unchanged)
     # ==========================================================
@@ -507,7 +536,7 @@ class MongoDBService:
 
     def _create_chunk_document(
         self,
-        track_ref_id: ObjectId,
+        track_ref_id: str,
         chunk_index: int,
         segments: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
@@ -530,16 +559,14 @@ class MongoDBService:
 
     async def update_track_status(
         self,
-        track_ref_id: ObjectId,
-        room_ref_id: ObjectId,
+        track_ref_id: str,
         status: str
     ) -> bool:
         """
         Update track status and automatically update room counters.
         
         Args:
-            track_ref_id: Track reference ID
-            room_ref_id: Room reference ID
+            track_ref_id: Track _id (egress_id string)
             status: New status ('processing' | 'completed' | 'failed')
             
         Returns:
@@ -557,6 +584,7 @@ class MongoDBService:
                 return False
             
             old_status = current_track.get("status", "")
+            room_ref_id = current_track.get("room_ref_id")
             
             # Update track status
             result = await self.tracks_collection.update_one(
@@ -570,12 +598,8 @@ class MongoDBService:
             
             logger.info(f"📝 Track status updated: {old_status} → {status} (track_id={track_ref_id})")
             
-            # Update room counters based on new status
-            # Only update room if transitioning to a final state
-            if status == "completed" and old_status != "completed":
-                await self.complete_track_in_room(room_ref_id)
-            elif status == "failed" and old_status not in ["completed", "failed"]:
-                await self.fail_track_in_room(room_ref_id)
+            # Check if room should be completed (if status changed from processing)
+            await self.check_and_complete_room(room_ref_id)
             
             return True
 
@@ -585,7 +609,7 @@ class MongoDBService:
         
     async def append_transcript_chunk(
         self,
-        track_ref_id: ObjectId,
+        track_ref_id: str,
         new_segments: List[Dict[str, Any]]
     ) -> bool:
         """Append new segments as additional chunks"""
@@ -636,17 +660,17 @@ class MongoDBService:
     # 🔍 QUERY METHODS - TRACKS
     # ==========================================================
 
-    async def get_track_by_id(self, track_ref_id: ObjectId) -> Optional[Dict]:
-        """Get track metadata by _id"""
+    async def get_track_by_id(self, track_ref_id: str) -> Optional[Dict]:
+        """Get track metadata by _id (egress_id)"""
         if not self.connected:
             return None
         return await self.tracks_collection.find_one({"_id": track_ref_id})
 
     async def get_track_by_egress_id(self, egress_id: str) -> Optional[Dict]:
-        """Get track metadata by egress_id"""
+        """Get track metadata by egress_id (which is _id)"""
         if not self.connected:
             return None
-        return await self.tracks_collection.find_one({"egress_id": egress_id})
+        return await self.tracks_collection.find_one({"_id": egress_id})
 
     async def get_room_tracks(self, room_ref_id: ObjectId) -> List[Dict]:
         """Get all tracks for a room"""
@@ -657,12 +681,6 @@ class MongoDBService:
         ).sort("created_at", 1)
         return await cursor.to_list(None)
 
-    async def get_room_tracks_by_name(self, room_name: str) -> List[Dict]:
-        """Get all tracks for a room by room name"""
-        room = await self.get_room_by_name(room_name)
-        if not room:
-            return []
-        return await self.get_room_tracks(room["_id"])
 
     # ==========================================================
     # 🔍 QUERY METHODS - CHUNKS (Unchanged)
@@ -670,7 +688,7 @@ class MongoDBService:
 
     async def get_track_chunks(
         self,
-        track_ref_id: ObjectId,
+        track_ref_id: str,
         chunk_index: Optional[int] = None
     ) -> List[Dict]:
         """Get transcript chunks for a track"""
@@ -686,7 +704,7 @@ class MongoDBService:
 
     async def get_chunks_by_time_range(
         self,
-        track_ref_id: ObjectId,
+        track_ref_id: str,
         start_time: float,
         end_time: float
     ) -> List[Dict]:
@@ -704,7 +722,7 @@ class MongoDBService:
         cursor = self.chunks_collection.find(query).sort("chunk_index", 1)
         return await cursor.to_list(None)
 
-    async def get_full_transcript(self, track_ref_id: ObjectId) -> List[Dict]:
+    async def get_full_transcript(self, track_ref_id: str) -> List[Dict]:
         """Get complete transcript by combining all chunks"""
         chunks = await self.get_track_chunks(track_ref_id)
         
@@ -768,7 +786,7 @@ class MongoDBService:
             logger.error(f"Failed to get stats: {e}")
             return {}
 
-    async def delete_track(self, track_ref_id: ObjectId) -> bool:
+    async def delete_track(self, track_ref_id: str) -> bool:
         """Delete track and all its chunks"""
         if not self.connected:
             return False

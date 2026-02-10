@@ -9,12 +9,9 @@ for new items without CPU waste or blocking other coroutines.
 import asyncio
 import logging
 import time
-import aiohttp
 from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
-from bson import ObjectId
 
 logger = logging.getLogger(__name__)
 
@@ -34,16 +31,11 @@ class TranscriptionTask:
     started_at: str
     ended_at: str
     duration: str
-    size: str
     location: str
+    source: Optional[str] = None
 
-    # New fields for richer context
+    # Optional fields
     egress_id: Optional[str] = None
-    room_id: ObjectId = None
-    participant_identity: Optional[str] = None
-    track_id: Optional[str] = None
-    track_type: Optional[str] = None
-    track_source: Optional[str] = None
 
     # Internal tracking
     task_id: str = ""
@@ -65,14 +57,8 @@ class TranscriptionTask:
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "duration": self.duration,
-            "size": self.size,
             "location": self.location,
             "egress_id": self.egress_id,
-            "room_id": self.room_id,
-            "participant_identity": self.participant_identity,
-            "track_id": self.track_id,
-            "track_type": self.track_type,
-            "track_source": self.track_source,
             "status": self.status.value,
             "created_at": self.created_at,
             "started_processing_at": self.started_processing_at,
@@ -161,21 +147,35 @@ class TranscriptionQueueService:
             
         logger.info("TranscriptionQueueService stopped")
     
-    async def enqueue(self, task: TranscriptionTask) -> str:
+    async def enqueue(self, task: TranscriptionTask, timeout: float = 5.0) -> str:
         """
         Add a task to the queue.
         
-        Non-blocking if queue has space, waits if full (backpressure).
+        Non-blocking if queue has space, waits if full (backpressure) with timeout.
+        
+        Args:
+            task: The transcription task to enqueue
+            timeout: Maximum seconds to wait if queue is full (default: 5s)
         
         Returns:
             Task ID
+            
+        Raises:
+            asyncio.TimeoutError: If queue is full and timeout expires
         """
-        await self._queue.put(task)
-        self._tasks[task.task_id] = task
-        self._stats["total_received"] += 1
-        
-        logger.info(f"📥 Queued task {task.task_id}: {task.filename} (queue size: {self._queue.qsize()})")
-        return task.task_id
+        try:
+            await asyncio.wait_for(self._queue.put(task), timeout=timeout)
+            self._tasks[task.task_id] = task
+            self._stats["total_received"] += 1
+            
+            logger.info(f"📥 Queued task {task.task_id}: {task.filename} (queue size: {self._queue.qsize()})")
+            return task.task_id
+        except asyncio.TimeoutError:
+            logger.error(
+                f"⚠️ Queue full! Failed to enqueue task {task.task_id} after {timeout}s. "
+                f"Queue size: {self._queue.qsize()}, Max: {self._queue.maxsize}"
+            )
+            raise
     
     def enqueue_nowait(self, task: TranscriptionTask) -> str:
         """
@@ -187,12 +187,19 @@ class TranscriptionQueueService:
         Returns:
             Task ID
         """
-        self._queue.put_nowait(task)
-        self._tasks[task.task_id] = task
-        self._stats["total_received"] += 1
-        
-        logger.info(f"📥 Queued task {task.task_id}: {task.filename} (queue size: {self._queue.qsize()})")
-        return task.task_id
+        try:
+            self._queue.put_nowait(task)
+            self._tasks[task.task_id] = task
+            self._stats["total_received"] += 1
+            
+            logger.info(f"📥 Queued task {task.task_id}: {task.filename} (queue size: {self._queue.qsize()})")
+            return task.task_id
+        except asyncio.QueueFull:
+            logger.warning(
+                f"⚠️ Queue full! Cannot enqueue {task.task_id} immediately. "
+                f"Queue size: {self._queue.qsize()}/{self._queue.maxsize}"
+            )
+            raise
     
     async def _consumer_loop(self):
         """
@@ -221,7 +228,8 @@ class TranscriptionQueueService:
                 break
             except Exception as e:
                 logger.error(f"Consumer loop error: {e}", exc_info=True)
-                await asyncio.sleep(100)  # Prevent tight loop on repeated errors
+                logger.warning(f"Queue size: {self._queue.qsize()}, Retrying in 1 second...")
+                await asyncio.sleep(1)  # Short delay to prevent tight loop on repeated errors
     
     async def _process_task(self, task: TranscriptionTask):
         """Process a single transcription task."""
