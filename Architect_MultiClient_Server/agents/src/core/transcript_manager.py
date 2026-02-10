@@ -97,8 +97,8 @@ class TranscriptManager:
         try:
             room_name = self.ctx.room.name
             config = get_config()
-            port = config.server.port
-            api_url = f"http://localhost:{port}/api/push_message"
+            base_url = config.orchestrator.base_url
+            api_url = f"{base_url}/api/push_message"
             
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
