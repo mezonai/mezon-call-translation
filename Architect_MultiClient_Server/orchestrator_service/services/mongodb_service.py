@@ -480,33 +480,6 @@ class MongoDBService:
     # 📝 ROOM SUMMARY QUERIES
     # ========================================
 
-    async def save_room_summary(self, summary_data: Dict[str, Any]) -> str:
-        """Save or update room summary"""
-        try:
-            room_id = summary_data.get("room_id")
-            if not room_id:
-                return None
-                
-            result = await self.summary_collection.update_one(
-                {"room_id": room_id},
-                {"$set": summary_data},
-                upsert=True
-            )
-            
-            if result.upserted_id:
-                return str(result.upserted_id)
-            
-            # If updated an existing document, we need to find its ID
-            if result.matched_count > 0:
-                doc = await self.summary_collection.find_one({"room_id": room_id}, {"_id": 1})
-                if doc:
-                    return str(doc["_id"])
-                    
-            return None
-        except Exception as e:
-            logger.error(f"Failed to save room summary: {e}")
-            return None
-
     async def get_room_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
         """Get summary for a room"""
         try:

@@ -120,6 +120,13 @@ class OrchestratorConfig:
 
 
 @dataclass
+class LLMConfig:
+    """LLM (Large Language Model) configuration for AI features."""
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -133,6 +140,7 @@ class AppConfig:
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
+    llm: LLMConfig = field(default_factory=LLMConfig)
 
     def __post_init__(self):
         """Post-initialization processing."""
@@ -229,6 +237,10 @@ class ConfigManager:
         config.orchestrator.url = os.getenv("ORCHESTRATOR_URL", config.orchestrator.url)
         config.orchestrator.internal_api_key = os.getenv("ORCHESTRATOR_INTERNAL_API_KEY", config.orchestrator.internal_api_key)
         
+        # LLM configuration
+        config.llm.gemini_api_key = os.getenv("GEMINI_API_KEY", config.llm.gemini_api_key)
+        config.llm.gemini_model = os.getenv("GEMINI_MODEL", config.llm.gemini_model)
+        
         # Load from config file if specified
         if self.config_file and Path(self.config_file).exists():
             self._load_from_file(config)
@@ -292,6 +304,10 @@ class ConfigManager:
                 "metrics_log_file": config.logging.metrics_log_file,
                 "max_file_size": config.logging.max_file_size,
                 "backup_count": config.logging.backup_count
+            },
+            "llm": {
+                "gemini_api_key": "***" if config.llm.gemini_api_key else "",
+                "gemini_model": config.llm.gemini_model
             },
             "orchestrator": {
                 "url": config.orchestrator.url,

@@ -14,6 +14,8 @@ from stt_service.service.migration_controller import pipeline_controller
 from stt_service.service.health_service import get_health_service
 from stt_service.service.transcription_queue_service import get_transcription_queue_service
 from stt_service.service.whisper_transcription_processor import transcribe_task, get_whisper_processor
+from stt_service.service.summary_queue_service import get_summary_queue_service
+from stt_service.service.summary_processor import get_summary_processor
 from stt_service.config import get_config
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
@@ -50,6 +52,13 @@ async def lifespan(app: FastAPI):
     whisper_processor = get_whisper_processor()
     await whisper_processor.initialize()
     
+    # Initialize Summary Queue Service
+    summary_queue = get_summary_queue_service()
+    summary_processor = get_summary_processor()
+    summary_queue.set_processor(summary_processor.process_summary)
+    await summary_queue.start()
+    logger.info("✅ Summary queue service started")
+    
     system_metrics_task = asyncio.create_task(system_metrics_loop())
     
     yield
@@ -59,6 +68,12 @@ async def lifespan(app: FastAPI):
         await transcription_queue.stop()
     if whisper_processor is not None:
         await whisper_processor.shutdown()
+    
+    # Stop summary queue
+    if summary_queue is not None:
+        await summary_queue.stop()
+        logger.info("✅ Summary queue service stopped")
+    
     await result_dispatcher.shutdown()
     await pipeline_controller.shutdown_service()
     

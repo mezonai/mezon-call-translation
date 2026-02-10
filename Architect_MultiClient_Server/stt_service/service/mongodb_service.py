@@ -12,7 +12,6 @@ from pymongo.errors import PyMongoError
 from bson import ObjectId
 import logging
 import asyncio
-import aiohttp
 from stt_service.config.app_config import get_config
 from pymongo import ReturnDocument
 
@@ -46,18 +45,21 @@ class MongoDBService:
         self.rooms_collection_name = "rooms"
         self.tracks_collection_name = "tracks"
         self.chunks_collection_name = "transcript_chunks"
+        self.summary_collection_name = "rooms_summary"
 
         self.client: Optional[AsyncIOMotorClient] = None
         self.db = None
         self.rooms_collection = None
         self.tracks_collection = None
         self.chunks_collection = None
+        self.summary_collection = None
         self.connected = False
 
         self._initialized = True
         logger.info(
             f"MongoDBService initialized (DB={self.database_name}, "
-            f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, {self.chunks_collection_name})"
+            f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, "
+            f"{self.chunks_collection_name}, {self.summary_collection_name})"
         )
 
     def _build_mongo_uri(self) -> str:
@@ -84,6 +86,7 @@ class MongoDBService:
             self.rooms_collection = self.db[self.rooms_collection_name]
             self.tracks_collection = self.db[self.tracks_collection_name]
             self.chunks_collection = self.db[self.chunks_collection_name]
+            self.summary_collection = self.db[self.summary_collection_name]
             
             # Test connection
             await self.client.admin.command("ping")
@@ -252,8 +255,16 @@ class MongoDBService:
                 )
                 logger.info(f"🎉 All tracks completed for room_id={room_ref_id}")
                 
-                # Trigger summary generation
-                asyncio.create_task(self._trigger_summary_api(str(room_ref_id)))
+                # Trigger summary generation via queue
+                try:
+                    from stt_service.service.summary_queue_service import get_summary_queue_service
+                    summary_queue = get_summary_queue_service()
+                    asyncio.create_task(
+                        summary_queue.enqueue_summary(str(room_ref_id), trigger="track_completion")
+                    )
+                    logger.info(f"📥 Summary queued for room {room_ref_id}")
+                except Exception as e:
+                    logger.error(f"Failed to queue summary for room {room_ref_id}: {e}")
             
             return True
 
@@ -447,8 +458,16 @@ class MongoDBService:
             
             logger.info(f"🎉 Room completed: room_id={room_ref_id} (all tracks processed)")
             
-            # Trigger summary generation
-            asyncio.create_task(self._trigger_summary_api(str(room_ref_id)))
+            # Trigger summary generation via queue
+            try:
+                from stt_service.service.summary_queue_service import get_summary_queue_service
+                summary_queue = get_summary_queue_service()
+                asyncio.create_task(
+                    summary_queue.enqueue_summary(str(room_ref_id), trigger="room_completion")
+                )
+                logger.info(f"📥 Summary queued for room {room_ref_id}")
+            except Exception as e:
+                logger.error(f"Failed to queue summary for room {room_ref_id}: {e}")
             
             return True
 
@@ -846,38 +865,78 @@ class MongoDBService:
         """Get singleton instance"""
         return cls()
 
-    async def _trigger_summary_api(self, room_id: str):
-        """Call Orchestrator API to generate summary for the closed room."""
-        try:
-            logger.info(f"Triggering summary API for room {room_id}")
-            config = get_config()
-            orchestrator_url = config.orchestrator.url
-            api_key = config.orchestrator.internal_api_key
-            
-            if not orchestrator_url or not api_key:
-                logger.warning("Summary trigger skipped: Orchestrator URL or API Key missing")
-                return
+    # ==========================================================
+    # 📋 SUMMARY METHODS
+    # ==========================================================
 
-            endpoint = f"{orchestrator_url.rstrip('/')}/api/internal/summary"
+    async def save_room_summary(self, summary_data: Dict[str, Any]) -> Optional[str]:
+        """
+        Save or update room summary to MongoDB.
+        
+        Args:
+            summary_data: Summary data dictionary (from RoomSummary.model_dump())
             
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    endpoint,
-                    json={"room_id": room_id},
-                    headers={
-                        "Content-Type": "application/json",
-                        "x-internal-api-key": api_key
-                    },
-                    timeout=10
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        logger.info(f"Summary triggered successfully for room {room_id}: {data}")
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"Failed to trigger summary for room {room_id}: {response.status} - {error_text}")
-        except Exception as e:
-            logger.error(f"Error triggering summary API for room {room_id}: {e}")
+        Returns:
+            Summary document ID as string, or None if failed
+        """
+        if not self.connected:
+            logger.error("MongoDB not connected")
+            return None
+            
+        try:
+            room_id = summary_data.get("room_id")
+            if not room_id:
+                logger.error("room_id missing in summary_data")
+                return None
+                
+            # Upsert: update if exists (by room_id), insert if not
+            result = await self.summary_collection.update_one(
+                {"room_id": room_id},
+                {"$set": summary_data},
+                upsert=True
+            )
+            
+            if result.upserted_id:
+                logger.info(f"✅ Inserted new summary for room {room_id}")
+                return str(result.upserted_id)
+            
+            # If updated existing document, find its ID
+            if result.matched_count > 0:
+                doc = await self.summary_collection.find_one(
+                    {"room_id": room_id},
+                    {"_id": 1}
+                )
+                if doc:
+                    logger.info(f"✅ Updated existing summary for room {room_id}")
+                    return str(doc["_id"])
+                    
+            return None
+            
+        except PyMongoError as e:
+            logger.error(f"Failed to save room summary: {e}")
+            return None
+
+    async def get_room_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the most recent summary for a room.
+        
+        Args:
+            room_id: Room identifier
+            
+        Returns:
+            Summary document or None
+        """
+        if not self.connected:
+            return None
+            
+        try:
+            return await self.summary_collection.find_one(
+                {"room_id": room_id},
+                sort=[("created_at", -1)]
+            )
+        except PyMongoError as e:
+            logger.error(f"Failed to get room summary: {e}")
+            return None
 
 
 def get_mongodb_service() -> MongoDBService:

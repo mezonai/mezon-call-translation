@@ -25,6 +25,11 @@ pymongo>=4.5.0                 # MongoDB Python driver (sync operations)
 minio>=7.2.0                   # MinIO client for audio file storage
 
 # ========================================
+# AI/LLM Services
+# ========================================
+google-genai>=1.0.0            # Google Gemini AI for summary generation
+
+# ========================================
 # HTTP Client
 # ========================================
 aiohttp>=3.9.0                 # Async HTTP client for external API calls
