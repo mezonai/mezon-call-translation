@@ -33,10 +33,21 @@ async def entrypoint(ctx: agents.JobContext):
         can_publish=True,
         can_subscribe=True
     ))
+    new_token.with_kind("agent")
 
     # ghi đè token trong ctx
     ctx._info.token = new_token.to_jwt()
     await ctx.connect()
+
+    p = ctx.room.local_participant
+
+    logger.info(
+        f"[AGENT STARTED] "
+        f"identity={p.identity} | "
+        f"name={p.name} | "
+        f"sid={p.sid} | "
+        f"room={ctx.room.name}"
+    )
 
     logger.info(f"✅ Connected to room: {ctx.room.name}")
     # Get session_id from room name
