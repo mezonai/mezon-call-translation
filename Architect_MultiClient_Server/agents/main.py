@@ -25,8 +25,8 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Create a new token to change the identity displayed in the room
     new_token = api.AccessToken(config.livekit.api_key, config.livekit.api_secret)
-    new_token.with_identity("KOMU")
-    new_token.with_name("KOMU Agent")
+    new_token.with_identity(config.livekit.agent_name)
+    new_token.with_name("KOMU")
     new_token.with_grants(api.VideoGrants(
         room_join=True,
         room=ctx.room.name,
