@@ -206,22 +206,8 @@ class WhisperTranscriptionProcessor:
         audio_path: Path,
         track_ref_id: str,
     ) -> tuple[str, int, Dict[str, Any]]:
-        """
-        Transcribe audio file with progressive chunk saving.
+        """Transcribe with progressive saving using async queue"""
         
-        This method:
-        1. Starts Whisper transcription
-        2. Collects segments in batches of CHUNK_BATCH_SIZE
-        3. Saves each batch to MongoDB immediately
-        4. Returns full text and info when complete
-        
-        Args:
-            audio_path: Path to audio file on disk
-            track_ref_id: MongoDB ObjectId of track document
-            
-        Returns:
-            Tuple of (full_text, total_segments, info_dict)
-        """
         if not self._whisper_model:
             raise RuntimeError("Whisper model not initialized")
         
@@ -231,82 +217,126 @@ class WhisperTranscriptionProcessor:
         whisper_config = self._config.whisper
         logger.info(f"🎤 Starting progressive transcription for {audio_path.name}...")
         
-        # Buffer for batch saving
-        segment_buffer: List[Dict[str, Any]] = []
-        full_text_parts: List[str] = []
-        total_segments = 0
+        # Shared queue between transcription thread and saving coroutine
+        segment_queue = asyncio.Queue(maxsize=500)  # Buffer up to 500 segments
+        transcription_done = asyncio.Event()
+        transcription_error = None
+        info_container = {}
         
-        try:
-            # Start transcription (returns generator)
-            segments_generator, info = self._whisper_model.transcribe(
-                str(audio_path),
-                language=whisper_config.language if whisper_config.language else None,
-                beam_size=whisper_config.beam_size,
-                vad_filter=whisper_config.vad_filter,
-            )
-            
-            # Process segments as they're generated
-            for seg in segments_generator:
-                # Convert to our format
-                segment = TranscriptionSegment(
-                    start=seg.start,
-                    end=seg.end,
-                    text=seg.text.strip(),
-                    confidence=round(math.exp(seg.avg_logprob), 4)
+        loop = asyncio.get_event_loop()
+        
+        def transcribe_in_thread():
+            """Producer: Generate segments in thread"""
+            nonlocal transcription_error
+            try:
+                segments_generator, info = self._whisper_model.transcribe(
+                    str(audio_path),
+                    language=whisper_config.language if whisper_config.language else None,
+                    beam_size=whisper_config.beam_size,
+                    vad_filter=whisper_config.vad_filter,
                 )
                 
-                # Add to buffer
-                segment_buffer.append(segment.to_dict())
-                full_text_parts.append(segment.text)
-                total_segments += 1
+                # Store info for later
+                info_container['info'] = info
                 
-                # Save batch when buffer is full
-                if len(segment_buffer) >= self.CHUNK_BATCH_SIZE:
-                    await self.mongodb_service.append_transcript_chunk(
-                        track_ref_id=track_ref_id,
-                        new_segments=segment_buffer
+                # Feed segments to queue
+                for seg in segments_generator:
+                    segment = TranscriptionSegment(
+                        start=seg.start,
+                        end=seg.end,
+                        text=seg.text.strip(),
+                        confidence=round(math.exp(seg.avg_logprob), 4)
                     )
                     
-                    # Clear buffer after successful save
-                    segment_buffer.clear()
+                    # Put segment in queue (thread-safe)
+                    loop.call_soon_threadsafe(
+                        segment_queue.put_nowait,
+                        segment.to_dict()
+                    )
+                
+            except Exception as e:
+                transcription_error = e
+                logger.error(f"Transcription error: {e}")
+            finally:
+                # Signal completion
+                loop.call_soon_threadsafe(transcription_done.set)
+        
+        async def consume_and_save():
+            """Consumer: Save segments progressively"""
+            segment_buffer = []
+            full_text_parts = []
+            total_segments = 0
             
-            # Save remaining segments (last batch)
+            while not transcription_done.is_set() or not segment_queue.empty():
+                try:
+                    # Wait for segment with timeout
+                    segment = await asyncio.wait_for(segment_queue.get(), timeout=0.1)
+                    
+                    segment_buffer.append(segment)
+                    full_text_parts.append(segment['text'])
+                    total_segments += 1
+                    
+                    # Save batch when buffer is full
+                    if len(segment_buffer) >= self.CHUNK_BATCH_SIZE:
+                        await self.mongodb_service.append_transcript_chunk(
+                            track_ref_id=track_ref_id,
+                            new_segments=segment_buffer
+                        )
+                        logger.debug(f"💾 Saved batch (total: {total_segments} segments)")
+                        segment_buffer.clear()
+                    
+                except asyncio.TimeoutError:
+                    # No segment available, check if done
+                    continue
+            
+            # Save remaining segments
             if segment_buffer:
-                logger.info(
-                    f"💾 Saving final batch of {len(segment_buffer)} segments "
-                    f"(total: {total_segments})..."
-                )
+                logger.info(f"💾 Saving final batch of {len(segment_buffer)} segments")
                 await self.mongodb_service.append_transcript_chunk(
                     track_ref_id=track_ref_id,
                     new_segments=segment_buffer
                 )
-                segment_buffer.clear()
             
-            # Build full text
-            full_text = " ".join(full_text_parts)
+            return full_text_parts, total_segments
+        
+        # Start transcription in thread pool
+        transcribe_task = loop.run_in_executor(None, transcribe_in_thread)
+        
+        # Start consuming and saving
+        full_text_parts, total_segments = await consume_and_save()
+        
+        # Wait for transcription thread to finish
+        await transcribe_task
+        
+        # Check for errors
+        if transcription_error:
+            raise RuntimeError(f"Transcription failed: {transcription_error}")
+        
+        # Build results
+        full_text = " ".join(full_text_parts)
+        info = info_container.get('info')
+        
+        if not info:
+            raise RuntimeError("Transcription info not available")
+        
+        lang_prob = info.language_probability
+        if math.isnan(lang_prob):
+            lang_prob = 0.0
+        
+        info_dict = {
+            "language": info.language,
+            "language_probability": lang_prob,
+            "duration": info.duration,
+            "duration_after_vad": info.duration_after_vad,
+        }
+        
+        logger.info(
+            f"✅ Progressive transcription complete: {total_segments} segments, "
+            f"{len(full_text)} characters"
+        )
+        
+        return full_text, total_segments, info_dict
             
-            # Build info dict
-            lang_prob = info.language_probability
-            if math.isnan(lang_prob):
-                lang_prob = 0.0
-            
-            info_dict = {
-                "language": info.language,
-                "language_probability": lang_prob,
-                "duration": info.duration,
-                "duration_after_vad": info.duration_after_vad,
-            }
-            
-            logger.info(
-                f"✅ Transcription complete: {total_segments} segments, "
-                f"{len(full_text)} characters"
-            )
-            
-            return full_text, total_segments, info_dict
-            
-        except Exception as e:
-            logger.error(f"Failed during transcription: {e}")
-            raise RuntimeError(f"Transcription failed: {e}") from e
     
     
     def _cleanup_temp_file(self, file_path: Path):
