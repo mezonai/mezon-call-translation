@@ -230,9 +230,17 @@ async def entrypoint(ctx: agents.JobContext):
     # Keep agent alive forever (cleanup callback will be called on shutdown)
     await asyncio.Future()
 
+MAX_ROOMS = 30
+def load(worker) -> float:
+    active_rooms = len(worker.active_jobs)
+    # logger.info(f"Calculated load for Worker {worker.id} current active rooms: {active_rooms} load: {active_rooms / MAX_ROOMS}")
+    return active_rooms / MAX_ROOMS
+
 if __name__ == "__main__":
 
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=entrypoint,
-        agent_name=config.livekit.agent_name
+        agent_name=config.livekit.agent_name,
+        load_fnc=load,
+        load_threshold=0.9
     ))
