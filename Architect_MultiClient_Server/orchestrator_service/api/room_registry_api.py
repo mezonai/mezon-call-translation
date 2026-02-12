@@ -12,6 +12,7 @@ from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.services.interview_queue import get_interview_queue
 from orchestrator_service.auth.transcript_auth import verify_api_key
 
 # Import để có thể access egress_service
@@ -62,15 +63,17 @@ async def register_room(
     """
     
     registry = get_room_registry()
+    interview_queue = get_interview_queue()
     stt_room_id = None
     tracks_started = 0
     
     # 1. Start room in STT service FIRST
     try:
         stt_response = await transcription_service.start_room(request.room_name)
-        if stt_response.get("success"):
-            stt_room_id = stt_response.get("room_id")
-            logger.info(f"✅ Room '{request.room_name}' started in STT service")
+        if stt_response:
+            if stt_response.get("success"):
+                stt_room_id = stt_response.get("room_id")
+                logger.info(f"✅ Room '{request.room_name}' started in STT service")
         else:
             logger.warning(f"⚠️ Failed to start room in STT service")
     except Exception as e:
@@ -82,6 +85,12 @@ async def register_room(
             status_code=409,
             detail=f"Room '{request.room_name}' is already registered"
         )
+    
+    # 2.5. Check if this room is in interview queue and update mapping
+    if stt_room_id and interview_queue.get_interview_id(request.room_name):
+        # Update from room_name to room_id
+        interview_queue.update_to_room_id(request.room_name, stt_room_id)
+        logger.info(f"✅ Interview mapping updated: room_name='{request.room_name}' → room_id='{stt_room_id}'")
     
     # 3. Start recording for existing tracks (best effort)
     try:
