@@ -71,14 +71,6 @@ class TranscriptManager:
                     participant_name=participant_name,
                     seq=seq
                 )
-            # Send immediately if final and has content
-            if is_final and text.strip():
-                await self._send_to_server(
-                    text=text.strip(),
-                    participant_identity=participant_identity,
-                    participant_name=participant_name,
-                    seq=seq
-                )
             
             return True
             
