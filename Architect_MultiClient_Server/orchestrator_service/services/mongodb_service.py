@@ -548,7 +548,7 @@ class MongoDBService:
             # 2. get summary list
             summary_list = await self.summary_collection.find(
                 {"room_id": {"$in": room_ids}}
-            ).sort("created_at", -1).to_list(None)
+            ).to_list(None)
 
             # Override created_at and completed_at
             for summary in summary_list:
