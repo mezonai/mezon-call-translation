@@ -40,7 +40,6 @@ class InterviewWebhookService:
         Returns:
             The location URL as-is
         """
-        location = location.replace(self.config.minio.endpoint, self.config.minio.url_getter)
 
         return location
     
@@ -88,13 +87,12 @@ class InterviewWebhookService:
                     continue
                 
                 # Get location (already a full HTTP URL)
-                location = audio_info.get("location", "")
-                if not location:
-                    logger.warning(f"Track {track.get('_id')} missing location, skipping")
+                filename = audio_info.get("filename", "")
+                if not filename:
+                    logger.warning(f"Track {track.get('_id')} missing filename, skipping")
                     continue
                 
-                storage_url = self._get_storage_url(location)
-                tracks_data[str(started_at_ns)] = storage_url
+                tracks_data[str(started_at_ns)] = filename
             
             if not tracks_data:
                 logger.warning(f"No valid tracks with storage URLs found for room_id '{room_id}'")
