@@ -1,0 +1,12 @@
+vấn đề hiển thị name agent hiện tại đang hiển thị dưới dạng identity custom vấn đề phát sinh là
+trong một room chỉ join được 1 agent này ( hiện tại chưa thành vấn đề vì chỉ cần 1 agent join vào )
+
+TODO lại và request tính năng để bên team làm interview:
+- Khi voice đoạn ngắn => Agent không response
+- Khi voice đoạn dài => Bị mất đoạn, thiếu, phản hồi không đủ
+- Phản hồi chậm (>3,4 phút sometimes)
+- Cần join được link meet external
+- Cần lưu được source mp3 để interviewer nghe lại trong tương lai, một số chỉ số kiểu duration, word per batch (kiểu số từ mà ng đấy nói trên chunk thời gian)
+
+vấn đề phản hồi chậm là lỗi sinh ra ở vad làm mất đi đoạn im lặng khiến cho model không nhận được tín hiện kết thúc câu(sửa tạm thời tắt vad) có một số bug trong process_chunk đang tiến hành tìm hiểu nguyên nhân
+Khi voice đoạn ngắn cũng cùng vấn đề với trường hợp trên

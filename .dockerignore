@@ -1,0 +1,54 @@
+# Git
+.git
+.github
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments (will be created fresh in container)
+venv/
+env/
+ENV/
+Architect_MultiClient_Server/*/venv/
+Architect_MultiClient_Server/*/env/
+
+# Models (will be downloaded by scripts)
+/models/
+
+# Environment files (will be created from .env.example)
+.env
+*.env
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.backup.*
+*.bak
+
+# Temporary files
+tmp/
+temp/
+*.tmp

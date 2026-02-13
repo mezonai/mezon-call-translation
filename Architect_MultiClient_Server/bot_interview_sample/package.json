@@ -1,0 +1,20 @@
+{
+  "name": "bot_interview",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node index",
+    "dev": "nodemon index"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "bot_interview": "file:",
+    "dotenv": "^16.4.5",
+    "eventsource": "^4.0.0",
+    "mezon-sdk": "^2.8.38",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
