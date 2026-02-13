@@ -26,6 +26,7 @@ ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 STT_SERVICE_DIR="$ARCH_DIR/stt_service"
 ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
+TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
 
 # Model directories
 MODELS_DIR="$PROJECT_ROOT/models"
@@ -294,6 +295,7 @@ if [ "$SKIP_ENV" = false ]; then
     setup_env_file "$STT_SERVICE_DIR" "STT Service"
     setup_env_file "$ORCHESTRATOR_DIR" "Orchestrator Service"
     setup_env_file "$AGENTS_DIR" "Agents Service"
+    setup_env_file "$TTS_SERVICE_DIR" "TTS Service"
     
     # Update model paths in .env files
     print_info "Updating model paths in .env files..."
@@ -380,6 +382,7 @@ if [ "$SKIP_VENV" = false ]; then
     setup_venv "$STT_SERVICE_DIR" "STT Service" "requirements-server.txt"
     setup_venv "$ORCHESTRATOR_DIR" "Orchestrator Service" "requirements-orchestrator.txt"
     setup_venv "$AGENTS_DIR" "Agents Service" "requirements-agent.txt"
+    setup_venv "$TTS_SERVICE_DIR" "TTS Service" "requirements-tts.txt"
     
     print_success "Virtual environments configured successfully!"
 else

@@ -4,15 +4,6 @@
 # ============================================================================
 
 # ========================================
-# Core LiveKit & Real-time Communication
-# ========================================
-livekit-agents>=0.9.0          # LiveKit agents framework for real-time applications
-livekit>=0.17.0                # LiveKit client SDK for WebRTC communication
-livekit-api>=0.7.0             # LiveKit server API for room/token management
-websockets>=11.0.0             # WebSocket client for STT/TTS server communication
-protobuf>=4.25.0               # Protocol buffers (for LiveKit)
-
-# ========================================
 # API
 # ========================================
 pydantic>=2.0.0                # Data validation and settings management
@@ -27,19 +18,14 @@ librosa>=0.10.0                # Audio analysis and feature extraction
 pyaudio>=0.2.13                # Audio I/O (VAD processor)
 
 # ========================================
-# Database & Storage
+# Text-to-Speech (TTS)
 # ========================================
-motor>=3.3.0                   # Async MongoDB driver
-pymongo>=4.5.0                 # MongoDB Python driver (sync operations)
+torch>=2.0.0                   # PyTorch for neural TTS models
+torchaudio>=2.0.0              # Audio I/O for PyTorch
+# kokoro-onnx>=0.1.0             # Kokoro TTS model (82M parameter model)
+kokoro>=0.9.4                  # Kokoro TTS model (82M parameter model)
 
 # ========================================
 # Configuration & Environment
 # ========================================
 python-dotenv>=1.0.0           # Load environment variables from .env
-
-# ========================================
-# Authentication & Security
-# ========================================
-PyJWT>=2.8.0                   # JSON Web Token for authentication
-
-
