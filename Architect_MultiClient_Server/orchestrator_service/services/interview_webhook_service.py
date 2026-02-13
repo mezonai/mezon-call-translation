@@ -40,6 +40,8 @@ class InterviewWebhookService:
         Returns:
             The location URL as-is
         """
+        location = location.replace(self.config.minio.endpoint, self.config.minio.url_getter)
+
         return location
     
     async def send_interview_data(

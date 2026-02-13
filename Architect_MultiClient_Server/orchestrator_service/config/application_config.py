@@ -172,6 +172,7 @@ class ServerConfig:
 class MinIOConfig:
     """MinIO/S3 storage configuration for recordings"""
     endpoint: str = "http://minio:9000"
+    url_getter: str = "http://minio:9001"
     access_key: str = "minioadmin"
     secret: str = "minioadmin123"
     bucket: str = "livekit-recordings"
@@ -183,6 +184,7 @@ class MinIOConfig:
         """Create MinIO config from environment variables"""
         return cls(
             endpoint=os.getenv('MINIO_ENDPOINT', 'http://minio:9000'),
+            url_getter=os.getenv('MINIO_URL_GETTER', 'http://minio:9001'),
             access_key=os.getenv('MINIO_ACCESS_KEY', 'minioadmin'),
             secret=os.getenv('MINIO_SECRET', 'minioadmin123'),
             bucket=os.getenv('MINIO_BUCKET', 'livekit-recordings'),
