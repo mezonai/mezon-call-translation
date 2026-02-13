@@ -540,7 +540,7 @@ class MongoDBService:
                     query["created_at"]["$gte"] = start_time
                 if end_time:
                     query["created_at"]["$lte"] = end_time
-            cursor = self.rooms_collection.find(query).sort("created_at", -1)
+            cursor = self.rooms_collection.find(query).sort("created_at", 1)
             room_list = await cursor.to_list(None)
             room_dict = {str(room["_id"]): room for room in room_list}
             room_ids = [str(room["_id"]) for room in room_list]
