@@ -165,12 +165,13 @@ class TTSEngine:
         self.cleanup()
 
 
-_tts_engine: Optional[TTSEngine] = None
+tts_engine: Optional[TTSEngine] = None
 
 @lru_cache(maxsize=1)
 def get_tts_engine() -> TTSEngine:
     """Get the TTS engine singleton instance"""
-    if _tts_engine is None:
+    global tts_engine
+    if tts_engine is None:
         model_path = os.getenv('TTS_MODEL_PATH', 'models/kokoro_models')
-        _tts_engine = TTSEngine(model_path=model_path)
-    return _tts_engine
+        tts_engine = TTSEngine(model_path=model_path)
+    return tts_engine
