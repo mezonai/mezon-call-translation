@@ -9,6 +9,7 @@ from orchestrator_service.services.transcription_service import TranscriptionSer
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.utils.filepath import Filepath
 from orchestrator_service.models.webhook_models import WebhookResponse, TrackInfo, EgressInfo
+from orchestrator_service.utils.parse_identity import parse_participant_identity
 
 logger = get_logger(__name__)
 
@@ -72,6 +73,9 @@ class WebhookHandler:
         room_name = event.get("room", {}).get("name", "unknown")
         identity = event.get("participant", {}).get("identity", "unknown")
         
+        # Extract extName from identity if it's in JSON format
+        identity = parse_participant_identity(identity)
+        
         track_data = event.get("track", {})
         track = TrackInfo(
             sid=track_data.get("sid", ""),
@@ -124,6 +128,10 @@ class WebhookHandler:
             try:
                 parsed = Filepath.parse(filepath)
                 participant_identity = parsed.get("identity")
+                
+                # Extract extName from identity if it's in JSON format
+                participant_identity = parse_participant_identity(participant_identity)
+                
                 logger.debug(f"Parsed participant identity '{participant_identity}' from filepath: {filepath}")
             except ValueError as e:
                 logger.warning(f"Failed to parse filepath '{filepath}': {e}")

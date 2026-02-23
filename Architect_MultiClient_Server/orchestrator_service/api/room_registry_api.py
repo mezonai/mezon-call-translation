@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from livekit import api
 
+from orchestrator_service.utils.parse_identity import parse_participant_identity
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.livekit_client import get_livekit_service
@@ -115,9 +116,12 @@ async def register_room(
                             2: "MICROPHONE"
                         }.get(track.source, "UNKNOWN")
                         
+                        # Extract extName from identity if it's in JSON format
+                        identity = parse_participant_identity(participant.identity)
+                        
                         logger.info(
                             f"Starting recording: track={track.sid}, "
-                            f"participant={participant.identity}, source={source_str}"
+                            f"participant={identity}, source={source_str}"
                         )
                         
                         asyncio.create_task(
@@ -126,7 +130,7 @@ async def register_room(
                                 track.sid,
                                 "AUDIO",
                                 source_str,
-                                participant.identity
+                                identity
                             )
                         )
                         tracks_started += 1

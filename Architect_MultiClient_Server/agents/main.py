@@ -3,6 +3,7 @@ LiveKit Agent entrypoint - Starts Vosk transcription agent + TTS
 """
 import asyncio
 from dotenv import load_dotenv
+import json
 load_dotenv()
 
 from livekit import agents
@@ -95,7 +96,6 @@ async def entrypoint(ctx: agents.JobContext):
     tts_manager = None
 
     def _parse_json_bytes(data: bytes):
-        import json
         try:
             if data is None:
                 return None
