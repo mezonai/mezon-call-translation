@@ -4,10 +4,12 @@ Integrated with agent logging system
 """
 import os
 import asyncio
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 import numpy as np
 from pathlib import Path
+from kokoro import KPipeline
 
 from ..logger import get_logger
 
@@ -20,7 +22,7 @@ class TTSEngine:
     Handles model loading, caching, and audio generation
     """
     
-    def __init__(self, sample_rate: int = 24000, model_path: Optional[str] = None):
+    def __init__(self, sample_rate: int = 24000, model_path: str = "models/kokoro_models"):
         """
         Initialize TTS Engine
         
@@ -29,7 +31,7 @@ class TTSEngine:
             model_path: Path to model directory (default: models/kokoro_models)
         """
         self.sample_rate = sample_rate
-        self.model_dir = Path(model_path or "models/kokoro_models")
+        self.model_dir = Path(model_path)
         self.pipeline = None
         self.lang_code = 'a'  # 'a' = American English, 'b' = British English
         
@@ -72,7 +74,7 @@ class TTSEngine:
         """Synchronous model loading (runs in thread pool)"""
         try:
             # Import Kokoro inside thread to avoid import issues
-            from kokoro import KPipeline
+            
             
             # Set HF_HOME to use local model directory
             os.environ['HF_HOME'] = str(self.model_dir.parent)
@@ -146,18 +148,6 @@ class TTSEngine:
             logger.error(f"Synthesis failed for text '{text[:30]}...': {e}", exc_info=True)
             raise
     
-    def get_audio_duration(self, audio_data: np.ndarray) -> float:
-        """
-        Calculate audio duration in seconds
-        
-        Args:
-            audio_data: Audio samples
-        
-        Returns:
-            Duration in seconds
-        """
-        return len(audio_data) / self.sample_rate
-    
     def cleanup(self):
         """Release model resources"""
         try:
@@ -173,3 +163,14 @@ class TTSEngine:
     def __del__(self):
         """Destructor - ensure cleanup"""
         self.cleanup()
+
+
+_tts_engine: Optional[TTSEngine] = None
+
+@lru_cache(maxsize=1)
+def get_tts_engine() -> TTSEngine:
+    """Get the TTS engine singleton instance"""
+    if _tts_engine is None:
+        model_path = os.getenv('TTS_MODEL_PATH', 'models/kokoro_models')
+        _tts_engine = TTSEngine(model_path=model_path)
+    return _tts_engine

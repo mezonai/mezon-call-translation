@@ -18,6 +18,7 @@ ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 STT_SERVICE_DIR="$ARCH_DIR/stt_service"
 ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
+TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
 SYSTEMD_DIR="/etc/systemd/system"
 
 # Default options
@@ -80,7 +81,7 @@ validate_setup() {
     print_section "Validating Setup"
     
     # Check directories and virtual environments
-    for dir in "$STT_SERVICE_DIR" "$ORCHESTRATOR_DIR" "$AGENTS_DIR"; do
+    for dir in "$STT_SERVICE_DIR" "$ORCHESTRATOR_DIR" "$AGENTS_DIR" "$TTS_SERVICE_DIR"; do
         [ ! -d "$dir" ] && print_error "Directory not found: $dir" && ((errors++)) && continue
         print_success "Found: $(basename "$dir")"
         
@@ -203,6 +204,50 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=mezon-orchestrator-service
+
+# Security settings
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=$PROJECT_ROOT
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
+"
+    
+    if [ "$DRY_RUN" = true ]; then
+        echo -e "${YELLOW}[DRY RUN] Would create: $service_file${NC}\n$content\n"
+    else
+        echo "$content" > "$service_file" && chmod 644 "$service_file"
+        print_success "Created: $service_file"
+    fi
+}
+
+create_tts_service() {
+    local service_file="$SYSTEMD_DIR/mezon-tts-service.service"
+    print_info "Creating service file: mezon-tts-service.service"
+    
+    local content="[Unit]
+Description=Mezon Call Translation - TTS Service
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_GROUP
+WorkingDirectory=$ARCH_DIR
+Environment="PATH=$TTS_SERVICE_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=$TTS_SERVICE_DIR/venv/bin/python -m uvicorn tts_service.main:app --host localhost --port 8008
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mezon-tts-service
 
 # Security settings
 ProtectSystem=strict
