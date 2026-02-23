@@ -295,29 +295,6 @@ class LiveKitConfig:
 
 
 # ============================================================================
-# TTS Configuration
-# ============================================================================
-
-@dataclass
-class TTSConfig:
-    """Text-to-Speech configuration"""
-    enabled: bool = True
-    model_path: str = "models/kokoro_models"
-    default_language: str = "en"
-    default_voice: str = "default"
-    
-    @classmethod
-    def from_env(cls) -> 'TTSConfig':
-        """Create TTS config from environment variables"""
-        return cls(
-            enabled=os.getenv('ENABLE_TTS', 'true').lower() == 'true',
-            model_path=os.getenv('TTS_MODEL_PATH', 'models/kokoro_models'),
-            default_language=os.getenv('TTS_DEFAULT_LANGUAGE', 'en'),
-            default_voice=os.getenv('TTS_DEFAULT_VOICE', 'default'),
-        )
-    
-
-# ============================================================================
 # Orchestrator Configuration
 # ============================================================================
 
@@ -410,7 +387,6 @@ class Config:
         self.threading = ThreadingConfig.from_env()
         self.transcript = TranscriptConfig.from_env()
         self.livekit = LiveKitConfig.from_env()
-        self.tts = TTSConfig.from_env()
         self.orchestrator = OrchestratorConfig.from_env()
         self.tts_service = TTSConfig.from_env()
         self.logger = LoggerConfig.from_env()

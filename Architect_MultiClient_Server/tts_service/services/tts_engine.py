@@ -22,7 +22,7 @@ class TTSEngine:
     Handles model loading, caching, and audio generation
     """
     
-    def __init__(self, sample_rate: int = 24000, model_path: Optional[str] = None):
+    def __init__(self, sample_rate: int = 24000, model_path: str = "models/kokoro_models"):
         """
         Initialize TTS Engine
         
@@ -31,7 +31,7 @@ class TTSEngine:
             model_path: Path to model directory (default: models/kokoro_models)
         """
         self.sample_rate = sample_rate
-        self.model_dir = Path(model_path or "models/kokoro_models")
+        self.model_dir = Path(model_path)
         self.pipeline = None
         self.lang_code = 'a'  # 'a' = American English, 'b' = British English
         
@@ -171,5 +171,6 @@ _tts_engine: Optional[TTSEngine] = None
 def get_tts_engine() -> TTSEngine:
     """Get the TTS engine singleton instance"""
     if _tts_engine is None:
-        _tts_engine = TTSEngine()
+        model_path = os.getenv('TTS_MODEL_PATH', 'models/kokoro_models')
+        _tts_engine = TTSEngine(model_path=model_path)
     return _tts_engine

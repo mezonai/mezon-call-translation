@@ -317,15 +317,15 @@ if [ "$SKIP_ENV" = false ]; then
     fi
     
     # Update Agents .env
-    if [ -f "$AGENTS_DIR/.env" ]; then
+    if [ -f "$TTS_SERVICE_DIR/.env" ]; then
         # Update TTS_MODEL_PATH
-        if grep -q "^TTS_MODEL_PATH=" "$AGENTS_DIR/.env"; then
-            sed -i.tmp "s|^TTS_MODEL_PATH=.*|TTS_MODEL_PATH=$KOKORO_MODEL_PATH|" "$AGENTS_DIR/.env"
-            rm -f "$AGENTS_DIR/.env.tmp"
+        if grep -q "^TTS_MODEL_PATH=" "$TTS_SERVICE_DIR/.env"; then
+            sed -i.tmp "s|^TTS_MODEL_PATH=.*|TTS_MODEL_PATH=$KOKORO_MODEL_PATH|" "$TTS_SERVICE_DIR/.env"
+            rm -f "$TTS_SERVICE_DIR/.env.tmp"
         else
-            echo "TTS_MODEL_PATH=$KOKORO_MODEL_PATH" >> "$AGENTS_DIR/.env"
+            echo "TTS_MODEL_PATH=$KOKORO_MODEL_PATH" >> "$TTS_SERVICE_DIR/.env"
         fi
-        print_success "Updated TTS_MODEL_PATH in Agents Service"
+        print_success "Updated TTS_MODEL_PATH in TTS Service"
     fi
     
     print_success ".env files configured successfully!"

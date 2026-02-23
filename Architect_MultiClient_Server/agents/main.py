@@ -186,36 +186,32 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 
-    if config.tts.enabled:
-        try:
-            logger.info("Initializing TTS Manager...")
-            
-            # Get model path from config
-            tts_manager = TTSManager(
-                ctx=ctx,
-                session_id=session_id,
-                model_path=config.tts.model_path
-            )
+    try:
+        logger.info("Initializing TTS Manager...")
+        
+        # Get model path from config
+        tts_manager = TTSManager(
+            ctx=ctx,
+            session_id=session_id
+        )
 
-            # Initialize TTS (load model, setup track)
-            if await tts_manager.initialize():
-                logger.info("✅ TTS Manager initialized successfully")
-                
-                # Note: DataChannel routing is handled by central dispatcher in main.py
-                logger.info("✅ TTS listening on DataChannel topic='tts_control'")
-                
-                # Announce TTS ready
-                await tts_manager.announce_tts_ready()
-            else:
-                logger.warning("⚠️ TTS Manager initialization failed, continuing without TTS")
-                tts_manager = None
-                
-        except Exception as e:
-            logger.error(f"Failed to setup TTS Manager: {e}", exc_info=True)
-            logger.warning("⚠️ Continuing without TTS functionality")
+        # Initialize TTS (load model, setup track)
+        if await tts_manager.initialize():
+            logger.info("✅ TTS Manager initialized successfully")
+            
+            # Note: DataChannel routing is handled by central dispatcher in main.py
+            logger.info("✅ TTS listening on DataChannel topic='tts_control'")
+            
+            # Announce TTS ready
+            await tts_manager.announce_tts_ready()
+        else:
+            logger.warning("⚠️ TTS Manager initialization failed, continuing without TTS")
             tts_manager = None
-    else:
-        logger.info("TTS disabled (set ENABLE_TTS=true to enable)")
+            
+    except Exception as e:
+        logger.error(f"Failed to setup TTS Manager: {e}", exc_info=True)
+        logger.warning("⚠️ Continuing without TTS functionality")
+        tts_manager = None
 
 
 

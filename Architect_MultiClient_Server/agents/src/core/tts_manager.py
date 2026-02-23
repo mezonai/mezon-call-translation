@@ -25,8 +25,7 @@ class TTSManager:
         self,
         ctx: agents.JobContext,
         session_id: str,
-        sample_rate: int = 24000,
-        model_path: Optional[str] = None
+        sample_rate: int = 24000
     ):
         """
         Initialize TTS Manager
@@ -35,7 +34,6 @@ class TTSManager:
             ctx: LiveKit job context
             session_id: Unique session identifier
             sample_rate: Audio sample rate in Hz (default: 24000 for Kokoro)
-            model_path: Path to TTS model directory (optional)
         """
         self.ctx = ctx
         self.session_id = session_id
