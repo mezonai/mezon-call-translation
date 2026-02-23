@@ -5,6 +5,8 @@ from tts_service.api.tts_api import router as tts_router
 from tts_service.services.tts_engine import get_tts_engine
 from tts_service.logger import get_logger
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = get_logger(__name__)
 
