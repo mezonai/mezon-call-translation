@@ -1,51 +1,58 @@
 import httpx
-from typing import Dict
+from typing import Dict, Optional
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
-from typing import Optional
+from orchestrator_service.services.redis_producer_service import RedisProducerService
 
 logger = get_logger(__name__)
 
 
 class TranscriptionService:
-    """Service sent audio to transcription queue"""
+    """Service sent audio to transcription queue via Redis Stream"""
     
     def __init__(self):
         self.config = get_config().stt_service
-        self.api_url =(f"http://{self.config.host}:{self.config.port}/api/transcribe")
+        self.redis_config = get_config().redis
+        self.api_url = f"http://{self.config.host}:{self.config.port}/api/transcribe"
         self.timeout = 30.0
+        self._redis_producer: Optional[RedisProducerService] = None
+    
+    async def _get_producer(self) -> RedisProducerService:
+        """Get or create Redis producer (lazy initialization)."""
+        if not self._redis_producer:
+            self._redis_producer = RedisProducerService(self.redis_config)
+            await self._redis_producer.connect()
+        return self._redis_producer
     
     async def enqueue(self, egress_info: Dict) -> bool:
         """
-        Send egress info to transcription queue
+        Send egress info directly to Redis Stream.
+        
+        Args:
+            egress_info: Dict with keys: egressId, filename, location, 
+                        duration, startedAt, endedAt, source (optional)
         
         Returns:
             True if successful, False if failed
         """
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                logger.info(f"📤 Sending to transcribe: {self.api_url}")
-                
-                response = await client.post(
-                    f"{self.api_url}/queue",
-                    json=egress_info,
-                    headers={"Content-Type": "application/json"}
-                )
-                
-                if response.status_code == 200:
-                    logger.info(f"✓ Queued: {egress_info['egressId']}")
-                    logger.debug(f"Response: {response.json()}")
-                    return True
-                else:
-                    logger.error(f"✗ Queue failed. Status: {response.status_code}")
-                    logger.error(f"Response: {response.text}")
-                    return False
-                    
-        except httpx.TimeoutException:
-            logger.error("✗ Timeout sending to transcribe queue")
-            return False
+            producer = await self._get_producer()
+            
+            task_id = await producer.enqueue(
+                egress_id=egress_info["egressId"],
+                filename=egress_info["filename"],
+                location=egress_info["location"],
+                duration=egress_info["duration"],
+                started_at=egress_info["startedAt"],
+                ended_at=egress_info["endedAt"],
+                source=egress_info.get("source"),
+            )
+            
+            logger.info(f"✓ Queued to Redis: {egress_info['egressId']} → {task_id}")
+            return True
+            
         except Exception as e:
-            logger.error(f"✗ Error sending to queue: {e}")
+            logger.error(f"✗ Redis enqueue failed: {e}")
             return False
 
     async def final_room(self, room_name: str, room_id: str ) -> bool:

@@ -13,7 +13,6 @@ from bson import ObjectId
 
 from ..service.redis_transcription_queue_service import (
     get_transcription_queue_service,
-    TranscriptionTask,
 )
 
 from stt_service.service.mongodb_service import get_mongodb_service
@@ -37,24 +36,6 @@ class TrackMetadataRequest(BaseModel):
     track_id: str
     room_ref_id: str
     participant_identity: str
-
-
-class TranscriptionRequest(BaseModel):
-    """Request model for queueing a transcription task (simplified structure)."""
-    egressId: str
-    filename: str
-    location: str
-    duration: str
-    startedAt: str
-    endedAt: str
-    source: Optional[str] = None
-
-class TranscriptionResponse(BaseModel):
-    """Response model for queued task."""
-    success: bool
-    task_id: str
-    message: str
-    queue_size: int
 
 
 class TaskStatusResponse(BaseModel):
@@ -139,69 +120,6 @@ async def save_track_metadata(request: TrackMetadataRequest):
         )
 
 
-@router.post("/queue", response_model=TranscriptionResponse)
-async def queue_transcription(request: TranscriptionRequest):
-    """
-    Queue a transcription task for processing.
-    
-    The task will be added to Redis Stream and processed by a background consumer.
-    Supports distributed workers and crash recovery.
-    This endpoint returns immediately without blocking.
-    
-    Returns:
-        Task ID and queue information
-    """
-    try:
-        queue_service = get_transcription_queue_service()
-        
-        # Create transcription task with all necessary info
-        # Track metadata will be updated in the processor when task starts processing
-        task = TranscriptionTask(
-            filename=request.filename,
-            started_at=request.startedAt,
-            ended_at=request.endedAt,
-            duration=request.duration,
-            location=request.location,
-            egress_id=request.egressId,
-            source=request.source,
-        )
-        
-        # Enqueue to Redis Stream (async, very fast)
-        try:
-            task_id = await queue_service.enqueue(task)
-            logger.info(f"Task {task_id} enqueued to Redis Stream")
-        except ConnectionError as e:
-            logger.error(f"Redis connection error: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Transcription service temporarily unavailable. Please try again later."
-            )
-        except Exception as e:
-            logger.error(f"Failed to enqueue {task.filename}: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to queue task: {str(e)}"
-            )
-        
-        # Get stats (async)
-        stats = await queue_service.get_stats()
-        
-        return TranscriptionResponse(
-            success=True,
-            task_id=task_id,
-            message="Task queued successfully",
-            queue_size=stats.get("queue_size", 0),
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to queue transcription task: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to queue task: {str(e)}"
-        )
-
 @router.post("/rooms/start",response_model=dict)
 async def start_room_transcription(request: SessionInfo):
     mongodb_service = get_mongodb_service()
@@ -279,24 +197,9 @@ async def get_task_status(task_id: str):
         Task status and result if completed
     """
     queue_service = get_transcription_queue_service()
-    
-    # First check local cache
-    task = queue_service.get_task(task_id)
-    
-    if task:
-        return TaskStatusResponse(
-            task_id=task.task_id,
-            status=task.status.value,
-            filename=task.filename,
-            created_at=task.created_at,
-            started_processing_at=task.started_processing_at,
-            completed_at=task.completed_at,
-            result=task.result,
-            error=task.error,
-        )
-    
-    # If not in cache, try Redis
-    task_data = await queue_service.get_task_async(task_id)
+
+    # Query Redis directly for task status
+    task_data = await queue_service.get_task(task_id)
     
     if not task_data:
         raise HTTPException(

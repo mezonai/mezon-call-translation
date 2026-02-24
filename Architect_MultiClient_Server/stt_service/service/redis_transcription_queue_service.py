@@ -138,10 +138,6 @@ class RedisTranscriptionQueueService:
         self._processor: Optional[Callable] = None
         self._current_task: Optional[TranscriptionTask] = None
         
-        # Local cache for recent tasks (for quick status lookup)
-        self._recent_tasks: Dict[str, TranscriptionTask] = {}
-        self._max_cache_size = 500
-        
         # Stats (local counters, Redis has authoritative stats)
         self._local_stats = {
             "tasks_processed_this_session": 0,
@@ -260,70 +256,6 @@ class RedisTranscriptionQueueService:
         
         logger.info("✅ RedisTranscriptionQueueService stopped")
     
-    async def enqueue(
-        self,
-        task: TranscriptionTask,
-        timeout: float = 5.0,
-        priority: int = TaskPriority.NORMAL
-    ) -> str:
-        """
-        Add a task to the Redis stream.
-        
-        Args:
-            task: The transcription task to enqueue
-            timeout: Not used (Redis is fast), kept for API compatibility
-            priority: Task priority (1-9, lower = higher)
-        
-        Returns:
-            Task ID
-            
-        Raises:
-            ConnectionError: If not connected to Redis
-        """
-        if not self._redis_service:
-            await self.connect()
-        
-        message_id = await self._redis_service.enqueue(
-            task_id=task.task_id,
-            filename=task.filename,
-            egress_id=task.egress_id or "",
-            started_at=task.started_at,
-            ended_at=task.ended_at,
-            duration=task.duration,
-            location=task.location,
-            source=task.source,
-            priority=priority,
-        )
-        
-        # Update task with message ID and cache it
-        task.message_id = message_id
-        task.priority = priority
-        self._cache_task(task)
-        
-        logger.info(
-            f"📥 Queued task {task.task_id}: {task.filename} "
-            f"(message_id={message_id}, priority={priority})"
-        )
-        
-        return task.task_id
-    
-    def enqueue_nowait(self, task: TranscriptionTask) -> str:
-        """
-        Synchronous wrapper for enqueue (for API compatibility).
-        
-        Note: This creates and runs an event loop task.
-        Prefer using async enqueue() when possible.
-        """
-        # Get or create event loop
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in an async context, schedule as task
-            asyncio.create_task(self.enqueue(task))
-            return task.task_id
-        except RuntimeError:
-            # No running loop, use asyncio.run (blocking)
-            return asyncio.run(self.enqueue(task))
-    
     async def _consumer_loop(self) -> None:
         """
         Main consumer loop using Redis XREADGROUP.
@@ -357,7 +289,6 @@ class RedisTranscriptionQueueService:
                     # Convert to TranscriptionTask
                     task = TranscriptionTask.from_stream_task(stream_task)
                     self._current_task = task
-                    self._cache_task(task)
                     
                     # Update heartbeat with current task
                     await self._redis_service.update_heartbeat(
@@ -496,7 +427,6 @@ class RedisTranscriptionQueueService:
                         task = TranscriptionTask.from_stream_task(stream_task)
                         task.retry_count = stream_task.retry_count + 1  # Increment since reclaimed
                         self._current_task = task
-                        self._cache_task(task)
                         
                         await self._redis_service.update_heartbeat(
                             current_task_id=task.task_id
@@ -518,41 +448,15 @@ class RedisTranscriptionQueueService:
         
         logger.info("Orphan recovery loop ended")
     
-    def _cache_task(self, task: TranscriptionTask) -> None:
-        """Cache task for quick status lookup."""
-        self._recent_tasks[task.task_id] = task
-        
-        # Cleanup old entries
-        if len(self._recent_tasks) > self._max_cache_size:
-            # Remove oldest entries
-            sorted_tasks = sorted(
-                self._recent_tasks.items(),
-                key=lambda x: x[1].created_at
-            )
-            to_remove = len(sorted_tasks) - self._max_cache_size
-            for task_id, _ in sorted_tasks[:to_remove]:
-                del self._recent_tasks[task_id]
-    
-    def get_task(self, task_id: str) -> Optional[TranscriptionTask]:
-        """
-        Get task by ID.
-        
-        Checks local cache first, then Redis.
-        """
-        # Check local cache
-        if task_id in self._recent_tasks:
-            return self._recent_tasks[task_id]
-        
-        # Could fetch from Redis here if needed
-        # For now, return None if not in cache
-        return None
-    
-    async def get_task_async(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Get task status from Redis."""
+    async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Get task status from Redis (source of truth)."""
         if not self._redis_service:
             return None
         
         return await self._redis_service.get_task_status(task_id)
+    
+    # Alias for backward compatibility
+    get_task_async = get_task
     
     async def get_stats(self) -> Dict[str, Any]:
         """
@@ -612,7 +516,6 @@ class RedisTranscriptionQueueService:
             "tasks_processed": self._local_stats["tasks_processed_this_session"],
             "tasks_failed": self._local_stats["tasks_failed_this_session"],
             "current_task": self._current_task.task_id if self._current_task else None,
-            "cached_tasks": len(self._recent_tasks),
         }
     
     async def get_pending_tasks(self) -> List[Dict[str, Any]]:

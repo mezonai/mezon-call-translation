@@ -29,6 +29,11 @@ pymongo>=4.5.0                 # MongoDB Python driver (sync operations)
 google-genai>=0.3.0            # Google Gemini API SDK
 
 # ========================================
+# Redis Queue
+# ========================================
+redis>=5.0.0                   # Redis client for task queue
+
+# ========================================
 # Configuration & Environment
 # ========================================
 python-dotenv>=1.0.0           # Load environment variables from .env
