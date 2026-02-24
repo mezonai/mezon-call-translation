@@ -12,7 +12,7 @@ from stt_service.controller.ws_vosk_control import router as stt_router
 from stt_service.controller.transcription_api import router as transcription_router
 from stt_service.service.migration_controller import pipeline_controller
 from stt_service.service.health_service import get_health_service
-from stt_service.service.transcription_queue_service import get_transcription_queue_service
+from stt_service.service.redis_transcription_queue_service import get_transcription_queue_service
 from stt_service.service.whisper_transcription_processor import transcribe_task, get_whisper_processor
 from stt_service.config import get_config
 from .utils.logging_config import setup_logging

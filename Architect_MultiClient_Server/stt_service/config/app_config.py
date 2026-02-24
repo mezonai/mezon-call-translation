@@ -90,6 +90,29 @@ class MongoDBConfig:
     chunk_size: int = 50  # Maximum segments per chunk
 
 @dataclass
+class RedisConfig:
+    """Redis configuration for streams and caching."""
+    host: str = "localhost"
+    port: int = 6379
+    password: str = ""
+    db: int = 0
+    # Stream configuration
+    stream_key: str = "transcription:stream"
+    consumer_group: str = "transcription-workers"
+    # Timeouts and retries
+    claim_min_idle_time_ms: int = 60000  # 60 seconds before claiming orphaned tasks
+    block_timeout_ms: int = 5000  # Block for 5s waiting for new messages
+    max_retries: int = 3  # Max retries for failed tasks
+    # Connection pool
+    max_connections: int = 10
+    socket_timeout: float = 30.0  # Must be > block_timeout_ms/1000 + buffer
+    socket_connect_timeout: float = 10.0
+    # Worker heartbeat
+    heartbeat_interval_sec: float = 10.0
+    worker_timeout_sec: float = 30.0
+
+
+@dataclass
 class WhisperConfig:
     """Whisper transcription configuration."""
     model_size: str = "medium"  # tiny, base, small, medium, large-v3
@@ -130,6 +153,7 @@ class AppConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     minio: MinIOConfig = field(default_factory=MinIOConfig)
     mongodb: MongoDBConfig = field(default_factory=MongoDBConfig)
+    redis: RedisConfig = field(default_factory=RedisConfig)
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
@@ -206,6 +230,22 @@ class ConfigManager:
         config.mongodb.database = os.getenv("MONGODB_DATABASE", config.mongodb.database)
         config.mongodb.collection = os.getenv("MONGODB_COLLECTION", config.mongodb.collection)
         config.mongodb.chunk_size = int(os.getenv("MONGODB_CHUNK_SIZE", config.mongodb.chunk_size))
+        
+        # Redis configuration
+        config.redis.host = os.getenv("REDIS_HOST", config.redis.host)
+        config.redis.port = int(os.getenv("REDIS_PORT", config.redis.port))
+        config.redis.password = os.getenv("REDIS_PASSWORD", config.redis.password)
+        config.redis.db = int(os.getenv("REDIS_DB", config.redis.db))
+        config.redis.stream_key = os.getenv("REDIS_STREAM_KEY", config.redis.stream_key)
+        config.redis.consumer_group = os.getenv("REDIS_CONSUMER_GROUP", config.redis.consumer_group)
+        config.redis.claim_min_idle_time_ms = int(os.getenv("REDIS_CLAIM_MIN_IDLE_TIME_MS", config.redis.claim_min_idle_time_ms))
+        config.redis.block_timeout_ms = int(os.getenv("REDIS_BLOCK_TIMEOUT_MS", config.redis.block_timeout_ms))
+        config.redis.max_retries = int(os.getenv("REDIS_MAX_RETRIES", config.redis.max_retries))
+        config.redis.max_connections = int(os.getenv("REDIS_MAX_CONNECTIONS", config.redis.max_connections))
+        config.redis.socket_timeout = float(os.getenv("REDIS_SOCKET_TIMEOUT", config.redis.socket_timeout))
+        config.redis.socket_connect_timeout = float(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", config.redis.socket_connect_timeout))
+        config.redis.heartbeat_interval_sec = float(os.getenv("REDIS_HEARTBEAT_INTERVAL_SEC", config.redis.heartbeat_interval_sec))
+        config.redis.worker_timeout_sec = float(os.getenv("REDIS_WORKER_TIMEOUT_SEC", config.redis.worker_timeout_sec))
         
         # Whisper configuration
         config.whisper.enabled = os.getenv("ENABLE_WHISPER", "true").lower() == "true"

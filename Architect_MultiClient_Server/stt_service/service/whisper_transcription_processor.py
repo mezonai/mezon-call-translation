@@ -23,7 +23,7 @@ from bson import ObjectId
 from stt_service.service.mongodb_service import get_mongodb_service
 
 from ..config import get_config
-from .transcription_queue_service import TranscriptionTask
+from .redis_transcription_queue_service import TranscriptionTask
 
 logger = logging.getLogger(__name__)
 
