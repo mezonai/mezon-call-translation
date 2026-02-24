@@ -371,84 +371,6 @@ class RedisStreamService:
     # Task Operations (XADD, XACK, etc.)
     # ========================================
     
-    async def enqueue(
-        self,
-        task_id: str,
-        filename: str,
-        egress_id: str,
-        started_at: str,
-        ended_at: str,
-        duration: str,
-        location: str,
-        source: Optional[str] = None,
-        priority: int = TaskPriority.NORMAL,
-    ) -> str:
-        """
-        Add a new task to the stream.
-        
-        Args:
-            task_id: Unique task identifier
-            filename: Path to audio file in MinIO
-            egress_id: LiveKit egress ID
-            started_at: Recording start timestamp
-            ended_at: Recording end timestamp
-            duration: Recording duration
-            location: File location (MinIO bucket path)
-            source: Optional source identifier
-            priority: Task priority (1-9, lower = higher)
-        
-        Returns:
-            Redis stream message ID (e.g., "1234567890123-0")
-        
-        Raises:
-            ConnectionError: If not connected to Redis
-        """
-        if not self._redis:
-            raise ConnectionError("Not connected to Redis")
-        
-        # Build task data
-        task_data = {
-            "task_id": task_id,
-            "filename": filename,
-            "egress_id": egress_id,
-            "started_at": started_at,
-            "ended_at": ended_at,
-            "duration": duration,
-            "location": location,
-            "source": source or "",
-            "priority": str(int(priority)),
-            "created_at": str(time.time()),
-            "retry_count": "0",
-        }
-        
-        # XADD to stream
-        message_id = await self._redis.xadd(
-            self._stream_key,
-            task_data,
-            maxlen=100000,  # Limit stream size
-            approximate=True
-        )
-        
-        message_id_str = message_id.decode() if isinstance(message_id, bytes) else message_id
-        
-        # Store task metadata for quick lookup
-        await self._redis.hset(
-            f"{self._tasks_prefix}:{task_id}",
-            mapping={
-                **task_data,
-                "message_id": message_id_str,
-                "status": StreamTaskStatus.PENDING.value,
-            }
-        )
-        # Set expiry for task metadata (7 days)
-        await self._redis.expire(f"{self._tasks_prefix}:{task_id}", 7 * 24 * 3600)
-        
-        # Update stats
-        await self._redis.hincrby(self._stats_key, "total_enqueued", 1)
-        
-        logger.info(f"📥 Enqueued task {task_id} → message_id={message_id_str}")
-        return message_id_str
-    
     async def read_tasks(
         self,
         count: int = 1,
@@ -604,12 +526,26 @@ class RedisStreamService:
                     approximate=True
                 )
                 
+                new_message_id_str = new_message_id.decode() if isinstance(new_message_id, bytes) else str(new_message_id)
+                
+                # Update task metadata hash to track retry
+                await self._redis.hset(
+                    f"{self._tasks_prefix}:{task.task_id}",
+                    mapping={
+                        "status": StreamTaskStatus.PENDING.value,
+                        "message_id": new_message_id_str,
+                        "retry_count": str(new_retry_count),
+                        "last_error": error[:500],
+                        "retried_at": str(time.time()),
+                    }
+                )
+                
                 # Update stats
                 await self._redis.hincrby(self._stats_key, "total_retried", 1)
                 
                 logger.warning(
                     f"🔄 Task {task.task_id} failed (attempt {task.retry_count + 1}), "
-                    f"re-queued as {new_message_id.decode()}: {error}"
+                    f"re-queued as {new_message_id_str}: {error}"
                 )
             else:
                 # Move to dead letter queue
