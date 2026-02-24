@@ -6,6 +6,8 @@ from typing import Dict, Optional
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.redis_producer_service import RedisProducerService
+from orchestrator_service.models.transcription_task import TranscriptionTask
+
 logger = get_logger(__name__)
 
 
@@ -19,11 +21,15 @@ class TranscriptionService:
         self.timeout = 30.0
         self.mongodb_service = get_mongodb_service()
         self._redis_producer: Optional[RedisProducerService] = None
+        self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
     
-    async def _get_producer(self) -> RedisProducerService:
+    async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
         """Get or create Redis producer (lazy initialization)."""
         if not self._redis_producer:
-            self._redis_producer = RedisProducerService(self.redis_config)
+            self._redis_producer = RedisProducerService.get_instance(
+                self.redis_config, 
+                TranscriptionTask
+            )
             await self._redis_producer.connect()
         return self._redis_producer
     
@@ -72,15 +78,18 @@ class TranscriptionService:
                 # Continue processing even if metadata update fails
 
             producer = await self._get_producer()
-            task_id = await producer.enqueue(
+                # Create task object
+            task = TranscriptionTask(
                 egress_id=egress_info["egressId"],
                 filename=egress_info["filename"],
                 location=egress_info["location"],
                 duration=egress_info["duration"],
                 started_at=egress_info["startedAt"],
                 ended_at=egress_info["endedAt"],
-                source=egress_info.get("source"),
+                source=egress_info.get("source", ""),
             )
+            
+            task_id = await producer.enqueue(task)
             
             logger.info(f"✓ Queued to Redis: {egress_info['egressId']} → {task_id}")
             return True
