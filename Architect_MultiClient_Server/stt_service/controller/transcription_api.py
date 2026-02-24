@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from typing import Optional
 from bson import ObjectId
 
-from ..service.transcription_queue_service import (
+from ..service.redis_transcription_queue_service import (
     get_transcription_queue_service,
     TranscriptionTask,
 )
@@ -87,7 +87,8 @@ async def queue_transcription(request: TranscriptionRequest):
     """
     Queue a transcription task for processing.
     
-    The task will be added to an async queue and processed by a background consumer.
+    The task will be added to Redis Stream and processed by a background consumer.
+    Supports distributed workers and crash recovery.
     This endpoint returns immediately without blocking.
     
     Returns:
@@ -108,31 +109,31 @@ async def queue_transcription(request: TranscriptionRequest):
             source=request.source,
         )
         
-        # Enqueue (non-blocking)
-        task_id = None
+        # Enqueue to Redis Stream (async, very fast)
         try:
-            task_id = queue_service.enqueue_nowait(task)
-            logger.info(f"Task {task_id} enqueued immediately")
-        except asyncio.QueueFull:
-            # Queue full, use blocking version with 5s timeout
-            logger.warning(f"Queue full, trying blocking enqueue with timeout for {task.filename}")
-            try:
-                task_id = await queue_service.enqueue(task, timeout=5.0)
-                logger.info(f"Task {task_id} enqueued after waiting")
-            except asyncio.TimeoutError:
-                logger.error(f"Failed to enqueue {task.filename}: Queue full and timeout after 5s")
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Transcription queue is full. Please try again later."
-                )
+            task_id = await queue_service.enqueue(task)
+            logger.info(f"Task {task_id} enqueued to Redis Stream")
+        except ConnectionError as e:
+            logger.error(f"Redis connection error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Transcription service temporarily unavailable. Please try again later."
+            )
+        except Exception as e:
+            logger.error(f"Failed to enqueue {task.filename}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to queue task: {str(e)}"
+            )
         
-        stats = queue_service.get_stats()
+        # Get stats (async)
+        stats = await queue_service.get_stats()
         
         return TranscriptionResponse(
             success=True,
             task_id=task_id,
             message="Task queued successfully",
-            queue_size=stats["queue_size"],
+            queue_size=stats.get("queue_size", 0),
         )
     
     except HTTPException:
@@ -154,7 +155,7 @@ async def get_queue_stats():
         Queue size, processing counts, and status
     """
     queue_service = get_transcription_queue_service()
-    stats = queue_service.get_stats()
+    stats = await queue_service.get_stats()
     
     return QueueStatsResponse(**stats)
 
@@ -171,23 +172,40 @@ async def get_task_status(task_id: str):
         Task status and result if completed
     """
     queue_service = get_transcription_queue_service()
+    
+    # First check local cache
     task = queue_service.get_task(task_id)
     
-    if not task:
+    if task:
+        return TaskStatusResponse(
+            task_id=task.task_id,
+            status=task.status.value,
+            filename=task.filename,
+            created_at=task.created_at,
+            started_processing_at=task.started_processing_at,
+            completed_at=task.completed_at,
+            result=task.result,
+            error=task.error,
+        )
+    
+    # If not in cache, try Redis
+    task_data = await queue_service.get_task_async(task_id)
+    
+    if not task_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task {task_id} not found"
         )
     
     return TaskStatusResponse(
-        task_id=task.task_id,
-        status=task.status.value,
-        filename=task.filename,
-        created_at=task.created_at,
-        started_processing_at=task.started_processing_at,
-        completed_at=task.completed_at,
-        result=task.result,
-        error=task.error,
+        task_id=task_data.get("task_id", task_id),
+        status=task_data.get("status", "unknown"),
+        filename=task_data.get("filename", ""),
+        created_at=float(task_data.get("created_at", 0)),
+        started_processing_at=float(task_data.get("processing_started_at", 0)) or None,
+        completed_at=float(task_data.get("completed_at", 0)) or None,
+        result=task_data.get("result"),
+        error=task_data.get("final_error") or task_data.get("last_error"),
     )
 
 
@@ -200,7 +218,8 @@ async def get_pending_tasks():
         List of tasks that are waiting or being processed
     """
     queue_service = get_transcription_queue_service()
+    pending_tasks = await queue_service.get_pending_tasks()
     return {
-        "tasks": queue_service.get_pending_tasks(),
-        "count": len(queue_service.get_pending_tasks()),
+        "tasks": pending_tasks,
+        "count": len(pending_tasks),
     }
