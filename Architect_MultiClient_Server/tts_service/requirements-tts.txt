@@ -1,0 +1,34 @@
+# ========================================
+# Web Framework & WebSocket
+# ========================================
+fastapi>=0.104.0               # FastAPI web framework for REST/WebSocket API
+uvicorn[standard]>=0.24.0      # ASGI server with WebSocket support
+websockets>=11.0.3             # WebSocket protocol implementation
+pydantic>=2.0.0                # Data validation and settings management
+
+# ========================================
+# API
+# ========================================
+pydantic>=2.0.0                # Data validation and settings management
+httpx>=0.25.0                  # HTTP client for API calls
+
+# ========================================
+# Audio Processing & Analysis
+# ========================================
+numpy>=1.24.0,<2.0.0           # Numerical computing for audio buffers
+scipy>=1.11.0                  # Scientific computing for signal processing
+librosa>=0.10.0                # Audio analysis and feature extraction
+pyaudio>=0.2.13                # Audio I/O (VAD processor)
+
+# ========================================
+# Text-to-Speech (TTS)
+# ========================================
+torch>=2.0.0                   # PyTorch for neural TTS models
+torchaudio>=2.0.0              # Audio I/O for PyTorch
+# kokoro-onnx>=0.1.0             # Kokoro TTS model (82M parameter model)
+kokoro>=0.9.4                  # Kokoro TTS model (82M parameter model)
+
+# ========================================
+# Configuration & Environment
+# ========================================
+python-dotenv>=1.0.0           # Load environment variables from .env

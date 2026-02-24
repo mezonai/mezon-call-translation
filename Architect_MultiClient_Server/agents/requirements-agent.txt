@@ -27,14 +27,6 @@ librosa>=0.10.0                # Audio analysis and feature extraction
 pyaudio>=0.2.13                # Audio I/O (VAD processor)
 
 # ========================================
-# Text-to-Speech (TTS)
-# ========================================
-torch>=2.0.0                   # PyTorch for neural TTS models
-torchaudio>=2.0.0              # Audio I/O for PyTorch
-# kokoro-onnx>=0.1.0             # Kokoro TTS model (82M parameter model)
-kokoro>=0.9.4                  # Kokoro TTS model (82M parameter model)
-
-# ========================================
 # Database & Storage
 # ========================================
 motor>=3.3.0                   # Async MongoDB driver

@@ -10,7 +10,7 @@ import numpy as np
 from livekit import rtc, agents
 
 from ..logger import get_logger
-from ..services.tts_engine import TTSEngine
+from ..services.tts_client import process_text_to_audio
 
 logger = get_logger(__name__)
 
@@ -25,8 +25,7 @@ class TTSManager:
         self,
         ctx: agents.JobContext,
         session_id: str,
-        sample_rate: int = 24000,
-        model_path: Optional[str] = None
+        sample_rate: int = 24000
     ):
         """
         Initialize TTS Manager
@@ -35,17 +34,10 @@ class TTSManager:
             ctx: LiveKit job context
             session_id: Unique session identifier
             sample_rate: Audio sample rate in Hz (default: 24000 for Kokoro)
-            model_path: Path to TTS model directory (optional)
         """
         self.ctx = ctx
         self.session_id = session_id
         self.sample_rate = sample_rate
-        
-        # Initialize TTS engine
-        self.tts_engine = TTSEngine(
-            sample_rate=sample_rate,
-            model_path=model_path
-        )
         
         # Audio track management (persistent track)
         self.audio_source: Optional[rtc.AudioSource] = None
@@ -88,16 +80,7 @@ class TTSManager:
         """
         try:
             logger.info("Initializing TTS Manager...")
-            
-            # Step 1: Load TTS model
-            logger.info("Loading TTS model...")
-            if not await self.tts_engine.load():
-                logger.error("Failed to load TTS model")
-                return False
-            
-            # Step 2: Audio track setup is deferred to first TTS request (lazy initialization)
-            logger.info("✅ TTS model loaded (audio track will be setup on first use)")
-            
+
             # Start request processing worker
             self._processing_task = asyncio.create_task(self._process_request_queue())
             logger.info("✅ TTS request queue worker started")
@@ -421,7 +404,7 @@ class TTSManager:
             logger.info("Step 1/2: Synthesizing audio...")
             synthesis_start = time.time()
             
-            audio_data = self.tts_engine.synthesize(text)
+            audio_data = await process_text_to_audio(text)
             
             synthesis_time = time.time() - synthesis_start
             self.stats["total_synthesis_time"] += synthesis_time
@@ -434,7 +417,7 @@ class TTSManager:
             
             # Calculate stats
             total_time = time.time() - request_start
-            audio_duration = self.tts_engine.get_audio_duration(audio_data)
+            audio_duration = len(audio_data) / self.sample_rate
             self.stats["total_audio_duration"] += audio_duration
             self.stats["successful_requests"] += 1
             
@@ -680,10 +663,7 @@ class TTSManager:
                     
                 except Exception as e:
                     logger.warning(f"Failed to flush audio buffer: {e}")
-            
-            # Cleanup TTS engine
-            self.tts_engine.cleanup()
-            
+
             # Log final stats
             stats = self.get_stats()
             logger.info(

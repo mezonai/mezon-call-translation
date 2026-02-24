@@ -240,6 +240,35 @@ class LLMConfig:
 
 
 # ============================================================================
+# Interview Configuration
+# ============================================================================
+
+@dataclass
+class InterviewConfig:
+    """Configuration for interview webhook service"""
+    webhook_url: str = ""
+    webhook_api_key: str = ""
+    timeout: float = 30.0
+    enabled: bool = False
+    
+    @classmethod
+    def from_env(cls) -> 'InterviewConfig':
+        """Create Interview config from environment variables"""
+        return cls(
+            webhook_url=os.getenv('INTERVIEW_WEBHOOK_URL', ''),
+            webhook_api_key=os.getenv('INTERVIEW_WEBHOOK_API_KEY', ''),
+            timeout=float(os.getenv('INTERVIEW_WEBHOOK_TIMEOUT', '30.0')),
+            enabled=os.getenv('INTERVIEW_ENABLED', 'false').lower() == 'true',
+        )
+    
+    def validate(self) -> bool:
+        """Validate interview configuration"""
+        if self.enabled and not self.webhook_url:
+            return False
+        return True
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -268,6 +297,7 @@ class Config:
         self.logger = LoggerConfig.from_env()
         self.minio = MinIOConfig.from_env()
         self.llm = LLMConfig.from_env()
+        self.interview = InterviewConfig.from_env()
         
         self._initialized = True
         self._validate_all()
@@ -278,6 +308,8 @@ class Config:
             raise ValueError("Invalid LiveKit configuration")
         if not self.minio.validate():
             raise ValueError("Invalid MinIO configuration")
+        if not self.interview.validate():
+            raise ValueError("Invalid Interview configuration")
     
     @classmethod
     def get_instance(cls) -> 'Config':

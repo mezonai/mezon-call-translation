@@ -295,29 +295,6 @@ class LiveKitConfig:
 
 
 # ============================================================================
-# TTS Configuration
-# ============================================================================
-
-@dataclass
-class TTSConfig:
-    """Text-to-Speech configuration"""
-    enabled: bool = True
-    model_path: str = "models/kokoro_models"
-    default_language: str = "en"
-    default_voice: str = "default"
-    
-    @classmethod
-    def from_env(cls) -> 'TTSConfig':
-        """Create TTS config from environment variables"""
-        return cls(
-            enabled=os.getenv('ENABLE_TTS', 'true').lower() == 'true',
-            model_path=os.getenv('TTS_MODEL_PATH', 'models/kokoro_models'),
-            default_language=os.getenv('TTS_DEFAULT_LANGUAGE', 'en'),
-            default_voice=os.getenv('TTS_DEFAULT_VOICE', 'default'),
-        )
-    
-
-# ============================================================================
 # Orchestrator Configuration
 # ============================================================================
 
@@ -341,6 +318,28 @@ class OrchestratorConfig:
             return False
         return True
 
+
+# ============================================================================
+# TTS Service Configuration
+# ============================================================================
+
+@dataclass
+class TTSConfig:
+    """TTS service configuration"""
+    base_url: str = "http://localhost:8008"
+    
+    @classmethod
+    def from_env(cls) -> 'TTSConfig':
+        """Create TTS service config from environment variables"""
+        return cls(
+            base_url=os.getenv('TTS_SERVICE_BASE_URL', 'http://localhost:8008'),
+        )
+    
+    def validate(self) -> bool:
+        """Validate TTS service configuration"""
+        if not self.base_url:
+            return False
+        return True
 
 # ============================================================================
 # Logger Configuration
@@ -388,8 +387,8 @@ class Config:
         self.threading = ThreadingConfig.from_env()
         self.transcript = TranscriptConfig.from_env()
         self.livekit = LiveKitConfig.from_env()
-        self.tts = TTSConfig.from_env()
         self.orchestrator = OrchestratorConfig.from_env()
+        self.tts_service = TTSConfig.from_env()
         self.logger = LoggerConfig.from_env()
         
         self._initialized = True
@@ -407,6 +406,8 @@ class Config:
             raise ValueError("Invalid transcript configuration")
         if not self.orchestrator.validate():
             raise ValueError("Invalid orchestrator configuration")
+        if not self.tts_service.validate():
+            raise ValueError("Invalid TTS service configuration")
     
     @classmethod
     def get_instance(cls) -> 'Config':
