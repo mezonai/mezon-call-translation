@@ -1,5 +1,5 @@
 """
-Redis Stream Service for Transcription Queue
+Redis Stream Service for Distributed Task Queue
 
 Provides reliable distributed task queue using Redis Streams with Consumer Groups.
 Features:
@@ -7,7 +7,7 @@ Features:
 - Consumer groups for distributed workers
 - Automatic task recovery (XAUTOCLAIM for orphaned tasks)
 - Worker heartbeat mechanism
-- Priority queue support via multiple streams
+- Generic task type support via Protocol
 
 Redis Streams Commands Used:
 - XADD: Add new task to stream
@@ -24,116 +24,44 @@ import os
 import socket
 import time
 import uuid
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import (
+    Any, 
+    ClassVar, 
+    Dict, 
+    Generic, 
+    List, 
+    Optional, 
+    Type, 
+    TypeVar,
+)
 
 import redis.asyncio as redis
 from redis.asyncio import ConnectionPool, Redis
 from redis.exceptions import ResponseError
 
 from ..config import get_config
+from ..models.stream_base import (
+    StreamTaskProtocol,
+    StreamTaskStatus,
+    TaskPriority,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class TaskPriority(int, Enum):
-    """Task priority levels (lower = higher priority)."""
-    URGENT = 1
-    HIGH = 3
-    NORMAL = 5
-    LOW = 7
-    BACKGROUND = 9
+# Type variable bound to StreamTaskProtocol
+# Any class implementing the protocol can be used as T
+T = TypeVar('T', bound=StreamTaskProtocol)
 
 
-class StreamTaskStatus(str, Enum):
-    """Task status in Redis Stream."""
-    PENDING = "pending"          # In stream, not yet read by any consumer
-    PROCESSING = "processing"    # Read by consumer, being processed
-    COMPLETED = "completed"      # Successfully processed & acknowledged
-    FAILED = "failed"            # Failed after max retries
-    DEAD_LETTER = "dead_letter"  # Moved to dead letter queue
-
-
-def _parse_priority(value) -> int:
-    """Parse priority from Redis - handles both int strings and old enum string format."""
-    if isinstance(value, int):
-        return value
-    if isinstance(value, TaskPriority):
-        return int(value)
-    if isinstance(value, str):
-        # Try direct int conversion first
-        try:
-            return int(value)
-        except ValueError:
-            # Handle old format like "TaskPriority.NORMAL"
-            if "." in value:
-                priority_name = value.split(".")[-1]
-                try:
-                    return int(TaskPriority[priority_name])
-                except KeyError:
-                    pass
-    # Default to NORMAL
-    return TaskPriority.NORMAL
-
-
-@dataclass
-class StreamTask:
-    """Represents a task in the Redis Stream."""
-    task_id: str
-    message_id: str  # Redis stream message ID (e.g., "1234567890-0")
-    filename: str
-    egress_id: str
-    started_at: str
-    ended_at: str
-    duration: str
-    location: str
-    source: Optional[str] = None
-    priority: int = TaskPriority.NORMAL
-    created_at: float = field(default_factory=time.time)
-    retry_count: int = 0
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict for Redis storage."""
-        return {
-            "task_id": self.task_id,
-            "filename": self.filename,
-            "egress_id": self.egress_id,
-            "started_at": self.started_at,
-            "ended_at": self.ended_at,
-            "duration": self.duration,
-            "location": self.location,
-            "source": self.source or "",
-            "priority": str(int(self.priority)),
-            "created_at": str(self.created_at),
-            "retry_count": str(self.retry_count),
-        }
-    
-    @classmethod
-    def from_stream_message(cls, message_id: str, data: Dict[bytes, bytes]) -> 'StreamTask':
-        """Create StreamTask from Redis stream message."""
-        # Decode bytes to strings
-        decoded = {k.decode(): v.decode() for k, v in data.items()}
-        
-        return cls(
-            task_id=decoded.get("task_id", ""),
-            message_id=message_id,
-            filename=decoded.get("filename", ""),
-            egress_id=decoded.get("egress_id", ""),
-            started_at=decoded.get("started_at", ""),
-            ended_at=decoded.get("ended_at", ""),
-            duration=decoded.get("duration", ""),
-            location=decoded.get("location", ""),
-            source=decoded.get("source") or None,
-            priority=_parse_priority(decoded.get("priority", TaskPriority.NORMAL)),
-            created_at=float(decoded.get("created_at", time.time())),
-            retry_count=int(decoded.get("retry_count", 0)),
-        )
-
+# ========================================
+# Data Classes
+# ========================================
 
 @dataclass
 class WorkerInfo:
-    """Information about a worker."""
+    """Information about a worker in the consumer group."""
     consumer_id: str
     hostname: str
     pid: int
@@ -143,14 +71,20 @@ class WorkerInfo:
     tasks_failed: int = 0
 
 
-class RedisStreamService:
+# ========================================
+# Service Class
+# ========================================
+
+class RedisStreamService(Generic[T]):
     """
-    Redis Stream-based distributed task queue.
+    Generic Redis Stream-based distributed task queue.
+    
+    Type parameter T: The task type this service handles (must implement StreamTaskProtocol)
     
     Architecture:
     - Uses Redis Streams for persistent, ordered task storage
     - Consumer Groups for distributing tasks across workers
-    - Each worker has unique consumer ID: worker-{hostname}-{pid}
+    - Each worker has unique consumer ID: worker-{hostname}-{pid}-{uuid}
     - Orphaned tasks auto-claimed after idle timeout
     - Dead letter queue for tasks exceeding retry limit
     
@@ -162,9 +96,24 @@ class RedisStreamService:
     - {stream_key}:stats: Queue statistics (Hash)
     """
     
-    _instance: Optional['RedisStreamService'] = None
+    # Registry for singleton instances per (task_class, stream_key)
+    _instances: ClassVar[Dict[str, 'RedisStreamService']] = {}
     
-    def __init__(self):
+    def __init__(
+        self,
+        task_class: Type[T],
+        stream_key: Optional[str] = None,
+        group_name: Optional[str] = None,
+    ):
+        """
+        Initialize Redis Stream service.
+        
+        Args:
+            task_class: Class used to parse tasks (must implement StreamTaskProtocol)
+            stream_key: Redis stream key (default: from config)
+            group_name: Consumer group name (default: from config)
+        """
+        self._task_class: Type[T] = task_class
         self._config = get_config().redis
         self._pool: Optional[ConnectionPool] = None
         self._redis: Optional[Redis] = None
@@ -173,22 +122,49 @@ class RedisStreamService:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._recovery_task: Optional[asyncio.Task] = None
         
-        # Keys
-        self._stream_key = self._config.stream_key
-        self._group_name = self._config.consumer_group
+        # Keys - use provided values or fall back to config
+        self._stream_key = stream_key or self._config.stream_key
+        self._group_name = group_name or self._config.consumer_group
         self._dlq_key = f"{self._stream_key}:dlq"
         self._tasks_prefix = f"{self._stream_key}:tasks"
         self._workers_key = f"{self._stream_key}:workers"
         self._stats_key = f"{self._stream_key}:stats"
         
-        logger.info(f"RedisStreamService created - Consumer ID: {self._consumer_id}")
+        logger.info(
+            f"RedisStreamService[{task_class.__name__}] created - "
+            f"stream='{self._stream_key}', consumer_id='{self._consumer_id}'"
+        )
     
     @classmethod
-    def get_instance(cls) -> 'RedisStreamService':
-        """Get singleton instance."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+    def get_instance(
+        cls, 
+        task_class: Type[T],
+        stream_key: Optional[str] = None,
+        group_name: Optional[str] = None,
+    ) -> 'RedisStreamService[T]':
+        """
+        Get or create singleton instance for the given task class and stream.
+        
+        Args:
+            task_class: Class used to parse tasks
+            stream_key: Redis stream key (default: from config)
+            group_name: Consumer group name (default: from config)
+        
+        Returns:
+            RedisStreamService instance for the specified configuration
+        """
+        config = get_config().redis
+        effective_stream_key = stream_key or config.stream_key
+        instance_key = f"{task_class.__name__}:{effective_stream_key}"
+        
+        if instance_key not in cls._instances:
+            cls._instances[instance_key] = cls(
+                task_class=task_class,
+                stream_key=stream_key,
+                group_name=group_name,
+            )
+        
+        return cls._instances[instance_key]
     
     def _generate_consumer_id(self) -> str:
         """Generate unique consumer ID for this worker.
@@ -375,7 +351,7 @@ class RedisStreamService:
         self,
         count: int = 1,
         block_ms: Optional[int] = None
-    ) -> List[StreamTask]:
+    ) -> List[T]:
         """
         Read tasks from stream as consumer in group.
         
@@ -389,7 +365,7 @@ class RedisStreamService:
             block_ms: Milliseconds to block waiting for messages (None = don't block)
         
         Returns:
-            List of StreamTask objects
+            List of tasks (type T)
         """
         if not self._redis:
             raise ConnectionError("Not connected to Redis")
@@ -411,11 +387,12 @@ class RedisStreamService:
             if not result:
                 return []
             
-            tasks = []
+            tasks: List[T] = []
             for stream_name, messages in result:
                 for message_id, data in messages:
                     message_id_str = message_id.decode() if isinstance(message_id, bytes) else message_id
-                    task = StreamTask.from_stream_message(message_id_str, data)
+                    # Use injected task_class to parse the message
+                    task = self._task_class.from_stream_message(message_id_str, data)
                     tasks.append(task)
                     
                     # Update task status in metadata
@@ -436,14 +413,14 @@ class RedisStreamService:
             logger.error(f"Error reading from stream: {e}")
             raise
     
-    async def acknowledge(self, task: StreamTask) -> bool:
+    async def acknowledge(self, task: T) -> bool:
         """
         Acknowledge successful task completion.
         
         Removes the message from pending entries list (PEL).
         
         Args:
-            task: The completed task
+            task: The completed task (type T)
         
         Returns:
             True if acknowledged successfully
@@ -484,7 +461,7 @@ class RedisStreamService:
     
     async def reject(
         self,
-        task: StreamTask,
+        task: T,
         error: str,
         retry: bool = True
     ) -> bool:
@@ -499,7 +476,7 @@ class RedisStreamService:
         In both cases, ACK the original message to remove from pending.
         
         Args:
-            task: The failed task
+            task: The failed task (type T)
             error: Error message
             retry: Whether to retry the task
         
@@ -706,7 +683,7 @@ class RedisStreamService:
         self,
         min_idle_time_ms: Optional[int] = None,
         count: int = 10
-    ) -> List[StreamTask]:
+    ) -> List[T]:
         """
         Claim orphaned tasks from crashed/stale workers.
         
@@ -720,7 +697,7 @@ class RedisStreamService:
             count: Maximum tasks to claim
         
         Returns:
-            List of claimed StreamTask objects
+            List of claimed tasks (type T)
         """
         if not self._redis:
             raise ConnectionError("Not connected to Redis")
@@ -748,14 +725,15 @@ class RedisStreamService:
             if deleted_ids:
                 logger.warning(f"Found {len(deleted_ids)} deleted messages during autoclaim")
             
-            tasks = []
+            tasks: List[T] = []
             for message_id, data in messages:
                 if data is None:
                     # Message was deleted
                     continue
                     
                 message_id_str = message_id.decode() if isinstance(message_id, bytes) else message_id
-                task = StreamTask.from_stream_message(message_id_str, data)
+                # Use injected task_class to parse the message
+                task = self._task_class.from_stream_message(message_id_str, data)
                 tasks.append(task)
                 
                 # Update task metadata
@@ -1090,9 +1068,36 @@ class RedisStreamService:
 
 
 # ========================================
-# Singleton accessor
+# Factory Functions
 # ========================================
 
-def get_redis_stream_service() -> RedisStreamService:
-    """Get singleton RedisStreamService instance."""
-    return RedisStreamService.get_instance()
+def create_stream_service(
+    task_class: Type[T],
+    stream_key: Optional[str] = None,
+    group_name: Optional[str] = None,
+) -> 'RedisStreamService[T]':
+    """
+    Create or get a RedisStreamService for a specific task type.
+    
+    Uses singleton pattern - returns existing instance if one exists
+    for the given (task_class, stream_key) combination.
+    
+    Args:
+        task_class: Class implementing StreamTaskProtocol
+        stream_key: Redis stream key (default: from config)
+        group_name: Consumer group name (default: from config)
+    
+    Returns:
+        RedisStreamService instance for the specified task type
+    
+    Example:
+        from stt_service.models import TranscriptionStreamTask
+        
+        service = create_stream_service(TranscriptionStreamTask)
+        tasks = await service.read_tasks()
+    """
+    return RedisStreamService.get_instance(
+        task_class=task_class,
+        stream_key=stream_key,
+        group_name=group_name,
+    )

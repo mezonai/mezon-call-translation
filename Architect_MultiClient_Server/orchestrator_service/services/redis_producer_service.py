@@ -1,34 +1,75 @@
 """
-Redis Producer Service for sending transcription tasks directly to Redis Stream.
+Generic Redis Producer Service for sending tasks to Redis Stream.
 
-This service allows the orchestrator to bypass the STT API and enqueue tasks
-directly into the Redis Stream that STT workers consume from.
+This service allows producing tasks directly to Redis Stream using XADD.
+Supports any task type implementing ProducerTaskProtocol.
 """
 
-import time
-import uuid
 import redis.asyncio as redis
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from typing import ClassVar, Dict, Any, Generic, Optional, Type, TypeVar
 
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import RedisConfig
+from orchestrator_service.models.stream_base import (
+    ProducerTaskProtocol,
+    StreamTaskStatus,
+)
 
 logger = get_logger(__name__)
 
+# Type variable bound to ProducerTaskProtocol
+T = TypeVar('T', bound=ProducerTaskProtocol)
 
-class RedisProducerService:
+
+class RedisProducerService(Generic[T]):
     """
-    Redis Stream producer for transcription tasks.
+    Generic Redis Stream producer for any task type.
     
-    Sends tasks directly to Redis Stream using XADD, matching the format
-    expected by STT service's RedisStreamService consumer.
+    Type parameter T: Task type (must implement ProducerTaskProtocol)
+    
+    Sends tasks to Redis Stream using XADD, compatible with any consumer
+    that reads from the same stream.
+    
+    Example:
+        from orchestrator_service.models.transcription_task import TranscriptionTask
+        
+        producer = RedisProducerService[TranscriptionTask](config, TranscriptionTask)
+        
+        task = TranscriptionTask(
+            egress_id="EG_xxx",
+            filename="recording.ogg",
+            ...
+        )
+        task_id = await producer.enqueue(task)
     """
     
-    def __init__(self, config: RedisConfig):
+    # Singleton registry per (task_class, stream_key)
+    _instances: ClassVar[Dict[str, 'RedisProducerService']] = {}
+    
+    def __init__(self, config: RedisConfig, task_class: Type[T]):
         self._config = config
+        self._task_class = task_class
         self._redis: Optional[redis.Redis] = None
         self._connected = False
+        
+        logger.info(
+            f"RedisProducerService[{task_class.__name__}] created - "
+            f"stream='{config.stream_key}'"
+        )
+    
+    @classmethod
+    def get_instance(
+        cls,
+        config: RedisConfig,
+        task_class: Type[T],
+    ) -> 'RedisProducerService[T]':
+        """Get or create singleton instance for task class and stream."""
+        instance_key = f"{task_class.__name__}:{config.stream_key}"
+        
+        if instance_key not in cls._instances:
+            cls._instances[instance_key] = cls(config, task_class)
+        
+        return cls._instances[instance_key]
     
     async def connect(self) -> None:
         """Establish connection to Redis."""
@@ -67,29 +108,12 @@ class RedisProducerService:
             self._connected = False
             logger.info("Redis connection closed")
     
-    async def enqueue(
-        self,
-        egress_id: str,
-        filename: str,
-        location: str,
-        duration: str,
-        started_at: str,
-        ended_at: str,
-        source: Optional[str] = None,
-        priority: int = 5,  # TaskPriority.NORMAL = 5
-    ) -> str:
+    async def enqueue(self, task: T) -> str:
         """
-        Add a transcription task to the Redis Stream.
+        Add a task to the Redis Stream.
         
         Args:
-            egress_id: LiveKit egress ID
-            filename: Path to audio file in MinIO
-            location: Full file location (bucket/path)
-            duration: Recording duration
-            started_at: Recording start timestamp
-            ended_at: Recording end timestamp
-            source: Optional source identifier (e.g., MICROPHONE, SCREEN_SHARE)
-            priority: Task priority (1-9, lower = higher priority)
+            task: Task object implementing ProducerTaskProtocol
         
         Returns:
             task_id: Unique task identifier
@@ -100,23 +124,9 @@ class RedisProducerService:
         if not self._redis or not self._connected:
             await self.connect()
         
-        # Generate unique task ID (matching STT service format)
-        task_id = f"task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:4]}"
-        
-        # Build task data (matching STT service's StreamTask format)
-        task_data = {
-            "task_id": task_id,
-            "filename": filename,
-            "egress_id": egress_id,
-            "started_at": started_at,
-            "ended_at": ended_at,
-            "duration": duration,
-            "location": location,
-            "source": source or "",
-            "priority": str(priority),
-            "created_at": str(time.time()),
-            "retry_count": "0",
-        }
+        # Get task data from object
+        task_data = task.to_dict()
+        task_id = task.task_id
         
         try:
             # XADD to stream
@@ -135,7 +145,7 @@ class RedisProducerService:
                 mapping={
                     **task_data,
                     "message_id": message_id_str,
-                    "status": "pending",
+                    "status": StreamTaskStatus.PENDING.value,
                 }
             )
             
@@ -155,7 +165,7 @@ class RedisProducerService:
             return task_id
             
         except Exception as e:
-            logger.error(f"✗ Failed to enqueue task: {e}")
+            logger.error(f"✗ Failed to enqueue task {task_id}: {e}")
             raise
     
     async def get_queue_stats(self) -> Dict[str, Any]:

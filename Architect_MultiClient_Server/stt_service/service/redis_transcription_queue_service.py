@@ -6,8 +6,6 @@ Replaces asyncio.Queue with Redis Streams for:
 - Distributed workers (multiple consumers)
 - Automatic recovery of orphaned tasks
 - Priority queue support
-
-
 """
 
 import asyncio
@@ -17,15 +15,31 @@ from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 
+from ..models import TranscriptionStreamTask
 from .redis_stream_service import (
     RedisStreamService,
-    StreamTask,
     StreamTaskStatus,
     TaskPriority,
-    get_redis_stream_service,
+    create_stream_service,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ========================================
+# Transcription-specific factory function
+# ========================================
+
+def get_redis_stream_service() -> 'RedisStreamService[TranscriptionStreamTask]':
+    """
+    Get singleton RedisStreamService for transcription tasks.
+    
+    Convenience function for transcription-specific usage.
+    
+    Returns:
+        RedisStreamService[TranscriptionStreamTask] singleton instance
+    """
+    return create_stream_service(TranscriptionStreamTask)
 
 
 class TaskStatus(str, Enum):
@@ -92,8 +106,8 @@ class TranscriptionTask:
         }
     
     @classmethod
-    def from_stream_task(cls, stream_task: StreamTask) -> 'TranscriptionTask':
-        """Create TranscriptionTask from StreamTask."""
+    def from_stream_task(cls, stream_task: TranscriptionStreamTask) -> 'TranscriptionTask':
+        """Create TranscriptionTask from TranscriptionStreamTask."""
         return cls(
             task_id=stream_task.task_id,
             filename=stream_task.filename,
@@ -131,7 +145,7 @@ class RedisTranscriptionQueueService:
     _instance: Optional['RedisTranscriptionQueueService'] = None
     
     def __init__(self):
-        self._redis_service: Optional[RedisStreamService] = None
+        self._redis_service: Optional[RedisStreamService[TranscriptionStreamTask]] = None
         self._consumer_task: Optional[asyncio.Task] = None
         self._orphan_recovery_task: Optional[asyncio.Task] = None
         self._running = False
@@ -321,14 +335,14 @@ class RedisTranscriptionQueueService:
     async def _process_task(
         self,
         task: TranscriptionTask,
-        stream_task: StreamTask
+        stream_task: TranscriptionStreamTask
     ) -> bool:
         """
         Process a single transcription task.
         
         Args:
             task: TranscriptionTask wrapper
-            stream_task: Original StreamTask from Redis
+            stream_task: Original TranscriptionStreamTask from Redis
         
         Returns:
             True if processing succeeded, False otherwise
