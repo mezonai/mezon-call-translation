@@ -66,25 +66,6 @@ async def generate_room_summary(request: SummaryRequest = Body(...)):
         "data": result
     }
 
-@client_router.get("/user/{user_id}", response_description="Get summaries by user ID")
-async def get_user_summaries(user_id: str):
-    """
-    Get all summaries where the user participated.
-    """
-    mongodb = get_mongodb_service()
-    summaries = await mongodb.get_summaries_by_participant(user_id)
-    
-    # Convert ObjectId to str
-    for summary in summaries:
-        if "_id" in summary:
-            summary["_id"] = str(summary["_id"])
-            
-    return {
-        "status": "ok",
-        "count": len(summaries),
-        "data": summaries
-    }
-
 @client_router.get("/room/{room_name}", response_description="Get summary by room ID")
 async def get_summary_by_room_name(
     room_name: str,
@@ -111,10 +92,6 @@ async def get_summary_by_room_id(
     """
     mongodb = get_mongodb_service()
     summaries = await mongodb.get_summary_by_room_id(room_id)
-    # remove unnecessary fields
-    for summary in summaries:
-        summary.pop("_id", None)
-        summary.pop("summary_text", None)
     return {
         "status": "ok",
         "data": summaries,

@@ -565,10 +565,17 @@ class MongoDBService:
                     summary["completed_at"] = completed_at.replace(microsecond=0).isoformat() + 'Z'
                 else:
                     summary["completed_at"] = completed_at
-                
+
+                summary_data = summary.get("summary_data", {})
+                summary_text = summary_data.get("summary", "")
+                action_items = summary_data.get("action_items", [])
+                action_items_dict = {action_item.get("participant_identity", ""): action_item.get("participant_actions", []) for action_item in action_items}
+                summary["summary_data"] = {
+                    "summary": summary_text,
+                    "action_items": action_items_dict
+                }
+
                 summary.pop("_id", None)
-                summary.pop("room_id", None)
-                summary.pop("summary_text", None)
             return summary_list
         except Exception as e:
             logger.error(f"Failed to get summary by room name: {e}")
@@ -577,7 +584,18 @@ class MongoDBService:
     async def get_summary_by_room_id(self, room_id: str) -> List[Dict[str, Any]]:
         """Get summary by room id"""
         try:
-            return await self.summary_collection.find({"room_id": room_id}).to_list(None)
+            summary_list = await self.summary_collection.find({"room_id": room_id}).to_list(None)
+            for summary in summary_list:
+                summary_data = summary.get("summary_data", {})
+                summary_text = summary_data.get("summary", "")
+                action_items = summary_data.get("action_items", [])
+                action_items_dict = {action_item.get("participant_identity", ""): action_item.get("participant_actions", []) for action_item in action_items}
+                summary["summary_data"] = {
+                    "summary": summary_text,
+                    "action_items": action_items_dict
+                }
+                summary.pop("_id", None)
+            return summary_list
         except Exception as e:
             logger.error(f"Failed to get summary by room id: {e}")
             return []
