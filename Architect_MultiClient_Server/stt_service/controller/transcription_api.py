@@ -1,7 +1,8 @@
 """
 Transcription API Controller
 
-Provides REST endpoints for transcription queue management.
+Provides REST endpoints for transcription internal operations.
+Note: Queue monitoring endpoints (stats, task status) are now in orchestrator_service.
 """
 
 import logging

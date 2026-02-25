@@ -21,6 +21,7 @@ from orchestrator_service.api.track_api import router as track_router
 from orchestrator_service.api.transcript_api import router as transcript_router
 from orchestrator_service.api.agent_control_api import router as agent_control_router
 from orchestrator_service.api.room_registry_api import router as room_registry_router
+from orchestrator_service.api.queue_api import router as queue_router
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
 from orchestrator_service.api.summary_api import internal_router as summary_internal_router, client_router as summary_client_router
 
@@ -120,6 +121,7 @@ app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat exte
 app.include_router(sse_metadata_router, prefix="/api", tags=["sse metadata"])
 app.include_router(chat_external_router, prefix="/api", tags=["sse chat external"])
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
+app.include_router(queue_router)  # Has prefix="/api/queue"
 app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
 app.include_router(track_router)  # Has prefix="/api/transcripts/tracks"
 app.include_router(transcript_router)  # Has prefix="/api/transcripts"

@@ -1089,12 +1089,6 @@ def create_stream_service(
     
     Returns:
         RedisStreamService instance for the specified task type
-    
-    Example:
-        from stt_service.models import TranscriptionStreamTask
-        
-        service = create_stream_service(TranscriptionStreamTask)
-        tasks = await service.read_tasks()
     """
     return RedisStreamService.get_instance(
         task_class=task_class,
