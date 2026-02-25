@@ -1,5 +1,7 @@
 from fastapi import Request
+import json
 from pydantic import BaseModel
+from typing import Optional
 from orchestrator_service.api.stream_message_manager import StreamMessageManager
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -15,6 +17,8 @@ manager = StreamMessageManager()
 class PushMessageRequest(BaseModel):
     room_name: str
     message: str
+    message_type: str
+    participant_identity: Optional[str] = None
 
 @router.post("/push_message")
 async def push_message_api(req: PushMessageRequest):
@@ -23,11 +27,16 @@ async def push_message_api(req: PushMessageRequest):
         logger.warning(f"No active connections for room {req.room_name}, message may be lost")
     
     q = manager.get_queue(req.room_name)
-    q.put(req.message)
+    q.put({
+        "message": req.message, 
+        "type": req.message_type,
+        "participant_identity": req.participant_identity
+    })
     return {
         "status": "ok", 
         "room": req.room_name, 
         "message": req.message,
+        "message_type": req.message_type,
         "active_connections": manager.get_connection_count(req.room_name)
     }
 
@@ -54,12 +63,12 @@ async def event_generator(room_name: str, connection_id: str):
         while True:
             try:
                 # Use timeout to check connection and send heartbeat
-                text = await asyncio.wait_for(
+                data = await asyncio.wait_for(
                     loop.run_in_executor(None, lambda: q.get(timeout=1.0)),
                     timeout=2.0
                 )
-                logger.info(f"[SSE] Sending to {connection_id}: {text[:50]}...")
-                yield f"data: {text}\n\n"
+                logger.info(f"[SSE] Sending to {connection_id}:{data['type']} {data['message'][:50]}...")
+                yield f"data: {json.dumps(data)}\n\n"
                 
             except (asyncio.TimeoutError, queue.Empty):
                 # No new message - check if heartbeat needs to be sent
