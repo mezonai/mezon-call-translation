@@ -372,15 +372,26 @@ class RedisTranscriptionQueueService:
                 )
                 return True
             else:
-                # No processor set
-                logger.warning(
-                    f"No processor set, task {task.task_id} "
-                    f"marked as completed without processing"
-                )
-                task.status = TaskStatus.COMPLETED
+                task.status = TaskStatus.FAILED
+                task.error = str(e)
                 task.completed_at = time.time()
-                await self._redis_service.acknowledge(stream_task)
-                return True
+                
+                self._local_stats["tasks_failed_this_session"] += 1
+                logger.error(f"❌ Task {task.task_id} failed: {e}")
+                
+                # Reject with retry
+                should_retry = await self._redis_service.reject(
+                    stream_task,
+                    error=str(e),
+                    retry=True
+                )
+                
+                if should_retry:
+                    logger.info(f"🔄 Task {task.task_id} will be retried")
+                else:
+                    logger.error(f"Task {task.task_id} moved to dead letter queue")
+                
+                return False
                 
         except Exception as e:
             task.status = TaskStatus.FAILED
@@ -400,7 +411,7 @@ class RedisTranscriptionQueueService:
             if should_retry:
                 logger.info(f"🔄 Task {task.task_id} will be retried")
             else:
-                logger.error(f"💀 Task {task.task_id} moved to dead letter queue")
+                logger.error(f"Task {task.task_id} moved to dead letter queue")
             
             return False
     

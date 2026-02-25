@@ -23,13 +23,6 @@ class TranscriptionStreamTask(BaseStreamTask):
     
     Inherits from BaseStreamTask (has task_id, message_id, priority, retry_count).
     Implements StreamTaskProtocol for audio/video transcription processing.
-    
-    Example:
-        from stt_service.service.redis_stream_service import create_stream_service
-        from stt_service.models import TranscriptionStreamTask
-        
-        service = create_stream_service(TranscriptionStreamTask)
-        tasks = await service.read_tasks()
     """
     
     # Transcription-specific fields

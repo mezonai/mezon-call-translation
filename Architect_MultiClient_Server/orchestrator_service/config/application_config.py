@@ -281,8 +281,6 @@ class RedisConfig:
     db: int = 0
     # Stream configuration (must match STT service)
     stream_key: str = "transcription:stream"
-    tasks_prefix: str = "transcription:task"
-    stats_key: str = "transcription:stats"
     # Connection pool
     max_connections: int = 10
     socket_timeout: float = 30.0
@@ -291,14 +289,14 @@ class RedisConfig:
     @classmethod
     def from_env(cls) -> 'RedisConfig':
         """Create Redis config from environment variables"""
+        stream_key_value = os.getenv('REDIS_STREAM_KEY', 'transcription:stream')
+        
         return cls(
             host=os.getenv('REDIS_HOST', 'localhost'),
             port=int(os.getenv('REDIS_PORT', '6379')),
             password=os.getenv('REDIS_PASSWORD', ''),
             db=int(os.getenv('REDIS_DB', '0')),
-            stream_key=os.getenv('REDIS_STREAM_KEY', 'transcription:stream'),
-            tasks_prefix=os.getenv('REDIS_TASKS_PREFIX', 'transcription:task'),
-            stats_key=os.getenv('REDIS_STATS_KEY', 'transcription:stats'),
+            stream_key=stream_key_value,
             max_connections=int(os.getenv('REDIS_MAX_CONNECTIONS', '10')),
             socket_timeout=float(os.getenv('REDIS_SOCKET_TIMEOUT', '30.0')),
             socket_connect_timeout=float(os.getenv('REDIS_SOCKET_CONNECT_TIMEOUT', '10.0')),

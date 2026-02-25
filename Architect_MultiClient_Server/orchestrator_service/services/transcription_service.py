@@ -2,7 +2,10 @@ import httpx
 from typing import Dict, Optional
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.redis_producer_service import RedisProducerService
+from orchestrator_service.services.redis_producer_service import (
+    RedisProducerService,
+    create_producer_service,
+)
 from orchestrator_service.models.transcription_task import TranscriptionTask
 
 logger = get_logger(__name__)
@@ -21,9 +24,9 @@ class TranscriptionService:
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
         """Get or create Redis producer (lazy initialization)."""
         if not self._redis_producer:
-            self._redis_producer = RedisProducerService.get_instance(
-                self.redis_config, 
-                TranscriptionTask
+            self._redis_producer = create_producer_service(
+                task_class=TranscriptionTask,
+                stream_key=None  # Use default from config
             )
             await self._redis_producer.connect()
         return self._redis_producer
