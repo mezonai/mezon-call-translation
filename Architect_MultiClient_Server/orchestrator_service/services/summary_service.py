@@ -2,25 +2,16 @@
 Service for generating room summaries
 """
 from datetime import datetime
-from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any
 
 from orchestrator_service.services.mongodb_service import get_mongodb_service
-from orchestrator_service.models.summary_models import RoomSummary
+from orchestrator_service.models.summary_models import RoomSummary, SummaryActionItemsResult
 from orchestrator_service.config.application_config import get_config
 from google import genai
 
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-class ActionItemResult(BaseModel):
-    participant_identity: str = Field(description="Participant identity")
-    participant_actions: List[str] = Field(description="List of actions performed by the participant")
-
-class SummaryActionItemsResult(BaseModel):
-    summary: str = Field(description="Summary of the conversation")
-    action_items: List[ActionItemResult] = Field(description="List of action items for all participants")
 
 class SummaryService:
     """Service to handle room summarization logic"""
@@ -96,7 +87,7 @@ Conversation content:
 
         except Exception as e:
             logger.error(f"Gemini summarization error: {e}")
-            return {"summary": f"An error occurred during summarization: {e}", "action_items": {}}
+            return SummaryActionItemsResult(summary=f"An error occurred during summarization: {e}", action_items=[])
 
     async def generate_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
         """
