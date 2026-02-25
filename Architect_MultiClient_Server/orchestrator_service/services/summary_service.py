@@ -185,13 +185,19 @@ Conversation content:
         
         # 6. Generate Summary via LLM
         summary_data_result = self.summarize_conversation(full_text)
+        action_items = summary_data_result.action_items
+        action_items_dict = {action_item.participant_identity: action_item.participant_actions for action_item in action_items}
+        summary_data = {
+            "summary": summary_data_result.summary,
+            "action_items": action_items_dict
+        }
         
         # 7. Create Summary Object
         summary_model = RoomSummary(
             room_id=room_id,
             room_name=room.get("room_name", "Unknown"),
             participants=list(unique_participants),
-            summary_data=summary_data_result.model_dump(),
+            summary_data=summary_data,
             full_text=full_text,
             created_at= datetime.utcnow(),
             total_segments=len(all_segments)

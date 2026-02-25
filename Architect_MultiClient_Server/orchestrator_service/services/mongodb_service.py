@@ -566,15 +566,6 @@ class MongoDBService:
                 else:
                     summary["completed_at"] = completed_at
 
-                summary_data = summary.get("summary_data", {})
-                summary_text = summary_data.get("summary", "")
-                action_items = summary_data.get("action_items", [])
-                action_items_dict = {action_item.get("participant_identity", ""): action_item.get("participant_actions", []) for action_item in action_items}
-                summary["summary_data"] = {
-                    "summary": summary_text,
-                    "action_items": action_items_dict
-                }
-
                 summary.pop("_id", None)
             return summary_list
         except Exception as e:
@@ -586,14 +577,6 @@ class MongoDBService:
         try:
             summary_list = await self.summary_collection.find({"room_id": room_id}).to_list(None)
             for summary in summary_list:
-                summary_data = summary.get("summary_data", {})
-                summary_text = summary_data.get("summary", "")
-                action_items = summary_data.get("action_items", [])
-                action_items_dict = {action_item.get("participant_identity", ""): action_item.get("participant_actions", []) for action_item in action_items}
-                summary["summary_data"] = {
-                    "summary": summary_text,
-                    "action_items": action_items_dict
-                }
                 summary.pop("_id", None)
             return summary_list
         except Exception as e:
