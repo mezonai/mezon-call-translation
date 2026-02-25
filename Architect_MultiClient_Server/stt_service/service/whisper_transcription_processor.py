@@ -128,6 +128,7 @@ class WhisperTranscriptionProcessor:
                 whisper_config.model_size,
                 device=whisper_config.device,
                 compute_type=whisper_config.compute_type,
+                cpu_threads=whisper_config.cpu_threads,
             )
         )
         logger.info(f"✅ Whisper model loaded: {whisper_config.model_size}")

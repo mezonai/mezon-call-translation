@@ -15,10 +15,11 @@ class TranscriptManager:
         """Initialize transcript manager and per-participant sequence tracking"""
         self.ctx = ctx
         self.logger = get_logger("transcript_manager")
-        
+        self.count_transcript = 0
         # Load configuration
-        config = get_config()
-        self.silence_timeout = config.transcript.silence_timeout
+        self.config = get_config()
+        
+        self.silence_timeout = self.config.transcript.silence_timeout
         
         # Incremental sequence number for each participant for client ordering
         self._seq_by_participant = {}
@@ -35,6 +36,17 @@ class TranscriptManager:
             f"TranscriptManager initialized for meeting {self.session_id} "
             f"silence_timeout={self.silence_timeout}s)"
         )
+
+        # Reusable HTTP client with connection pooling
+        self._http_client = httpx.AsyncClient(
+            timeout=3.0,  # Reduced timeout
+            limits=httpx.Limits(
+                max_keepalive_connections=5,
+                max_connections=10,
+                keepalive_expiry=30.0
+            )
+        )
+
     
     async def send_transcript_entry(
         self,
@@ -47,7 +59,6 @@ class TranscriptManager:
         seq: int | None = None,
     ):
         """
-        Core transcript processing - sends immediately without buffering
         Core transcript processing - sends immediately without buffering
         """
         try:
@@ -62,16 +73,16 @@ class TranscriptManager:
             self.logger.info(
                 f"[{transcript_type}] [{self.session_id}] {participant_name} ({participant_identity}): {text}"
             )
-            
-            # Send immediately if final and has content
-            if is_final and text.strip():
+
+            # Send immediately if has content (fire-and-forget to prevent blocking)
+            if text.strip():
                 await self._send_to_server(
-                    text=text.strip(),
-                    participant_identity=participant_identity,
-                    participant_name=participant_name,
-                    seq=seq
-                )
-            
+                        text=text.strip(),
+                        participant_identity=participant_identity,
+                        participant_name=participant_name,
+                        seq=seq,
+                        type=transcript_type
+                    )
             return True
             
         except Exception as e:
@@ -83,26 +94,34 @@ class TranscriptManager:
         text: str,
         participant_identity: str,
         participant_name: str,
-        seq: int
+        seq: int,
+        type: str
     ):
         """Send transcript to API server"""
         try:
             room_name = self.ctx.room.name
-            config = get_config()
-            base_url = config.orchestrator.base_url
+            base_url = self.config.orchestrator.base_url
             api_url = f"{base_url}/api/push_message"
             
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    api_url,
-                    json={"room_name": room_name, "message": text},
-                    timeout=5.0
-                )
-                self.logger.info(
-                    f"[API] Pushed to queue via API (room={room_name}): "
-                    f"{text[:50]}{'...' if len(text) > 50 else ''}, "
-                    f"status={resp.status_code}"
-                )
+            resp = await self._http_client.post(
+                api_url,
+                json={
+                    "room_name": room_name, 
+                    "message": text, 
+                    "message_type": type, 
+                    "participant_identity": participant_identity
+                },
+                timeout=1.0
+            )
+            self.logger.info(
+                f"[API] Pushed to queue via API (room={room_name}): "
+                f"{text[:50]}{'...' if len(text) > 50 else ''}, "
+                f"status={resp.status_code}"
+            )
+        except httpx.TimeoutException:
+            self.logger.warning(
+                f"[API] Timeout pushing to API (room={room_name}), but transcription recorded locally"
+            )
         except Exception as e:
             self.logger.error(f"[API] Failed to push text via API: {e}")
     
@@ -116,14 +135,6 @@ class TranscriptManager:
             if not text or not text.strip():
                 return
             
-            # Server only sends text, create default segment
-            if segments is None:
-                segments = [{
-                    "text": text.strip(),
-                    "start": 0.0,
-                    "end": 0.0,
-                    "completed": True
-                }]
             
             # Server sends final text (no partial)
             is_final = True
@@ -142,8 +153,6 @@ class TranscriptManager:
     
     async def send_welcome_message(self):
         """Send welcome message when agent is ready (optional)"""
-        import asyncio
-        import asyncio
         await asyncio.sleep(2)
         self.logger.info("Vosk transcription agent is ready!")
     
