@@ -8,6 +8,7 @@ from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.redis.active_egress_repository import get_active_egress_repository
 
 logger = get_logger(__name__)
 
@@ -16,7 +17,7 @@ class EgressService:
     """LiveKit egress operations management Service"""
     
     def __init__(self):
-        self.active_egresses: Dict[str, str] = {}  # {track_sid: egress_id}
+        self._active_egress_repo = get_active_egress_repository()
         self.egress_rooms: Dict[str, str] = {}  # {track_sid: room_name}
         self._s3_upload: Optional[api.S3Upload] = None
 
@@ -53,9 +54,10 @@ class EgressService:
             Egress ID if successful, None if failed
         """
         # Check duplicate
-        if track_sid in self.active_egresses:
+        existing_egress_id = await self._active_egress_repo.get_egress_id(track_sid)
+        if existing_egress_id:
             logger.info(f"⏭ Track {track_sid} was recorded, skipping")
-            return self.active_egresses[track_sid]
+            return existing_egress_id
         
         try:
             lk = self._get_client()
@@ -63,7 +65,7 @@ class EgressService:
             
             # Get room_id from registry
             registry = get_room_registry()
-            room_id = registry.get_room_id(room_name)
+            room_id = await registry.get_room_id(room_name)
             if not room_id:
                 logger.error(f"Room '{room_name}' not found in registry")
                 raise ValueError(f"Room '{room_name}' not registered")
@@ -80,7 +82,7 @@ class EgressService:
             )
             
             result = await lk.egress.start_track_egress(req)
-            self.active_egresses[track_sid] = result.egress_id
+            await self._active_egress_repo.add(track_sid, result.egress_id)
             self.egress_rooms[track_sid] = room_name  # Track which room this egress belongs to
             
             logger.info(f"✓ Started egress {result.egress_id}")
@@ -94,17 +96,17 @@ class EgressService:
     
     async def stop_recording(self, track_sid: str) -> bool:
         """Stop recording a track"""
-        if track_sid not in self.active_egresses:
+        egress_id = await self._active_egress_repo.get_egress_id(track_sid)
+        if not egress_id:
             logger.info(f"No active egress for track {track_sid}")
             return False
         
         try:
             lk = self._get_client()
-            egress_id = self.active_egresses[track_sid]
             
             await lk.egress.stop_egress(api.StopEgressRequest(egress_id=egress_id))
             self.egress_rooms.pop(track_sid, None)  # Remove room mapping
-            del self.active_egresses[track_sid]
+            await self._active_egress_repo.pop(track_sid)
             
             logger.info(f"✓ Stopped egress {egress_id}")
             return True
@@ -115,11 +117,12 @@ class EgressService:
     
     async def stop_all(self) -> Dict[str, int]:
         """Stop all active egresses"""
-        if not self.active_egresses:
+        active_egresses = await self._active_egress_repo.get_all_active_egresses()
+        if not active_egresses:
             return {"stopped": 0, "failed": 0}
         
         stopped, failed = 0, 0
-        track_sids = list(self.active_egresses.keys())
+        track_sids = list(active_egresses.keys())
         
         for track_sid in track_sids:
             if await self.stop_recording(track_sid):
@@ -139,7 +142,8 @@ class EgressService:
         Returns:
             Dict with counts of stopped and failed egresses
         """
-        if not self.active_egresses:
+        active_egresses = await self._active_egress_repo.get_all_active_egresses()
+        if not active_egresses:
             return {"stopped": 0, "failed": 0}
         
         stopped, failed = 0, 0
@@ -165,26 +169,27 @@ class EgressService:
         logger.info(f"Stopped {stopped} egresses for room '{room_name}' ({failed} failed)")
         return {"stopped": stopped, "failed": failed}
     
-    def mark_unpublished(self, track_sid: str) -> bool:
+    async def mark_unpublished(self, track_sid: str) -> bool:
         """Mark track as unpublished (egress auto stopped)"""
-        if track_sid in self.active_egresses:
-            del self.active_egresses[track_sid]
+        egress_id = await self._active_egress_repo.pop(track_sid)
+        if egress_id:
             self.egress_rooms.pop(track_sid, None)  # Remove room mapping
             return True
         return False
     
-    def get_active_count(self) -> int:
+    async def get_active_count(self) -> int:
         """Number of active egresses"""
-        return len(self.active_egresses)
+        return await self._active_egress_repo.get_active_count()
     
-    def get_all_active(self) -> Dict[str, str]:
+    async def get_all_active(self) -> Dict[str, str]:
         """Get list of all active egresses"""
-        return self.active_egresses.copy()
+        return await self._active_egress_repo.get_all_active_egresses()
     
     async def cleanup(self):
         """Cleanup resources (client managed by LiveKitClientService)"""
         # Stop all active egresses before cleanup
-        if self.active_egresses:
-            logger.info(f"Stopping {len(self.active_egresses)} active egresses before cleanup")
+        active_count = await self._active_egress_repo.get_active_count()
+        if active_count > 0:
+            logger.info(f"Stopping {active_count} active egresses before cleanup")
             await self.stop_all()
         # Note: LiveKit client cleanup is handled by LiveKitClientService

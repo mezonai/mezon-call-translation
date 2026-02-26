@@ -80,7 +80,7 @@ async def register_room(
         logger.error(f"Error starting room in STT: {e}", exc_info=True)
     
     # 2. Register room in registry
-    if not registry.register_room(request.room_name, stt_room_id):
+    if not await registry.register_room(request.room_name, stt_room_id):
         raise HTTPException(
             status_code=409,
             detail=f"Room '{request.room_name}' is already registered"
@@ -173,7 +173,7 @@ async def unregister_room(
         registry = get_room_registry()
         
         # Get room_id from registry
-        room_id = registry.get_room_id(request.room_name)
+        room_id = await registry.get_room_id(request.room_name)
         if not room_id:
             raise HTTPException(
                 status_code=404,
@@ -182,7 +182,7 @@ async def unregister_room(
         
         
         # Unregister room from registry
-        if not registry.unregister_room(request.room_name):
+        if not await registry.unregister_room(request.room_name):
             raise HTTPException(
                 status_code=404,
                 detail=f"Room '{request.room_name}' not found in registry"
@@ -244,8 +244,8 @@ async def get_room_status(
     try:
         registry = get_room_registry()
         
-        is_registered = registry.is_registered(room_name)
-        room_id = registry.get_room_id(room_name) if is_registered else None
+        is_registered = await registry.is_registered(room_name)
+        room_id = await registry.get_room_id(room_name) if is_registered else None
         
         return RoomStatusResponse(
             room_name=room_name,
@@ -271,11 +271,11 @@ async def list_registered_rooms(
     """
     try:
         registry = get_room_registry()
-        rooms = registry.list_rooms()
+        rooms = await registry.list_rooms()
         
         return {
             "status": "ok",
-            "total": registry.count_rooms(),
+            "total": await registry.count_rooms(),
             "rooms": rooms
         }
     except Exception as e:
@@ -297,13 +297,13 @@ async def clear_all_rooms(
     """
     try:
         registry = get_room_registry()
-        count = registry.count_rooms()
-        registry.clear_all()
+        count = await registry.count_rooms()
+        cleared = await registry.clear_all()
         
         return {
             "status": "ok",
-            "message": f"Cleared {count} rooms from registry",
-            "cleared_count": count
+            "message": f"Cleared {cleared} rooms from registry",
+            "cleared_count": cleared
         }
     except Exception as e:
         logger.error(f"Error clearing rooms: {e}", exc_info=True)

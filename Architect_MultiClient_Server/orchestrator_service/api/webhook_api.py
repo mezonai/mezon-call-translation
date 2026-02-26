@@ -25,7 +25,7 @@ async def health_check():
     return {
         "status": "ok",
         "service": "livekit-webhook-handler",
-        "active_egresses": egress_service.get_active_count(),
+        "active_egresses": await egress_service.get_active_count(),
         "timestamp":  datetime.utcnow()
     }
 
@@ -35,8 +35,8 @@ async def list_active_egresses():
     """List active egresses"""
     return {
         "status": "ok",
-        "active_egresses": egress_service.get_all_active(),
-        "count": egress_service.get_active_count()
+        "active_egresses": await egress_service.get_all_active(),
+        "count": await egress_service.get_active_count()
     }
 
 
@@ -81,7 +81,8 @@ async def handle_webhook(request: Request):
 @router.post("/egress/stop/{track_sid}")  
 async def stop_egress(track_sid: str):
     """Manually stop egress cho track"""
-    if track_sid not in egress_service.get_all_active():
+    all_active = await egress_service.get_all_active()
+    if track_sid not in all_active:
         raise HTTPException(404, f"No active egress for {track_sid}")
     
     success = await egress_service.stop_recording(track_sid)
@@ -93,12 +94,13 @@ async def stop_egress(track_sid: str):
 @router.post("/egress/stop-all")
 async def stop_all_egresses():
     """Stop tất cả egress"""
-    if egress_service.get_active_count() == 0:
+    active_count = await egress_service.get_active_count()
+    if active_count == 0:
         return {"status": "ok", "message": "No active egresses", "stopped": 0}
     
     result = await egress_service.stop_all()
     return {
         "status": "ok",
         **result,
-        "remaining": egress_service.get_active_count()
+        "remaining": await egress_service.get_active_count()
     }

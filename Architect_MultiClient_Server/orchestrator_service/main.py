@@ -24,6 +24,8 @@ from orchestrator_service.api.agent_control_api import router as agent_control_r
 from orchestrator_service.api.room_registry_api import router as room_registry_router
 from orchestrator_service.api.queue_api import router as queue_router
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
+from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.api.summary_api import internal_router as summary_internal_router, client_router as summary_client_router
 
 # Load config
@@ -38,20 +40,50 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     # ===== STARTUP =====
     logger.info("FastAPI startup") 
+    
+    # Connect MongoDB
     mongodb = get_mongodb_service()
     ok = await mongodb.connect()
     if not ok:
         raise RuntimeError("❌ MongoDB connection failed on startup")
     logger.info("✅ MongoDB connected on startup")
+    
+    # Connect Redis Connection Pool (shared by all repositories)
+    try:
+        redis_manager = get_connection_manager()
+        await redis_manager.connect()
+        logger.info("✅ Redis connection pool created")
+        
+        # Initialize Room Registry (auto-connects to Redis pool)
+        room_registry = get_room_registry()
+        logger.info("✅ Room Registry initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Redis services: {e}")
+        raise
+    
     yield
+    
     # ===== SHUTDOWN =====
     logger.info("FastAPI shutting down, cleaning up resources...")
+    
+    # Cleanup egress service
     await egress_service.cleanup()
+    
+    # Cleanup LiveKit service
     await cleanup_livekit_service()
     
-    # Disconnect Mongo LAST
+    # Disconnect Redis Connection Pool
+    try:
+        redis_manager = get_connection_manager()
+        await redis_manager.disconnect()
+        logger.info("✅ Redis connection pool closed")
+    except Exception as e:
+        logger.error(f"Error closing Redis connection pool: {e}")
+    
+    # Disconnect MongoDB LAST
     if mongodb is not None:
         await mongodb.disconnect()
+    
     logger.info("All services cleanup completed")
 
 

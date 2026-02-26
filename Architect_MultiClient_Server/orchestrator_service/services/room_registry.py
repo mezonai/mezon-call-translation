@@ -1,15 +1,30 @@
 """
 Room Registry Service - Singleton for managing active rooms
+
+Now backed by Redis via Repository pattern.
+Delegates all operations to RoomRegistryRepository.
 """
 from typing import Optional, Dict
+
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.services.redis.room_registry_repository import (
+    get_room_registry_repository,
+    RoomRegistryRepository
+)
+from orchestrator_service.services.redis.connection_pool import get_connection_manager
 
 logger = get_logger(__name__)
 
 
 class RoomRegistry:
     """
-    Singleton service save and manage active rooms.
+    Service layer for room registry management.
+    
+    Architecture:
+    - Service Layer (this class): Business logic, validation
+    - Repository Layer: Data access via RoomRegistryRepository
+    - Infrastructure Layer: Redis connection via BaseHashRepository
+    
     Only registered rooms are allowed to process webhook events.
     """
     
@@ -25,11 +40,16 @@ class RoomRegistry:
         if self._initialized:
             return
         
-        self._rooms: Dict[str, str] = {}  # {room_name: room_id}
+        # Initialize repository immediately (uses shared Redis pool)
+        self._repository = get_room_registry_repository()
         self._initialized = True
-        logger.info("RoomRegistry initialized")
+        logger.info("RoomRegistry initialized (Repository pattern)")
     
-    def register_room(self, room_name: str, room_id: str) -> bool:
+    def _get_repository(self) -> RoomRegistryRepository:
+        """Get repository instance."""
+        return self._repository
+    
+    async def register_room(self, room_name: str, room_id: str) -> bool:
         """
         Register a room in the registry.
         
@@ -39,34 +59,30 @@ class RoomRegistry:
             
         Returns:
             True if registration is successful, False if the room already exists
-        """
-        if room_name in self._rooms:
-            logger.warning(f"Room '{room_name}' already registered")
-            return False
         
-        self._rooms[room_name] = room_id
-        logger.info(f"Room '{room_name}' registered at {room_id}")
-        return True
-    
-    def unregister_room(self, room_name: str) -> bool:
+        Raises:
+            ConnectionError: If Redis operation fails
         """
-        Register a room in the registry.
+        repository = self._get_repository()
+        return await repository.register_room(room_name, room_id)
+    
+    async def unregister_room(self, room_name: str) -> bool:
+        """
+        Unregister a room from the registry.
         
         Args:
             room_name: name of the room to unregister
             
         Returns:
             True if unregistration is successful, False if the room does not exist
-        """
-        if room_name not in self._rooms:
-            logger.warning(f"Room '{room_name}' not found in registry")
-            return False
         
-        room_id = self._rooms.pop(room_name)
-        logger.info(f"Room '{room_name}' unregistered (room_id: {room_id})")
-        return True
+        Raises:
+            ConnectionError: If Redis operation fails
+        """
+        repository = self._get_repository()
+        return await repository.unregister_room(room_name)
     
-    def is_registered(self, room_name: str) -> bool:
+    async def is_registered(self, room_name: str) -> bool:
         """
         Check if a room is registered.
         
@@ -75,10 +91,14 @@ class RoomRegistry:
             
         Returns:
             True if the room is registered, False otherwise
+        
+        Raises:
+            ConnectionError: If Redis operation fails
         """
-        return room_name in self._rooms
+        repository = self._get_repository()
+        return await repository.is_registered(room_name)
     
-    def get_room_id(self, room_name: str) -> Optional[str]:
+    async def get_room_id(self, room_name: str) -> Optional[str]:
         """
         Get the room_id of a room.
         
@@ -87,32 +107,74 @@ class RoomRegistry:
             
         Returns:
             room_id string or None if the room does not exist
+        
+        Raises:
+            ConnectionError: If Redis operation fails
         """
-        return self._rooms.get(room_name)
+        repository = self._get_repository()
+        return await repository.get_room_id(room_name)
     
-    def list_rooms(self) -> Dict[str, str]:
+    async def list_rooms(self) -> Dict[str, str]:
         """
         Get a list of all active rooms.
         
         Returns:
             Dictionary {room_name: room_id}
+        
+        Raises:
+            ConnectionError: If Redis operation fails
         """
-        return self._rooms.copy()
+        repository = self._get_repository()
+        return await repository.list_rooms()
     
-    def count_rooms(self) -> int:
+    async def count_rooms(self) -> int:
         """
         Count the number of active rooms.
         
         Returns:
             Number of rooms
+        
+        Raises:
+            ConnectionError: If Redis operation fails
         """
-        return len(self._rooms)
+        repository = self._get_repository()
+        return await repository.count_rooms()
     
-    def clear_all(self):
-        """Clear all rooms (used for testing or cleanup)"""
-        count = len(self._rooms)
-        self._rooms.clear()
-        logger.info(f"Cleared all {count} rooms from registry")
+    async def clear_all(self) -> int:
+        """
+        Clear all rooms (used for testing or cleanup).
+        
+        Returns:
+            Number of rooms cleared
+        
+        Raises:
+            ConnectionError: If Redis operation fails
+        """
+        repository = self._get_repository()
+        return await repository.clear_all_rooms()
+    
+    async def get_stats(self) -> Dict:
+        """
+        Get registry statistics.
+        
+        Returns:
+            Dictionary with statistics
+        """
+        repository = self._get_repository()
+        return await repository.get_registry_stats()
+    
+    async def health_check(self) -> bool:
+        """
+        Check if Redis backend is healthy.
+        
+        Returns:
+            True if healthy, False otherwise
+        """
+        if self._repository is None:
+            return False
+        
+        connection_manager = get_connection_manager()
+        return await connection_manager.health_check()
 
 
 # Global singleton instance
