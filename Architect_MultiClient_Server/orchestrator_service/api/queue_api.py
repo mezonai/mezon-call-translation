@@ -224,58 +224,6 @@ async def get_pending_tasks_by_queue(
 
 
 # ========================================
-# Backward Compatible Legacy Endpoints
-# ========================================
-
-@router.get("/stats", response_model=QueueStatsResponse)
-async def get_queue_stats():
-    """
-    Get queue statistics (defaults to transcription queue).
-    
-    **Legacy endpoint for backward compatibility.**
-    Use `/api/queue/{queue_name}/stats` for explicit queue selection.
-    
-    Returns:
-        Queue size, processing counts, and status
-    """
-    return await get_queue_stats_by_name(queue_name="transcription")
-
-
-@router.get("/task/{task_id}", response_model=TaskStatusResponse)
-async def get_task_status(task_id: str):
-    """
-    Get status of a specific task (defaults to transcription queue).
-    
-    **Legacy endpoint for backward compatibility.**
-    Use `/api/queue/{queue_name}/task/{task_id}` for explicit queue selection.
-    
-    Args:
-        task_id: The task ID returned when queuing
-        
-    Returns:
-        Task status and result if completed
-    """
-    return await get_task_status_by_queue(
-        queue_name="transcription",
-        task_id=task_id
-    )
-
-
-@router.get("/pending")
-async def get_pending_tasks():
-    """
-    Get list of pending tasks (defaults to transcription queue).
-    
-    **Legacy endpoint for backward compatibility.** 
-    Use `/api/queue/{queue_name}/pending` for explicit queue selection.
-    
-    Returns:
-        List of tasks that are waiting or being processed
-    """
-    return await get_pending_tasks_by_queue(queue_name="transcription")
-
-
-# ========================================
 # Queue Overview Endpoint
 # ========================================
 
