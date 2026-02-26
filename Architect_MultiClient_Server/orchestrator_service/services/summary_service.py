@@ -2,11 +2,10 @@
 Service for generating room summaries
 """
 from datetime import datetime
-from typing import Optional, Dict, Any, List
-import json
+from typing import Optional, Dict, Any
 
 from orchestrator_service.services.mongodb_service import get_mongodb_service
-from orchestrator_service.models.summary_models import RoomSummary
+from orchestrator_service.models.summary_models import RoomSummary, SummaryActionItemsResult
 from orchestrator_service.config.application_config import get_config
 from google import genai
 
@@ -28,7 +27,7 @@ class SummaryService:
             except Exception as e:
                 logger.error(f"Failed to initialize Gemini client: {e}")
 
-    def summarize_conversation(self, conversation_text: str) -> Dict[str, Any]:
+    def summarize_conversation(self, conversation_text: str) -> SummaryActionItemsResult:
         """
         Summarize conversation using Google Gemini (New SDK).
         Returns a dictionary with 'summary' and 'action_items'.
@@ -37,57 +36,58 @@ class SummaryService:
             return {"summary": "Summarization unavailable: Gemini API key not configured or SDK missing.", "action_items": {}}
 
         try:
-            # Using Gemini 2.0 Flash model (or from config)
-            model_name = self.config.llm.gemini_model or 'gemini-2.0-flash'
+            # Using Gemini 2.5 Flash model (or from config)
+            model_name = self.config.llm.gemini_model or 'gemini-2.5-flash'
             
             prompt = f"""
-            You are an AI assistant skilled at summarizing information.
-            Please summarize the following conversation concisely, highlighting key points and conclusions (if any).
-            
-            Also, please extract and list all actionable tasks/to-dos mentioned in the conversation for each person.
+You are an AI assistant specialized in summarizing conversations and extracting action items.
 
-            Return the output in the following JSON format:
-            {{
-                "summary": "Summary content",
-                "action_items": {{
-                    "user_name1": ["task1", "task2"],
-                    "user_name2": ["task1", "task2"]
-                }}
-            }}
-            
-            If there are no action items, "action_items" should be an empty object {{}}.
+The conversation content is formatted as:
 
-            Important: Automatically detect the language of the conversation and return the summary in THAT SAME LANGUAGE.
+    [time] participant_identity: transcript_text
 
-            Conversation content:
-            {conversation_text}
+Example:
+    [10:05] participant_identity_1: We should migrate Redis next week.
+    [10:06] participant_identity_2: I will handle the configuration.
+
+Important rules:
+
+1. The "participant_identity" is the exact identity after the timestamp.
+2. When extracting action items, you MUST use the exact participant_identity as provided.
+3. Do NOT rename, normalize, translate, or modify participant identities.
+4. Only extract action items that are explicitly stated or clearly committed by a participant.
+5. Do NOT invent tasks or infer implicit responsibilities.
+6. If no action items are mentioned, return an empty list.
+7. Preserve the original meaning. Do NOT add new information.
+8. Automatically detect the language of the conversation and return the summary in the SAME language.
+
+Your tasks:
+
+1. Provide a concise summary highlighting:
+   - Key discussion points
+   - Decisions made (if any)
+
+2. Extract and list all actionable tasks/to-dos, grouped by participant_identifier.
+
+Conversation content:
+{conversation_text}
             """
 
             response = self.genai_client.models.generate_content(
                 model=model_name,
-                contents=prompt
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_json_schema": SummaryActionItemsResult.model_json_schema(),
+                },
             )
             
-            text_response = response.text
-            # Clean up markdown code blocks if present
-            if text_response.startswith("```json"):
-                text_response = text_response[7:]
-            elif text_response.startswith("```"):
-                text_response = text_response[3:]
-            if text_response.endswith("```"):
-                text_response = text_response[:-3]
-                
-            
-            try:
-                # parse json
-                return json.loads(text_response.strip())
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse Gemini response as JSON: {text_response}")
-                return {"summary": text_response, "action_items": {}}
+            summary_data_result = SummaryActionItemsResult.model_validate_json(response.text)
+            return summary_data_result
 
         except Exception as e:
             logger.error(f"Gemini summarization error: {e}")
-            return {"summary": f"An error occurred during summarization: {e}", "action_items": {}}
+            return SummaryActionItemsResult(summary=f"An error occurred during summarization: {e}", action_items=[])
 
     async def generate_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -185,13 +185,19 @@ class SummaryService:
         
         # 6. Generate Summary via LLM
         summary_data_result = self.summarize_conversation(full_text)
+        action_items = summary_data_result.action_items
+        action_items_dict = {action_item.participant_identity: action_item.participant_actions for action_item in action_items}
+        summary_data = {
+            "summary": summary_data_result.summary,
+            "action_items": action_items_dict
+        }
         
         # 7. Create Summary Object
         summary_model = RoomSummary(
             room_id=room_id,
             room_name=room.get("room_name", "Unknown"),
             participants=list(unique_participants),
-            summary_data=summary_data_result,
+            summary_data=summary_data,
             full_text=full_text,
             created_at= datetime.utcnow(),
             total_segments=len(all_segments)

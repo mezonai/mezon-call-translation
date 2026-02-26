@@ -31,7 +31,7 @@ async def process_text_to_audio(text: str) -> Optional[np.ndarray]:
     }
     
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, json=payload)
             if response.status_code in [200, 201]:
                 audio = np.frombuffer(response.content, dtype=np.int16) / 32767.0

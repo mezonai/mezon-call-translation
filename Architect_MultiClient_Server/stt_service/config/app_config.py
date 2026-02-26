@@ -95,6 +95,7 @@ class WhisperConfig:
     model_size: str = "medium"  # tiny, base, small, medium, large-v3
     device: str = "cpu"  # cuda or cpu
     compute_type: str = "int8"  # float16, int8, int8_float16
+    cpu_threads: int = 4
     beam_size: int = 1
     vad_filter: bool = True
     sample_rate: int = 16000
@@ -212,6 +213,7 @@ class ConfigManager:
         config.whisper.model_size = os.getenv("WHISPER_MODEL_SIZE", config.whisper.model_size)
         config.whisper.device = os.getenv("WHISPER_DEVICE", config.whisper.device)
         config.whisper.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", config.whisper.compute_type)
+        config.whisper.cpu_threads = int(os.getenv("WHISPER_CPU_THREADS", config.whisper.cpu_threads))
         config.whisper.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", config.whisper.beam_size))
         config.whisper.vad_filter = os.getenv("WHISPER_VAD_FILTER", "true").lower() == "true"
         config.whisper.sample_rate = int(os.getenv("WHISPER_SAMPLE_RATE", config.whisper.sample_rate))

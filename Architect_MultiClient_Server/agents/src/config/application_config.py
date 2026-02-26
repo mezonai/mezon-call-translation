@@ -234,12 +234,14 @@ class TranscriptConfig:
     """Transcript manager configuration"""
     # Silence timeout for batching transcripts (seconds)
     silence_timeout: float = 5.0
+    transcript_count_threshold: int = 5  # Number of transcripts before forcing send (for active meetings)
     
     @classmethod
     def from_env(cls) -> 'TranscriptConfig':
         """Create transcript config from environment variables"""
         return cls(
             silence_timeout=float(os.getenv('TRANSCRIPT_SILENCE_TIMEOUT', '5.0')),
+            transcript_count_threshold=int(os.getenv('TRANSCRIPT_COUNT_THRESHOLD', '5'))
         )
     
     def validate(self) -> bool:
