@@ -417,7 +417,7 @@ class RedisStreamService(Generic[T]):
         """
         Acknowledge successful task completion.
         
-        Removes the message from pending entries list (PEL).
+        Removes the message from pending entries list (PEL) and deletes it from stream.
         
         Args:
             task: The completed task (type T)
@@ -437,6 +437,15 @@ class RedisStreamService(Generic[T]):
             )
             
             if result > 0:
+                # XDEL removes the message completely from stream
+                deleted = await self._redis.xdel(
+                    self._stream_key,
+                    task.message_id
+                )
+                
+                if deleted > 0:
+                    logger.debug(f"🗑️ Deleted message {task.message_id} from stream")
+                
                 # Update task metadata
                 await self._redis.hset(
                     f"{self._tasks_prefix}:{task.task_id}",
