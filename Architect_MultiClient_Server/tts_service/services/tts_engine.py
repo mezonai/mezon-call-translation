@@ -117,7 +117,7 @@ class TTSEngine:
             raise RuntimeError("TTS model not loaded. Call load() first.")
         
         try:
-            logger.debug(f"Synthesizing: '{text[:50]}...' (voice={voice}, speed={speed}x)")
+            logger.info(f"Synthesizing: '{text[:50]}...' (voice={voice}, speed={speed}x)")
             
             # Generate audio using Kokoro
             generator = self.pipeline(
@@ -140,7 +140,7 @@ class TTSEngine:
             audio_np = np.concatenate(all_audio)
             
             duration = len(audio_np) / self.sample_rate
-            logger.debug(f"Synthesized {duration:.2f}s audio ({len(audio_np)} samples)")
+            logger.info(f"Synthesized {duration:.2f}s audio ({len(audio_np)} samples)")
             
             return audio_np
             
