@@ -151,10 +151,6 @@ class TranscriptManager:
         
         return transcription_callback
     
-    async def send_welcome_message(self):
-        """Send welcome message when agent is ready (optional)"""
-        await asyncio.sleep(2)
-        self.logger.info("Vosk transcription agent is ready!")
     
     async def cleanup(self):
         """Cleanup sequence tracking, flush remaining buffers"""

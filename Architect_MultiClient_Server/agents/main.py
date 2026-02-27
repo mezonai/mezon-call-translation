@@ -37,17 +37,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     # ghi đè token trong ctx
     ctx._info.token = new_token.to_jwt()
-    await ctx.connect()
-
-    p = ctx.room.local_participant
-
-    logger.info(
-        f"[AGENT STARTED] "
-        f"identity={p.identity} | "
-        f"name={p.name} | "
-        f"sid={p.sid} | "
-        f"room={ctx.room.name}"
-    )
+    
 
     logger.info(f"✅ Connected to room: {ctx.room.name}")
     # Get session_id from room name
@@ -162,6 +152,7 @@ async def entrypoint(ctx: agents.JobContext):
         """Central DataChannel dispatcher - routes messages to appropriate handlers"""
         try:
             topic = data_packet.topic
+            print(f"Received data packet: {data_packet}")
             participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
             logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
             print(data_packet)
@@ -181,8 +172,7 @@ async def entrypoint(ctx: agents.JobContext):
     # Always register dispatcher (even if TTS is disabled)
     ctx.room.on("data_received", on_data_received)
 
-    # Register room with orchestrator for webhook processing
-    await orchestrator_client.register_room(session_id)
+
 
 
 
@@ -202,8 +192,6 @@ async def entrypoint(ctx: agents.JobContext):
             # Note: DataChannel routing is handled by central dispatcher in main.py
             logger.info("✅ TTS listening on DataChannel topic='tts_control'")
             
-            # Announce TTS ready
-            await tts_manager.announce_tts_ready()
         else:
             logger.warning("⚠️ TTS Manager initialization failed, continuing without TTS")
             tts_manager = None
@@ -214,9 +202,18 @@ async def entrypoint(ctx: agents.JobContext):
         tts_manager = None
 
 
+    await ctx.connect()
+    p = ctx.room.local_participant
 
-    await transcript_manager.send_welcome_message()
-
+    logger.info(
+        f"[AGENT STARTED] "
+        f"identity={p.identity} | "
+        f"name={p.name} | "
+        f"sid={p.sid} | "
+        f"room={ctx.room.name}"
+    )
+    # Register room with orchestrator for webhook processing
+    await orchestrator_client.register_room(session_id)
     # Log readiness status
     if tts_manager:
         logger.info("🎤🔊 Vosk + TTS Agent ready and waiting for participants...")
