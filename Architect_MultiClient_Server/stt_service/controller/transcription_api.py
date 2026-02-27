@@ -5,16 +5,11 @@ Provides REST endpoints for transcription internal operations.
 Note: Queue monitoring endpoints (stats, task status) are now in orchestrator_service.
 """
 
-import asyncio
 import logging
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from typing import Optional
 from bson import ObjectId
 
-from ..service.redis_transcription_queue_service import (
-    get_transcription_queue_service,
-)
 
 from stt_service.service.mongodb_service import get_mongodb_service
 

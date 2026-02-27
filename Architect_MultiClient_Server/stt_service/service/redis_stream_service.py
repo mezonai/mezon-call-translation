@@ -44,7 +44,6 @@ from ..config import get_config
 from ..models.stream_base import (
     StreamTaskProtocol,
     StreamTaskStatus,
-    TaskPriority,
 )
 
 logger = logging.getLogger(__name__)
@@ -123,8 +122,8 @@ class RedisStreamService(Generic[T]):
         self._recovery_task: Optional[asyncio.Task] = None
         
         # Keys - use provided values or fall back to config
-        self._stream_key = stream_key or self._config.stream_key
-        self._group_name = group_name or self._config.consumer_group
+        self._stream_key = stream_key
+        self._group_name = group_name
         self._dlq_key = f"{self._stream_key}:dlq"
         self._tasks_prefix = f"{self._stream_key}:tasks"
         self._workers_key = f"{self._stream_key}:workers"
@@ -153,8 +152,7 @@ class RedisStreamService(Generic[T]):
         Returns:
             RedisStreamService instance for the specified configuration
         """
-        config = get_config().redis
-        effective_stream_key = stream_key or config.stream_key
+        effective_stream_key = stream_key
         instance_key = f"{task_class.__name__}:{effective_stream_key}"
         
         if instance_key not in cls._instances:
@@ -446,14 +444,8 @@ class RedisStreamService(Generic[T]):
                 if deleted > 0:
                     logger.debug(f"🗑️ Deleted message {task.message_id} from stream")
                 
-                # Update task metadata
-                await self._redis.hset(
-                    f"{self._tasks_prefix}:{task.task_id}",
-                    mapping={
-                        "status": StreamTaskStatus.COMPLETED.value,
-                        "completed_at": str(time.time()),
-                    }
-                )
+                # Delete task metadata since task is completed and no longer needed
+                await self._redis.delete(f"{self._tasks_prefix}:{task.task_id}")
                 
                 # Update stats
                 await self._redis.hincrby(self._stats_key, "total_processed", 1)
@@ -977,104 +969,6 @@ class RedisStreamService(Generic[T]):
                 logger.error(f"Recovery loop error: {e}")
                 await asyncio.sleep(interval)
     
-    # ========================================
-    # Statistics & Monitoring
-    # ========================================
-    
-    async def get_stats(self) -> Dict[str, Any]:
-        """Get comprehensive queue statistics."""
-        if not self._redis:
-            return {}
-        
-        try:
-            # Get stream info
-            stream_info = await self._redis.xinfo_stream(self._stream_key)
-            
-            # Get pending summary
-            pending = await self.get_pending_summary()
-            
-            # Get stats hash
-            stats_data = await self._redis.hgetall(self._stats_key)
-            stats = {
-                k.decode(): v.decode()
-                for k, v in stats_data.items()
-            }
-            
-            # Get DLQ size
-            try:
-                dlq_info = await self._redis.xinfo_stream(self._dlq_key)
-                dlq_size = dlq_info.get("length", 0)
-            except ResponseError:
-                dlq_size = 0  # DLQ doesn't exist yet
-            
-            # Get active workers
-            workers = await self.get_active_workers()
-            
-            # Safely extract first/last entry IDs
-            def get_entry_id(entry):
-                if entry is None:
-                    return None
-                if isinstance(entry, (list, tuple)) and len(entry) > 0:
-                    id_val = entry[0]
-                    return id_val.decode() if isinstance(id_val, bytes) else str(id_val)
-                return None
-            
-            return {
-                "stream": {
-                    "length": stream_info.get("length", 0),
-                    "first_entry_id": get_entry_id(stream_info.get("first-entry")),
-                    "last_entry_id": get_entry_id(stream_info.get("last-entry")),
-                    "groups": stream_info.get("groups", 0),
-                },
-                "pending": pending,
-                "dead_letter_queue_size": dlq_size,
-                "totals": {
-                    "enqueued": int(stats.get("total_enqueued", 0)),
-                    "processed": int(stats.get("total_processed", 0)),
-                    "failed": int(stats.get("total_failed", 0)),
-                    "retried": int(stats.get("total_retried", 0)),
-                },
-                "workers": {
-                    "active_count": len(workers),
-                    "list": [
-                        {
-                            "consumer_id": w.consumer_id,
-                            "hostname": w.hostname,
-                            "current_task": w.current_task_id,
-                            "tasks_processed": w.tasks_processed,
-                        }
-                        for w in workers
-                    ]
-                },
-                "consumer_id": self._consumer_id,
-            }
-            
-        except ResponseError as e:
-            if "no such key" in str(e).lower():
-                return {"stream": {"length": 0}, "pending": {"pending_count": 0}}
-            raise
-        except Exception as e:
-            logger.error(f"Error getting stats: {e}")
-            return {}
-    
-    async def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Get status of a specific task."""
-        if not self._redis:
-            return None
-        
-        try:
-            data = await self._redis.hgetall(f"{self._tasks_prefix}:{task_id}")
-            if not data:
-                return None
-            
-            return {
-                k.decode(): v.decode()
-                for k, v in data.items()
-            }
-        except Exception as e:
-            logger.error(f"Error getting task status: {e}")
-            return None
-
 
 # ========================================
 # Factory Functions
@@ -1082,8 +976,8 @@ class RedisStreamService(Generic[T]):
 
 def create_stream_service(
     task_class: Type[T],
-    stream_key: Optional[str] = None,
-    group_name: Optional[str] = None,
+    stream_key: str,
+    group_name: str,
 ) -> 'RedisStreamService[T]':
     """
     Create or get a RedisStreamService for a specific task type.

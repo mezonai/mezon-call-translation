@@ -12,7 +12,6 @@ from orchestrator_service.services.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
 )
-from orchestrator_service.services.queue_discovery import QueueDiscovery
 from orchestrator_service.models.stream_base import ProducerTaskProtocol
 from orchestrator_service.models.transcription_task import TranscriptionTask
 from orchestrator_service.config.application_config import get_config
@@ -31,13 +30,6 @@ class QueueService(Generic[T]):
     
     Wraps the RedisProducerService to provide queue monitoring capabilities
     for any task type.
-    
-    Example:
-        # For transcription queue
-        service = QueueService(TranscriptionTask, "transcription:stream")
-        
-        # For TTS queue
-        service = QueueService(TTSTask, "tts:stream")
     """
     
     # Singleton registry per (task_class, stream_key)
@@ -46,8 +38,8 @@ class QueueService(Generic[T]):
     def __init__(
         self,
         task_class: Type[T],
-        stream_key: Optional[str] = None,
-        queue_name: Optional[str] = None,
+        stream_key: str,
+        queue_name: str,
     ):
         """
         Initialize queue service.
@@ -72,8 +64,8 @@ class QueueService(Generic[T]):
     def get_instance(
         cls,
         task_class: Type[T],
-        stream_key: Optional[str] = None,
-        queue_name: Optional[str] = None,
+        stream_key: str,
+        queue_name: str,
     ) -> 'QueueService[T]':
         """
         Get or create singleton instance for task class and stream.
@@ -86,9 +78,7 @@ class QueueService(Generic[T]):
         Returns:
             QueueService singleton instance
         """
-        config = get_config().redis
-        effective_stream_key = stream_key or config.stream_key
-        instance_key = f"{task_class.__name__}:{effective_stream_key}"
+        instance_key = f"{task_class.__name__}:{stream_key}"
         
         if instance_key not in cls._instances:
             cls._instances[instance_key] = cls(
@@ -213,7 +203,7 @@ class QueueService(Generic[T]):
             
             # Read pending messages from stream (last 100)
             messages = await producer._redis.xrange(
-                producer._config.stream_key,
+                producer.stream_key,
                 count=100
             )
             
@@ -247,8 +237,8 @@ class QueueService(Generic[T]):
 
 def create_queue_service(
     task_class: Type[T],
-    stream_key: Optional[str] = None,
-    queue_name: Optional[str] = None,
+    stream_key: str,
+    queue_name: str,
 ) -> QueueService[T]:
     """
     Factory function to create or get queue service instance.
@@ -261,20 +251,6 @@ def create_queue_service(
     Returns:
         QueueService singleton instance
     
-    Example:
-        # Create transcription queue service
-        service = create_queue_service(
-            TranscriptionTask,
-            stream_key="transcription:stream",
-            queue_name="transcription"
-        )
-        
-        # Create TTS queue service
-        service = create_queue_service(
-            TTSTask,
-            stream_key="tts:stream",
-            queue_name="tts"
-        )
     """
     return QueueService.get_instance(
         task_class=task_class,
@@ -283,7 +259,7 @@ def create_queue_service(
     )
 
 
-def get_queue_service_by_name(queue_name: str = "transcription") -> QueueService:
+def get_queue_service_by_name(queue_name: str) -> QueueService:
     """
     Get queue service by queue name.
     
@@ -297,13 +273,6 @@ def get_queue_service_by_name(queue_name: str = "transcription") -> QueueService
     
     Raises:
         ValueError: If queue is not found in Redis
-    
-    Example:
-        # Get transcription queue
-        service = get_queue_service_by_name("transcription")
-        
-        # Get any other queue that exists in Redis
-        # service = get_queue_service_by_name("tts")
     """
     # Map queue names to task classes
     # Only need to map for known types, new types can be added here
@@ -314,11 +283,18 @@ def get_queue_service_by_name(queue_name: str = "transcription") -> QueueService
         # "agent": AgentTask,
     }
     
+    # Check if queue name is registered
+    if queue_name not in _task_class_map:
+        raise ValueError(
+            f"Queue '{queue_name}' not found. "
+            f"Available queues: {', '.join(_task_class_map.keys())}"
+        )
+    
     # Construct stream key from queue name
     stream_key = f"{queue_name}:stream"
     
-    # Get task class (default to TranscriptionTask for backward compat)
-    task_class = _task_class_map.get(queue_name, TranscriptionTask)
+    # Get task class
+    task_class = _task_class_map[queue_name]
     
     return create_queue_service(
         task_class=task_class,
@@ -326,26 +302,3 @@ def get_queue_service_by_name(queue_name: str = "transcription") -> QueueService
         queue_name=queue_name,
     )
 
-
-# ========================================
-# Backward Compatibility
-# ========================================
-
-_transcription_queue_service: Optional[QueueService[TranscriptionTask]] = None
-
-
-def get_transcription_queue_service() -> QueueService[TranscriptionTask]:
-    """
-    Get the transcription queue service instance (backward compatibility).
-    
-    Returns:
-        QueueService instance for transcription queue
-    """
-    global _transcription_queue_service
-    if _transcription_queue_service is None:
-        _transcription_queue_service = create_queue_service(
-            task_class=TranscriptionTask,
-            stream_key=None,  # Use default from config
-            queue_name="transcription",
-        )
-    return _transcription_queue_service
