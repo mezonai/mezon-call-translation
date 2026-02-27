@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 
 from orchestrator_service.api.dispatch_api import router as dispatch_router
 from orchestrator_service.api.tts_api import router as tts_router
+from orchestrator_service.api.chat_external_api import router as chat_external_router
 from orchestrator_service.api.stream_message_api import router as stream_router
 from orchestrator_service.api.webhook_api import router as webhook_router, egress_service
 from orchestrator_service.api.room_api import router as room_router
@@ -68,6 +69,7 @@ app.add_middleware(
 app.include_router(dispatch_router, prefix="/api")
 app.include_router(tts_router, prefix="/api")
 app.include_router(stream_router, prefix="/api")
+app.include_router(chat_external_router, prefix="/api")
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
 app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
 app.include_router(track_router)  # Has prefix="/api/transcripts/tracks"

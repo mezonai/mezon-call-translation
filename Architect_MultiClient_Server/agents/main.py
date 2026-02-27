@@ -164,7 +164,7 @@ async def entrypoint(ctx: agents.JobContext):
             topic = data_packet.topic
             participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
             logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
-
+            print(data_packet)
             if topic == "tts_control":
                 if tts_manager:
                     logger.info("🎯 Routing to TTSManager")
