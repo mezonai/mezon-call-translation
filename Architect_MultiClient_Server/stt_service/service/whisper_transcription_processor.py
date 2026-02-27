@@ -23,7 +23,7 @@ from bson import ObjectId
 from stt_service.service.mongodb_service import get_mongodb_service
 
 from ..config import get_config
-from .redis_transcription_queue_service import TranscriptionTask
+from ..models import TranscriptionStreamTask
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +354,7 @@ class WhisperTranscriptionProcessor:
         except Exception as e:
             logger.warning(f"Failed to cleanup temp file {file_path}: {e}")
     
-    async def process(self, task: TranscriptionTask) -> str:
+    async def process(self, task: TranscriptionStreamTask) -> str:
         """
         Process a transcription task with progressive saving.
         
@@ -366,7 +366,7 @@ class WhisperTranscriptionProcessor:
         5. Cleanup temp files
         
         Args:
-            task: TranscriptionTask with file information
+            task: TranscriptionStreamTask with file information
             
         Returns:
             Full transcribed text
@@ -487,7 +487,7 @@ def get_whisper_processor() -> WhisperTranscriptionProcessor:
     return WhisperTranscriptionProcessor.get_instance()
 
 
-async def transcribe_task(task: TranscriptionTask) -> str:
+async def transcribe_task(task: TranscriptionStreamTask) -> str:
     """
     Convenience function to transcribe a task.
     
@@ -495,7 +495,7 @@ async def transcribe_task(task: TranscriptionTask) -> str:
         queue_service.set_processor(transcribe_task)
     
     Args:
-        task: TranscriptionTask to process
+        task: TranscriptionStreamTask to process
         
     Returns:
         Full transcribed text

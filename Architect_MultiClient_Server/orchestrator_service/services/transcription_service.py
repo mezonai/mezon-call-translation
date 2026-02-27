@@ -31,7 +31,7 @@ class TranscriptionService:
         if not self._redis_producer:
             self._redis_producer = create_producer_service(
                 task_class=TranscriptionTask,
-                stream_key=None  # Use default from config
+                stream_key="transcription:stream",
             )
             await self._redis_producer.connect()
         return self._redis_producer

@@ -3,30 +3,6 @@ Generic Redis Producer Service for sending tasks to Redis Stream.
 
 This service allows producing tasks directly to Redis Stream using XADD.
 Supports any task type implementing ProducerTaskProtocol.
-
-Features:
-- Connection pooling for efficient resource usage
-- Singleton pattern per (task_class, stream_key)
-- Automatic stats tracking
-- Graceful connection cleanup
-- Factory functions for convenient usage
-
-Usage:
-    # Method 1: Using factory function (recommended)
-    from orchestrator_service.services.redis_producer_service import create_producer_service
-    
-    producer = create_producer_service(TranscriptionTask)
-    await producer.connect()
-    task_id = await producer.enqueue(task)
-    
-    # Method 2: Quick enqueue helpers (most convenient)
-    from orchestrator_service.services.redis_producer_service import enqueue_task
-    
-    # Single task
-    task_id = await enqueue_task(task)
-    
-    # Method 3: Direct singleton access (advanced)
-    producer = RedisProducerService.get_instance(TranscriptionTask)
 """
 
 import redis.asyncio as redis
@@ -54,17 +30,6 @@ class RedisProducerService(Generic[T]):
     
     Sends tasks to Redis Stream using XADD, compatible with any consumer
     that reads from the same stream.
-    
-    Example:
-        # Get singleton instance
-        producer = RedisProducerService.get_instance(
-            task_class=TranscriptionTask,
-            stream_key=None  # Use default from config
-        )
-        await producer.connect()
-        
-        # Enqueue task
-        task_id = await producer.enqueue(task)
     """
     
     # Singleton registry per (task_class, stream_key)
@@ -88,7 +53,7 @@ class RedisProducerService(Generic[T]):
         self._redis: Optional[Redis] = None
         
         # Keys - use provided value or fall back to config
-        self._stream_key = stream_key or self._config.stream_key
+        self._stream_key = stream_key
         self._tasks_prefix = f"{self._stream_key}:tasks"
         self._stats_key = f"{self._stream_key}:stats"
         
@@ -113,8 +78,7 @@ class RedisProducerService(Generic[T]):
         Returns:
             RedisProducerService instance for the specified configuration
         """
-        config = get_config().redis
-        effective_stream_key = stream_key or config.stream_key
+        effective_stream_key = stream_key
         instance_key = f"{task_class.__name__}:{effective_stream_key}"
         
         if instance_key not in cls._instances:
@@ -290,7 +254,7 @@ class RedisProducerService(Generic[T]):
 
 def create_producer_service(
     task_class: Type[T],
-    stream_key: Optional[str] = None,
+    stream_key: str,
 ) -> RedisProducerService[T]:
     """
     Factory function to create or get producer service instance.
@@ -301,43 +265,9 @@ def create_producer_service(
     
     Returns:
         RedisProducerService singleton instance
-    
-    Example:
-        from orchestrator_service.models.transcription_task import TranscriptionTask
-        
-        producer = create_producer_service(TranscriptionTask)
-        await producer.connect()
-        task_id = await producer.enqueue(task)
     """
     return RedisProducerService.get_instance(
         task_class=task_class,
         stream_key=stream_key,
     )
 
-
-async def enqueue_task(
-    task: T,
-    stream_key: Optional[str] = None,
-) -> str:
-    """
-    Helper function to enqueue a single task quickly.    
-    Args:
-        task: Task object implementing ProducerTaskProtocol
-        stream_key: Redis stream key (default: from config)
-    
-    Returns:
-        task_id: Unique task identifier
-    
-    Example:
-        from orchestrator_service.models.transcription_task import TranscriptionTask
-        
-        task = TranscriptionTask(egress_id="EG_xxx", filename="audio.ogg", ...)
-        task_id = await enqueue_task(task)
-    """
-    task_class = type(task)
-    producer = create_producer_service(task_class, stream_key)
-    
-    if not producer.is_connected:
-        await producer.connect()
-    
-    return await producer.enqueue(task)

@@ -12,14 +12,11 @@ import asyncio
 import logging
 import time
 from typing import Optional, Dict, Any, List, Callable
-from dataclasses import dataclass, field
-from enum import Enum
 
 from ..models import TranscriptionStreamTask
+from ..models.stream_base import StreamTaskStatus
 from .redis_stream_service import (
     RedisStreamService,
-    StreamTaskStatus,
-    TaskPriority,
     create_stream_service,
 )
 
@@ -39,90 +36,7 @@ def get_redis_stream_service() -> 'RedisStreamService[TranscriptionStreamTask]':
     Returns:
         RedisStreamService[TranscriptionStreamTask] singleton instance
     """
-    return create_stream_service(TranscriptionStreamTask)
-
-
-class TaskStatus(str, Enum):
-    """Task status enumeration (compatible with original)."""
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-@dataclass
-class TranscriptionTask:
-    """
-    Represents a transcription task.
-    
-    Compatible with original TranscriptionTask but adds Redis-specific fields.
-    """
-    filename: str
-    started_at: str
-    ended_at: str
-    duration: str
-    location: str
-    source: Optional[str] = None
-
-    # Optional fields
-    egress_id: Optional[str] = None
-
-    # Internal tracking
-    task_id: str = ""
-    status: TaskStatus = TaskStatus.PENDING
-    created_at: float = field(default_factory=time.time)
-    started_processing_at: Optional[float] = None
-    completed_at: Optional[float] = None
-    result: Optional[str] = None
-    error: Optional[str] = None
-    
-    # Redis-specific
-    message_id: Optional[str] = None  # Redis stream message ID
-    priority: int = TaskPriority.NORMAL
-    retry_count: int = 0
-
-    def __post_init__(self):
-        if not self.task_id:
-            self.task_id = f"task_{int(time.time() * 1000)}_{hash(self.filename) % 10000:04d}"
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "task_id": self.task_id,
-            "filename": self.filename,
-            "started_at": self.started_at,
-            "ended_at": self.ended_at,
-            "duration": self.duration,
-            "location": self.location,
-            "egress_id": self.egress_id,
-            "status": self.status.value,
-            "created_at": self.created_at,
-            "started_processing_at": self.started_processing_at,
-            "completed_at": self.completed_at,
-            "result": self.result,
-            "error": self.error,
-            "message_id": self.message_id,
-            "priority": self.priority,
-            "retry_count": self.retry_count,
-        }
-    
-    @classmethod
-    def from_stream_task(cls, stream_task: TranscriptionStreamTask) -> 'TranscriptionTask':
-        """Create TranscriptionTask from TranscriptionStreamTask."""
-        return cls(
-            task_id=stream_task.task_id,
-            filename=stream_task.filename,
-            started_at=stream_task.started_at,
-            ended_at=stream_task.ended_at,
-            duration=stream_task.duration,
-            location=stream_task.location,
-            source=stream_task.source,
-            egress_id=stream_task.egress_id,
-            status=TaskStatus.PROCESSING,
-            created_at=stream_task.created_at,
-            message_id=stream_task.message_id,
-            priority=stream_task.priority,
-            retry_count=stream_task.retry_count,
-        )
+    return create_stream_service(task_class=TranscriptionStreamTask, stream_key="transcription:stream", group_name="transcription-workers")
 
 
 class RedisTranscriptionQueueService:
@@ -150,7 +64,7 @@ class RedisTranscriptionQueueService:
         self._orphan_recovery_task: Optional[asyncio.Task] = None
         self._running = False
         self._processor: Optional[Callable] = None
-        self._current_task: Optional[TranscriptionTask] = None
+        self._current_task: Optional[TranscriptionStreamTask] = None
         
         # Stats (local counters, Redis has authoritative stats)
         self._local_stats = {
@@ -178,7 +92,7 @@ class RedisTranscriptionQueueService:
         Set the processor function for transcription tasks.
         
         Args:
-            processor: Async function that takes TranscriptionTask and returns transcription text
+            processor: Async function that takes TranscriptionStreamTask and returns transcription text
         """
         self._processor = processor
         logger.info("Transcription processor set")
@@ -300,17 +214,16 @@ class RedisTranscriptionQueueService:
                     continue
                 
                 for stream_task in tasks:
-                    # Convert to TranscriptionTask
-                    task = TranscriptionTask.from_stream_task(stream_task)
-                    self._current_task = task
+                    # Use stream_task directly (no conversion needed)
+                    self._current_task = stream_task
                     
                     # Update heartbeat with current task
                     await self._redis_service.update_heartbeat(
-                        current_task_id=task.task_id
+                        current_task_id=stream_task.task_id
                     )
                     
                     # Process the task
-                    success = await self._process_task(task, stream_task)
+                    success = await self._process_task(stream_task)
                     
                     # Update worker stats
                     if success:
@@ -334,20 +247,18 @@ class RedisTranscriptionQueueService:
     
     async def _process_task(
         self,
-        task: TranscriptionTask,
-        stream_task: TranscriptionStreamTask
+        task: TranscriptionStreamTask
     ) -> bool:
         """
         Process a single transcription task.
         
         Args:
-            task: TranscriptionTask wrapper
-            stream_task: Original TranscriptionStreamTask from Redis
+            task: TranscriptionStreamTask from Redis
         
         Returns:
             True if processing succeeded, False otherwise
         """
-        task.status = TaskStatus.PROCESSING
+        task.status = StreamTaskStatus.PROCESSING
         task.started_processing_at = time.time()
         
         logger.info(
@@ -359,11 +270,11 @@ class RedisTranscriptionQueueService:
             if self._processor:
                 result = await self._processor(task)
                 task.result = result
-                task.status = TaskStatus.COMPLETED
+                task.status = StreamTaskStatus.COMPLETED
                 task.completed_at = time.time()
                 
                 # ACK the task (remove from pending)
-                await self._redis_service.acknowledge(stream_task)
+                await self._redis_service.acknowledge(task)
                 
                 self._local_stats["tasks_processed_this_session"] += 1
                 logger.info(
@@ -372,29 +283,10 @@ class RedisTranscriptionQueueService:
                 )
                 return True
             else:
-                task.status = TaskStatus.FAILED
-                task.error = str(e)
-                task.completed_at = time.time()
-                
-                self._local_stats["tasks_failed_this_session"] += 1
-                logger.error(f"❌ Task {task.task_id} failed: {e}")
-                
-                # Reject with retry
-                should_retry = await self._redis_service.reject(
-                    stream_task,
-                    error=str(e),
-                    retry=True
-                )
-                
-                if should_retry:
-                    logger.info(f"🔄 Task {task.task_id} will be retried")
-                else:
-                    logger.error(f"Task {task.task_id} moved to dead letter queue")
-                
-                return False
+                raise Exception("No processor configured")
                 
         except Exception as e:
-            task.status = TaskStatus.FAILED
+            task.status = StreamTaskStatus.FAILED
             task.error = str(e)
             task.completed_at = time.time()
             
@@ -403,7 +295,7 @@ class RedisTranscriptionQueueService:
             
             # Reject with retry
             should_retry = await self._redis_service.reject(
-                stream_task,
+                task,
                 error=str(e),
                 retry=True
             )
@@ -449,15 +341,15 @@ class RedisTranscriptionQueueService:
                     
                     # Process claimed tasks
                     for stream_task in claimed_tasks:
-                        task = TranscriptionTask.from_stream_task(stream_task)
-                        task.retry_count = stream_task.retry_count + 1  # Increment since reclaimed
-                        self._current_task = task
+                        # Use stream_task directly, increment retry_count
+                        stream_task.retry_count += 1
+                        self._current_task = stream_task
                         
                         await self._redis_service.update_heartbeat(
-                            current_task_id=task.task_id
+                            current_task_id=stream_task.task_id
                         )
                         
-                        success = await self._process_task(task, stream_task)
+                        success = await self._process_task(stream_task)
                         
                         if success:
                             await self._redis_service.increment_worker_stats(processed=1)
@@ -473,88 +365,6 @@ class RedisTranscriptionQueueService:
         
         logger.info("Orphan recovery loop ended")
     
-    async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Get task status from Redis (source of truth)."""
-        if not self._redis_service:
-            return None
-        
-        return await self._redis_service.get_task_status(task_id)
-    
-    # Alias for backward compatibility
-    get_task_async = get_task
-    
-    async def get_stats(self) -> Dict[str, Any]:
-        """
-        Get comprehensive queue statistics.
-        
-        Combines Redis stats with local session stats.
-        """
-        redis_stats = {}
-        if self._redis_service:
-            try:
-                redis_stats = await self._redis_service.get_stats()
-            except Exception as e:
-                logger.error(f"Error getting Redis stats: {e}")
-        
-        uptime = 0
-        if self._local_stats["started_at"]:
-            uptime = time.time() - self._local_stats["started_at"]
-        
-        return {
-            # Redis stats
-            "stream": redis_stats.get("stream", {}),
-            "pending": redis_stats.get("pending", {}),
-            "dead_letter_queue_size": redis_stats.get("dead_letter_queue_size", 0),
-            "totals": redis_stats.get("totals", {}),
-            "workers": redis_stats.get("workers", {}),
-            
-            # Local session stats
-            "session": {
-                "running": self._running,
-                "uptime": uptime,
-                "tasks_processed": self._local_stats["tasks_processed_this_session"],
-                "tasks_failed": self._local_stats["tasks_failed_this_session"],
-                "current_task": self._current_task.task_id if self._current_task else None,
-                "consumer_id": self._redis_service._consumer_id if self._redis_service else None,
-            },
-            
-            # Legacy compatibility
-            "queue_size": redis_stats.get("stream", {}).get("length", 0),
-            "total_received": redis_stats.get("totals", {}).get("enqueued", 0),
-            "total_processed": redis_stats.get("totals", {}).get("processed", 0),
-            "total_failed": redis_stats.get("totals", {}).get("failed", 0),
-            "running": self._running,
-            "uptime": uptime,
-            "pending_tasks": redis_stats.get("pending", {}).get("pending_count", 0),
-            "processing_tasks": redis_stats.get("pending", {}).get("pending_count", 0),
-        }
-    
-    def get_stats_sync(self) -> Dict[str, Any]:
-        """Synchronous version of get_stats (returns cached/local data only)."""
-        uptime = 0
-        if self._local_stats["started_at"]:
-            uptime = time.time() - self._local_stats["started_at"]
-        
-        return {
-            "running": self._running,
-            "uptime": uptime,
-            "tasks_processed": self._local_stats["tasks_processed_this_session"],
-            "tasks_failed": self._local_stats["tasks_failed_this_session"],
-            "current_task": self._current_task.task_id if self._current_task else None,
-        }
-    
-    async def get_pending_tasks(self) -> List[Dict[str, Any]]:
-        """Get list of pending tasks from Redis."""
-        if not self._redis_service:
-            return []
-        
-        try:
-            pending = await self._redis_service.get_pending_tasks(count=100)
-            return pending
-        except Exception as e:
-            logger.error(f"Error getting pending tasks: {e}")
-            return []
-
 
 # ========================================
 # Singleton accessor functions
@@ -570,12 +380,3 @@ def get_redis_transcription_queue_service() -> RedisTranscriptionQueueService:
         _queue_service = RedisTranscriptionQueueService.get_instance()
     return _queue_service
 
-
-# Alias for backward compatibility
-def get_transcription_queue_service() -> RedisTranscriptionQueueService:
-    """
-    Get transcription queue service (Redis-backed).
-    
-    This replaces the original asyncio.Queue version.
-    """
-    return get_redis_transcription_queue_service()

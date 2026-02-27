@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from orchestrator_service.services.queue_service import (
-    get_transcription_queue_service,
     get_queue_service_by_name,
 )
 from orchestrator_service.services.queue_discovery import QueueDiscovery
