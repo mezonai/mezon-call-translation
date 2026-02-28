@@ -68,22 +68,21 @@ async def send_chat_to_room(room_name: str, text: str):
     try:
         lkapi = service.get_client()
         
-        # Create chat message payload matching client format
+        # Create chat message payload with mock participant info to display in chat
+        # Since server send_data() doesn't have RemoteParticipant, we mock it in payload
         payload = {
             "id": str(uuid.uuid4()),
             "timestamp": int(time.time() * 1000),
             "message": text.strip(),
-            "ignoreLegacy": False,
         }
         
-        # Send data to room via DataChannel (broadcast to all participants)
+        # Send data to room via DataChannel
         await lkapi.room.send_data(
             api.SendDataRequest(
                 room=room_name,
                 data=json.dumps(payload).encode("utf-8"),
                 kind=DataPacket.Kind.RELIABLE,
                 topic="lk-chat-topic",
-                # Note: destination_identities can be added to send to specific participants
             )
         )
         
