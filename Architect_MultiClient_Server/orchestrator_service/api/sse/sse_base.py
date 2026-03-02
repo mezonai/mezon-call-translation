@@ -63,17 +63,12 @@ async def event_generator(
                     timeout=0.1  # 100ms - balance between responsiveness and CPU
                 )
                 
-                # Check for explicit shutdown message (optional, for graceful notify)
-                if data is None or (isinstance(data, dict) and data.get("event") == "shutdown"):
+                # Check for explicit disconnect message (optional, for graceful notify)
+                if data is None or (isinstance(data, dict) and data.get("event") == "disconnect"):
                     if data and isinstance(data, dict):
-                        logger.info(f"[SSE] Sending shutdown notification to {connection_id}")
-                        yield f"event: shutdown\ndata: {json.dumps(data.get('data', {}))}\n\n"
+                        logger.info(f"[SSE] Sending disconnect notification to {connection_id}")
+                        yield f"event: disconnect\ndata: {json.dumps(data.get('data', {}))}\n\n"
                     break
-                
-                # Apply event filter if provided
-                if event_filter and not event_filter(data):
-                    logger.debug(f"[SSE] Event filtered out for {connection_id}")
-                    continue
                 
                 # Log message being sent
                 logger.info(

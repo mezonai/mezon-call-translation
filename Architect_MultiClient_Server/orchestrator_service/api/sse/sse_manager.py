@@ -173,7 +173,35 @@ class SSEManager:
                     break
             
             if existing_connection_id:
-                # Remove from tracking
+                # Send disconnect message to client BEFORE removing queue
+                if (channel_type in self.connection_queues and 
+                    context_key in self.connection_queues[channel_type] and
+                    existing_connection_id in self.connection_queues[channel_type][context_key]):
+                    
+                    queue = self.connection_queues[channel_type][context_key][existing_connection_id]
+                    disconnect_message = {
+                        "event": "disconnect",
+                        "data": {"message": "Duplicate connection from same appid"}
+                    }
+                    try:
+                        # Send disconnect notification to client
+                        queue.put_nowait(disconnect_message)
+                        logger.info(
+                            f"[SSE Manager] Sent disconnect notification to {existing_connection_id} "
+                            f"(channel={channel_type}, appid={appid})"
+                        )
+                    except asyncio.QueueFull:
+                        # Queue full, will be disconnected anyway when we remove the queue
+                        logger.warning(
+                            f"[SSE Manager] Queue full while disconnecting {existing_connection_id}, "
+                            "forcing disconnect"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[SSE Manager] Error sending disconnect to {existing_connection_id}: {e}"
+                        )
+                
+                # Now remove from tracking
                 self.connection_appids[channel_type][context_key].pop(existing_connection_id, None)
                 
                 # Remove queue (this will cause generator to stop)
@@ -350,7 +378,7 @@ class SSEManager:
             
             total_notified = 0
             shutdown_message = {
-                "event": "shutdown",
+                "event": "disconnect",
                 "data": {"message": "Server is shutting down"}
             }
             
