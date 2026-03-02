@@ -12,7 +12,7 @@ from src.core.tts_manager import TTSManager
 from src.core.agent_control_state import AgentControlState
 from src.logger import get_logger
 from src.config.application_config import get_config
-from src.services import orchestrator_client
+from src.services.orchestrator_client import OrchestratorClient
 from livekit import api
 
 # Load config
@@ -22,6 +22,9 @@ logger = get_logger(__name__)
 
 async def entrypoint(ctx: agents.JobContext):
     """Main agent entrypoint - setup and lifecycle management"""
+
+    # Initialize orchestrator client singleton
+    orchestrator = OrchestratorClient.get_instance()
 
     # Create a new token to change the identity displayed in the room
     new_token = api.AccessToken(config.livekit.api_key, config.livekit.api_secret)
@@ -37,17 +40,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     # ghi đè token trong ctx
     ctx._info.token = new_token.to_jwt()
-    await ctx.connect()
-
-    p = ctx.room.local_participant
-
-    logger.info(
-        f"[AGENT STARTED] "
-        f"identity={p.identity} | "
-        f"name={p.name} | "
-        f"sid={p.sid} | "
-        f"room={ctx.room.name}"
-    )
+    
 
     logger.info(f"✅ Connected to room: {ctx.room.name}")
     # Get session_id from room name
@@ -66,18 +59,25 @@ async def entrypoint(ctx: agents.JobContext):
         logger.info("🧹 Agent shutdown: cleaning resources...")
 
         try:
-            await orchestrator_client.unregister_room(session_id)
+            await orchestrator.unregister_room(session_id)
+            await orchestrator.push_event_session_ended(session_id, room_id)
         except Exception as e:
-            logger.error(f"unregister failed: {e}")
+            logger.error(f"unregister or session_ended event failed: {e}")
 
         await event_handlers.safe_disconnect_all()
         await transcript_manager.cleanup()
 
         if tts_manager:
             await tts_manager.cleanup()
+        
+        # Close orchestrator HTTP client
+        try:
+            await orchestrator.close()
+        except Exception as e:
+            logger.error(f"orchestrator close failed: {e}")
 
     # Register cleanup callback
-    ctx.add_shutdown_callback(lambda: asyncio.create_task(cleanup()))
+    ctx.add_shutdown_callback(cleanup)
 
     for participant in ctx.room.remote_participants.values():
         for pub in participant.track_publications.values():
@@ -158,33 +158,8 @@ async def entrypoint(ctx: agents.JobContext):
         else:
             await _send_agent_control_ack("error", {"error": "unknown_action", "action": action})
 
-    def on_data_received(data_packet):
-        """Central DataChannel dispatcher - routes messages to appropriate handlers"""
-        try:
-            topic = data_packet.topic
-            participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
-            logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
-
-            if topic == "tts_control":
-                if tts_manager:
-                    logger.info("🎯 Routing to TTSManager")
-                    asyncio.create_task(tts_manager.handle_tts_data(data_packet))
-                else:
-                    logger.warning("⚠️ Received TTS request but TTS is not enabled")
-            elif topic == "agent_control":
-                asyncio.create_task(_handle_agent_control(data_packet))
-            else:
-                logger.debug(f"Unhandled DataChannel topic: {topic}")
-        except Exception as e:
-            logger.error(f"❌ Error in DataChannel dispatcher: {e}", exc_info=True)
-
-    # Always register dispatcher (even if TTS is disabled)
-    ctx.room.on("data_received", on_data_received)
-
-    # Register room with orchestrator for webhook processing
-    await orchestrator_client.register_room(session_id)
-
-
+    # TTS Manager (optional, check if TTS is enabled)
+    tts_manager = None
 
     try:
         logger.info("Initializing TTS Manager...")
@@ -202,8 +177,6 @@ async def entrypoint(ctx: agents.JobContext):
             # Note: DataChannel routing is handled by central dispatcher in main.py
             logger.info("✅ TTS listening on DataChannel topic='tts_control'")
             
-            # Announce TTS ready
-            await tts_manager.announce_tts_ready()
         else:
             logger.warning("⚠️ TTS Manager initialization failed, continuing without TTS")
             tts_manager = None
@@ -214,9 +187,91 @@ async def entrypoint(ctx: agents.JobContext):
         tts_manager = None
 
 
+    await ctx.connect()
+    p = ctx.room.local_participant
 
-    await transcript_manager.send_welcome_message()
-
+    logger.info(
+        f"[AGENT STARTED] "
+        f"identity={p.identity} | "
+        f"name={p.name} | "
+        f"sid={p.sid} | "
+        f"room={ctx.room.name}"
+    )
+    
+    # Register room with orchestrator for webhook processing and get room_id
+    room_id = await orchestrator.register_room(session_id)
+    if room_id:
+        logger.info(f"✅ Room registered with orchestrator (room_id: {room_id})")
+        event_session_started = await orchestrator.push_event_session_started(session_id, room_id)
+        if event_session_started :
+            logger.info("✅ session_started event pushed to orchestrator successfully")
+        else:
+            logger.warning(f"⚠️ Failed to push session_started event: {event_session_started.get('message')}")
+    else:
+        logger.warning("⚠️ Failed to get room_id from orchestrator")
+    
+    # Setup DataChannel dispatcher
+    async def _handle_chat_external(data_packet):
+        """Handle chat messages from lk-chat-topic and push to orchestrator"""
+        try:
+            payload = _parse_json_bytes(getattr(data_packet, "data", None))
+            if not payload:
+                logger.warning("lk-chat-topic: invalid payload")
+                return
+            print(f"Received payload: {payload}")
+            participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
+            message = payload.get("message", "")
+            timestamp = payload.get("timestamp") or payload.get("time")
+            
+            if not message:
+                logger.warning(f"lk-chat-topic: empty message from {participant_id}")
+                return
+            
+            # Push to orchestrator (broadcasts to all bots via SSE)
+            if room_id:
+                await orchestrator.push_chat_external(
+                    room_name=session_id,
+                    room_id=room_id,
+                    participant_identity=participant_id,
+                    message=message,
+                    time_str=str(timestamp)
+                )
+            else:
+                logger.warning("lk-chat-topic: room_id not available, skipping push")
+        except Exception as e:
+            logger.error(f"Error handling chat external: {e}", exc_info=True)
+    
+    def on_data_received(data_packet):
+        """Central DataChannel dispatcher - routes messages to appropriate handlers"""
+        try:
+            topic = data_packet.topic
+            participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
+            logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
+            
+            if topic == "tts_control":
+                if tts_manager:
+                    logger.info("🎯 Routing to TTSManager")
+                    asyncio.create_task(tts_manager.handle_tts_data(data_packet))
+                else:
+                    logger.warning("⚠️ Received TTS request but TTS is not enabled")
+            
+            elif topic == "lk-chat-topic":
+                logger.info("🎯 Routing to chat external handler")
+                asyncio.create_task(_handle_chat_external(data_packet))
+            
+            elif topic == "agent_control":
+                asyncio.create_task(_handle_agent_control(data_packet))
+            
+            else:
+                logger.debug(f"Unhandled DataChannel topic: {topic}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error in DataChannel dispatcher: {e}", exc_info=True)
+    
+    # Register DataChannel dispatcher
+    ctx.room.on("data_received", on_data_received)
+    logger.info("✅ DataChannel dispatcher registered")
+    
     # Log readiness status
     if tts_manager:
         logger.info("🎤🔊 Vosk + TTS Agent ready and waiting for participants...")
