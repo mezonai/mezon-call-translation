@@ -34,13 +34,11 @@ class OrchestratorClient:
         self._http_client: Optional[httpx.AsyncClient] = None
     
     @classmethod
-    async def get_instance(cls) -> 'OrchestratorClient':
+    def get_instance(cls) -> 'OrchestratorClient':
         """Get singleton instance (thread-safe)"""
         if cls._instance is None:
-            async with cls._lock:
                 if cls._instance is None:
                     cls._instance = cls()
-                    await cls._instance.start()
         return cls._instance
     
     async def start(self):
@@ -221,7 +219,7 @@ class OrchestratorClient:
         if not self._http_client or self._http_client.is_closed:
             await self.start()
         
-        url = f"{self.config.orchestrator.base_url}/api/push_chat_external"
+        url = f"{self.config.orchestrator.base_url}/api/agent_push_chat_external"
         
         payload = {
             "room_name": room_name,
@@ -281,7 +279,7 @@ class OrchestratorClient:
             )
             end_time = time.time()
             print(f"API call took {end_time - start_time:.2f} seconds")
-            self.logger.info(
+            self.logger.debug(
                 f"[API] Pushed to queue via API (room={room_name}): "
                 f"{text[:50]}{'...' if len(text) > 50 else ''}, "
                 f"status={resp.status_code}"

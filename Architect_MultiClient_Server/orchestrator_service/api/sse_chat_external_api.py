@@ -54,7 +54,7 @@ async def sse_chat_external_endpoint(appid: str, token: str):
     return await chat_external_channel.create_connection(appid, token)
 
 
-@router.post("/push_chat_external")
+@router.post("/agent_push_chat_external")
 async def push_chat_external_api(req: PushChatExternalRequest):
     """
     Push chat external event to all connected bots via SSE.

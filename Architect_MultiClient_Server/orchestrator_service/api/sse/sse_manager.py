@@ -7,20 +7,9 @@ import asyncio
 import time
 from typing import Dict
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.decorator import singleton
 
 logger = get_logger(__name__)
-
-
-def singleton(cls):
-    """Singleton decorator to ensure only one instance exists"""
-    instances = {}
-    lock = threading.Lock()
-    def get_instance(*args, **kwargs):
-        with lock:
-            if cls not in instances:
-                instances[cls] = cls(*args, **kwargs)
-            return instances[cls]
-    return get_instance
 
 
 @singleton
@@ -59,25 +48,18 @@ class SSEManager:
         # Shutdown flag for signal handler (thread-safe)
         self._shutdown_flag = False
         self._shutdown_lock = threading.Lock()
-        
-        # channel_type -> context_key -> connection_id -> appid
-        self.connection_appids: Dict[str, Dict[str, Dict[str, str]]] = {}
-        
-        # Use asyncio.Lock() for async context instead of threading.Lock()
-        # This prevents blocking the event loop during concurrent operations
-        self._lock = asyncio.Lock()
-        self._connection_counter = 0
+
     
-    def _get_or_create_channel(self, channel_type: str):
+    def _ensure_channel_exists(self, channel_type: str):
         """Internal: Ensure channel exists in both dictionaries"""
         if channel_type not in self.connection_queues:
             self.connection_queues[channel_type] = {}
         if channel_type not in self.connection_appids:
             self.connection_appids[channel_type] = {}
     
-    def _get_or_create_context(self, channel_type: str, context_key: str):
+    def _ensure_context_exists(self, channel_type: str, context_key: str):
         """Internal: Ensure context exists within channel"""
-        self._get_or_create_channel(channel_type)
+        self._ensure_channel_exists(channel_type)
         if context_key not in self.connection_queues[channel_type]:
             self.connection_queues[channel_type][context_key] = {}
         if context_key not in self.connection_appids[channel_type]:
@@ -101,7 +83,7 @@ class SSEManager:
             Unique connection_id
         """
         async with self._lock:
-            self._get_or_create_context(channel_type, context_key)
+            self._ensure_context_exists(channel_type, context_key)
             
             self._connection_counter += 1
             connection_id = f"{channel_type}_{context_key}_{self._connection_counter}_{int(time.time())}"
@@ -134,7 +116,7 @@ class SSEManager:
             asyncio.Queue for this connection
         """
         async with self._lock:
-            self._get_or_create_context(channel_type, context_key)
+            self._ensure_context_exists(channel_type, context_key)
             
             # Create asyncio.Queue for this connection
             conn_queue = asyncio.Queue(maxsize=100)  # Limit to prevent memory issues
@@ -300,6 +282,12 @@ class SSEManager:
                 # Skip slow consumers to prevent blocking others
                 logger.warning(
                     f"[SSE Manager] Queue full, skipping slow consumer "
+                    f"(channel={channel_type}, context={context_key})"
+                )
+                pass
+            except Exception as e:
+                logger.exception(
+                    f"[SSE Manager] Error broadcasting to a connection: {e} "
                     f"(channel={channel_type}, context={context_key})"
                 )
                 pass

@@ -5,8 +5,6 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Body, Depends, Header, Query
 from pydantic import BaseModel
 from orchestrator_service.services.summary_service import get_summary_service
-from orchestrator_service.services.interview_queue import get_interview_queue
-from orchestrator_service.services.interview_webhook_service import get_interview_webhook_service
 from orchestrator_service.config.application_config import get_config
 from datetime import datetime
 from typing import Optional
@@ -40,17 +38,6 @@ async def generate_room_summary(request: SummaryRequest = Body(...)):
     If the room is associated with an interview, also sends track data to interview webhook.
     """
     
-    # Check if this room is associated with an interview
-    interview_queue = get_interview_queue()
-    interview_id = interview_queue.get_interview_id(request.room_id)
-    
-    if interview_id:
-        # Send interview data to webhook asynchronously
-        webhook_service = get_interview_webhook_service()
-        asyncio.create_task(
-            webhook_service.send_interview_data(interview_id, request.room_id)
-        )
-        interview_queue.remove(request.room_id)  # Optionally remove from queue after processing
     mongodb = get_mongodb_service()
     room = await mongodb.get_room_by_id(request.room_id)
     room_name = room.get("room_name") if room else "unknown"

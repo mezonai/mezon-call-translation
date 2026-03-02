@@ -24,7 +24,7 @@ async def entrypoint(ctx: agents.JobContext):
     """Main agent entrypoint - setup and lifecycle management"""
 
     # Initialize orchestrator client singleton
-    orchestrator = await OrchestratorClient.get_instance()
+    orchestrator = OrchestratorClient.get_instance()
 
     # Create a new token to change the identity displayed in the room
     new_token = api.AccessToken(config.livekit.api_key, config.livekit.api_secret)

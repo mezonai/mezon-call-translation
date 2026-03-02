@@ -30,7 +30,7 @@ class TranscriptManager:
         # Key: participant_identity, Value: {"texts": [], "timer_task": Task, "last_activity": timestamp}
         self._transcript_buffer = {}
         self._buffer_lock = asyncio.Lock()
-        self._orchestrator = None 
+        self._orchestrator = OrchestratorClient.get_instance()
 
         self.logger.info(
             f"TranscriptManager initialized for meeting {self.session_id} "
@@ -60,14 +60,12 @@ class TranscriptManager:
             
             # Log with FINAL/PARTIAL prefix for visibility
             transcript_type = "FINAL" if is_final else "PARTIAL"
-            self.logger.info(
+            self.logger.debug(
                 f"[{transcript_type}] [{self.session_id}] {participant_name} ({participant_identity}): {text}"
             )
 
             # Send immediately if has content (fire-and-forget to prevent blocking)
             if text.strip():
-                if self._orchestrator is None:
-                    self._orchestrator = await OrchestratorClient.get_instance()
                 
                 success = await self._orchestrator.push_transcript(
                     room_name=self.session_id,
