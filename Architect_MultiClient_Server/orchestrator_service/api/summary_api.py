@@ -11,6 +11,7 @@ from orchestrator_service.config.application_config import get_config
 from datetime import datetime
 from typing import Optional
 from orchestrator_service.services.mongodb_service import get_mongodb_service
+from orchestrator_service.api.sse_metadata_api import metadata_channel
 
 internal_router = APIRouter(prefix="/api/internal", tags=["Internal"])
 client_router = APIRouter(prefix="/api/summary", tags=["Summary"])
@@ -50,10 +51,21 @@ async def generate_room_summary(request: SummaryRequest = Body(...)):
             webhook_service.send_interview_data(interview_id, request.room_id)
         )
         interview_queue.remove(request.room_id)  # Optionally remove from queue after processing
+    mongodb = get_mongodb_service()
+    room = await mongodb.get_room_by_id(request.room_id)
+    room_name = room.get("room_name") if room else "unknown"
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    result = await metadata_channel.push_room_record_done(
+        room_id=request.room_id,
+        room_name=room_name
+    )
 
     service = get_summary_service()
     result = await service.generate_summary(request.room_id)
-    
+
+
     if not result:
         raise HTTPException(status_code=404, detail="Room not found or no transcripts available")
         

@@ -1,11 +1,7 @@
-import os
-import logging
-import time
 from dotenv import load_dotenv
 load_dotenv()
 
-import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from orchestrator_service.utils.logger import get_logger
@@ -16,7 +12,9 @@ from contextlib import asynccontextmanager
 from orchestrator_service.api.dispatch_api import router as dispatch_router
 from orchestrator_service.api.tts_api import router as tts_router
 from orchestrator_service.api.chat_external_api import router as chat_external_router
-from orchestrator_service.api.stream_message_api import router as stream_router
+from orchestrator_service.api.sse_transcript_api import router as stream_router
+from orchestrator_service.api.sse_chat_external_api import router as sse_chat_external_router
+from orchestrator_service.api.sse_metadata_api import router as sse_metadata_router, sse_manager
 from orchestrator_service.api.webhook_api import router as webhook_router, egress_service
 from orchestrator_service.api.room_api import router as room_router
 from orchestrator_service.api.track_api import router as track_router
@@ -26,33 +24,82 @@ from orchestrator_service.api.room_registry_api import router as room_registry_r
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
 from orchestrator_service.api.summary_api import internal_router as summary_internal_router, client_router as summary_client_router
 
+import signal
+
 # Load config
 config = get_config()
 logger = get_logger(__name__)
-from dotenv import load_dotenv
+original_sigint = signal.getsignal(signal.SIGINT)
+original_sigterm = signal.getsignal(signal.SIGTERM)
+
+def signal_exit(signum, frame):
+    """
+    Signal handler for SIGINT (Ctrl+C) and SIGTERM.
+    
+    This is called SYNCHRONOUSLY when signal is received.
+    Cannot use 'await' here, so we call synchronous method on sse_manager.
+    """
+    signal_name = "SIGINT" if signum == signal.SIGINT else "SIGTERM"
+    logger.info(f"🛑 Received {signal_name}, initiating graceful shutdown...")
+    
+    # Call synchronous method to notify all SSE connections
+    # This sends shutdown messages to all queues without awaiting
+    sse_manager.signal_shutdown()
+        # Gọi lại handler gốc của Uvicorn
+    
+    if callable(original_sigint):
+        original_sigint(signum, frame)
+    # Note: We DON'T call sys.exit() here
+    # Let Uvicorn's signal handler run after this to properly shutdown
 
 
-load_dotenv()
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_exit)
+signal.signal(signal.SIGTERM, signal_exit)
+logger.info("✅ Signal handlers registered for SIGINT and SIGTERM")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ===== STARTUP =====
-    logger.info("FastAPI startup") 
+    logger.info("🚀 FastAPI startup")
+    
     mongodb = get_mongodb_service()
     ok = await mongodb.connect()
     if not ok:
         raise RuntimeError("❌ MongoDB connection failed on startup")
     logger.info("✅ MongoDB connected on startup")
-    yield
-    # ===== SHUTDOWN =====
-    logger.info("FastAPI shutting down, cleaning up resources...")
-    await egress_service.cleanup()
-    await cleanup_livekit_service()
     
-    # Disconnect Mongo LAST
+    yield
+    
+    # ===== SHUTDOWN =====
+    # Uvicorn automatically cancels all active SSE generators when shutdown signal received
+    # We just need to cleanup resources after generators are cancelled
+    logger.info("🛑 FastAPI shutting down, cleaning up resources...")
+    
+    # Step 1: Cleanup SSE manager (clear data structures)
+    # SSE connections were already notified by signal handler
+    logger.info("Step 1/4: Cleaning up SSE manager...")
+    await sse_manager.cleanup()
+    logger.info("✅ SSE manager cleanup completed")
+    
+    # Step 2: Cleanup egress service
+    logger.info("Step 2/4: Cleaning up egress service...")
+    await egress_service.cleanup()
+    logger.info("✅ Egress service cleanup completed")
+    
+    # Step 3: Cleanup LiveKit service
+    logger.info("Step 3/4: Cleaning up LiveKit service...")
+    await cleanup_livekit_service()
+    logger.info("✅ LiveKit service cleanup completed")
+    
+    # Step 4: Disconnect MongoDB LAST
+    logger.info("Step 4/4: Disconnecting MongoDB...")
     if mongodb is not None:
         await mongodb.disconnect()
-    logger.info("All services cleanup completed")
+    logger.info("✅ MongoDB disconnected")
+    
+    logger.info("🎉 All services cleanup completed successfully")
 
 
 app = FastAPI(title="LiveKit Orchestrator API", lifespan=lifespan)
@@ -68,8 +115,10 @@ app.add_middleware(
 # Include routers
 app.include_router(dispatch_router, prefix="/api")
 app.include_router(tts_router, prefix="/api")
-app.include_router(stream_router, prefix="/api")
-app.include_router(chat_external_router, prefix="/api")
+app.include_router(stream_router, prefix="/api", tags=["sse transcript"])
+app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat external"])
+app.include_router(sse_metadata_router, prefix="/api", tags=["sse metadata"])
+app.include_router(chat_external_router, prefix="/api", tags=["sse chat external"])
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
 app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
 app.include_router(track_router)  # Has prefix="/api/transcripts/tracks"

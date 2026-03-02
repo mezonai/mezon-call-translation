@@ -73,7 +73,7 @@ async def send_chat_to_room(room_name: str, text: str):
         payload = {
             "id": str(uuid.uuid4()),
             "timestamp": int(time.time() * 1000),
-            "message": text.strip(),
+            "message": text.strip()
         }
         
         # Send data to room via DataChannel
