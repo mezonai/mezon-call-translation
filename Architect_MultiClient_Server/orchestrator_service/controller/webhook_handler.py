@@ -37,8 +37,7 @@ class WebhookHandler:
         """
         event_type = event.get("event", "unknown")
         logger.info(f"📥 Received: {event_type}")
-        logger.debug(f"Payload: {json.dumps(event, indent=2, ensure_ascii=False)}")
-        if event_type not in {"egress_ended", "egress_started"}:
+        if event_type not in {"egress_ended", "egress_started","egress_updated"}:
             logger.info(f"  (skipping detailed processing for event type)")
             # Get room name - different events have different structures
             room_name = event.get("room", {}).get("name", "")
@@ -56,8 +55,8 @@ class WebhookHandler:
             "track_published": self._handle_track_published,
             "track_unpublished": self._handle_track_unpublished,
             "egress_started": self._handle_egress_started,
-            "egress_ended": self._handle_egress_ended
-            
+            "egress_ended": self._handle_egress_ended,
+            "egress_updated": self._handle_egress_updated
         }
         
         handler = handlers.get(event_type)
@@ -153,6 +152,16 @@ class WebhookHandler:
         except Exception as e:
             logger.error(f"Error saving track metadata: {e}")
             return WebhookResponse(received=True, action="egress_started_logged")
+
+
+    async def _handle_egress_updated(self, event: Dict) -> WebhookResponse:
+        """Handle when an egress is updated"""
+        egress_info = event.get("egressInfo", {})
+        egress_id = egress_info.get("egressId", "unknown")
+        status = egress_info.get("status", "unknown")
+        room_name = egress_info.get("roomName", "unknown")
+        logger.info(f"egress_updated: room={room_name}, egress_id={egress_id}, status={status}")
+        return WebhookResponse(received=True, action="egress_updated_logged")
 
     async def _handle_egress_ended(self, event: Dict) -> WebhookResponse:
         """Handle when an egress ends"""
