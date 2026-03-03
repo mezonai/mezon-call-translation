@@ -9,9 +9,9 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
+from pymongo import ReturnDocument
 import logging
-
-
+from pymongo.errors import PyMongoError
 from orchestrator_service.config.application_config import get_config
 
 logger = logging.getLogger(__name__)
@@ -116,13 +116,19 @@ class MongoDBService:
             logger.error(f"Failed to get room: {e}")
             return None
 
-    async def get_room_by_id(self, room_id: str) -> Optional[Dict[str, Any]]:
-        """Get room by ObjectId"""
+
+
+    async def get_room_by_id(
+        self, room_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get room by _id"""
+
         try:
             return await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
+
         except Exception as e:
-            logger.error(f"Failed to get room by ID: {e}")
-            return None
+            logger.exception(f"Unexpected error when fetching room by ID {e}")
+            raise
 
     async def list_rooms(self, status: str = None, limit: int = 100, 
                         skip: int = 0) -> List[Dict[str, Any]]:
@@ -366,6 +372,211 @@ class MongoDBService:
         except Exception as e:
             logger.error(f"Failed to get full transcript: {e}")
             return []
+
+    # ==========================================================
+    # 🏠 ROOM METHODS
+    # ==========================================================
+
+    async def create_room_session(
+        self,
+        room_name: str,
+        status: str = "pending",
+    ) -> Optional[ObjectId]:
+        
+        if not self.connected and not await self.connect():
+            logger.error("Cannot create room: MongoDB not connected")
+            return None
+        try:
+            room_data = {
+                "room_name": room_name,
+                "status": status,
+                "created_at": datetime.utcnow(),
+            }
+            
+            result = await self.rooms_collection.insert_one(room_data)
+            logger.info(f"📁 Room created: room={room_name}, _id={result.inserted_id}")
+            return result.inserted_id
+            
+        except PyMongoError as e:
+            logger.error(f"Failed to create room: {e}")
+            return None
+
+
+    async def get_room_by_name(self, room_name: str) -> Optional[Dict]:
+        """Get room by name"""
+        if not self.connected:
+            return None
+        return await self.rooms_collection.find_one({"room_name": room_name})
+
+
+
+    async def final_room_status(self, room_name: str, room_id: str) -> bool:
+
+        if not self.connected:
+            return False
+
+        try:
+            room_id = ObjectId(room_id)
+            update_doc = {
+                "$set": {
+                    "status": "final_room",
+                    "finalized_at": datetime.utcnow()
+                }
+            }
+            
+            await self.rooms_collection.update_one(
+                {"_id": room_id},
+                update_doc
+            )
+            
+            logger.info(f"🔒 Room finalized: {room_name} → final_room")
+            # Check if room should be completed (if status changed from pending)
+            await self.check_and_complete_room(room_id)
+            
+            return True
+
+        except PyMongoError as e:
+            logger.error(f"Failed to finalize room: {e}")
+            return False
+
+    
+    async def check_and_complete_room(
+        self,
+        room_ref_id: ObjectId
+    ) -> bool:
+        """
+        Check if room should be completed:
+        - Room status must be "final_room"
+        - No tracks with status "pending"
+        
+        If conditions met, update room status to "completed" and trigger summary.
+        
+        Args:
+            room_ref_id: Room reference ID
+            
+        Returns:
+            True if room was completed, False otherwise
+        """
+        if not self.connected:
+            return False
+
+        try:
+            # Get room
+            room = await self.rooms_collection.find_one({"_id": room_ref_id})
+            
+            if not room:
+                logger.error(f"Room not found: room_id={room_ref_id}")
+                return False
+            
+            # Check if room is in final_room status
+            if room.get("status") != "final_room":
+                logger.debug(f"Room not in final_room status: {room.get('status')}")
+                return False
+            
+            # Count pending tracks
+            pending_count = await self.tracks_collection.count_documents({
+                "room_ref_id": room_ref_id,
+                "status": "pending"
+            })
+            
+            # If there are still pending tracks, don't complete
+            if pending_count > 0:
+                logger.info(f"Room still has {pending_count} pending tracks")
+                return False
+            
+            # All tracks completed (or none pending), mark room as completed
+            await self.rooms_collection.update_one(
+                {"_id": room_ref_id},
+                {
+                    "$set": {
+                        "status": "completed",
+                        "completed_at": datetime.utcnow()
+                    }
+                }
+            )
+            
+            logger.info(f"🎉 Room completed: room_id={room_ref_id} (all tracks processed)")
+            
+            # Trigger summary generation
+            asyncio.create_task(self._trigger_summary_api(str(room_ref_id)))
+            
+            return True
+
+        except PyMongoError as e:
+            logger.error(f"Failed to check and complete room: {e}")
+            return False
+
+    # ==========================================================
+    # 🔥 TRACK METHODS (Updated to use room_ref_id)
+    # ==========================================================
+
+    async def save_track_metadata(
+        self,
+        *,
+        egress_id: str,
+        track_id: Optional[str] = None,
+        room_ref_id: Optional[ObjectId] = None,
+        participant_identity: Optional[str] = None,
+        audio_info: Optional[Dict[str, Any]] = None,
+        status: str = "pending",
+    ) -> Optional[str]:
+        """
+        Save track metadata using egress_id as _id.
+        
+        Args:
+            egress_id: Unique egress identifier (used as _id)
+            track_id: Track identifier
+            room_ref_id: Reference to room document _id
+            participant_identity: Participant identity
+            audio_info: Dict containing {filename, ...}
+            status: Track status (default: "pending")
+            
+        Returns:
+            egress_id (the _id) of inserted/updated document, or None if failed
+        """
+
+        try:
+            
+            # Build $set operation - only include audio_info if provided
+            set_fields = {
+                "status": status,
+                "updated_at": datetime.utcnow()
+            }
+            if audio_info is not None:
+                set_fields["audio_info"] = audio_info
+            
+            result = await self.tracks_collection.find_one_and_update(
+                {"_id": egress_id},
+                {
+                    "$setOnInsert": {
+                        "_id": egress_id,
+                        "track_id": track_id,
+                        "room_ref_id": room_ref_id,
+                        "participant_identity": participant_identity,
+                        "chunk_count": 0,
+                        "created_at": datetime.utcnow(),
+                    },
+                    "$set": set_fields
+                },
+                upsert=True,
+                return_document=ReturnDocument.AFTER
+            )
+            
+            if result:
+                logger.info(
+                    f"📝 Track metadata saved: _id(egress)={egress_id} "
+                )
+                
+                return result["_id"]
+            else:
+                logger.warning(f"Track metadata operation returned None: egress={egress_id}")
+                return None
+
+        except PyMongoError as e:
+            logger.error(f"Failed to save track metadata: {e}")
+            return None
+
+
 
 
     # ========================================

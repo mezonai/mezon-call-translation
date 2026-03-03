@@ -12,7 +12,7 @@ import logging
 import tempfile
 import shutil
 import math
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -385,26 +385,6 @@ class WhisperTranscriptionProcessor:
         track_ref_id = task.egress_id
         
         try:
-            # STEP 0: Update track metadata with audio info and set status to processing
-            if task.egress_id:
-                logger.info("📝 Updating track metadata with audio info...")
-                try:
-                    await self.mongodb_service.save_track_metadata(
-                        egress_id=task.egress_id,
-                        audio_info={
-                            "filename": task.filename,
-                            "duration_sec": task.duration,
-                            "started_at_ns": task.started_at,
-                            "ended_at_ns": task.ended_at,
-                            "location": task.location,
-                            "source": task.source,
-                        },
-                    )
-                    logger.info(f"✅ Track metadata updated: egress={task.egress_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to update track metadata: {e}")
-                    # Continue processing even if metadata update fails
-            
             # STEP 1: Download audio from MinIO
             local_file, file_size_mb = await self._download_from_minio(task.filename)
             

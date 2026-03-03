@@ -39,6 +39,8 @@ async def generate_room_summary(request: SummaryRequest = Body(...)):
     """
     
     mongodb = get_mongodb_service()
+    if not mongodb.connected:
+        await mongodb.connect()
     room = await mongodb.get_room_by_id(request.room_id)
     room_name = room.get("room_name") if room else "unknown"
     if not room:
