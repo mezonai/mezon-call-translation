@@ -340,3 +340,59 @@ class MetadataChannel:
             "active_connections": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),
             "broadcast_to": broadcast_count
         }
+    
+    async def push_room_summary_done(
+        self,
+        room_id: str,
+        room_name: str,
+    ) -> Dict[str, Any]:
+        """
+        Push room_summary_done event to all connected bots.
+        Notifies that room summary/analysis has been completed.
+        
+        Args:
+            room_id: Room identifier
+            room_name: Room name
+            status: Summary generation status (success/failure)
+            summary_id: Optional identifier for the generated summary
+        Returns:
+            Dictionary with push status
+        """
+        context_key = self.CONTEXT_KEY
+        
+        # Check if any bots are connected
+        if not await self.manager.has_active_connections(self.CHANNEL_TYPE, context_key):
+            logger.warning(
+                f"[Metadata Channel] No active bot connections, room_summary_done event may be lost"
+            )
+        
+        # Prepare event data
+        event_data = self._create_base_event(
+            event_type="room_summary_done",
+            room_id=room_id,
+            room_name=room_name,
+            metadata={}
+        )
+        
+        # Broadcast event
+        broadcast_count = await self.manager.broadcast_message(
+            self.CHANNEL_TYPE,
+            context_key,
+            event_data
+        )
+        
+        logger.info(
+            f"[Metadata Channel] Pushed room_summary_done event to {broadcast_count} bots "
+            f"(room_id={room_id}, room_name={room_name})"
+        )
+        
+        return {
+            "status": "ok",
+            "event_type": "room_summary_done",
+            "event_id": event_data["event_id"],
+            "room_id": room_id,
+            "room_name": room_name,
+            "timestamp": event_data["timestamp"],
+            "active_connections": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),
+            "broadcast_to": broadcast_count
+        }

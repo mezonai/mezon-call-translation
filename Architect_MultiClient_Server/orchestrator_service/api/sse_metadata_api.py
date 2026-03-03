@@ -90,6 +90,17 @@ class SessionRecordDoneRequest(RoomInfo):
         }
 
 
+class SessionSummaryDoneRequest(RoomInfo):
+    """Request model for room_summary_done event"""
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "room_id": "69a66008cfc00881f1d7b382",
+                "room_name": "H3U-EXdDg"
+            }
+        }
+
+
 # ==================== SSE Endpoint ====================
 
 @router.get("/sse/metadata")
@@ -162,6 +173,26 @@ async def push_session_record_done_api(req: SessionRecordDoneRequest):
 
     """
     result = await metadata_channel.push_room_record_done(
+        room_id=req.room_id,
+        room_name=req.room_name
+    )
+    return result
+
+
+@router.post("/push_metadata/session_summary_done")
+async def push_session_summary_done_api(req: SessionSummaryDoneRequest):
+    """
+    Push session_summary_done event to all connected bots via SSE.
+    Notifies that room summary/analysis has been completed.
+    
+    Args:
+        req: Session summary done event data
+    
+    Returns:
+        Status and statistics
+    
+    """
+    result = await metadata_channel.push_room_summary_done(
         room_id=req.room_id,
         room_name=req.room_name
     )

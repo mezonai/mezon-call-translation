@@ -9,6 +9,8 @@ from orchestrator_service.services.transcription_service import TranscriptionSer
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.utils.filepath import Filepath
 from orchestrator_service.models.webhook_models import WebhookResponse, TrackInfo, EgressInfo
+from orchestrator_service.utils.participant_identity import parse_participant_identity
+
 
 logger = get_logger(__name__)
 
@@ -70,7 +72,7 @@ class WebhookHandler:
         """Handle when a track is published"""
         room_name = event.get("room", {}).get("name", "unknown")
         identity = event.get("participant", {}).get("identity", "unknown")
-        
+        identity = parse_participant_identity(identity)
         track_data = event.get("track", {})
         track = TrackInfo(
             sid=track_data.get("sid", ""),

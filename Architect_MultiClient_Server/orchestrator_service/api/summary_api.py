@@ -44,7 +44,7 @@ async def generate_room_summary(request: SummaryRequest = Body(...)):
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    result = await metadata_channel.push_room_record_done(
+    await metadata_channel.push_room_record_done(
         room_id=request.room_id,
         room_name=room_name
     )
@@ -55,7 +55,12 @@ async def generate_room_summary(request: SummaryRequest = Body(...)):
 
     if not result:
         raise HTTPException(status_code=404, detail="Room not found or no transcripts available")
-        
+    
+    await metadata_channel.push_room_summary_done(
+        room_id=request.room_id,
+        room_name=room_name
+    )
+
     # Convert ObjectId to str for JSON serialization
     if "_id" in result:
         result["_id"] = str(result["_id"])

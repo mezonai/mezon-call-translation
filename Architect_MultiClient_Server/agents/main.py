@@ -15,6 +15,8 @@ from src.config.application_config import get_config
 from src.services.orchestrator_client import OrchestratorClient
 from livekit import api
 
+from src.utils.participant_identity import parse_participant_identity
+
 # Load config
 config = get_config()
 logger = get_logger(__name__)
@@ -218,8 +220,8 @@ async def entrypoint(ctx: agents.JobContext):
             if not payload:
                 logger.warning("lk-chat-topic: invalid payload")
                 return
-            print(f"Received payload: {payload}")
             participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
+            participant_id = parse_participant_identity(participant_id)
             message = payload.get("message", "")
             timestamp = payload.get("timestamp") or payload.get("time")
             
