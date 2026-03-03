@@ -161,6 +161,7 @@ class WebhookHandler:
         
         if status != "EGRESS_COMPLETE":
             logger.info(f"Egress not completed: {status}")
+            logger.info("egress_ended full event:\n%s", json.dumps(event, indent=2, ensure_ascii=False))
             return WebhookResponse(received=True, action="egress_not_completed")
         
         file_data = egress.get("file", {})
