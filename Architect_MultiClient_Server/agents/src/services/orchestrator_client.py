@@ -277,8 +277,6 @@ class OrchestratorClient:
                 json=payload,
                 timeout=1.0
             )
-            end_time = time.time()
-            print(f"API call took {end_time - start_time:.2f} seconds")
             self.logger.debug(
                 f"[API] Pushed to queue via API (room={room_name}): "
                 f"{text[:50]}{'...' if len(text) > 50 else ''}, "
