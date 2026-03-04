@@ -456,7 +456,7 @@ class MongoDBService:
             room = await self.rooms_collection.find_one(
                 {"_id": ObjectId(room_ref_id), "status": "final_room"}
             )
-            print(f"Room found: {room}")
+            logger.info(f"found room: {room.get('_id')} with status: {room.get('status')}")
 
             if not room:
                 return None
