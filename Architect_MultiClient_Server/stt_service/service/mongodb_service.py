@@ -159,14 +159,14 @@ class MongoDBService:
 
         try:
             # Count pending tracks first (lightweight check)
-            pending_count = await self.tracks_collection.count_documents({
+            incomplete_count = await self.tracks_collection.count_documents({
                 "room_ref_id": room_ref_id,
-                "status": "pending"
+                "status": {"$in": ["pending", "wait_process"]}    
             })
             
             # If there are still pending tracks, don't complete
-            if pending_count > 0:
-                logger.debug(f"Room still has {pending_count} pending tracks")
+            if incomplete_count > 0:
+                logger.debug(f"Room still has {incomplete_count} incomplete tracks")
                 return False
             
             # Atomic update: only update if status is "final_room" (prevent race condition)

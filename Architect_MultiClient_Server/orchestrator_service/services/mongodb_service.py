@@ -461,7 +461,7 @@ class MongoDBService:
             if not room:
                 return None
 
-            # Count pending + wait_process tracks
+            # Count pending tracks
             count = await self.tracks_collection.count_documents({
                 "room_ref_id": ObjectId(room_ref_id),
                 "status": "pending"
@@ -498,14 +498,14 @@ class MongoDBService:
             room_ref_id = ObjectId(room_ref_id)
             
             # Count pending and wait_process tracks first (lightweight check)
-            pending_count = await self.tracks_collection.count_documents({
+            incomplete_count = await self.tracks_collection.count_documents({
                 "room_ref_id": room_ref_id,
                 "status": {"$in": ["pending", "wait_process"]}    
             })
             
             # If there are still pending tracks, don't complete
-            if pending_count > 0:
-                logger.debug(f"Room still has {pending_count} pending tracks")
+            if incomplete_count > 0:
+                logger.debug(f"Room still has {incomplete_count} incomplete tracks")
                 return False
             
             # Atomic update: only update if status is "pending" OR "final_room"
