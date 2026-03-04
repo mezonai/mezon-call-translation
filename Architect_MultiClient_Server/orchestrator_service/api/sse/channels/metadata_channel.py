@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
 from orchestrator_service.auth.verify_account import authenticate_account
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb_service import get_mongodb_service
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -37,7 +37,7 @@ class MetadataChannel:
             manager: Shared SSEManager instance
         """
         self.manager = manager
-        self.mongodb_service = MongoDBService()
+        self.mongodb_service = get_mongodb_service()
     
     async def create_connection(
         self,

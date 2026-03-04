@@ -190,17 +190,11 @@ async def unregister_room(
             logger.error(f"Error stopping egresses for room '{request.room_name}': {e}", exc_info=True)
             # Don't fail unregistration if egress stopping fails
         
-        # Finalize room in STT service
-        final_room_success = False
         try:
-            final_room_success = await transcription_service.final_room(
+            asyncio.create_task(transcription_service.final_room(
                 request.room_name, 
                 room_id
-            )
-            if final_room_success:
-                logger.info(f"✅ Room '{request.room_name}' finalized in STT service")
-            else:
-                logger.warning(f"⚠️ Failed to finalize room '{request.room_name}' in STT service")
+            ))
         except Exception as e:
             logger.error(f"Error finalizing room '{request.room_name}': {e}", exc_info=True)
             # Don't fail unregistration if finalization fails
@@ -211,7 +205,6 @@ async def unregister_room(
             "room_name": request.room_name,
             "egresses_stopped": egress_result["stopped"],
             "egresses_failed": egress_result["failed"],
-            "room_finalized": final_room_success
         }
         
     except HTTPException:

@@ -9,9 +9,9 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
+from pymongo import ReturnDocument
 import logging
-
-
+from pymongo.errors import PyMongoError
 from orchestrator_service.config.application_config import get_config
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class MongoDBService:
         self.summary_collection = None
         self.connected = False
 
-        self._initialized = True
+
         logger.info(
             f"MongoDBService initialized (DB={self.database_name}, "
             f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, {self.chunks_collection_name}, {self.summary_collection_name})"
@@ -116,13 +116,19 @@ class MongoDBService:
             logger.error(f"Failed to get room: {e}")
             return None
 
-    async def get_room_by_id(self, room_id: str) -> Optional[Dict[str, Any]]:
-        """Get room by ObjectId"""
+
+
+    async def get_room_by_id(
+        self, room_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get room by _id"""
+
         try:
             return await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
+
         except Exception as e:
-            logger.error(f"Failed to get room by ID: {e}")
-            return None
+            logger.exception(f"Unexpected error when fetching room by ID {e}")
+            raise
 
     async def list_rooms(self, status: str = None, limit: int = 100, 
                         skip: int = 0) -> List[Dict[str, Any]]:
@@ -366,6 +372,243 @@ class MongoDBService:
         except Exception as e:
             logger.error(f"Failed to get full transcript: {e}")
             return []
+
+    # ==========================================================
+    # 🏠 ROOM METHODS
+    # ==========================================================
+
+    async def create_room_session(
+        self,
+        room_name: str,
+        status: str = "pending",
+    ) -> Optional[ObjectId]:
+        
+        if not self.connected and not await self.connect():
+            logger.error("Cannot create room: MongoDB not connected")
+            return None
+        try:
+            room_data = {
+                "room_name": room_name,
+                "status": status,
+                "created_at": datetime.utcnow(),
+            }
+            
+            result = await self.rooms_collection.insert_one(room_data)
+            logger.info(f"📁 Room created: room={room_name}, _id={result.inserted_id}")
+            return result.inserted_id
+            
+        except PyMongoError as e:
+            logger.error(f"Failed to create room: {e}")
+            return None
+
+
+
+
+    async def final_room_status(self, room_name: str, room_id: str) -> bool:
+        """
+        Mark room as finalized.
+        Only updates if current status is 'pending' (prevents overwriting 'completed').
+        Uses atomic findOneAndUpdate to prevent race conditions.
+        
+        Returns:
+            True if status was updated to final_room, False if already finalized/completed
+        """
+        try:
+            room_id = ObjectId(room_id)
+            
+            # Atomic update: only set final_room if status is currently "pending"
+            # This prevents overwriting "completed" status
+            updated_room = await self.rooms_collection.find_one_and_update(
+                {
+                    "_id": room_id,
+                    "status": "pending"  # Only update if still pending
+                },
+                {
+                    "$set": {
+                        "status": "final_room",
+                        "finalized_at": datetime.utcnow()
+                    }
+                },
+                return_document=True
+            )
+            
+            if updated_room:
+                logger.info(f"🔒 Room finalized: {room_name} → final_room")
+                return True
+            else:
+                return False
+
+        except PyMongoError as e:
+            logger.error(f"Failed to finalize room: {e}")
+            return False
+
+
+    async def check_event_record_done(
+        self,
+        room_ref_id: str
+    ) -> Optional[dict]:
+        """
+        Count pending tracks in a room 
+        only if room is in final_room status.
+        """
+        try:
+            # Check room exists AND is in final_room status
+            room = await self.rooms_collection.find_one(
+                {"_id": ObjectId(room_ref_id), "status": "final_room"}
+            )
+            logger.info(f"found room: {room.get('_id')} with status: {room.get('status')}")
+
+            if not room:
+                return None
+
+            # Count pending tracks
+            count = await self.tracks_collection.count_documents({
+                "room_ref_id": ObjectId(room_ref_id),
+                "status": "pending"
+            })
+
+            if count == 0:
+                return room
+            else:
+                return None
+        except PyMongoError as e:
+            logger.error(f"Failed to count pending tracks: {e}")
+            return None
+
+    async def check_and_complete_room(
+        self,
+        room_ref_id: str
+    ) -> bool:
+        """
+        Check if room should be completed:
+        - Room status must be "pending" or "final_room" (not already completed)
+        - No tracks with status "pending" or "wait_process"
+        
+        If conditions met, update room status to "completed".
+        Uses atomic findOneAndUpdate to prevent race conditions.
+        
+        Args:
+            room_ref_id: Room reference ID
+            
+        Returns:
+            True if room was completed by THIS call, False otherwise
+        """
+
+        try:
+            room_ref_id = ObjectId(room_ref_id)
+            
+            # Count pending and wait_process tracks first (lightweight check)
+            incomplete_count = await self.tracks_collection.count_documents({
+                "room_ref_id": room_ref_id,
+                "status": {"$in": ["pending", "wait_process"]}    
+            })
+            
+            # If there are still pending tracks, don't complete
+            if incomplete_count > 0:
+                logger.debug(f"Room still has {incomplete_count} incomplete tracks")
+                return False
+            
+            # Atomic update: only update if status is "pending" OR "final_room"
+            # This allows completion even if final_room() hasn't been called yet
+            # findOneAndUpdate ensures only ONE thread can complete the room
+            updated_room = await self.rooms_collection.find_one_and_update(
+                {
+                    "_id": room_ref_id,
+                    "status": "final_room"  # Accept both states
+                },
+                {
+                    "$set": {
+                        "status": "completed",
+                        "completed_at": datetime.utcnow()
+                    }
+                },
+                return_document=True  # Return updated document
+            )
+            
+            # If updated_room is None, room already completed
+            if not updated_room:
+                logger.debug(f"Room already completed: room_id={room_ref_id}")
+                return False
+            
+            # This thread won the race
+            logger.info(f"🎉 Room completed: room_id={room_ref_id} (all tracks processed)")
+            return True
+
+        except PyMongoError as e:
+            logger.error(f"Failed to check and complete room: {e}")
+            return False
+
+    # ==========================================================
+    # 🔥 TRACK METHODS (Updated to use room_ref_id)
+    # ==========================================================
+
+    async def save_track_metadata(
+        self,
+        *,
+        egress_id: str,
+        track_id: Optional[str] = None,
+        room_ref_id: Optional[ObjectId] = None,
+        participant_identity: Optional[str] = None,
+        audio_info: Optional[Dict[str, Any]] = None,
+        status: str = "pending",
+    ) -> Optional[dict]:
+        """
+        Save track metadata using egress_id as _id.
+        
+        Args:
+            egress_id: Unique egress identifier (used as _id)
+            track_id: Track identifier
+            room_ref_id: Reference to room document _id
+            participant_identity: Participant identity
+            audio_info: Dict containing {filename, ...}
+            status: Track status (default: "pending")
+            
+        Returns:
+            docs of inserted/updated document, or None if failed
+        """
+
+        try:
+            
+            # Build $set operation - only include audio_info if provided
+            set_fields = {
+                "status": status,
+                "updated_at": datetime.utcnow()
+            }
+            if audio_info is not None:
+                set_fields["audio_info"] = audio_info
+            
+            result = await self.tracks_collection.find_one_and_update(
+                {"_id": egress_id},
+                {
+                    "$setOnInsert": {
+                        "_id": egress_id,
+                        "track_id": track_id,
+                        "room_ref_id": room_ref_id,
+                        "participant_identity": participant_identity,
+                        "chunk_count": 0,
+                        "created_at": datetime.utcnow(),
+                    },
+                    "$set": set_fields
+                },
+                upsert=True,
+                return_document=ReturnDocument.AFTER
+            )
+            
+            if result:
+                logger.info(
+                    f"📝 Track metadata saved: _id(egress)={egress_id} "
+                )
+                
+                return result
+            else:
+                logger.warning(f"Track metadata operation returned None: egress={egress_id}")
+                return None
+
+        except PyMongoError as e:
+            logger.error(f"Failed to save track metadata: {e}")
+            return None
+
+
 
 
     # ========================================
