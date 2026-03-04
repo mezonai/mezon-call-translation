@@ -52,7 +52,7 @@ class MongoDBService:
         self.summary_collection = None
         self.connected = False
 
-        self._initialized = True
+
         logger.info(
             f"MongoDBService initialized (DB={self.database_name}, "
             f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, {self.chunks_collection_name}, {self.summary_collection_name})"
@@ -402,104 +402,136 @@ class MongoDBService:
             return None
 
 
-    async def get_room_by_name(self, room_name: str) -> Optional[Dict]:
-        """Get room by name"""
-        if not self.connected:
-            return None
-        return await self.rooms_collection.find_one({"room_name": room_name})
-
 
 
     async def final_room_status(self, room_name: str, room_id: str) -> bool:
-
-        if not self.connected:
-            return False
-
+        """
+        Mark room as finalized.
+        Only updates if current status is 'pending' (prevents overwriting 'completed').
+        Uses atomic findOneAndUpdate to prevent race conditions.
+        
+        Returns:
+            True if status was updated to final_room, False if already finalized/completed
+        """
         try:
             room_id = ObjectId(room_id)
-            update_doc = {
-                "$set": {
-                    "status": "final_room",
-                    "finalized_at": datetime.utcnow()
-                }
-            }
             
-            await self.rooms_collection.update_one(
-                {"_id": room_id},
-                update_doc
+            # Atomic update: only set final_room if status is currently "pending"
+            # This prevents overwriting "completed" status
+            updated_room = await self.rooms_collection.find_one_and_update(
+                {
+                    "_id": room_id,
+                    "status": "pending"  # Only update if still pending
+                },
+                {
+                    "$set": {
+                        "status": "final_room",
+                        "finalized_at": datetime.utcnow()
+                    }
+                },
+                return_document=True
             )
             
-            logger.info(f"🔒 Room finalized: {room_name} → final_room")
-            # Check if room should be completed (if status changed from pending)
-            await self.check_and_complete_room(room_id)
-            
-            return True
+            if updated_room:
+                logger.info(f"🔒 Room finalized: {room_name} → final_room")
+                return True
+            else:
+                return False
 
         except PyMongoError as e:
             logger.error(f"Failed to finalize room: {e}")
             return False
 
-    
+
+    async def check_event_record_done(
+        self,
+        room_ref_id: str
+    ) -> Optional[dict]:
+        """
+        Count pending tracks in a room 
+        only if room is in final_room status.
+        """
+        try:
+            # Check room exists AND is in final_room status
+            room = await self.rooms_collection.find_one(
+                {"_id": ObjectId(room_ref_id), "status": "final_room"}
+            )
+            print(f"Room found: {room}")
+
+            if not room:
+                return None
+
+            # Count pending + wait_process tracks
+            count = await self.tracks_collection.count_documents({
+                "room_ref_id": ObjectId(room_ref_id),
+                "status": "pending"
+            })
+
+            if count == 0:
+                return room
+            else:
+                return None
+        except PyMongoError as e:
+            logger.error(f"Failed to count pending tracks: {e}")
+            return None
+
     async def check_and_complete_room(
         self,
-        room_ref_id: ObjectId
+        room_ref_id: str
     ) -> bool:
         """
         Check if room should be completed:
-        - Room status must be "final_room"
-        - No tracks with status "pending"
+        - Room status must be "pending" or "final_room" (not already completed)
+        - No tracks with status "pending" or "wait_process"
         
-        If conditions met, update room status to "completed" and trigger summary.
+        If conditions met, update room status to "completed".
+        Uses atomic findOneAndUpdate to prevent race conditions.
         
         Args:
             room_ref_id: Room reference ID
             
         Returns:
-            True if room was completed, False otherwise
+            True if room was completed by THIS call, False otherwise
         """
-        if not self.connected:
-            return False
 
         try:
-            # Get room
-            room = await self.rooms_collection.find_one({"_id": room_ref_id})
+            room_ref_id = ObjectId(room_ref_id)
             
-            if not room:
-                logger.error(f"Room not found: room_id={room_ref_id}")
-                return False
-            
-            # Check if room is in final_room status
-            if room.get("status") != "final_room":
-                logger.debug(f"Room not in final_room status: {room.get('status')}")
-                return False
-            
-            # Count pending tracks
+            # Count pending and wait_process tracks first (lightweight check)
             pending_count = await self.tracks_collection.count_documents({
                 "room_ref_id": room_ref_id,
-                "status": "pending"
+                "status": {"$in": ["pending", "wait_process"]}    
             })
             
             # If there are still pending tracks, don't complete
             if pending_count > 0:
-                logger.info(f"Room still has {pending_count} pending tracks")
+                logger.debug(f"Room still has {pending_count} pending tracks")
                 return False
             
-            # All tracks completed (or none pending), mark room as completed
-            await self.rooms_collection.update_one(
-                {"_id": room_ref_id},
+            # Atomic update: only update if status is "pending" OR "final_room"
+            # This allows completion even if final_room() hasn't been called yet
+            # findOneAndUpdate ensures only ONE thread can complete the room
+            updated_room = await self.rooms_collection.find_one_and_update(
+                {
+                    "_id": room_ref_id,
+                    "status": "final_room"  # Accept both states
+                },
                 {
                     "$set": {
                         "status": "completed",
                         "completed_at": datetime.utcnow()
                     }
-                }
+                },
+                return_document=True  # Return updated document
             )
             
+            # If updated_room is None, room already completed
+            if not updated_room:
+                logger.debug(f"Room already completed: room_id={room_ref_id}")
+                return False
+            
+            # This thread won the race
             logger.info(f"🎉 Room completed: room_id={room_ref_id} (all tracks processed)")
-            
-            # Trigger summary generation
-            asyncio.create_task(self._trigger_summary_api(str(room_ref_id)))
-            
             return True
 
         except PyMongoError as e:
@@ -519,7 +551,7 @@ class MongoDBService:
         participant_identity: Optional[str] = None,
         audio_info: Optional[Dict[str, Any]] = None,
         status: str = "pending",
-    ) -> Optional[str]:
+    ) -> Optional[dict]:
         """
         Save track metadata using egress_id as _id.
         
@@ -532,7 +564,7 @@ class MongoDBService:
             status: Track status (default: "pending")
             
         Returns:
-            egress_id (the _id) of inserted/updated document, or None if failed
+            docs of inserted/updated document, or None if failed
         """
 
         try:
@@ -567,7 +599,7 @@ class MongoDBService:
                     f"📝 Track metadata saved: _id(egress)={egress_id} "
                 )
                 
-                return result["_id"]
+                return result
             else:
                 logger.warning(f"Track metadata operation returned None: egress={egress_id}")
                 return None

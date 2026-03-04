@@ -5,7 +5,8 @@ from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.mongodb_service import get_mongodb_service
 from typing import Optional
 from bson import ObjectId
-
+from orchestrator_service.api.sse_metadata_api import metadata_channel
+from orchestrator_service.services.summary_service import get_summary_service
 logger = get_logger(__name__)
 
 
@@ -29,7 +30,7 @@ class TranscriptionService:
             try:
                 if not self.mongodb_service.connected:
                     await self.mongodb_service.connect()
-                await self.mongodb_service.save_track_metadata(            
+                track_result = await self.mongodb_service.save_track_metadata(            
                     egress_id=egress_info.get("egressId"),
                     audio_info={
                         "filename": egress_info.get("filename"),
@@ -38,7 +39,21 @@ class TranscriptionService:
                         "ended_at_ns": egress_info.get("endedAt"),
                         "location": egress_info.get("location"),
                         "source": egress_info.get("source")
-                    })
+                    },
+                    status="wait_process")
+                
+                if track_result and track_result.get("room_ref_id"):
+                    room = await self.mongodb_service.check_event_record_done(str(track_result.get("room_ref_id")))
+                    if room:
+                        await metadata_channel.push_room_record_done(
+                        room_id=str(room.get("_id")),
+                        room_name=room.get("room_name")
+                    )
+                elif track_result:
+                    logger.warning(f"Track metadata saved but no room_ref_id found: {track_result}")
+                else:
+                    logger.warning("Failed to save track metadata: track_result is None")
+
                 logger.info(f"✅ Track metadata updated: egress={egress_info.get('egressId')}")
             except Exception as e:
                 logger.warning(f"Failed to update track metadata: {e}")
@@ -90,6 +105,23 @@ class TranscriptionService:
 
             if not updated:
                 return False
+            
+            if await self.mongodb_service.check_event_record_done(room_id):
+                await metadata_channel.push_room_record_done(
+                    room_id=room_id,
+                    room_name=room_name
+                )
+
+            if await self.mongodb_service.check_and_complete_room(room_id):
+                service = get_summary_service()
+                await service.generate_summary(room_id)
+
+
+
+                await metadata_channel.push_room_summary_done(
+                    room_id=room_id,
+                    room_name=room_name
+                )
 
             return True
         except Exception as e:
@@ -160,7 +192,7 @@ class TranscriptionService:
             if not room:
                 logger.error(f"Room with ID '{room_ref_id}' not found")
                 return False
-            track_id_result = await self.mongodb_service.save_track_metadata(
+            track_result = await self.mongodb_service.save_track_metadata(
                 egress_id=egress_id,
                 track_id=track_id,
                 room_ref_id=room_ref_id,
@@ -168,7 +200,7 @@ class TranscriptionService:
                 status=status,
             )
 
-            if not track_id_result:
+            if not track_result:
                 logger.error(f"Failed to save track metadata for egress_id '{egress_id}'")
                 return False
 

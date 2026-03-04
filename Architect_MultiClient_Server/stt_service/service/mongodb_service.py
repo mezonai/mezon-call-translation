@@ -14,7 +14,6 @@ import logging
 import asyncio
 import aiohttp
 from stt_service.config.app_config import get_config
-from pymongo import ReturnDocument
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +146,7 @@ class MongoDBService:
         - No tracks with status "pending"
         
         If conditions met, update room status to "completed" and trigger summary.
+        Uses atomic findOneAndUpdate to prevent race conditions.
         
         Args:
             room_ref_id: Room reference ID
@@ -158,19 +158,7 @@ class MongoDBService:
             return False
 
         try:
-            # Get room
-            room = await self.rooms_collection.find_one({"_id": room_ref_id})
-            
-            if not room:
-                logger.error(f"Room not found: room_id={room_ref_id}")
-                return False
-            
-            # Check if room is in final_room status
-            if room.get("status") != "final_room":
-                logger.debug(f"Room not in final_room status: {room.get('status')}")
-                return False
-            
-            # Count pending tracks
+            # Count pending tracks first (lightweight check)
             pending_count = await self.tracks_collection.count_documents({
                 "room_ref_id": room_ref_id,
                 "status": "pending"
@@ -178,23 +166,32 @@ class MongoDBService:
             
             # If there are still pending tracks, don't complete
             if pending_count > 0:
-                logger.info(f"Room still has {pending_count} pending tracks")
+                logger.debug(f"Room still has {pending_count} pending tracks")
                 return False
             
-            # All tracks completed (or none pending), mark room as completed
-            await self.rooms_collection.update_one(
-                {"_id": room_ref_id},
+            # Atomic update: only update if status is "final_room" (prevent race condition)
+            # findOneAndUpdate ensures only ONE thread can change status from final_room → completed
+            updated_room = await self.rooms_collection.find_one_and_update(
+                {
+                    "_id": room_ref_id,
+                    "status": "final_room"  # Only update if status is still "final_room"
+                },
                 {
                     "$set": {
                         "status": "completed",
                         "completed_at": datetime.utcnow()
                     }
-                }
+                },
+                return_document=True  # Return updated document
             )
             
-            logger.info(f"🎉 Room completed: room_id={room_ref_id} (all tracks processed)")
+            # If updated_room is None, another thread already completed it
+            if not updated_room:
+                logger.debug(f"Room already completed by another process: room_id={room_ref_id}")
+                return False
             
-            # Trigger summary generation
+            # This thread won the race - trigger summary
+            logger.info(f"🎉 Room completed: room_id={room_ref_id} (all tracks processed)")
             asyncio.create_task(self._trigger_summary_api(str(room_ref_id)))
             
             return True
@@ -203,78 +200,6 @@ class MongoDBService:
             logger.error(f"Failed to check and complete room: {e}")
             return False
 
-    # ==========================================================
-    # 🔥 TRACK METHODS (Updated to use room_ref_id)
-    # ==========================================================
-
-    async def save_track_metadata(
-        self,
-        *,
-        egress_id: str,
-        track_id: Optional[str] = None,
-        room_ref_id: Optional[ObjectId] = None,
-        participant_identity: Optional[str] = None,
-        audio_info: Optional[Dict[str, Any]] = None,
-        status: str = "pending",
-    ) -> Optional[str]:
-        """
-        Save track metadata using egress_id as _id.
-        
-        Args:
-            egress_id: Unique egress identifier (used as _id)
-            track_id: Track identifier
-            room_ref_id: Reference to room document _id
-            participant_identity: Participant identity
-            audio_info: Dict containing {filename, ...}
-            status: Track status (default: "pending")
-            
-        Returns:
-            egress_id (the _id) of inserted/updated document, or None if failed
-        """
-        if not self.connected and not await self.connect():
-            logger.error("Cannot save track metadata: MongoDB not connected")
-            return None
-
-        try:
-            
-            # Build $set operation - only include audio_info if provided
-            set_fields = {
-                "status": status,
-                "updated_at": datetime.utcnow()
-            }
-            if audio_info is not None:
-                set_fields["audio_info"] = audio_info
-            
-            result = await self.tracks_collection.find_one_and_update(
-                {"_id": egress_id},
-                {
-                    "$setOnInsert": {
-                        "_id": egress_id,
-                        "track_id": track_id,
-                        "room_ref_id": room_ref_id,
-                        "participant_identity": participant_identity,
-                        "chunk_count": 0,
-                        "created_at": datetime.utcnow(),
-                    },
-                    "$set": set_fields
-                },
-                upsert=True,
-                return_document=ReturnDocument.AFTER
-            )
-            
-            if result:
-                logger.info(
-                    f"📝 Track metadata saved: _id(egress)={egress_id} "
-                )
-                
-                return result["_id"]
-            else:
-                logger.warning(f"Track metadata operation returned None: egress={egress_id}")
-                return None
-
-        except PyMongoError as e:
-            logger.error(f"Failed to save track metadata: {e}")
-            return None
     # ==========================================================
     # 🔥 TRANSCRIPT CHUNKS METHODS (Unchanged)
     # ==========================================================

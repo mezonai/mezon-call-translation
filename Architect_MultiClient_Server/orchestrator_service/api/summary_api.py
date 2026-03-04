@@ -1,7 +1,6 @@
 """
 Internal API endpoints for room summary
 """
-import asyncio
 from fastapi import APIRouter, HTTPException, Body, Depends, Header, Query
 from pydantic import BaseModel
 from orchestrator_service.services.summary_service import get_summary_service
@@ -45,11 +44,6 @@ async def generate_room_summary(request: SummaryRequest = Body(...)):
     room_name = room.get("room_name") if room else "unknown"
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-
-    await metadata_channel.push_room_record_done(
-        room_id=request.room_id,
-        room_name=room_name
-    )
 
     service = get_summary_service()
     result = await service.generate_summary(request.room_id)
