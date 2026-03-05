@@ -296,13 +296,6 @@ class MongoDBService:
     # ========================================
     # 📝 TRANSCRIPT CHUNKS COLLECTION QUERIES (READ ONLY)
     # ========================================
-        except Exception as e:
-            logger.error(f"Failed to get tracks by date range: {e}")
-            return []
-
-    # ========================================
-    # 📝 TRANSCRIPT CHUNKS COLLECTION QUERIES (READ ONLY)
-    # ========================================
 
     async def get_chunks_by_track(self, track_id: str, 
                                  sorted_by_index: bool = True,
@@ -456,10 +449,11 @@ class MongoDBService:
             room = await self.rooms_collection.find_one(
                 {"_id": ObjectId(room_ref_id), "status": "final_room"}
             )
-            logger.info(f"found room: {room.get('_id')} with status: {room.get('status')}")
-
             if not room:
+                logger.info(f"No room found for room_ref_id={room_ref_id} with status 'final_room'")
                 return None
+
+            logger.info(f"found room: {room.get('_id')} with status: {room.get('status')}")
 
             # Count pending tracks
             count = await self.tracks_collection.count_documents({
@@ -551,6 +545,7 @@ class MongoDBService:
         participant_identity: Optional[str] = None,
         audio_info: Optional[Dict[str, Any]] = None,
         status: str = "pending",
+        error: Optional[str] = None,
     ) -> Optional[dict]:
         """
         Save track metadata using egress_id as _id.
@@ -562,7 +557,7 @@ class MongoDBService:
             participant_identity: Participant identity
             audio_info: Dict containing {filename, ...}
             status: Track status (default: "pending")
-            
+            error: Optional dict containing error details if track processing failed
         Returns:
             docs of inserted/updated document, or None if failed
         """
@@ -577,6 +572,9 @@ class MongoDBService:
             if audio_info is not None:
                 set_fields["audio_info"] = audio_info
             
+            if error is not None:
+                set_fields["error"] = error
+
             result = await self.tracks_collection.find_one_and_update(
                 {"_id": egress_id},
                 {

@@ -169,11 +169,26 @@ class WebhookHandler:
         """Handle when an egress ends"""
         egress = event.get("egressInfo", {})
         status = egress.get("status", "unknown")
-        
+
+        room_name = egress.get("roomName", "unknown")
+        egress_id = egress.get("egressId", "unknown")
+        logger.info(f"  Egress ended: {egress_id} for room {room_name} with status {status}")
         if status != "EGRESS_COMPLETE":
+            if status in ["EGRESS_FAILED", "EGRESS_ABORTED"]:
+                error = egress.get('error', 'no error info')
+                logger.error(f"Egress failed: {error}")
+                mongodb_service = self.transcription_service.mongodb_service
+                if not mongodb_service.connected:
+                    await mongodb_service.connect()
+                await mongodb_service.save_track_metadata(
+                    egress_id=egress_id,
+                    error=error,
+                    status="failed",
+                )
+                return WebhookResponse(received=True, action="egress_ended_failed")
             logger.info(f"Egress not completed: {status}, egress_ended full event: {event}")
-            return WebhookResponse(received=True, action="egress_not_completed")
-        
+            return WebhookResponse(received=True, action="egress_ended_not_complete")
+
         file_data = egress.get("file", {})
         
         egress_info = self._build_egress_info(egress, file_data)
