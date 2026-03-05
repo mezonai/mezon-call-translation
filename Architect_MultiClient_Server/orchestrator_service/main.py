@@ -125,7 +125,6 @@ async def lifespan(app: FastAPI):
         # Disconnect Redis Connection Pool
 
     logger.info("🎉 All services cleanup completed successfully")
->>>>>>> 9651f1e435fff46e694bb73d1985ac2fc0503038
 
 
 app = FastAPI(title="LiveKit Orchestrator API", lifespan=lifespan)
