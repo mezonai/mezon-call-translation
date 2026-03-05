@@ -1,5 +1,4 @@
-import httpx
-from typing import Dict, Any
+from typing import Dict
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.mongodb_service import MongoDBService
@@ -29,6 +28,8 @@ class TranscriptionService:
         self.timeout = 30.0
         self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
         self.stream_key = "transcription:stream"
+        self.mongodb_service = MongoDBService()
+        
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
         """Get or create Redis producer (lazy initialization)."""
         if not self._redis_producer:
@@ -38,7 +39,7 @@ class TranscriptionService:
             )
             await self._redis_producer.connect()
         return self._redis_producer
-        self.mongodb_service = MongoDBService()
+        
 
     async def enqueue(self, egress_info: Dict) -> bool:
         """
