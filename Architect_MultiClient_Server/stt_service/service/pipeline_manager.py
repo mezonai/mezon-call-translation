@@ -13,7 +13,7 @@ from vosk import Model
 
 from .client_pipeline import ClientInferencePipeline, PipelineState
 from ..config import get_config
-from ..utils.circuit_breaker import get_stt_circuit_breaker
+from ..service.result_dispatcher import get_result_dispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,7 @@ class PipelineManager:
         client_key = self._make_client_key(client_id, session_id)
         
         async with self.pipelines_lock:
+            time_start = time.time()
             # Check if pipeline already exists
             if client_key in self.pipelines:
                 existing = self.pipelines[client_key]
@@ -115,7 +116,6 @@ class PipelineManager:
             # Get dispatcher reference
             result_dispatcher = None
             try:
-                from ..service.result_dispatcher import get_result_dispatcher
                 result_dispatcher = get_result_dispatcher()
             except Exception as e:
                 logger.debug(f"Could not get result dispatcher: {e}")
@@ -141,7 +141,8 @@ class PipelineManager:
                 if self.stats["current_active"] > self.stats["max_concurrent_reached"]:
                     self.stats["max_concurrent_reached"] = self.stats["current_active"]
             
-            logger.info(f"Created pipeline for {client_key} ({len(self.pipelines)}/{self.max_clients} slots used)")
+            
+            logger.info(f"Created pipeline for {client_key} ({len(self.pipelines)}/{self.max_clients} slots used) in {time.time() - time_start:.2f}s")
             return pipeline
     
     async def get_pipeline(self, client_id: str, session_id: str) -> Optional[ClientInferencePipeline]:

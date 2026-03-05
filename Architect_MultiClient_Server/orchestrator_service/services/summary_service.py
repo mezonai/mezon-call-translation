@@ -103,6 +103,10 @@ Conversation content:
         7. Create Summary Object.
         8. Save summary to DB.
         """
+        # Ensure MongoDB is connected
+        if not self.mongodb.connected:
+            await self.mongodb.connect()
+        
         # 1. Verify room exists
         logger.info(f"Generating summary for room {repr(room_id)}")
         room = await self.mongodb.get_room_by_id(room_id)

@@ -571,54 +571,6 @@ class TTSManager:
             )
         }
     
-    async def announce_tts_ready(self, max_retries: int = 3) -> bool:
-        """
-        Announce TTS service is ready via data channel
-        
-        Args:
-            max_retries: Maximum retry attempts
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        for attempt in range(max_retries):
-            try:
-                announcement = {
-                    "type": "tts_announcement",
-                    "event": "tts_ready",
-                    "tts": {
-                        "session_id": self.session_id,
-                        "sample_rate": self.sample_rate,
-                        "status": "ready",
-                        "capabilities": [
-                            "text_to_speech",
-                            "real_time_synthesis",
-                            "websocket_control"
-                        ]
-                    },
-                    "timestamp": int(time.time() * 1000)
-                }
-                
-                await asyncio.wait_for(
-                    self.ctx.room.local_participant.publish_data(
-                        json.dumps(announcement).encode("utf-8"),
-                        reliable=True,
-                        topic="tts_control"
-                    ),
-                    timeout=5.0
-                )
-                
-                logger.info("TTS ready announcement sent via data channel")
-                return True
-                
-            except Exception as e:
-                logger.warning(
-                    f"Failed to announce TTS ready (attempt {attempt + 1}/{max_retries}): {e}"
-                )
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(1.0 * (attempt + 1))
-        
-        return False
     
     async def cleanup(self):
         """Cleanup TTS resources and connections"""

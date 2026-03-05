@@ -9,6 +9,8 @@ from orchestrator_service.services.transcription_service import TranscriptionSer
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.utils.filepath import Filepath
 from orchestrator_service.models.webhook_models import WebhookResponse, TrackInfo, EgressInfo
+from orchestrator_service.utils.participant_identity import parse_participant_identity
+
 
 logger = get_logger(__name__)
 
@@ -37,8 +39,7 @@ class WebhookHandler:
         """
         event_type = event.get("event", "unknown")
         logger.info(f"📥 Received: {event_type}")
-        logger.debug(f"Payload: {json.dumps(event, indent=2, ensure_ascii=False)}")
-        if event_type not in {"egress_ended", "egress_started"}:
+        if event_type not in {"egress_ended", "egress_started","egress_updated"}:
             logger.info(f"  (skipping detailed processing for event type)")
             # Get room name - different events have different structures
             room_name = event.get("room", {}).get("name", "")
@@ -56,8 +57,8 @@ class WebhookHandler:
             "track_published": self._handle_track_published,
             "track_unpublished": self._handle_track_unpublished,
             "egress_started": self._handle_egress_started,
-            "egress_ended": self._handle_egress_ended
-            
+            "egress_ended": self._handle_egress_ended,
+            "egress_updated": self._handle_egress_updated
         }
         
         handler = handlers.get(event_type)
@@ -71,7 +72,7 @@ class WebhookHandler:
         """Handle when a track is published"""
         room_name = event.get("room", {}).get("name", "unknown")
         identity = event.get("participant", {}).get("identity", "unknown")
-        
+        identity = parse_participant_identity(identity)
         track_data = event.get("track", {})
         track = TrackInfo(
             sid=track_data.get("sid", ""),
@@ -154,15 +155,40 @@ class WebhookHandler:
             logger.error(f"Error saving track metadata: {e}")
             return WebhookResponse(received=True, action="egress_started_logged")
 
+
+    async def _handle_egress_updated(self, event: Dict) -> WebhookResponse:
+        """Handle when an egress is updated"""
+        egress_info = event.get("egressInfo", {})
+        egress_id = egress_info.get("egressId", "unknown")
+        status = egress_info.get("status", "unknown")
+        room_name = egress_info.get("roomName", "unknown")
+        logger.info(f"egress_updated: room={room_name}, egress_id={egress_id}, status={status}")
+        return WebhookResponse(received=True, action="egress_updated_logged")
+
     async def _handle_egress_ended(self, event: Dict) -> WebhookResponse:
         """Handle when an egress ends"""
         egress = event.get("egressInfo", {})
         status = egress.get("status", "unknown")
-        
+
+        room_name = egress.get("roomName", "unknown")
+        egress_id = egress.get("egressId", "unknown")
+        logger.info(f"  Egress ended: {egress_id} for room {room_name} with status {status}")
         if status != "EGRESS_COMPLETE":
-            logger.info(f"Egress not completed: {status}")
-            return WebhookResponse(received=True, action="egress_not_completed")
-        
+            if status in ["EGRESS_FAILED", "EGRESS_ABORTED"]:
+                error = egress.get('error', 'no error info')
+                logger.error(f"Egress failed: {error}")
+                mongodb_service = self.transcription_service.mongodb_service
+                if not mongodb_service.connected:
+                    await mongodb_service.connect()
+                await mongodb_service.save_track_metadata(
+                    egress_id=egress_id,
+                    error=error,
+                    status="failed",
+                )
+                return WebhookResponse(received=True, action="egress_ended_failed")
+            logger.info(f"Egress not completed: {status}, egress_ended full event: {event}")
+            return WebhookResponse(received=True, action="egress_ended_not_complete")
+
         file_data = egress.get("file", {})
         
         egress_info = self._build_egress_info(egress, file_data)

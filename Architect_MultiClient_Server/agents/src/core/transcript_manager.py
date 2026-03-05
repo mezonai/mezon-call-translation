@@ -7,6 +7,7 @@ from livekit import agents
 
 from src.logger import get_logger
 from src.config.application_config import get_config
+from src.services.orchestrator_client import OrchestratorClient
 
 class TranscriptManager:
     """Manages transcript entries: sequence tracking, logging"""
@@ -19,8 +20,6 @@ class TranscriptManager:
         # Load configuration
         self.config = get_config()
         
-        self.silence_timeout = self.config.transcript.silence_timeout
-        
         # Incremental sequence number for each participant for client ordering
         self._seq_by_participant = {}
 
@@ -31,21 +30,12 @@ class TranscriptManager:
         # Key: participant_identity, Value: {"texts": [], "timer_task": Task, "last_activity": timestamp}
         self._transcript_buffer = {}
         self._buffer_lock = asyncio.Lock()
+        self._orchestrator = OrchestratorClient.get_instance()
 
         self.logger.info(
             f"TranscriptManager initialized for meeting {self.session_id} "
-            f"silence_timeout={self.silence_timeout}s)"
         )
 
-        # Reusable HTTP client with connection pooling
-        self._http_client = httpx.AsyncClient(
-            timeout=3.0,  # Reduced timeout
-            limits=httpx.Limits(
-                max_keepalive_connections=5,
-                max_connections=10,
-                keepalive_expiry=30.0
-            )
-        )
 
     
     async def send_transcript_entry(
@@ -70,60 +60,24 @@ class TranscriptManager:
             
             # Log with FINAL/PARTIAL prefix for visibility
             transcript_type = "FINAL" if is_final else "PARTIAL"
-            self.logger.info(
+            self.logger.debug(
                 f"[{transcript_type}] [{self.session_id}] {participant_name} ({participant_identity}): {text}"
             )
 
             # Send immediately if has content (fire-and-forget to prevent blocking)
             if text.strip():
-                await self._send_to_server(
-                        text=text.strip(),
-                        participant_identity=participant_identity,
-                        participant_name=participant_name,
-                        seq=seq,
-                        type=transcript_type
-                    )
-            return True
+                
+                success = await self._orchestrator.push_transcript(
+                    room_name=self.session_id,
+                    text=text,
+                    participant_identity=participant_identity,
+                    type=transcript_type
+                )
+            return success
             
         except Exception as e:
             self.logger.error(f"Error tracking transcript: {e}")
             return False
-    
-    async def _send_to_server(
-        self,
-        text: str,
-        participant_identity: str,
-        participant_name: str,
-        seq: int,
-        type: str
-    ):
-        """Send transcript to API server"""
-        try:
-            room_name = self.ctx.room.name
-            base_url = self.config.orchestrator.base_url
-            api_url = f"{base_url}/api/push_message"
-            
-            resp = await self._http_client.post(
-                api_url,
-                json={
-                    "room_name": room_name, 
-                    "message": text, 
-                    "message_type": type, 
-                    "participant_identity": participant_identity
-                },
-                timeout=1.0
-            )
-            self.logger.info(
-                f"[API] Pushed to queue via API (room={room_name}): "
-                f"{text[:50]}{'...' if len(text) > 50 else ''}, "
-                f"status={resp.status_code}"
-            )
-        except httpx.TimeoutException:
-            self.logger.warning(
-                f"[API] Timeout pushing to API (room={room_name}), but transcription recorded locally"
-            )
-        except Exception as e:
-            self.logger.error(f"[API] Failed to push text via API: {e}")
     
     def create_transcription_callback(self, participant_identity: str, participant_name: str):
         """
@@ -151,10 +105,6 @@ class TranscriptManager:
         
         return transcription_callback
     
-    async def send_welcome_message(self):
-        """Send welcome message when agent is ready (optional)"""
-        await asyncio.sleep(2)
-        self.logger.info("Vosk transcription agent is ready!")
     
     async def cleanup(self):
         """Cleanup sequence tracking, flush remaining buffers"""

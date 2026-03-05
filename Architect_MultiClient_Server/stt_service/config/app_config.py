@@ -96,9 +96,6 @@ class RedisConfig:
     port: int = 6379
     password: str = ""
     db: int = 0
-    # Stream configuration
-    stream_key: str = "transcription:stream"
-    consumer_group: str = "transcription-workers"
     # Timeouts and retries
     claim_min_idle_time_ms: int = 60000  # 60 seconds before claiming orphaned tasks
     block_timeout_ms: int = 5000  # Block for 5s waiting for new messages
@@ -237,8 +234,6 @@ class ConfigManager:
         config.redis.port = int(os.getenv("REDIS_PORT", config.redis.port))
         config.redis.password = os.getenv("REDIS_PASSWORD", config.redis.password)
         config.redis.db = int(os.getenv("REDIS_DB", config.redis.db))
-        config.redis.stream_key = os.getenv("REDIS_STREAM_KEY", config.redis.stream_key)
-        config.redis.consumer_group = os.getenv("REDIS_CONSUMER_GROUP", config.redis.consumer_group)
         config.redis.claim_min_idle_time_ms = int(os.getenv("REDIS_CLAIM_MIN_IDLE_TIME_MS", config.redis.claim_min_idle_time_ms))
         config.redis.block_timeout_ms = int(os.getenv("REDIS_BLOCK_TIMEOUT_MS", config.redis.block_timeout_ms))
         config.redis.max_retries = int(os.getenv("REDIS_MAX_RETRIES", config.redis.max_retries))

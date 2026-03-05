@@ -13,6 +13,8 @@ from src.core.transcript_manager import TranscriptManager
 from src.logger import get_logger
 from src.core.vad_processor import RealTimeVADProcessor
 from src.core.agent_control_state import AgentControlState
+from src.utils.participant_identity import parse_participant_identity
+
 
 logger = get_logger(__name__)
 
@@ -202,9 +204,10 @@ class EventHandlers:
 
     def _speaker_id_from_publication(self, participant: rtc.RemoteParticipant, publication: rtc.TrackPublication) -> str:
         # Phân biệt audio từ mic vs screen share
+        participant_identity = parse_participant_identity(participant.identity)
         if publication.source == 4:  # Screen share audio
-            return f"{participant.identity}-screen"
-        return participant.identity
+            return f"{participant_identity}-screen"
+        return participant_identity
 
     async def _start_transcription_for_speaker_id(self, speaker_id: str) -> bool:
         """Start transcription task for a pending speaker_id if available."""

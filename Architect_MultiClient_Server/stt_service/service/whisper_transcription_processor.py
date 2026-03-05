@@ -12,7 +12,7 @@ import logging
 import tempfile
 import shutil
 import math
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -23,7 +23,7 @@ from bson import ObjectId
 from stt_service.service.mongodb_service import get_mongodb_service
 
 from ..config import get_config
-from .redis_transcription_queue_service import TranscriptionTask
+from ..models import TranscriptionStreamTask
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +354,7 @@ class WhisperTranscriptionProcessor:
         except Exception as e:
             logger.warning(f"Failed to cleanup temp file {file_path}: {e}")
     
-    async def process(self, task: TranscriptionTask) -> str:
+    async def process(self, task: TranscriptionStreamTask) -> str:
         """
         Process a transcription task with progressive saving.
         
@@ -366,7 +366,7 @@ class WhisperTranscriptionProcessor:
         5. Cleanup temp files
         
         Args:
-            task: TranscriptionTask with file information
+            task: TranscriptionStreamTask with file information
             
         Returns:
             Full transcribed text
@@ -385,26 +385,6 @@ class WhisperTranscriptionProcessor:
         track_ref_id = task.egress_id
         
         try:
-            # STEP 0: Update track metadata with audio info and set status to processing
-            if task.egress_id:
-                logger.info("📝 Updating track metadata with audio info...")
-                try:
-                    await self.mongodb_service.save_track_metadata(
-                        egress_id=task.egress_id,
-                        audio_info={
-                            "filename": task.filename,
-                            "duration_sec": task.duration,
-                            "started_at_ns": task.started_at,
-                            "ended_at_ns": task.ended_at,
-                            "location": task.location,
-                            "source": task.source,
-                        },
-                    )
-                    logger.info(f"✅ Track metadata updated: egress={task.egress_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to update track metadata: {e}")
-                    # Continue processing even if metadata update fails
-            
             # STEP 1: Download audio from MinIO
             local_file, file_size_mb = await self._download_from_minio(task.filename)
             
@@ -507,7 +487,7 @@ def get_whisper_processor() -> WhisperTranscriptionProcessor:
     return WhisperTranscriptionProcessor.get_instance()
 
 
-async def transcribe_task(task: TranscriptionTask) -> str:
+async def transcribe_task(task: TranscriptionStreamTask) -> str:
     """
     Convenience function to transcribe a task.
     
@@ -515,7 +495,7 @@ async def transcribe_task(task: TranscriptionTask) -> str:
         queue_service.set_processor(transcribe_task)
     
     Args:
-        task: TranscriptionTask to process
+        task: TranscriptionStreamTask to process
         
     Returns:
         Full transcribed text

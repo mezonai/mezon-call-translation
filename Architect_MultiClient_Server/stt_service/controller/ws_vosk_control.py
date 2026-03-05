@@ -3,6 +3,7 @@ from stt_service.service.migration_controller import pipeline_controller
 from stt_service.session_manager import session_manager
 from stt_service.utils.websocket_monitor import websocket_monitor
 from stt_service.service.metrics_service import metrics
+from ..service.result_dispatcher import get_result_dispatcher
 import asyncio
 import time
 from typing import Optional
@@ -30,7 +31,6 @@ async def websocket_vosk(
         idle_timeout,
     )
     
-    from ..service.result_dispatcher import get_result_dispatcher
     result_dispatcher = get_result_dispatcher()
     await result_dispatcher.register_client(session_id, client_id, websocket)
     
@@ -134,7 +134,6 @@ async def websocket_vosk(
         
         # Unregister from result dispatcher
         try:
-            from ..service.result_dispatcher import get_result_dispatcher
             result_dispatcher = get_result_dispatcher()
             await result_dispatcher.unregister_client(session_id, client_id)
         except Exception as e:
@@ -151,7 +150,6 @@ async def websocket_vosk(
 @router.get("/ws/dispatcher-stats")
 async def get_dispatcher_stats():
     """Get dispatcher performance statistics"""
-    from ..service.result_dispatcher import get_result_dispatcher
     result_dispatcher = get_result_dispatcher()
     return {
         "dispatcher_stats": result_dispatcher.get_stats(),

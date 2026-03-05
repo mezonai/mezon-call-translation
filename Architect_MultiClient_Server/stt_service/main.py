@@ -12,14 +12,14 @@ from stt_service.controller.ws_vosk_control import router as stt_router
 from stt_service.controller.transcription_api import router as transcription_router
 from stt_service.service.migration_controller import pipeline_controller
 from stt_service.service.health_service import get_health_service
-from stt_service.service.redis_transcription_queue_service import get_transcription_queue_service
+from stt_service.service.redis_transcription_queue_service import get_redis_transcription_queue_service
 from stt_service.service.whisper_transcription_processor import transcribe_task, get_whisper_processor
 from stt_service.config import get_config
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, Response, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Response
+
 
 
 # Load environment variables
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     pipeline_controller.set_result_dispatcher(result_dispatcher)
     
     # Initialize Whisper transcription if enabled
-    transcription_queue = get_transcription_queue_service()
+    transcription_queue = get_redis_transcription_queue_service()
     transcription_queue.set_processor(transcribe_task)  # Set Whisper processor
     await transcription_queue.start()
         

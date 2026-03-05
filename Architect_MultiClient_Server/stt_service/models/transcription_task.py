@@ -13,6 +13,7 @@ from stt_service.models.stream_base import (
     BaseStreamTask,
     parse_priority,
     TaskPriority,
+    StreamTaskStatus,
 )
 
 
@@ -35,6 +36,13 @@ class TranscriptionStreamTask(BaseStreamTask):
     source: Optional[str] = None
     created_at: float = field(default_factory=time.time)
     
+    # Processing tracking fields
+    status: str = StreamTaskStatus.PENDING
+    started_processing_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    result: Optional[str] = None
+    error: Optional[str] = None
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for Redis storage."""
         # Get base fields from parent
@@ -50,6 +58,12 @@ class TranscriptionStreamTask(BaseStreamTask):
             "location": self.location,
             "source": self.source or "",
             "created_at": str(self.created_at),
+            # Tracking fields
+            "status": str(self.status),
+            "started_processing_at": str(self.started_processing_at) if self.started_processing_at else "",
+            "completed_at": str(self.completed_at) if self.completed_at else "",
+            "result": self.result or "",
+            "error": self.error or "",
         })
         
         return data
@@ -64,6 +78,13 @@ class TranscriptionStreamTask(BaseStreamTask):
         # Decode bytes to strings
         decoded = {k.decode(): v.decode() for k, v in data.items()}
         
+        # Parse optional float fields
+        started_processing_at = decoded.get("started_processing_at")
+        started_processing_at = float(started_processing_at) if started_processing_at and started_processing_at != "" else None
+        
+        completed_at = decoded.get("completed_at")
+        completed_at = float(completed_at) if completed_at and completed_at != "" else None
+        
         return cls(
             task_id=decoded.get("task_id", ""),
             message_id=message_id,
@@ -77,4 +98,10 @@ class TranscriptionStreamTask(BaseStreamTask):
             location=decoded.get("location", ""),
             source=decoded.get("source") or None,
             created_at=float(decoded.get("created_at", time.time())),
+            # Tracking fields
+            status=decoded.get("status", StreamTaskStatus.PENDING),
+            started_processing_at=started_processing_at,
+            completed_at=completed_at,
+            result=decoded.get("result") or None,
+            error=decoded.get("error") or None,
         )

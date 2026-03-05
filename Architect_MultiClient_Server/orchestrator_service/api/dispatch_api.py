@@ -13,7 +13,6 @@ import httpx
 from pydantic import BaseModel
 from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.services.livekit_client import get_livekit_service
-from orchestrator_service.services.interview_queue import get_interview_queue
 
 router = APIRouter()
 
@@ -71,8 +70,6 @@ class AccountModel(BaseModel):
 class DispatchRequestModel(BaseModel):
     account: AccountModel
     room_name: str
-    type: Optional[str] = "normal"
-    metadata: dict = {}
 
 async def ensure_dispatch(room_name: str) -> Dict[str, Any]:
     """
@@ -174,20 +171,6 @@ async def api_create_dispatch(body: DispatchRequestModel) -> Dict[str, Any]:
     """Create a dispatch for the specified room."""
     await verify_account(body.account.dict())
     
-    if(body.type == "interview"):
-        try:
-            # For interview dispatches, add to interview queue
-            interview_id = body.metadata.get("interview_id")
-            room_name = body.room_name
-            
-            if interview_id:
-                interview_queue = get_interview_queue()
-                interview_queue.add_by_room_name(room_name, interview_id)
-            else:
-                raise HTTPException(status_code=400, detail="interview_id is required in metadata for interview dispatch")
-    
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid metadata for interview dispatch: {str(e)}")
     result = await ensure_dispatch(body.room_name)
     if result["status"] == DispatchStatus.ERROR:
         raise HTTPException(status_code=500, detail=result["message"])
