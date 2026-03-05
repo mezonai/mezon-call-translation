@@ -187,6 +187,7 @@ async def entrypoint(ctx: agents.JobContext):
     ctx.room.on("data_received", on_data_received)
 
 
+
     try:
         logger.info("Initializing TTS Manager...")
         
@@ -297,6 +298,7 @@ async def entrypoint(ctx: agents.JobContext):
     # Register DataChannel dispatcher
     ctx.room.on("data_received", on_data_received)
     logger.info("✅ DataChannel dispatcher registered")
+
     # Log readiness status
     if tts_manager:
         logger.info("🎤🔊 Vosk + TTS Agent ready and waiting for participants...")

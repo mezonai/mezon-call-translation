@@ -1,3 +1,4 @@
+
 from orchestrator_service.services.mongodb_service import get_mongodb_service
 from bson import ObjectId
 from orchestrator_service.api.sse_metadata_api import metadata_channel
@@ -22,8 +23,8 @@ class TranscriptionService:
         self.redis_config = get_config().redis
         self.api_url = f"http://{self.config.host}:{self.config.port}/api/transcribe"
         self.timeout = 30.0
+        
         self.mongodb_service = get_mongodb_service()
-        self._redis_producer: Optional[RedisProducerService] = None
         self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
     
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
@@ -81,7 +82,8 @@ class TranscriptionService:
                 # Continue processing even if metadata update fails
 
             producer = await self._get_producer()
-                # Create task object
+            
+            # Create task object
             task = TranscriptionTask(
                 egress_id=egress_info["egressId"],
                 filename=egress_info["filename"],
@@ -96,6 +98,7 @@ class TranscriptionService:
             
             logger.info(f"✓ Queued to Redis: {egress_info['egressId']} → {task_id}")
             return True
+            
         except Exception as e:
             logger.error(f"✗ Redis enqueue failed: {e}")
             return False

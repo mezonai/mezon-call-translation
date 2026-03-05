@@ -6,9 +6,9 @@ Note: Queue monitoring endpoints (stats, task status) are now in orchestrator_se
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Optional
+
 
 
 
@@ -31,29 +31,4 @@ class TrackMetadataRequest(BaseModel):
     track_id: str
     room_ref_id: str
     participant_identity: str
-
-
-class TaskStatusResponse(BaseModel):
-    """Response model for task status."""
-    task_id: str
-    status: str
-    filename: str
-    created_at: float
-    started_processing_at: Optional[float] = None
-    completed_at: Optional[float] = None
-    result: Optional[str] = None
-    error: Optional[str] = None
-
-
-class QueueStatsResponse(BaseModel):
-    """Response model for queue statistics."""
-    queue_size: int
-    total_received: int
-    total_processed: int
-    total_failed: int
-    running: bool
-    uptime: float
-    pending_tasks: int
-    processing_tasks: int
-
 
