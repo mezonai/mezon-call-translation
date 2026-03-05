@@ -17,9 +17,9 @@ def setup_logger(name: str) -> logging.Logger:
 
     # Only configure logger if it hasn't been configured yet
     if not logger.handlers:
-        # Create formatters
+        # Create formatters (with milliseconds precision)
         console_formatter = logging.Formatter(
-            "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+            "%(asctime)s.%(msecs)03d | %(levelname)s | %(name)s | %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
         
@@ -38,7 +38,8 @@ def setup_logger(name: str) -> logging.Logger:
                 backupCount=5
             )
             file_formatter = logging.Formatter(
-                '%(asctime)s - %(levelname)s - %(message)s'
+                '%(asctime)s.%(msecs)03d - %(levelname)s - %(message)s',
+                datefmt="%Y-%m-%d %H:%M:%S",
             )
             file_handler.setFormatter(file_formatter)
             file_handler.setLevel(log_level)

@@ -7,7 +7,7 @@ from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.config.application_config import get_config
 from datetime import datetime
 from typing import Optional
-from orchestrator_service.services.mongodb_service import get_mongodb_service
+from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.api.sse_metadata_api import metadata_channel
 
 internal_router = APIRouter(prefix="/api/internal", tags=["Internal"])
@@ -37,7 +37,7 @@ async def generate_room_summary(request: SummaryRequest = Body(...)):
     If the room is associated with an interview, also sends track data to interview webhook.
     """
     
-    mongodb = get_mongodb_service()
+    mongodb = MongoDBService()
     if not mongodb.connected:
         await mongodb.connect()
     room = await mongodb.get_room_by_id(request.room_id)
@@ -75,7 +75,7 @@ async def get_summary_by_room_name(
     """
     Get summary by room name.
     """
-    mongodb = get_mongodb_service()
+    mongodb = MongoDBService()
     summaries = await mongodb.get_summary_by_room_name(room_name, start_time, end_time)
     return {
         "status": "ok",
@@ -90,7 +90,7 @@ async def get_summary_by_room_id(
     """
     Get summary by room id.
     """
-    mongodb = get_mongodb_service()
+    mongodb = MongoDBService()
     summaries = await mongodb.get_summary_by_room_id(room_id)
     return {
         "status": "ok",
