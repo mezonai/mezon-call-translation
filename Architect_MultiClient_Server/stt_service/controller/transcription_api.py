@@ -10,10 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from stt_service.service.mongodb_service import MongoDBService
-<<<<<<< HEAD
 
-=======
->>>>>>> 1ed82c03473330a863bcbac945cab03462b824ba
 
 logger = logging.getLogger(__name__)
 
