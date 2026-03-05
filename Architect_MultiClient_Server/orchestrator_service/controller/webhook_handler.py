@@ -174,7 +174,7 @@ class WebhookHandler:
         egress_id = egress.get("egressId", "unknown")
         logger.info(f"  Egress ended: {egress_id} for room {room_name} with status {status}")
         if status != "EGRESS_COMPLETE":
-            if status == "EGRESS_FAILED":
+            if status in ["EGRESS_FAILED", "EGRESS_ABORTED"]:
                 error = egress.get('error', 'no error info')
                 logger.error(f"Egress failed: {error}")
                 mongodb_service = self.transcription_service.mongodb_service
