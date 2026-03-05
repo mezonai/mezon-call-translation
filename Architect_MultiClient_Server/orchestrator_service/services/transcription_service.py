@@ -1,3 +1,4 @@
+
 from typing import Dict
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
@@ -38,10 +39,6 @@ class TranscriptionService:
             )
             await self._redis_producer.connect()
         return self._redis_producer
-    
-
-
-
     async def enqueue(self, egress_info: Dict) -> bool:
         """
         Send egress info directly to Redis Stream.
