@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 
 async def entrypoint(ctx: agents.JobContext):
     """Main agent entrypoint - setup and lifecycle management"""
-
+    logger.info(f"✅ Connecting to room: {ctx.room.name}")
     # Initialize orchestrator client singleton
     orchestrator = OrchestratorClient.get_instance()
 
@@ -44,7 +44,6 @@ async def entrypoint(ctx: agents.JobContext):
     ctx._info.token = new_token.to_jwt()
     
 
-    logger.info(f"✅ Connected to room: {ctx.room.name}")
     # Get session_id from room name
     session_id = ctx.room.name
 
@@ -175,10 +174,6 @@ async def entrypoint(ctx: agents.JobContext):
         # Initialize TTS (load model, setup track)
         if await tts_manager.initialize():
             logger.info("✅ TTS Manager initialized successfully")
-            
-            # Note: DataChannel routing is handled by central dispatcher in main.py
-            logger.info("✅ TTS listening on DataChannel topic='tts_control'")
-            
         else:
             logger.warning("⚠️ TTS Manager initialization failed, continuing without TTS")
             tts_manager = None

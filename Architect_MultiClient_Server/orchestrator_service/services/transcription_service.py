@@ -1,5 +1,8 @@
-
-from orchestrator_service.services.mongodb_service import get_mongodb_service
+from typing import Dict
+from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.config.application_config import get_config
+from orchestrator_service.services.mongodb_service import MongoDBService
+from typing import Optional
 from bson import ObjectId
 from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.services.summary_service import get_summary_service
@@ -23,8 +26,7 @@ class TranscriptionService:
         self.redis_config = get_config().redis
         self.api_url = f"http://{self.config.host}:{self.config.port}/api/transcribe"
         self.timeout = 30.0
-        
-        self.mongodb_service = get_mongodb_service()
+        self.mongodb_service = MongoDBService()
         self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
         self.stream_key = "transcription:stream"
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
@@ -37,6 +39,9 @@ class TranscriptionService:
             await self._redis_producer.connect()
         return self._redis_producer
     
+
+
+
     async def enqueue(self, egress_info: Dict) -> bool:
         """
         Send egress info directly to Redis Stream.

@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb_service import get_mongodb_service
+from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.config.application_config import get_config
 from contextlib import asynccontextmanager
 
@@ -66,7 +66,7 @@ logger.info("✅ Signal handlers registered for SIGINT and SIGTERM")
 async def lifespan(app: FastAPI):
     # ===== STARTUP =====
     logger.info("🚀 FastAPI startup")
-    mongodb = get_mongodb_service()
+    mongodb = MongoDBService()
     ok = await mongodb.connect()
     if not ok:
         raise RuntimeError("❌ MongoDB connection failed on startup")

@@ -10,30 +10,24 @@ from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import PyMongoError
 from bson import ObjectId
-import logging
 import asyncio
 import aiohttp
+from tts_service.logger import get_logger
 from stt_service.config.app_config import get_config
+from stt_service.utils.decorator import singleton
 
-logger = logging.getLogger(__name__)
+
+logger = get_logger(__name__)
 
 
+@singleton
 class MongoDBService:
     """Service for storing track-based transcripts in MongoDB"""
 
-    _instance = None
     CHUNK_SIZE = 50  # Maximum segments per chunk
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
 
     def __init__(self):
-        if self._initialized:
-            return
-
         self.config = get_config()
         
         # Build MongoDB URI with authentication
@@ -337,14 +331,6 @@ class MongoDBService:
 
 
 
-    # ==========================================================
-    # 🏭 SINGLETON PATTERN
-    # ==========================================================
-
-    @classmethod
-    def get_instance(cls) -> "MongoDBService":
-        """Get singleton instance"""
-        return cls()
 
     async def _trigger_summary_api(self, room_id: str):
         """Call Orchestrator API to generate summary for the closed room."""
@@ -378,8 +364,3 @@ class MongoDBService:
                         logger.error(f"Failed to trigger summary for room {room_id}: {response.status} - {error_text}")
         except Exception as e:
             logger.error(f"Error triggering summary API for room {room_id}: {e}")
-
-
-def get_mongodb_service() -> MongoDBService:
-    """Convenience function to get MongoDB service instance"""
-    return MongoDBService.get_instance()
