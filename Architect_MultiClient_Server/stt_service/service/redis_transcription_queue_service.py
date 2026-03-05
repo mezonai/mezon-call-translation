@@ -21,7 +21,8 @@ from .redis_stream_service import (
 )
 
 logger = logging.getLogger(__name__)
-
+stream_key = "transcription:stream"
+group_name = "transcription-workers"
 
 # ========================================
 # Transcription-specific factory function
@@ -36,7 +37,7 @@ def get_redis_stream_service() -> 'RedisStreamService[TranscriptionStreamTask]':
     Returns:
         RedisStreamService[TranscriptionStreamTask] singleton instance
     """
-    return create_stream_service(task_class=TranscriptionStreamTask, stream_key="transcription:stream", group_name="transcription-workers")
+    return create_stream_service(task_class=TranscriptionStreamTask, stream_key=stream_key, group_name=group_name)
 
 
 class RedisTranscriptionQueueService:

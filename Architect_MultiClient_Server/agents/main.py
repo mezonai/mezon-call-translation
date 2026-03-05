@@ -166,7 +166,6 @@ async def entrypoint(ctx: agents.JobContext):
         """Central DataChannel dispatcher - routes messages to appropriate handlers"""
         try:
             topic = data_packet.topic
-            print(f"Received data packet: {data_packet}")
             participant_id = data_packet.participant.identity if data_packet.participant else "unknown"
             logger.info(f"📩 DataChannel received: topic='{topic}' from {participant_id}")
 

@@ -26,13 +26,13 @@ class TranscriptionService:
         
         self.mongodb_service = get_mongodb_service()
         self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
-    
+        self.stream_key = "transcription:stream"
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
         """Get or create Redis producer (lazy initialization)."""
         if not self._redis_producer:
             self._redis_producer = create_producer_service(
                 task_class=TranscriptionTask,
-                stream_key="transcription:stream",
+                stream_key=self.stream_key,
             )
             await self._redis_producer.connect()
         return self._redis_producer
