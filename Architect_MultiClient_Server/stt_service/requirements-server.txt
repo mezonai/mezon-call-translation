@@ -23,6 +23,7 @@ faster-whisper>=1.0.0          # Whisper transcription (post-processing)
 motor>=3.3.0                   # Async MongoDB driver
 pymongo>=4.5.0                 # MongoDB Python driver (sync operations)
 minio>=7.2.0                   # MinIO client for audio file storage
+redis>=5.0.0                   # Redis client with async support (redis.asyncio)
 
 # ========================================
 # HTTP Client

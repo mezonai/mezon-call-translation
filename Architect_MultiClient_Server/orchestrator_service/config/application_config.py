@@ -269,6 +269,37 @@ class InterviewConfig:
 
 
 # ============================================================================
+# Redis Configuration (Task Queue)
+# ============================================================================
+
+@dataclass
+class RedisConfig:
+    """Redis configuration for transcription task queue."""
+    host: str = "localhost"
+    port: int = 6379
+    password: str = ""
+    db: int = 0
+    # Connection pool
+    max_connections: int = 10
+    socket_timeout: float = 30.0
+    socket_connect_timeout: float = 10.0
+    
+    @classmethod
+    def from_env(cls) -> 'RedisConfig':
+        """Create Redis config from environment variables"""
+        
+        return cls(
+            host=os.getenv('REDIS_HOST', 'localhost'),
+            port=int(os.getenv('REDIS_PORT', '6379')),
+            password=os.getenv('REDIS_PASSWORD', ''),
+            db=int(os.getenv('REDIS_DB', '0')),
+            max_connections=int(os.getenv('REDIS_MAX_CONNECTIONS', '10')),
+            socket_timeout=float(os.getenv('REDIS_SOCKET_TIMEOUT', '30.0')),
+            socket_connect_timeout=float(os.getenv('REDIS_SOCKET_CONNECT_TIMEOUT', '10.0')),
+        )
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -298,6 +329,7 @@ class Config:
         self.minio = MinIOConfig.from_env()
         self.llm = LLMConfig.from_env()
         self.interview = InterviewConfig.from_env()
+        self.redis = RedisConfig.from_env()
         
         self._initialized = True
         self._validate_all()
