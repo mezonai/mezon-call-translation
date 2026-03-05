@@ -21,7 +21,6 @@ class MongoDBService:
     """Service for storing track-based transcripts in MongoDB"""
 
     def __init__(self):
-        print("đã đi vào đây")
         self.config = get_config()
         # Build MongoDB URI with authentication
         self.mongo_uri = self._build_mongo_uri()

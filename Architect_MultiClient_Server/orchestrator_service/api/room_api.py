@@ -185,7 +185,6 @@ async def get_room_by_id(
     """
     try:
         mongodb = MongoDBService()
-        print(id(mongodb))
         if not mongodb.connected:
             await mongodb.connect()
         
