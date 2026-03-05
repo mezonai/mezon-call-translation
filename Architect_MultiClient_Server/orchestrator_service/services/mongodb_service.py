@@ -51,7 +51,7 @@ class MongoDBService:
         self.chunks_collection = None
         self.summary_collection = None
         self.connected = False
-
+        self._initialized = True
 
         logger.info(
             f"MongoDBService initialized (DB={self.database_name}, "
