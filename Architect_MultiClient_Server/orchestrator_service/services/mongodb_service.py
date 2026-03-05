@@ -10,17 +10,18 @@ from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pymongo import ReturnDocument
-import logging
 from pymongo.errors import PyMongoError
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.decorator import singleton
+logger = get_logger(__name__)
 
-logger = logging.getLogger(__name__)
-
-
+@singleton
 class MongoDBService:
     """Service for storing track-based transcripts in MongoDB"""
 
     def __init__(self):
+        print("đã đi vào đây")
         self.config = get_config()
         # Build MongoDB URI with authentication
         self.mongo_uri = self._build_mongo_uri()
@@ -817,16 +818,16 @@ class MongoDBService:
             logger.error(f"Failed to get summary by room id: {e}")
             return []
 
-# ========================================
-# 🏭 SINGLETON PATTERN
-# ========================================
+# # ========================================
+# # 🏭 SINGLETON PATTERN
+# # ========================================
 
-# Global singleton instance
-_mongodb_service: Optional['MongoDBService'] = None
+# # Global singleton instance
+# _mongodb_service: Optional['MongoDBService'] = None
 
-def get_mongodb_service() -> MongoDBService:
-    """Get singleton instance of MongoDB service"""
-    global _mongodb_service
-    if _mongodb_service is None:
-        _mongodb_service = MongoDBService()
-    return _mongodb_service
+# def MongoDBService() -> MongoDBService:
+#     """Get singleton instance of MongoDB service"""
+#     global _mongodb_service
+#     if _mongodb_service is None:
+#         _mongodb_service = MongoDBService()
+#     return _mongodb_service

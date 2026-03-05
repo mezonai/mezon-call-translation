@@ -16,7 +16,7 @@ from ..service.transcription_queue_service import (
     TranscriptionTask,
 )
 
-from stt_service.service.mongodb_service import get_mongodb_service
+from stt_service.service.mongodb_service import MongoDBService
 
 
 logger = logging.getLogger(__name__)

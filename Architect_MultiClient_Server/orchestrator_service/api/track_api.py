@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb_service import get_mongodb_service
+from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
@@ -50,7 +50,7 @@ async def list_tracks(
     Note: Pagination (limit/skip) works with or without date range filter.
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -122,7 +122,7 @@ async def get_track_by_egress_id(
     - **egress_id**: The egress ID of the track
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -156,7 +156,7 @@ async def get_track_by_id(
     - **track_id**: The MongoDB ObjectId of the track
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -192,7 +192,7 @@ async def get_tracks_by_room(
     - **status**: Optional filter by track status
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -234,7 +234,7 @@ async def get_tracks_by_participant(
     - **participant_identity**: The identity of the participant
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -273,7 +273,7 @@ async def get_participant_statistics(
     - Total transcript segments
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         

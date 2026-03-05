@@ -20,7 +20,7 @@ from minio import Minio
 from faster_whisper import WhisperModel
 from bson import ObjectId
 
-from stt_service.service.mongodb_service import get_mongodb_service
+from stt_service.service.mongodb_service import MongoDBService
 
 from ..config import get_config
 from .transcription_queue_service import TranscriptionTask
@@ -87,7 +87,7 @@ class WhisperTranscriptionProcessor:
         logger.info("Initializing WhisperTranscriptionProcessor...")
         
         # Initialize MongoDB
-        self.mongodb_service = get_mongodb_service()
+        self.mongodb_service = MongoDBService()
         await self.mongodb_service.connect()
         logger.info("✅ MongoDB connected")
         

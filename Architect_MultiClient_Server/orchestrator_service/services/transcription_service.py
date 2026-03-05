@@ -2,7 +2,7 @@ import httpx
 from typing import Dict, Any
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.mongodb_service import get_mongodb_service
+from orchestrator_service.services.mongodb_service import MongoDBService
 from typing import Optional
 from bson import ObjectId
 from orchestrator_service.api.sse_metadata_api import metadata_channel
@@ -17,7 +17,7 @@ class TranscriptionService:
         self.config = get_config().stt_service
         self.api_url =(f"http://{self.config.host}:{self.config.port}/api/transcribe")
         self.timeout = 30.0
-        self.mongodb_service = get_mongodb_service()
+        self.mongodb_service = MongoDBService()
 
     async def enqueue(self, egress_info: Dict) -> bool:
         """
