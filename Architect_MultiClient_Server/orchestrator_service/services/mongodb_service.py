@@ -128,7 +128,7 @@ class MongoDBService:
             room: dict = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
             room["_id"] = str(room["_id"])
             room["created_at"] = convert_to_iso_8601(room["created_at"])
-            room["completed_at"] = convert_to_iso_8601(room["completed_at"])
+            room["completed_at"] = convert_to_iso_8601(room.get("completed_at", None))
             return room
 
         except Exception as e:
@@ -145,7 +145,7 @@ class MongoDBService:
             for room in room_list:
                 room["_id"] = str(room["_id"])
                 room["created_at"] = convert_to_iso_8601(room["created_at"])
-                room["completed_at"] = convert_to_iso_8601(room["completed_at"])
+                room["completed_at"] = convert_to_iso_8601(room.get("completed_at", None))
             return room_list
         except Exception as e:
             logger.error(f"Failed to list rooms: {e}")
@@ -587,12 +587,16 @@ class MongoDBService:
     async def get_room_statistics_by_id(self, room_id: str) -> Dict[str, Any]:
         """Get detailed statistics for a room by ID"""
         try:
-            room = await self.get_room_by_id(room_id)
+            # Fetch raw room document to preserve datetime types for calculations
+            room = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
             if not room:
                 return {}
+
             created_at_raw: datetime = room.get("created_at")
-            completed_at_raw: datetime = room.get("completed_at")                
-            total_duration_sec = (completed_at_raw - created_at_raw).total_seconds()
+            completed_at_raw: datetime = room.get("completed_at")
+            total_duration_sec: float = 0.0
+            if completed_at_raw and created_at_raw:
+                total_duration_sec = (completed_at_raw - created_at_raw).total_seconds()
             tracks = await self.get_tracks_by_room(room_id)
             total_segments = 0
             completed_tracks = 0
@@ -616,7 +620,7 @@ class MongoDBService:
                 "total_duration_sec": total_duration_sec,
                 "total_segments": total_segments,
                 "created_at": convert_to_iso_8601(created_at_raw),
-                "completed_at": convert_to_iso_8601(completed_at_raw)
+                "completed_at": convert_to_iso_8601(completed_at_raw) if completed_at_raw else None
             }
         except Exception as e:
             logger.error(f"Failed to get room statistics by ID: {e}")
@@ -724,7 +728,9 @@ class MongoDBService:
         """Get summary by room id"""
         try:
             summary_data: dict = await self.summary_collection.find_one({"room_id": room_id})
-            response = RoomSummaryResponse.model_construct(**summary_data)
+            response = RoomSummaryResponse()
+            if summary_data:
+                response = RoomSummaryResponse.model_construct(**summary_data)
             room_data: dict = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
             response.created_at = convert_to_iso_8601(room_data.get("created_at", ""))
             response.completed_at = convert_to_iso_8601(room_data.get("completed_at", ""))
