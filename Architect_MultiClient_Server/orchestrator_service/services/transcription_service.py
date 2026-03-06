@@ -26,9 +26,9 @@ class TranscriptionService:
         self.redis_config = get_config().redis
         self.api_url = f"http://{self.config.host}:{self.config.port}/api/transcribe"
         self.timeout = 30.0
+        self.mongodb_service = MongoDBService()
         self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
         self.stream_key = "transcription:stream"
-        self.mongodb_service = MongoDBService()
         
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
         """Get or create Redis producer (lazy initialization)."""
@@ -39,7 +39,6 @@ class TranscriptionService:
             )
             await self._redis_producer.connect()
         return self._redis_producer
-        
 
     async def enqueue(self, egress_info: Dict) -> bool:
         """

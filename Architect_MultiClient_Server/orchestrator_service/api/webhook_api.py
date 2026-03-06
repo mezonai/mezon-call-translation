@@ -8,7 +8,7 @@ from orchestrator_service.services.egress_service import EgressService
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.controller.webhook_handler import WebhookHandler
 from orchestrator_service.models.webhook_models import WebhookResponse
-from livekit import api
+from orchestrator_service.services.redis.egress_repository import EgressRepository
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -25,7 +25,7 @@ async def health_check():
     return {
         "status": "ok",
         "service": "livekit-webhook-handler",
-        "active_egresses": egress_service.get_active_count(),
+        "active_egresses": await egress_service.get_active_count(),
         "timestamp":  datetime.utcnow()
     }
 
@@ -35,8 +35,8 @@ async def list_active_egresses():
     """List active egresses"""
     return {
         "status": "ok",
-        "active_egresses": egress_service.get_all_active(),
-        "count": egress_service.get_active_count()
+        "active_egresses": await egress_service.get_all_active(),
+        "count": await egress_service.get_active_count()
     }
 
 
@@ -78,27 +78,31 @@ async def handle_webhook(request: Request):
         return WebhookResponse(received=False, error=str(e))
 
 # This api use for testing purposes only
-@router.post("/egress/stop/{track_sid}")  
-async def stop_egress(track_sid: str):
-    """Manually stop egress cho track"""
-    if track_sid not in egress_service.get_all_active():
-        raise HTTPException(404, f"No active egress for {track_sid}")
+@router.post("/egress/stop/{room_name}/{track_sid}")  
+async def stop_egress(room_name: str, track_sid: str):
+    """Manually stop egress for track"""
+    repo = EgressRepository()
+    egress_id = await repo.get_egress_id(room_name, track_sid)
+    if not egress_id:
+        raise HTTPException(404, f"No active egress for {track_sid} in room {room_name}")
     
-    success = await egress_service.stop_recording(track_sid)
+    success = await egress_service.stop_recording(room_name, track_sid)
     if success:
-        return {"status": "stopped", "track_sid": track_sid}
+        return {"status": "stopped", "room_name": room_name, "track_sid": track_sid}
     raise HTTPException(500, "Failed to stop egress")
 
 # This api use for testing purposes only
-@router.post("/egress/stop-all")
-async def stop_all_egresses():
-    """Stop tất cả egress"""
-    if egress_service.get_active_count() == 0:
-        return {"status": "ok", "message": "No active egresses", "stopped": 0}
+@router.post("/egress/stop-all/{room_name}")
+async def stop_all_egresses_by_room(room_name: str):
+    """stop all egresses in a room (for testing)"""
+    active_count = await egress_service.get_active_count_by_room(room_name)
+    if active_count == 0:
+        return {"status": "ok", "message": f"No active egresses in room '{room_name}'", "stopped": 0}
     
-    result = await egress_service.stop_all()
+    result = await egress_service.stop_all_by_room(room_name)
     return {
         "status": "ok",
+        "room_name": room_name,
         **result,
-        "remaining": egress_service.get_active_count()
+        "remaining": await egress_service.get_active_count_by_room(room_name)
     }

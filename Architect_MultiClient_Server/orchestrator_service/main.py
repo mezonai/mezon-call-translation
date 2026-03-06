@@ -23,6 +23,8 @@ from orchestrator_service.api.agent_control_api import router as agent_control_r
 from orchestrator_service.api.room_registry_api import router as room_registry_router
 from orchestrator_service.api.queue_api import router as queue_router
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
+from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.api.summary_api import internal_router as summary_internal_router, client_router as summary_client_router
 
 import signal
@@ -64,12 +66,24 @@ logger.info("✅ Signal handlers registered for SIGINT and SIGTERM")
 async def lifespan(app: FastAPI):
     # ===== STARTUP =====
     logger.info("🚀 FastAPI startup")
-    
     mongodb = MongoDBService()
     ok = await mongodb.connect()
     if not ok:
         raise RuntimeError("❌ MongoDB connection failed on startup")
     logger.info("✅ MongoDB connected on startup")
+
+    # Connect Redis Connection Pool (shared by all repositories)
+    try:
+        redis_manager = get_connection_manager()
+        await redis_manager.connect()
+        logger.info("✅ Redis connection pool created")
+        
+        # Initialize Room Registry (auto-connects to Redis pool)
+        room_registry = get_room_registry()
+        logger.info("✅ Room Registry initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Redis services: {e}")
+        raise
     
     yield
     
@@ -80,26 +94,36 @@ async def lifespan(app: FastAPI):
     
     # Step 1: Cleanup SSE manager (clear data structures)
     # SSE connections were already notified by signal handler
-    logger.info("Step 1/4: Cleaning up SSE manager...")
+    logger.info("Step 1/5: Cleaning up SSE manager...")
     await sse_manager.cleanup()
     logger.info("✅ SSE manager cleanup completed")
     
     # Step 2: Cleanup egress service
-    logger.info("Step 2/4: Cleaning up egress service...")
+    logger.info("Step 2/5: Cleaning up egress service...")
     await egress_service.cleanup()
     logger.info("✅ Egress service cleanup completed")
     
     # Step 3: Cleanup LiveKit service
-    logger.info("Step 3/4: Cleaning up LiveKit service...")
+    logger.info("Step 3/5: Cleaning up LiveKit service...")
     await cleanup_livekit_service()
     logger.info("✅ LiveKit service cleanup completed")
     
-    # Step 4: Disconnect MongoDB LAST
-    logger.info("Step 4/4: Disconnecting MongoDB...")
+    # Step 4: Disconnect Redis Connection Pool
+    try:
+        logger.info("Step 4/5: Disconnecting Redis connection pool...")
+        redis_manager = get_connection_manager()
+        await redis_manager.disconnect()
+        logger.info("✅ Redis connection pool closed")
+    except Exception as e:
+        logger.error(f"Error closing Redis connection pool: {e}")
+    
+    # Step 5: Disconnect MongoDB LAST
+    logger.info("Step 5/5: Disconnecting MongoDB...")
     if mongodb is not None:
         await mongodb.disconnect()
     logger.info("✅ MongoDB disconnected")
-    
+        # Disconnect Redis Connection Pool
+
     logger.info("🎉 All services cleanup completed successfully")
 
 
