@@ -71,7 +71,7 @@ async def get_summary_by_room_name(
     room_name: str,
     start_time: Optional[datetime] = Query(None, description="Start time for room summary (ISO format: 2024-01-01T00:00:00)"),
     end_time: Optional[datetime] = Query(None, description="End time for room summary (ISO format: 2024-01-31T23:59:59)"),
-    ):
+):
     """
     Get summary by room name.
     """
@@ -86,14 +86,13 @@ async def get_summary_by_room_name(
 @client_router.get("/room/id/{room_id}", response_description="Get summary by room ID")
 async def get_summary_by_room_id(
     room_id: str,
-    ):
+):
     """
     Get summary by room id.
     """
     mongodb = get_mongodb_service()
-    summaries = await mongodb.get_summary_by_room_id(room_id)
+    summary = await mongodb.get_summary_by_room_id(room_id)
     return {
         "status": "ok",
-        "data": summaries,
-        "count": len(summaries)
+        "data": summary
     }

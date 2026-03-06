@@ -13,7 +13,8 @@ from pymongo import ReturnDocument
 import logging
 from pymongo.errors import PyMongoError
 from orchestrator_service.config.application_config import get_config
-
+from orchestrator_service.utils.time_convert import convert_to_iso_8601
+from orchestrator_service.models.summary_models import RoomSummaryResponse
 logger = logging.getLogger(__name__)
 
 
@@ -124,7 +125,11 @@ class MongoDBService:
         """Get room by _id"""
 
         try:
-            return await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
+            room: dict = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
+            room["_id"] = str(room["_id"])
+            room["created_at"] = convert_to_iso_8601(room["created_at"])
+            room["completed_at"] = convert_to_iso_8601(room.get("completed_at", None))
+            return room
 
         except Exception as e:
             logger.exception(f"Unexpected error when fetching room by ID {e}")
@@ -136,7 +141,12 @@ class MongoDBService:
         try:
             query = {"status": status} if status else {}
             cursor = self.rooms_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
-            return await cursor.to_list(length=limit)
+            room_list: list[dict] = await cursor.to_list(length=limit)
+            for room in room_list:
+                room["_id"] = str(room["_id"])
+                room["created_at"] = convert_to_iso_8601(room["created_at"])
+                room["completed_at"] = convert_to_iso_8601(room.get("completed_at", None))
+            return room_list
         except Exception as e:
             logger.error(f"Failed to list rooms: {e}")
             return []
@@ -150,45 +160,6 @@ class MongoDBService:
             logger.error(f"Failed to count rooms: {e}")
             return 0
 
-    async def get_rooms_by_date_range(self, start_date: datetime, 
-                                     end_date: datetime, 
-                                     status: str = None,
-                                     limit: int = 100,
-                                     skip: int = 0) -> List[Dict[str, Any]]:
-        """Get rooms created within a date range with optional status filter and pagination"""
-        try:
-            query = {
-                "created_at": {
-                    "$gte": start_date,
-                    "$lte": end_date
-                }
-            }
-            if status:
-                query["status"] = status
-            
-            cursor = self.rooms_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
-            return await cursor.to_list(length=limit)
-        except Exception as e:
-            logger.error(f"Failed to get rooms by date range: {e}")
-            return []
-
-    async def count_rooms_by_date_range(self, start_date: datetime,
-                                       end_date: datetime,
-                                       status: str = None) -> int:
-        """Count rooms in date range with optional status filter"""
-        try:
-            query = {
-                "created_at": {
-                    "$gte": start_date,
-                    "$lte": end_date
-                }
-            }
-            if status:
-                query["status"] = status
-            return await self.rooms_collection.count_documents(query)
-        except Exception as e:
-            logger.error(f"Failed to count rooms by date range: {e}")
-            return 0
 
     # ========================================
     # 🎵 TRACK COLLECTION QUERIES (READ ONLY)
@@ -613,74 +584,43 @@ class MongoDBService:
     # 📊 ANALYTICS & STATISTICS QUERIES
     # ========================================
 
-    async def get_room_statistics(self, room_name: str) -> Dict[str, Any]:
-        """Get detailed statistics for a room"""
-        try:
-            room = await self.get_room_by_name(room_name)
-            if not room:
-                return {}
-            
-            tracks = await self.get_tracks_by_room(str(room["_id"]))
-            
-            total_duration = 0
-            total_segments = 0
-            
-            for track in tracks:
-                chunks = await self.get_chunks_by_track(str(track["_id"]))
-                for chunk in chunks:
-                    total_segments += chunk.get("item_count", 0)
-                
-                audio_info = track.get("audio_info", {})
-                duration_ns = int(audio_info.get("duration_sec", "0"))
-                total_duration += duration_ns / 1_000_000_000  # Convert to seconds
-            
-            return {
-                "room_name": room_name,
-                "status": room.get("status"),
-                "total_tracks": len(tracks),
-                "completed_tracks": room.get("completed_tracks", 0),
-                "remain_tracks": room.get("remain_tracks", 0),
-                "total_duration_sec": total_duration,
-                "total_segments": total_segments,
-                "created_at": room.get("created_at"),
-                "completed_at": room.get("completed_at")
-            }
-        except Exception as e:
-            logger.error(f"Failed to get room statistics: {e}")
-            return {}
-
     async def get_room_statistics_by_id(self, room_id: str) -> Dict[str, Any]:
         """Get detailed statistics for a room by ID"""
         try:
-            room = await self.get_room_by_id(room_id)
+            # Fetch raw room document to preserve datetime types for calculations
+            room = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
             if not room:
                 return {}
-            
+
+            created_at_raw: datetime = room.get("created_at")
+            completed_at_raw: datetime = room.get("completed_at")
+            total_duration_sec: float = 0.0
+            if completed_at_raw and created_at_raw:
+                total_duration_sec = (completed_at_raw - created_at_raw).total_seconds()
             tracks = await self.get_tracks_by_room(room_id)
-            
-            total_duration = 0
             total_segments = 0
-            
+            completed_tracks = 0
+            remain_tracks = 0
             for track in tracks:
                 chunks = await self.get_chunks_by_track(str(track["_id"]))
                 for chunk in chunks:
                     total_segments += chunk.get("item_count", 0)
-                
-                audio_info = track.get("audio_info", {})
-                duration_ns = int(audio_info.get("duration_sec", "0"))
-                total_duration += duration_ns / 1_000_000_000  # Convert to seconds
-            
+                if track.get("status") == "completed":
+                    completed_tracks += 1
+                else:
+                    remain_tracks += 1
+
             return {
                 "room_id": room_id,
                 "room_name": room.get("room_name"),
                 "status": room.get("status"),
                 "total_tracks": len(tracks),
-                "completed_tracks": room.get("completed_tracks", 0),
-                "remain_tracks": room.get("remain_tracks", 0),
-                "total_duration_sec": total_duration,
+                "completed_tracks": completed_tracks,
+                "remain_tracks": remain_tracks,
+                "total_duration_sec": total_duration_sec,
                 "total_segments": total_segments,
-                "created_at": room.get("created_at"),
-                "completed_at": room.get("completed_at")
+                "created_at": convert_to_iso_8601(created_at_raw),
+                "completed_at": convert_to_iso_8601(completed_at_raw) if completed_at_raw else None
             }
         except Exception as e:
             logger.error(f"Failed to get room statistics by ID: {e}")
@@ -748,29 +688,8 @@ class MongoDBService:
             logger.error(f"Failed to save room summary: {e}")
             return None
 
-    async def get_room_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
-        """Get summary for a room"""
-        try:
-            return await self.summary_collection.find_one(
-                {"room_id": room_id},
-                sort=[("created_at", -1)]
-            )
-        except Exception as e:
-            logger.error(f"Failed to get room summary: {e}")
-            return None
 
-    async def get_summaries_by_participant(self, participant_id: str, limit: int = 50, skip: int = 0) -> List[Dict[str, Any]]:
-        """Get all summaries where the user participated"""
-        try:
-            cursor = self.summary_collection.find(
-                {"participants": participant_id}
-            ).sort("created_at", -1).skip(skip).limit(limit)
-            return await cursor.to_list(length=limit)
-        except Exception as e:
-            logger.error(f"Failed to get summaries by participant: {e}")
-            return []
-
-    async def get_summary_by_room_name(self, room_name: str, start_time: Optional[datetime], end_time: Optional[datetime]) -> List[Dict[str, Any]]:
+    async def get_summary_by_room_name(self, room_name: str, start_time: Optional[datetime], end_time: Optional[datetime]) -> List[RoomSummaryResponse]:
         """Get summary by room name"""
         try:
             # 1. get room list
@@ -782,7 +701,7 @@ class MongoDBService:
                 if end_time:
                     query["created_at"]["$lte"] = end_time
             cursor = self.rooms_collection.find(query).sort("created_at", 1)
-            room_list = await cursor.to_list(None)
+            room_list: list[dict] = await cursor.to_list(None)
             room_dict = {str(room["_id"]): room for room in room_list}
             room_ids = [str(room["_id"]) for room in room_list]
 
@@ -792,34 +711,30 @@ class MongoDBService:
             ).to_list(None)
 
             # Override created_at and completed_at
+            summary_response_list = []
             for summary in summary_list:
-                created_at = room_dict.get(str(summary["room_id"])).get("created_at")
-                completed_at = room_dict.get(str(summary["room_id"])).get("completed_at")
-                
-                # Format datetime to ISO 8601 with Z suffix (UTC) and rounded to seconds
-                if isinstance(created_at, datetime):
-                    summary["created_at"] = created_at.replace(microsecond=0).isoformat() + 'Z'
-                else:
-                    summary["created_at"] = created_at
-                
-                if isinstance(completed_at, datetime):
-                    summary["completed_at"] = completed_at.replace(microsecond=0).isoformat() + 'Z'
-                else:
-                    summary["completed_at"] = completed_at
-
-                summary.pop("_id", None)
-            return summary_list
+                summary_response = RoomSummaryResponse.model_construct(**summary)
+                created_at = room_dict.get(str(summary["room_id"])).get("created_at", "")
+                completed_at = room_dict.get(str(summary["room_id"])).get("completed_at", "")
+                summary_response.created_at = convert_to_iso_8601(created_at)
+                summary_response.completed_at = convert_to_iso_8601(completed_at)
+                summary_response_list.append(summary_response)
+            return summary_response_list
         except Exception as e:
             logger.error(f"Failed to get summary by room name: {e}")
             return []
 
-    async def get_summary_by_room_id(self, room_id: str) -> List[Dict[str, Any]]:
+    async def get_summary_by_room_id(self, room_id: str) -> RoomSummaryResponse:
         """Get summary by room id"""
         try:
-            summary_list = await self.summary_collection.find({"room_id": room_id}).to_list(None)
-            for summary in summary_list:
-                summary.pop("_id", None)
-            return summary_list
+            summary_data: dict = await self.summary_collection.find_one({"room_id": room_id})
+            response = RoomSummaryResponse()
+            if summary_data:
+                response = RoomSummaryResponse.model_construct(**summary_data)
+            room_data: dict = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
+            response.created_at = convert_to_iso_8601(room_data.get("created_at", ""))
+            response.completed_at = convert_to_iso_8601(room_data.get("completed_at", ""))
+            return response
         except Exception as e:
             logger.error(f"Failed to get summary by room id: {e}")
             return []
