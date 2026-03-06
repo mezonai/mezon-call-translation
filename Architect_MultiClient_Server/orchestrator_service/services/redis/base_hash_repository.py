@@ -56,7 +56,7 @@ class BaseHashRepository(ABC):
             self._redis = await get_redis_connection()
         return self._redis
     
-    async def set(self, hash_key: str, STATS_KEY: Optional[str], key: str, value: str) -> bool:
+    async def set(self, hash_key: str, stats_key: Optional[str], key: str, value: str) -> bool:
         """
         Set a key-value pair in the hash.
         
@@ -82,9 +82,9 @@ class BaseHashRepository(ABC):
             await redis.hset(hash_key, key, value)
 
             # Update stats if enabled
-            if STATS_KEY:
-                await self._increment_stat(STATS_KEY, self.STAT_TOTAL_SET)
-                await self._update_stat(STATS_KEY, self.STAT_LAST_SET_AT, str(time.time()))
+            if stats_key:
+                await self._increment_stat(stats_key, self.STAT_TOTAL_SET)
+                await self._update_stat(stats_key, self.STAT_LAST_SET_AT, str(time.time()))
             
             logger.info(
                 f"[{self.__class__.__name__}] Set '{key}' = '{value}'"
@@ -119,7 +119,7 @@ class BaseHashRepository(ABC):
             )
             raise
     
-    async def delete(self, hash_key: str, STATS_KEY: Optional[str], key: str) -> bool:
+    async def delete(self, hash_key: str, stats_key: Optional[str], key: str) -> bool:
         """
         Delete a key from the hash.
         
@@ -146,9 +146,9 @@ class BaseHashRepository(ABC):
             
             if deleted > 0:
                 # Update stats if enabled
-                if STATS_KEY:
-                    await self._increment_stat(STATS_KEY, self.STAT_TOTAL_DELETED)
-                    await self._update_stat(STATS_KEY, self.STAT_LAST_DELETED_AT, str(time.time()))
+                if stats_key:
+                    await self._increment_stat(stats_key, self.STAT_TOTAL_DELETED)
+                    await self._update_stat(stats_key, self.STAT_LAST_DELETED_AT, str(time.time()))
                 
                 logger.info(
                     f"[{self.__class__.__name__}] Deleted '{key}' "
@@ -248,20 +248,20 @@ class BaseHashRepository(ABC):
             )
             raise
     
-    async def get_stats(self, hash_key: str, STATS_KEY: str) -> Dict[str, Any]:
+    async def get_stats(self, hash_key: str, stats_key: str) -> Dict[str, Any]:
         """
         Get repository statistics.
         
         Returns:
             Dictionary with stats
         """
-        if not STATS_KEY:
+        if not stats_key:
             return {}
         
         redis = await self._get_redis()
         
         try:
-            stats_data = await redis.hgetall(STATS_KEY)
+            stats_data = await redis.hgetall(stats_key)
             item_count = await self.count(hash_key)
             
             return {
@@ -280,14 +280,14 @@ class BaseHashRepository(ABC):
     
     # Helper methods for stats
     
-    async def _increment_stat(self, STATS_KEY: str, stat_name: str, amount: int = 1) -> None:
+    async def _increment_stat(self, stats_key: str, stat_name: str, amount: int = 1) -> None:
         """Increment a stat counter."""
 
         redis = await self._get_redis()
-        await redis.hincrby(STATS_KEY, stat_name, amount)
+        await redis.hincrby(stats_key, stat_name, amount)
     
-    async def _update_stat(self, STATS_KEY: str, stat_name: str, value: str) -> None:
+    async def _update_stat(self, stats_key: str, stat_name: str, value: str) -> None:
         """Update a stat value."""
         
         redis = await self._get_redis()
-        await redis.hset(STATS_KEY, stat_name, value)
+        await redis.hset(stats_key, stat_name, value)
