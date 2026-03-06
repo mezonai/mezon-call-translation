@@ -24,7 +24,7 @@ class RoomRegistryRepository(BaseHashRepository):
     
     Redis Structure:
         Hash: "rooms:registry"
-        Stats: "rooms:stats"
+        Stats: "rooms:registry:stats"
     
     Business Rules:
         - Room names must be unique
@@ -33,7 +33,7 @@ class RoomRegistryRepository(BaseHashRepository):
     """
     
     HASH_KEY = "rooms:registry"
-    STATS_KEY = "rooms:stats"
+    STATS_KEY = "rooms:registry:stats"
     
     def __init__(self):
         """Initialize room registry repository."""
