@@ -1,4 +1,3 @@
-
 from typing import Dict
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
@@ -30,6 +29,8 @@ class TranscriptionService:
         self.mongodb_service = MongoDBService()
         self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
         self.stream_key = "transcription:stream"
+        self.mongodb_service = MongoDBService()
+        
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
         """Get or create Redis producer (lazy initialization)."""
         if not self._redis_producer:
@@ -39,6 +40,7 @@ class TranscriptionService:
             )
             await self._redis_producer.connect()
         return self._redis_producer
+
     async def enqueue(self, egress_info: Dict) -> bool:
         """
         Send egress info directly to Redis Stream.
