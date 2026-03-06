@@ -7,11 +7,13 @@ Extends BaseHashRepository with room-specific business logic.
 from typing import Dict, Optional
 
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.decorator import singleton
 from .base_hash_repository import BaseHashRepository
 
 logger = get_logger(__name__)
 
 
+@singleton
 class RoomRegistryRepository(BaseHashRepository):
     """
     Repository for managing room registrations in Redis.
@@ -169,22 +171,3 @@ class RoomRegistryRepository(BaseHashRepository):
             "last_registered_at": registry_stats.get("last_registered_at"),
             "last_unregistered_at": registry_stats.get("last_unregistered_at"),
         }
-
-
-# Singleton instance
-_repository: Optional[RoomRegistryRepository] = None
-
-
-def get_room_registry_repository() -> RoomRegistryRepository:
-    """
-    Get singleton RoomRegistryRepository instance.
-    
-    Returns:
-        RoomRegistryRepository instance
-    """
-    global _repository
-    
-    if _repository is None:
-        _repository = RoomRegistryRepository()
-    
-    return _repository

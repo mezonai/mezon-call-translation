@@ -9,19 +9,19 @@ from redis.asyncio import ConnectionPool, Redis
 from typing import Optional
 
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.config.application_config import get_config
 
 logger = get_logger(__name__)
 
 
+@singleton
 class RedisConnectionManager:
     """
     Singleton manager for Redis connection pool.
     
     All repositories share the same connection pool for efficiency.
     """
-    
-    _instance: Optional['RedisConnectionManager'] = None
     
     def __init__(self):
         """Initialize connection manager."""
@@ -30,18 +30,6 @@ class RedisConnectionManager:
         self._connected = False
         
         logger.info("RedisConnectionManager initialized")
-    
-    @classmethod
-    def get_instance(cls) -> 'RedisConnectionManager':
-        """Get singleton instance."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-    
-    @classmethod
-    def reset_instance(cls) -> None:
-        """Reset singleton (for testing)."""
-        cls._instance = None
     
     async def connect(self) -> None:
         """
@@ -134,10 +122,6 @@ class RedisConnectionManager:
             return False
 
 
-# Singleton instance
-_manager: Optional[RedisConnectionManager] = None
-
-
 async def get_redis_connection() -> Redis:
     """
     Get Redis client from shared connection pool.
@@ -150,15 +134,12 @@ async def get_redis_connection() -> Redis:
     Raises:
         ConnectionError: If cannot connect to Redis
     """
-    global _manager
+    manager = RedisConnectionManager()
     
-    if _manager is None:
-        _manager = RedisConnectionManager.get_instance()
+    if not manager.is_connected:
+        await manager.connect()
     
-    if not _manager.is_connected:
-        await _manager.connect()
-    
-    return _manager.get_client()
+    return manager.get_client()
 
 
 def get_connection_manager() -> RedisConnectionManager:
@@ -168,9 +149,4 @@ def get_connection_manager() -> RedisConnectionManager:
     Returns:
         RedisConnectionManager instance
     """
-    global _manager
-    
-    if _manager is None:
-        _manager = RedisConnectionManager.get_instance()
-    
-    return _manager
+    return RedisConnectionManager()

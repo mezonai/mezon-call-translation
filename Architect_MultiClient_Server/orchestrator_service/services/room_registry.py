@@ -7,10 +7,7 @@ Delegates all operations to RoomRegistryRepository.
 from typing import Optional, Dict
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.redis.room_registry_repository import (
-    get_room_registry_repository,
-    RoomRegistryRepository
-)
+from orchestrator_service.services.redis.room_registry_repository import RoomRegistryRepository
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 
 logger = get_logger(__name__)
@@ -41,7 +38,7 @@ class RoomRegistry:
             return
         
         # Initialize repository immediately (uses shared Redis pool)
-        self._repository = get_room_registry_repository()
+        self._repository = RoomRegistryRepository()
         self._initialized = True
         logger.info("RoomRegistry initialized (Repository pattern)")
     

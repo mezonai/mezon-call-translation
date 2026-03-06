@@ -97,10 +97,11 @@ class WebhookHandler:
     
     async def _handle_track_unpublished(self, event: Dict) -> WebhookResponse:
         """Handle when a track is unpublished"""
+        room_name = event.get("room", {}).get("name", "")
         track_sid = event.get("track", {}).get("sid", "")
         
-        if await self.egress_service.mark_unpublished(track_sid):
-            logger.info(f"  Track {track_sid} unpublished, egress auto-stop")
+        if await self.egress_service.mark_unpublished(room_name, track_sid):
+            logger.info(f"  Track {track_sid} unpublished in room {room_name}, egress auto-stop")
             return WebhookResponse(received=True, action="egress_removed")
         
         return WebhookResponse(received=True, action="no_active_egress")
