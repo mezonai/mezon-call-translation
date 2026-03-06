@@ -55,12 +55,12 @@ class RoomRegistryRepository(BaseHashRepository):
         Returns:
             True if registered successfully, False if already exists
         """
-        success = await self.set(room_name, room_id)
+        success = await self.set(self.HASH_KEY, self.STATS_KEY, room_name, room_id)
         
         if success:
             # Update domain-specific stats
-            await self._increment_stat("total_registered")
-            await self._update_stat("last_registered_at", 
+            await self._increment_stat(self.STATS_KEY, "total_registered")
+            await self._update_stat(self.STATS_KEY, "last_registered_at", 
                                    str(__import__('time').time()))
             logger.info(f"✅ Room '{room_name}' registered with ID '{room_id}'")
         else:
@@ -83,12 +83,12 @@ class RoomRegistryRepository(BaseHashRepository):
         # Get room_id before deletion for logging
         room_id = await self.get_room_id(room_name)
         
-        success = await self.delete(room_name)
+        success = await self.delete(self.HASH_KEY, self.STATS_KEY, room_name)
         
         if success:
             # Update domain-specific stats
-            await self._increment_stat("total_unregistered")
-            await self._update_stat("last_unregistered_at", 
+            await self._increment_stat(self.STATS_KEY, "total_unregistered")
+            await self._update_stat(self.STATS_KEY, "last_unregistered_at", 
                                    str(__import__('time').time()))
             logger.info(f"✅ Room '{room_name}' unregistered (room_id: {room_id})")
         else:
@@ -106,7 +106,7 @@ class RoomRegistryRepository(BaseHashRepository):
         Returns:
             True if registered, False otherwise
         """
-        return await self.exists(room_name)
+        return await self.exists(self.HASH_KEY, room_name)
     
     async def get_room_id(self, room_name: str) -> Optional[str]:
         """
@@ -118,7 +118,7 @@ class RoomRegistryRepository(BaseHashRepository):
         Returns:
             Room ID string or None if not registered
         """
-        return await self.get(room_name)
+        return await self.get(self.HASH_KEY, room_name)
     
     async def list_rooms(self) -> Dict[str, str]:
         """
@@ -127,7 +127,7 @@ class RoomRegistryRepository(BaseHashRepository):
         Returns:
             Dictionary {room_name: room_id}
         """
-        return await self.get_all()
+        return await self.get_all(self.HASH_KEY)
     
     async def count_rooms(self) -> int:
         """
@@ -136,7 +136,7 @@ class RoomRegistryRepository(BaseHashRepository):
         Returns:
             Number of registered rooms
         """
-        return await self.count()
+        return await self.count(self.HASH_KEY)
     
     async def clear_all_rooms(self) -> int:
         """
@@ -147,7 +147,7 @@ class RoomRegistryRepository(BaseHashRepository):
         Returns:
             Number of rooms cleared
         """
-        count = await self.clear()
+        count = await self.clear(self.HASH_KEY)
         logger.warning(f"🗑️ Cleared all {count} rooms from registry")
         return count
     
@@ -158,7 +158,7 @@ class RoomRegistryRepository(BaseHashRepository):
         Returns:
             Dictionary with registry-specific stats
         """
-        base_stats = await self.get_stats()
+        base_stats = await self.get_stats(self.HASH_KEY, self.STATS_KEY)
         
         # Add domain-specific fields
         redis = await self._get_redis()

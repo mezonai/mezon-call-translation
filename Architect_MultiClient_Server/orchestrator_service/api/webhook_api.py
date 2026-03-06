@@ -8,7 +8,7 @@ from orchestrator_service.services.egress_service import EgressService
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.controller.webhook_handler import WebhookHandler
 from orchestrator_service.models.webhook_models import WebhookResponse
-from orchestrator_service.services.redis.egress_repository import get_egress_repository
+from orchestrator_service.services.redis.egress_repository import EgressRepository
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -80,9 +80,9 @@ async def handle_webhook(request: Request):
 # This api use for testing purposes only
 @router.post("/egress/stop/{room_name}/{track_sid}")  
 async def stop_egress(room_name: str, track_sid: str):
-    """Manually stop egress cho track"""
-    repo = get_egress_repository(room_name)
-    egress_id = await repo.get_egress_id(track_sid)
+    """Manually stop egress for track"""
+    repo = EgressRepository()
+    egress_id = await repo.get_egress_id(room_name, track_sid)
     if not egress_id:
         raise HTTPException(404, f"No active egress for {track_sid} in room {room_name}")
     
@@ -94,7 +94,7 @@ async def stop_egress(room_name: str, track_sid: str):
 # This api use for testing purposes only
 @router.post("/egress/stop-all/{room_name}")
 async def stop_all_egresses_by_room(room_name: str):
-    """Stop tất cả egress trong một room"""
+    """stop all egresses in a room (for testing)"""
     active_count = await egress_service.get_active_count_by_room(room_name)
     if active_count == 0:
         return {"status": "ok", "message": f"No active egresses in room '{room_name}'", "stopped": 0}

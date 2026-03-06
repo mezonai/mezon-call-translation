@@ -28,27 +28,20 @@ class BaseHashRepository(ABC):
     - count() → HLEN
     - clear() → DEL
     
-    Subclasses should define:
-    - HASH_KEY: Redis hash key name
-    - STATS_KEY: Redis stats key name (optional)
     
     Example:
         class RoomRegistryRepository(BaseHashRepository):
-            HASH_KEY = "rooms:registry"
-            STATS_KEY = "rooms:stats"
     """
     
-    # Subclasses must override these
-    HASH_KEY: str = None
-    STATS_KEY: Optional[str] = None
+    
+    # Stats field names
+    STAT_TOTAL_SET = "total_set"
+    STAT_TOTAL_DELETED = "total_deleted"
+    STAT_LAST_SET_AT = "last_set_at"
+    STAT_LAST_DELETED_AT = "last_deleted_at"
     
     def __init__(self):
-        """Initialize repository."""
-        if self.HASH_KEY is None:
-            raise ValueError(
-                f"{self.__class__.__name__} must define HASH_KEY"
-            )
-        
+        """Initialize repository.""" 
         self._redis: Optional[Redis] = None
         logger.debug(f"{self.__class__.__name__} initialized")
     
@@ -63,7 +56,7 @@ class BaseHashRepository(ABC):
             self._redis = await get_redis_connection()
         return self._redis
     
-    async def set(self, key: str, value: str) -> bool:
+    async def set(self, HASH_KEY: str, STATS_KEY: Optional[str], key: str, value: str) -> bool:
         """
         Set a key-value pair in the hash.
         
@@ -78,7 +71,7 @@ class BaseHashRepository(ABC):
         
         try:
             # Check if exists first
-            exists = await redis.hexists(self.HASH_KEY, key)
+            exists = await redis.hexists(HASH_KEY, key)
             if exists:
                 logger.warning(
                     f"[{self.__class__.__name__}] Key '{key}' already exists"
@@ -86,12 +79,12 @@ class BaseHashRepository(ABC):
                 return False
             
             # Set value
-            await redis.hset(self.HASH_KEY, key, value)
-            
+            await redis.hset(HASH_KEY, key, value)
+
             # Update stats if enabled
-            if self.STATS_KEY:
-                await self._increment_stat("total_set")
-                await self._update_stat("last_set_at", str(time.time()))
+            if STATS_KEY:
+                await self._increment_stat(STATS_KEY, self.STAT_TOTAL_SET)
+                await self._update_stat(STATS_KEY, self.STAT_LAST_SET_AT, str(time.time()))
             
             logger.info(
                 f"[{self.__class__.__name__}] Set '{key}' = '{value}'"
@@ -104,7 +97,7 @@ class BaseHashRepository(ABC):
             )
             raise
     
-    async def get(self, key: str) -> Optional[str]:
+    async def get(self, HASH_KEY: str, key: str) -> Optional[str]:
         """
         Get value for a key.
         
@@ -117,7 +110,7 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
         
         try:
-            value = await redis.hget(self.HASH_KEY, key)
+            value = await redis.hget(HASH_KEY, key)
             return value
             
         except Exception as e:
@@ -126,7 +119,7 @@ class BaseHashRepository(ABC):
             )
             raise
     
-    async def delete(self, key: str) -> bool:
+    async def delete(self, HASH_KEY: str, STATS_KEY: Optional[str], key: str) -> bool:
         """
         Delete a key from the hash.
         
@@ -140,7 +133,7 @@ class BaseHashRepository(ABC):
         
         try:
             # Get value before deletion (for logging)
-            value = await redis.hget(self.HASH_KEY, key)
+            value = await redis.hget(HASH_KEY, key)
             
             if value is None:
                 logger.warning(
@@ -149,13 +142,13 @@ class BaseHashRepository(ABC):
                 return False
             
             # Delete
-            deleted = await redis.hdel(self.HASH_KEY, key)
+            deleted = await redis.hdel(HASH_KEY, key)
             
             if deleted > 0:
                 # Update stats if enabled
-                if self.STATS_KEY:
-                    await self._increment_stat("total_deleted")
-                    await self._update_stat("last_deleted_at", str(time.time()))
+                if STATS_KEY:
+                    await self._increment_stat(STATS_KEY, self.STAT_TOTAL_DELETED)
+                    await self._update_stat(STATS_KEY, self.STAT_LAST_DELETED_AT, str(time.time()))
                 
                 logger.info(
                     f"[{self.__class__.__name__}] Deleted '{key}' "
@@ -171,7 +164,7 @@ class BaseHashRepository(ABC):
             )
             raise
     
-    async def exists(self, key: str) -> bool:
+    async def exists(self, HASH_KEY: str, key: str) -> bool:
         """
         Check if a key exists.
         
@@ -184,7 +177,7 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
         
         try:
-            exists = await redis.hexists(self.HASH_KEY, key)
+            exists = await redis.hexists(HASH_KEY, key)
             return bool(exists)
             
         except Exception as e:
@@ -193,7 +186,7 @@ class BaseHashRepository(ABC):
             )
             raise
     
-    async def get_all(self) -> Dict[str, str]:
+    async def get_all(self, HASH_KEY: str) -> Dict[str, str]:
         """
         Get all key-value pairs.
         
@@ -203,7 +196,7 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
         
         try:
-            data = await redis.hgetall(self.HASH_KEY)
+            data = await redis.hgetall(HASH_KEY)
             return dict(data) if data else {}
             
         except Exception as e:
@@ -212,7 +205,7 @@ class BaseHashRepository(ABC):
             )
             raise
     
-    async def count(self) -> int:
+    async def count(self, HASH_KEY: str) -> int:
         """
         Count number of keys.
         
@@ -222,7 +215,7 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
         
         try:
-            count = await redis.hlen(self.HASH_KEY)
+            count = await redis.hlen(HASH_KEY)
             return count
             
         except Exception as e:
@@ -231,7 +224,7 @@ class BaseHashRepository(ABC):
             )
             raise
     
-    async def clear(self) -> int:
+    async def clear(self, HASH_KEY: str) -> int:
         """
         Clear all keys.
         
@@ -241,9 +234,9 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
         
         try:
-            count = await self.count()
+            count = await self.count(HASH_KEY)
             if count > 0:
-                await redis.delete(self.HASH_KEY)
+                await redis.delete(HASH_KEY)
                 logger.info(
                     f"[{self.__class__.__name__}] Cleared {count} keys"
                 )
@@ -255,28 +248,28 @@ class BaseHashRepository(ABC):
             )
             raise
     
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self, HASH_KEY: str, STATS_KEY: str) -> Dict[str, Any]:
         """
         Get repository statistics.
         
         Returns:
             Dictionary with stats
         """
-        if not self.STATS_KEY:
+        if not STATS_KEY:
             return {}
         
         redis = await self._get_redis()
         
         try:
-            stats_data = await redis.hgetall(self.STATS_KEY)
-            item_count = await self.count()
+            stats_data = await redis.hgetall(STATS_KEY)
+            item_count = await self.count(HASH_KEY)
             
             return {
                 "total_items": item_count,
-                "total_set": int(stats_data.get("total_set", 0)),
-                "total_deleted": int(stats_data.get("total_deleted", 0)),
-                "last_set_at": stats_data.get("last_set_at"),
-                "last_deleted_at": stats_data.get("last_deleted_at"),
+                self.STAT_TOTAL_SET: int(stats_data.get(self.STAT_TOTAL_SET, 0)),
+                self.STAT_TOTAL_DELETED: int(stats_data.get(self.STAT_TOTAL_DELETED, 0)),
+                self.STAT_LAST_SET_AT: stats_data.get(self.STAT_LAST_SET_AT),
+                self.STAT_LAST_DELETED_AT: stats_data.get(self.STAT_LAST_DELETED_AT),
             }
             
         except Exception as e:
@@ -287,18 +280,14 @@ class BaseHashRepository(ABC):
     
     # Helper methods for stats
     
-    async def _increment_stat(self, stat_name: str, amount: int = 1) -> None:
+    async def _increment_stat(self, STATS_KEY: str, stat_name: str, amount: int = 1) -> None:
         """Increment a stat counter."""
-        if not self.STATS_KEY:
-            return
-        
+
         redis = await self._get_redis()
-        await redis.hincrby(self.STATS_KEY, stat_name, amount)
+        await redis.hincrby(STATS_KEY, stat_name, amount)
     
-    async def _update_stat(self, stat_name: str, value: str) -> None:
+    async def _update_stat(self, STATS_KEY: str, stat_name: str, value: str) -> None:
         """Update a stat value."""
-        if not self.STATS_KEY:
-            return
         
         redis = await self._get_redis()
-        await redis.hset(self.STATS_KEY, stat_name, value)
+        await redis.hset(STATS_KEY, stat_name, value)
