@@ -49,15 +49,16 @@ class TranscriptionSegment:
 @singleton
 class WhisperTranscriptionProcessor:
     """
-    Processor that transcribes audio files using Whisper and sends batches to Redis.
+    Processor that transcribes audio files using Whisper and streams batches to Redis.
     
     Flow:
     1. Download audio from MinIO
-    2. Transcribe audio and collect all segments in memory
-    3. Split segments into batches (200 per batch)
-    4. Send each batch as SaveTranscriptionTask to Redis
-    5. Orchestrator consumer will save batches to MongoDB
-    6. Cleanup temp files
+    2. Transcribe audio and stream batches to Redis as segments are collected
+    3. Send batch immediately when CHUNK_BATCH_SIZE segments are ready
+    4. On success: send final "completed" marker task
+    5. On error: send "failed" marker task to notify consumer
+    6. Orchestrator consumer saves batches to MongoDB and updates track status
+    7. Cleanup temp files
     """
     
     # Configuration
@@ -200,18 +201,21 @@ class WhisperTranscriptionProcessor:
                 local_path.unlink()
             raise RuntimeError(f"Failed to download {filename}") from e
     
-    async def _transcribe_and_collect(
+    async def _transcribe_and_stream_batches(
         self,
         audio_path: Path,
-    ) -> tuple[List[Dict], str]:
+        track_ref_id: str,
+    ) -> int:
         """
-        Transcribe audio and collect all segments in memory.
+        Transcribe audio and stream batches to Redis as they're collected.
+        Sends batch immediately when CHUNK_BATCH_SIZE is reached.
         
         Args:
             audio_path: Path to audio file
+            track_ref_id: Egress ID / Track reference
             
         Returns:
-            Tuple of (segments_list, full_text)
+            Number of batches sent
         """
         if not self._whisper_model:
             raise RuntimeError("Whisper model not initialized")
@@ -219,14 +223,20 @@ class WhisperTranscriptionProcessor:
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
         
+        if not self._redis_producer:
+            raise RuntimeError("Redis producer not initialized")
+        
         whisper_config = self._config.whisper
         logger.info(f"🎤 Starting transcription for {audio_path.name}...")
+        
+        # Create queue for communication between thread and async code
+        batch_queue = asyncio.Queue()
         
         # Run transcription in thread pool
         loop = asyncio.get_event_loop()
         
         def transcribe_in_thread():
-            """Transcribe audio and collect all segments"""
+            """Transcribe audio and send batches via queue"""
             try:
                 segments_generator, info = self._whisper_model.transcribe(
                     str(audio_path),
@@ -235,9 +245,8 @@ class WhisperTranscriptionProcessor:
                     vad_filter=whisper_config.vad_filter,
                 )
                 
-                # Collect all segments
-                segments = []
-                full_text_parts = []
+                # Collect segments into batches
+                current_batch = []
                 
                 for seg in segments_generator:
                     segment = TranscriptionSegment(
@@ -248,94 +257,127 @@ class WhisperTranscriptionProcessor:
                     )
                     
                     segment_dict = segment.to_dict()
-                    segments.append(segment_dict)
-                    full_text_parts.append(segment_dict['text'])
+                    current_batch.append(segment_dict)
+                    
+                    # When batch is full, send it immediately
+                    if len(current_batch) >= self.CHUNK_BATCH_SIZE:
+                        asyncio.run_coroutine_threadsafe(
+                            batch_queue.put(('batch', current_batch.copy())),
+                            loop
+                        )
+                        current_batch.clear()
                 
-                full_text = " ".join(full_text_parts)
+                # Send remaining segments as final batch
+                if current_batch:
+                    asyncio.run_coroutine_threadsafe(
+                        batch_queue.put(('batch', current_batch)),
+                        loop
+                    )
                 
-                return segments, full_text
+                # Signal completion
+                asyncio.run_coroutine_threadsafe(
+                    batch_queue.put(('done', None)),
+                    loop
+                )
                 
             except Exception as e:
                 logger.error(f"❌ Transcription failed in thread: {e}", exc_info=True)
-                raise RuntimeError(f"Whisper transcription failed: {e}") from e
+                # Signal error
+                asyncio.run_coroutine_threadsafe(
+                    batch_queue.put(('error', str(e))),
+                    loop
+                )
         
-        # Run in thread pool
-        segments, full_text = await loop.run_in_executor(
-            None,
-            transcribe_in_thread
-        )
+        # Start transcription in thread
+        transcription_task = loop.run_in_executor(None, transcribe_in_thread)
         
-        logger.info(
-            f"✅ Transcription complete: {len(segments)} segments, "
-            f"{len(full_text)} characters"
-        )
+        # Process batches as they arrive
+        chunk_index = 0
+        total_segments = 0
         
-        return segments, full_text
-    
-    async def _send_batches_to_redis(
-        self,
-        track_ref_id: str,
-        segments: List[Dict],
-    ) -> int:
-        """
-        Split segments into batches and send to Redis as SaveTranscriptionTask.
-        
-        Args:
-            track_ref_id: Egress ID / Track reference
-            segments: All transcription segments
+        try:
+            while True:
+                msg_type, data = await batch_queue.get()
+                
+                if msg_type == 'batch':
+                    batch_segments = data
+                    total_segments += len(batch_segments)
+                    
+                    start_time = batch_segments[0]['start']
+                    end_time = batch_segments[-1]['end']
+                    
+                    task = SaveTranscriptionTask(
+                        track_ref_id=track_ref_id,
+                        segments=batch_segments,
+                        chunk_index=chunk_index,
+                        start_time=start_time,
+                        end_time=end_time,
+                        item_count=len(batch_segments),
+                        is_final=False,
+                        status="pending",
+                    )
+                    
+                    await self._redis_producer.enqueue(task)
+                    
+                    logger.info(
+                        f"📥 Sent batch {chunk_index + 1}: "
+                        f"{len(batch_segments)} segments, "
+                        f"time={start_time:.1f}-{end_time:.1f}s"
+                    )
+                    
+                    chunk_index += 1
+                    
+                elif msg_type == 'done':
+                    # Send final marker task
+                    final_task = SaveTranscriptionTask(
+                        track_ref_id=track_ref_id,
+                        segments=[],
+                        chunk_index=chunk_index,
+                        start_time=0.0,
+                        end_time=0.0,
+                        item_count=0,
+                        is_final=True,
+                        status="completed",
+                    )
+                    await self._redis_producer.enqueue(final_task)
+                    
+                    logger.info(
+                        f"✅ Transcription complete: {total_segments} segments, "
+                        f"{chunk_index} batches sent"
+                    )
+                    break
+                    
+                elif msg_type == 'error':
+                    error_msg = data
+                    
+                    # Send failed task to notify consumer
+                    failed_task = SaveTranscriptionTask(
+                        track_ref_id=track_ref_id,
+                        segments=[],
+                        chunk_index=chunk_index,
+                        start_time=0.0,
+                        end_time=0.0,
+                        item_count=0,
+                        is_final=True,
+                        status="failed",
+                    )
+                    await self._redis_producer.enqueue(failed_task)
+                    logger.info("📤 Sent failed task to Redis for consumer to mark track as failed")
+                    
+                    # Wait for thread to complete
+                    await transcription_task
+                    
+                    raise RuntimeError(f"Whisper transcription failed: {error_msg}")
             
-        Returns:
-            Number of batches sent
-        """
-        if not self._redis_producer:
-            raise RuntimeError("Redis producer not initialized")
-        
-        total_segments = len(segments)
-        num_batches = math.ceil(total_segments / self.CHUNK_BATCH_SIZE)
-        
-        logger.info(
-            f"📤 Sending {total_segments} segments in {num_batches} batches "
-            f"({self.CHUNK_BATCH_SIZE} per batch)"
-        )
-        
-        for chunk_idx in range(num_batches):
-            # Calculate batch range
-            start_idx = chunk_idx * self.CHUNK_BATCH_SIZE
-            end_idx = min(start_idx + self.CHUNK_BATCH_SIZE, total_segments)
-            batch_segments = segments[start_idx:end_idx]
+            # Wait for thread to complete
+            await transcription_task
             
-            # Get time range
-            start_time = batch_segments[0]['start']
-            end_time = batch_segments[-1]['end']
+            return chunk_index
             
-            # Check if this is the final batch
-            is_final = (chunk_idx == num_batches - 1)
-            
-            # Create task
-            task = SaveTranscriptionTask(
-                track_ref_id=track_ref_id,
-                segments=batch_segments,
-                chunk_index=chunk_idx,
-                start_time=start_time,
-                end_time=end_time,
-                item_count=len(batch_segments),
-                is_final=is_final,
-                status="pending",
-            )
-            
-            # Send to Redis
-            task_id = await self._redis_producer.enqueue(task)
-            
-            logger.info(
-                f"📥 Sent batch {chunk_idx + 1}/{num_batches}: "
-                f"{len(batch_segments)} segments, "
-                f"time={start_time:.1f}-{end_time:.1f}s, "
-                f"final={is_final}, task_id={task_id}"
-            )
-        
-        logger.info(f"✅ All {num_batches} batches sent to Redis")
-        return num_batches
-            
+        except Exception as e:
+            # Ensure thread completes even on error
+            await transcription_task
+            raise
     
     
     def _cleanup_temp_file(self, file_path: Path):
@@ -354,15 +396,14 @@ class WhisperTranscriptionProcessor:
     
     async def process(self, task: TranscriptionStreamTask) -> str:
         """
-        Process a transcription task by sending batches to Redis.
+        Process a transcription task by streaming batches to Redis.
         
         Main entry point that orchestrates the entire transcription flow:
         1. Initialize resources
         2. Download audio from MinIO
-        3. Transcribe and collect segments in memory
-        4. Split into batches and send to Redis
-        5. Orchestrator consumer will save to MongoDB progressively
-        6. Cleanup temp files
+        3. Transcribe and stream batches to Redis as they're collected
+        4. On error, send failed task to notify consumer
+        5. Cleanup temp files
         
         Args:
             task: TranscriptionStreamTask with file information
@@ -385,38 +426,35 @@ class WhisperTranscriptionProcessor:
             # STEP 1: Download audio from MinIO
             local_file, file_size_mb = await self._download_from_minio(task.filename)
             
-            # STEP 2: Transcribe and collect all segments
-            segments, full_text = await self._transcribe_and_collect(local_file)
-            
-            # STEP 3: Send batches to Redis
-            num_batches = await self._send_batches_to_redis(
+            # STEP 2: Transcribe and stream batches to Redis
+            # Batches are sent immediately when CHUNK_BATCH_SIZE is reached
+            # If transcription fails, a failed task is sent to notify consumer
+            num_batches = await self._transcribe_and_stream_batches(
+                audio_path=local_file,
                 track_ref_id=track_ref_id,
-                segments=segments,
             )
             
-            # STEP 4: Log final results
+            # STEP 3: Log final results
             logger.info(
                 f"\n{'='*60}\n"
-                f"✅ TRANSCRIPTION COMPLETE - BATCHES SENT TO REDIS\n"
+                f"✅ TRANSCRIPTION COMPLETE - BATCHES STREAMED TO REDIS\n"
                 f"{'='*60}\n"
                 f"File: {task.filename}\n"
                 f"Size: {file_size_mb:.2f} MB\n"
-                f"Total segments: {len(segments)}\n"
                 f"Batches sent: {num_batches}\n"
-                f"Text length: {len(full_text)} characters\n"
                 f"Track ID: {track_ref_id}\n"
-                f"Status: Pending save in Redis queue\n"
+                f"Status: All batches sent to Redis queue\n"
                 f"{'='*60}"
             )
             
-            return full_text
+            return ""
             
         except Exception as e:
             logger.error(f"❌ Failed to process transcription: {e}")
             raise
             
         finally:
-            # STEP 5: Always cleanup temp file
+            # STEP 4: Always cleanup temp file
             if local_file:
                 self._cleanup_temp_file(local_file)
     

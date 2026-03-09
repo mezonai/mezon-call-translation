@@ -217,34 +217,59 @@ class RedisSaveTranscriptionService:
         """
         Process a save transcription task.
         
+        Handles three task statuses:
+        - "pending": Normal batch with segments to save
+        - "completed": Final marker indicating successful transcription completion
+        - "failed": Error marker indicating transcription failed
+        
         Args:
-            task: SaveTranscriptionTask with batch of segments
+            task: SaveTranscriptionTask with batch of segments or status marker
             
         Returns:
             True if successful, False otherwise
         """
         logger.info(
             f"💾 Processing save task {task.task_id}: "
-            f"track={task.track_ref_id}, chunk={task.chunk_index}, "
-            f"segments={task.item_count}, final={task.is_final}"
+            f"track={task.track_ref_id}, status={task.status}, "
+            f"chunk={task.chunk_index}, segments={task.item_count}, final={task.is_final}"
         )
         
         try:
-            # Save segments to MongoDB
-            await self._mongodb_service.append_transcript_chunk(
-                track_ref_id=task.track_ref_id,
-                new_segments=task.segments
-            )
+            # Handle failed transcription
+            if task.status == "failed":
+                logger.error(
+                    f"❌ Transcription failed for track {task.track_ref_id}, "
+                    f"updating track status to 'failed'"
+                )
+                
+                success = await self._mongodb_service.update_track_status(
+                    track_ref_id=task.track_ref_id,
+                    status="failed"
+                )
+                
+                if success:
+                    logger.info(
+                        f"\n{'='*60}\n"
+                        f"❌ TRANSCRIPTION FAILED\n"
+                        f"{'='*60}\n"
+                        f"Track ID: {task.track_ref_id}\n"
+                        f"Status: failed\n"
+                        f"{'='*60}"
+                    )
+                else:
+                    logger.warning(
+                        f"Failed to update status for track {task.track_ref_id}"
+                    )
+                
+                # ACK the task
+                await self._redis_service.acknowledge(task)
+                self._local_stats["batches_failed"] += 1
+                return True
             
-            logger.info(
-                f"💾 Saved {task.item_count} segments for track {task.track_ref_id} "
-                f"(chunk {task.chunk_index}, time {task.start_time:.1f}-{task.end_time:.1f}s)"
-            )
-            
-            # If this is the final chunk, update track status
-            if task.is_final:
+            # Handle completed status (final marker with no segments)
+            if task.status == "completed" and task.is_final:
                 logger.info(
-                    f"🏁 Final chunk received for track {task.track_ref_id}, "
+                    f"🏁 Completion marker received for track {task.track_ref_id}, "
                     f"updating status to 'completed'"
                 )
                 
@@ -275,13 +300,33 @@ class RedisSaveTranscriptionService:
                     logger.warning(
                         f"Failed to update status for track {task.track_ref_id}"
                     )
+                
+                # ACK the task
+                await self._redis_service.acknowledge(task)
+                self._local_stats["batches_processed"] += 1
+                return True
+            
+            # Handle normal pending batch with segments
+            if task.segments and len(task.segments) > 0:
+                # Save segments to MongoDB
+                await self._mongodb_service.append_transcript_chunk(
+                    track_ref_id=task.track_ref_id,
+                    new_segments=task.segments
+                )
+                
+                logger.info(
+                    f"💾 Saved {task.item_count} segments for track {task.track_ref_id} "
+                    f"(chunk {task.chunk_index}, time {task.start_time:.1f}-{task.end_time:.1f}s)"
+                )
+                
+                # Update local stats
+                self._local_stats["total_segments_saved"] += task.item_count
             
             # ACK the task
             await self._redis_service.acknowledge(task)
             
             # Update local stats
             self._local_stats["batches_processed"] += 1
-            self._local_stats["total_segments_saved"] += task.item_count
             
             return True
             
