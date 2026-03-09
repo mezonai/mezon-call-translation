@@ -14,7 +14,8 @@ from orchestrator_service.api.tts_api import router as tts_router
 from orchestrator_service.api.chat_external_api import router as chat_external_router
 from orchestrator_service.api.sse_transcript_api import router as stream_router
 from orchestrator_service.api.sse_chat_external_api import router as sse_chat_external_router
-from orchestrator_service.api.sse_metadata_api import router as sse_metadata_router, sse_manager
+from orchestrator_service.api.sse_metadata_api import router as sse_metadata_router
+from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.webhook_api import router as webhook_router, egress_service
 from orchestrator_service.api.room_api import router as room_router
 from orchestrator_service.api.track_api import router as track_router
@@ -33,6 +34,7 @@ import signal
 # Load config
 config = get_config()
 logger = get_logger(__name__)
+sse_manager = SSEManager()  # Get singleton instance
 original_sigint = signal.getsignal(signal.SIGINT)
 original_sigterm = signal.getsignal(signal.SIGTERM)
 

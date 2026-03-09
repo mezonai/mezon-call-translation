@@ -820,7 +820,7 @@ class MongoDBService:
         self,
         track_ref_id: str,
         status: str
-    ) -> bool:
+    ) -> dict[str, Any]:
         """
         Update track status.
         
@@ -829,38 +829,32 @@ class MongoDBService:
             status: New status ('processing' | 'completed' | 'failed')
             
         Returns:
-            True if successful
+            Updated track document if successful, None if failed
         """
         if not self.connected:
-            return False
+            return None
 
         try:
-            # Get current track to check if exists
-            current_track = await self.tracks_collection.find_one({"_id": track_ref_id})
-            
-            if not current_track:
-                logger.error(f"Track not found: track_id={track_ref_id}")
-                return False
-            
-            old_status = current_track.get("status", "")
-            
-            # Update track status
-            result = await self.tracks_collection.update_one(
+            # Atomically update and return the document
+            updated_track = await self.tracks_collection.find_one_and_update(
                 {"_id": track_ref_id},
-                {"$set": {"status": status, "updated_at": datetime.utcnow()}}
+                {"$set": {"status": status, "updated_at": datetime.utcnow()}},
+                return_document=ReturnDocument.AFTER
             )
             
-            if result.modified_count == 0:
-                logger.warning(f"Track status not modified: track_id={track_ref_id}")
-                return False
+            if not updated_track:
+                logger.error(f"Track not found: track_id={track_ref_id}")
+                return None
+            
+            old_status = updated_track.get("status", status)
             
             logger.info(f"📝 Track status updated: {old_status} → {status} (track_id={track_ref_id})")
             
-            return True
+            return updated_track
 
         except Exception as e:
             logger.error(f"Failed to update track status: {e}")
-            return False
+            return None
         
     async def append_transcript_chunk(
         self,

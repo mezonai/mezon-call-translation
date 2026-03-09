@@ -138,13 +138,6 @@ class TranscriptionService:
                 service = get_summary_service()
                 await service.generate_summary(room_id)
 
-
-
-                await metadata_channel.push_room_summary_done(
-                    room_id=room_id,
-                    room_name=room_name
-                )
-
             return True
         except Exception as e:
             logger.exception("Failed to end room transcription: %s", e)

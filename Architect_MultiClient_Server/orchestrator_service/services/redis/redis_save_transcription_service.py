@@ -17,6 +17,7 @@ from orchestrator_service.services.redis.redis_stream_service import (
 from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.services.summary_service import get_summary_service
 
 logger = get_logger(__name__)
 
@@ -253,6 +254,9 @@ class RedisSaveTranscriptionService:
                 )
                 
                 if success:
+                    # Get room_ref_id from updated track
+                    room_ref_id = success.get("room_ref_id")
+                    
                     # Log final summary
                     logger.info(
                         f"\n{'='*60}\n"
@@ -262,6 +266,11 @@ class RedisSaveTranscriptionService:
                         f"Status: completed\n"
                         f"{'='*60}"
                     )
+                    
+                    # Check and complete room if all tracks are done
+                    if room_ref_id and await self._mongodb_service.check_and_complete_room(str(room_ref_id)):
+                        service = get_summary_service()
+                        await service.generate_summary(str(room_ref_id))
                 else:
                     logger.warning(
                         f"Failed to update status for track {task.track_ref_id}"
