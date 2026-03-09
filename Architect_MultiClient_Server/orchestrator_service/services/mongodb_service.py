@@ -817,16 +817,129 @@ class MongoDBService:
             logger.error(f"Failed to get summary by room id: {e}")
             return []
 
-# # ========================================
-# # 🏭 SINGLETON PATTERN
-# # ========================================
+    # ==========================================================
+    # 🔥 TRANSCRIPTION PROGRESSIVE SAVE METHODS
+    # ==========================================================
 
-# # Global singleton instance
-# _mongodb_service: Optional['MongoDBService'] = None
+    def _split_into_chunks(self, segments: List[Dict]) -> List[List[Dict]]:
+        """Split segments into chunks of CHUNK_SIZE"""
+        CHUNK_SIZE = 50
+        chunks = []
+        for i in range(0, len(segments), CHUNK_SIZE):
+            chunk = segments[i:i + CHUNK_SIZE]
+            chunks.append(chunk)
+        return chunks
 
-# def MongoDBService() -> MongoDBService:
-#     """Get singleton instance of MongoDB service"""
-#     global _mongodb_service
-#     if _mongodb_service is None:
-#         _mongodb_service = MongoDBService()
-#     return _mongodb_service
+    def _create_chunk_document(
+        self,
+        track_ref_id: str,
+        chunk_index: int,
+        segments: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Create a chunk document from segments"""
+        if not segments:
+            raise ValueError("Cannot create chunk document with empty segments")
+
+        return {
+            "track_ref_id": track_ref_id,
+            "chunk_index": chunk_index,
+            "start_time": segments[0].get("start", 0),
+            "end_time": segments[-1].get("end", 0),
+            "item_count": len(segments),
+            "segments": segments,
+        }
+
+    async def update_track_status(
+        self,
+        track_ref_id: str,
+        status: str
+    ) -> bool:
+        """
+        Update track status.
+        
+        Args:
+            track_ref_id: Track _id (egress_id string)
+            status: New status ('processing' | 'completed' | 'failed')
+            
+        Returns:
+            True if successful
+        """
+        if not self.connected:
+            return False
+
+        try:
+            # Get current track to check if exists
+            current_track = await self.tracks_collection.find_one({"_id": track_ref_id})
+            
+            if not current_track:
+                logger.error(f"Track not found: track_id={track_ref_id}")
+                return False
+            
+            old_status = current_track.get("status", "")
+            
+            # Update track status
+            result = await self.tracks_collection.update_one(
+                {"_id": track_ref_id},
+                {"$set": {"status": status, "updated_at": datetime.utcnow()}}
+            )
+            
+            if result.modified_count == 0:
+                logger.warning(f"Track status not modified: track_id={track_ref_id}")
+                return False
+            
+            logger.info(f"📝 Track status updated: {old_status} → {status} (track_id={track_ref_id})")
+            
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update track status: {e}")
+            return False
+        
+    async def append_transcript_chunk(
+        self,
+        track_ref_id: str,
+        new_segments: List[Dict[str, Any]]
+    ) -> bool:
+        """Append new segments as additional chunks"""
+        if not new_segments:
+            return True
+
+        last_chunk = await self.chunks_collection.find_one(
+            {"track_ref_id": track_ref_id},
+            sort=[("chunk_index", -1)]
+        )
+
+        start_index = (last_chunk["chunk_index"] + 1) if last_chunk else 0
+        chunks = self._split_into_chunks(new_segments)
+        chunk_documents = []
+
+        for i, chunk_segments in enumerate(chunks):
+            chunk_doc = self._create_chunk_document(
+                track_ref_id=track_ref_id,
+                chunk_index=start_index + i,
+                segments=chunk_segments
+            )
+            chunk_documents.append(chunk_doc)
+
+        try:
+            if chunk_documents:
+                await self.chunks_collection.insert_many(chunk_documents)
+                
+                # Update chunk_count in tracks collection
+                await self.tracks_collection.update_one(
+                    {"_id": track_ref_id},
+                    {
+                        "$inc": {"chunk_count": len(chunk_documents)}
+                    }
+                )
+
+                logger.info(
+                    f"✅ Appended {len(chunk_documents)} chunks "
+                    f"for track_ref_id={track_ref_id}"
+                )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to append chunks: {e}")
+            return False
+

@@ -9,7 +9,7 @@ from orchestrator_service.services.summary_service import get_summary_service
 from typing import Dict, Optional
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.redis_producer_service import (
+from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
 )

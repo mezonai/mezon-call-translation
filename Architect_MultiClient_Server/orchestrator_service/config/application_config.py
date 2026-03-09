@@ -240,35 +240,6 @@ class LLMConfig:
 
 
 # ============================================================================
-# Interview Configuration
-# ============================================================================
-
-@dataclass
-class InterviewConfig:
-    """Configuration for interview webhook service"""
-    webhook_url: str = ""
-    webhook_api_key: str = ""
-    timeout: float = 30.0
-    enabled: bool = False
-    
-    @classmethod
-    def from_env(cls) -> 'InterviewConfig':
-        """Create Interview config from environment variables"""
-        return cls(
-            webhook_url=os.getenv('INTERVIEW_WEBHOOK_URL', ''),
-            webhook_api_key=os.getenv('INTERVIEW_WEBHOOK_API_KEY', ''),
-            timeout=float(os.getenv('INTERVIEW_WEBHOOK_TIMEOUT', '30.0')),
-            enabled=os.getenv('INTERVIEW_ENABLED', 'false').lower() == 'true',
-        )
-    
-    def validate(self) -> bool:
-        """Validate interview configuration"""
-        if self.enabled and not self.webhook_url:
-            return False
-        return True
-
-
-# ============================================================================
 # Redis Configuration (Task Queue)
 # ============================================================================
 
@@ -283,6 +254,7 @@ class RedisConfig:
     max_connections: int = 10
     socket_timeout: float = 30.0
     socket_connect_timeout: float = 10.0
+    block_timeout_ms: int = 5000  # Timeout for blocking operations (e.g., XREADGROUP)
     
     @classmethod
     def from_env(cls) -> 'RedisConfig':
@@ -296,6 +268,7 @@ class RedisConfig:
             max_connections=int(os.getenv('REDIS_MAX_CONNECTIONS', '10')),
             socket_timeout=float(os.getenv('REDIS_SOCKET_TIMEOUT', '30.0')),
             socket_connect_timeout=float(os.getenv('REDIS_SOCKET_CONNECT_TIMEOUT', '10.0')),
+            block_timeout_ms=int(os.getenv('REDIS_BLOCK_TIMEOUT_MS', '5000')),
         )
 
 
@@ -328,7 +301,6 @@ class Config:
         self.logger = LoggerConfig.from_env()
         self.minio = MinIOConfig.from_env()
         self.llm = LLMConfig.from_env()
-        self.interview = InterviewConfig.from_env()
         self.redis = RedisConfig.from_env()
         
         self._initialized = True
@@ -340,8 +312,7 @@ class Config:
             raise ValueError("Invalid LiveKit configuration")
         if not self.minio.validate():
             raise ValueError("Invalid MinIO configuration")
-        if not self.interview.validate():
-            raise ValueError("Invalid Interview configuration")
+
     
     @classmethod
     def get_instance(cls) -> 'Config':
@@ -361,11 +332,3 @@ class Config:
 def get_config() -> Config:
     """Get the global configuration instance"""
     return Config.get_instance()
-
-
-# ============================================================================
-# Constants (backward compatibility)
-# ============================================================================
-
-# Audio constants - these are loaded from config
-_config = get_config()

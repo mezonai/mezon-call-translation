@@ -1,10 +1,11 @@
 """
-Whisper Transcription Processor - STREAMING MODE ONLY
+Whisper Transcription Processor - BATCHED REDIS MODE
 
-Progressive transcription with real-time saving:
-1. Save track metadata immediately
-2. Transcribe and save chunks progressively (every 200 segments)
-3. Update final status
+Transcription flow with Redis-based batched sending:
+1. Download audio from MinIO
+2. Transcribe and collect segments in memory
+3. Send batches of segments as Redis tasks (200 segments per task)
+4. Orchestrator will consume tasks and save to MongoDB progressively
 """
 
 import asyncio
@@ -12,18 +13,18 @@ import logging
 import tempfile
 import shutil
 import math
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 from dataclasses import dataclass
 
 from minio import Minio
 from faster_whisper import WhisperModel
-from bson import ObjectId
 
-from stt_service.service.mongodb_service import MongoDBService
+from stt_service.service.redis.redis_producer_service import RedisProducerService
+from stt_service.utils.decorator import singleton
 
 from ..config import get_config
-from ..models import TranscriptionStreamTask
+from ..models import TranscriptionStreamTask, SaveTranscriptionTask
 
 logger = logging.getLogger(__name__)
 
@@ -45,22 +46,23 @@ class TranscriptionSegment:
         }
 
 
+@singleton
 class WhisperTranscriptionProcessor:
     """
-    Processor that transcribes audio files using Whisper with progressive saving.
+    Processor that transcribes audio files using Whisper and sends batches to Redis.
     
     Flow:
     1. Download audio from MinIO
-    2. Save track metadata to MongoDB (status: "processing")
-    3. Transcribe audio progressively, saving chunks every CHUNK_BATCH_SIZE segments
-    4. Update track status to "completed" or "failed"
-    5. Cleanup temp files
+    2. Transcribe audio and collect all segments in memory
+    3. Split segments into batches (200 per batch)
+    4. Send each batch as SaveTranscriptionTask to Redis
+    5. Orchestrator consumer will save batches to MongoDB
+    6. Cleanup temp files
     """
     
-    _instance: Optional['WhisperTranscriptionProcessor'] = None
-    
     # Configuration
-    CHUNK_BATCH_SIZE = 200  # Save to DB every 200 segments
+    CHUNK_BATCH_SIZE = 50  # Send to Redis every 200 segments
+    SAVE_STREAM_KEY = "save_transcription:stream"  # Redis stream for save tasks
     
     def __init__(self):
         self._config = get_config()
@@ -68,28 +70,24 @@ class WhisperTranscriptionProcessor:
         self._whisper_model: Optional[WhisperModel] = None
         self._initialized = False
         self._temp_dir: Optional[Path] = None
-        self.mongodb_service = None
-        
-        logger.info("WhisperTranscriptionProcessor created (streaming mode)")
-    
-    @classmethod
-    def get_instance(cls) -> 'WhisperTranscriptionProcessor':
-        """Get singleton instance."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+        self._redis_producer: Optional[RedisProducerService] = None
+        self.CHUNK_BATCH_SIZE = self._config.Transcirpt.chunk_size
+        logger.info("WhisperTranscriptionProcessor created (batched Redis mode)")
     
     async def initialize(self):
-        """Initialize MinIO client, Whisper model, MongoDB, and temp directory."""
+        """Initialize MinIO client, Whisper model, Redis producer, and temp directory."""
         if self._initialized:
             return
         
         logger.info("Initializing WhisperTranscriptionProcessor...")
         
-        # Initialize MongoDB
-        self.mongodb_service = MongoDBService()
-        await self.mongodb_service.connect()
-        logger.info("✅ MongoDB connected")
+        # Initialize Redis producer for save tasks
+        self._redis_producer = RedisProducerService.get_instance(
+            task_class=SaveTranscriptionTask,
+            stream_key=self.SAVE_STREAM_KEY
+        )
+        await self._redis_producer.connect()
+        logger.info("✅ Redis producer connected")
         
         # Create temp directory for audio files
         self._temp_dir = Path(tempfile.gettempdir()) / "whisper_transcriptions"
@@ -202,13 +200,19 @@ class WhisperTranscriptionProcessor:
                 local_path.unlink()
             raise RuntimeError(f"Failed to download {filename}") from e
     
-    async def _transcribe_with_progressive_saving(
+    async def _transcribe_and_collect(
         self,
         audio_path: Path,
-        track_ref_id: str,
-    ) -> tuple[str, int, Dict[str, Any]]:
-        """Transcribe with progressive saving using async queue"""
+    ) -> tuple[List[Dict], str, Dict[str, Any]]:
+        """
+        Transcribe audio and collect all segments in memory.
         
+        Args:
+            audio_path: Path to audio file
+            
+        Returns:
+            Tuple of (segments_list, full_text, info_dict)
+        """
         if not self._whisper_model:
             raise RuntimeError("Whisper model not initialized")
         
@@ -216,127 +220,116 @@ class WhisperTranscriptionProcessor:
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
         
         whisper_config = self._config.whisper
-        logger.info(f"🎤 Starting progressive transcription for {audio_path.name}...")
+        logger.info(f"🎤 Starting transcription for {audio_path.name}...")
         
-        # Shared queue between transcription thread and saving coroutine
-        segment_queue = asyncio.Queue(maxsize=500)  # Buffer up to 500 segments
-        transcription_done = asyncio.Event()
-        transcription_error = None
-        info_container = {}
-        
+        # Run transcription in thread pool
         loop = asyncio.get_event_loop()
         
         def transcribe_in_thread():
-            """Producer: Generate segments in thread"""
-            nonlocal transcription_error
-            try:
-                segments_generator, info = self._whisper_model.transcribe(
-                    str(audio_path),
-                    language=whisper_config.language if whisper_config.language else None,
-                    beam_size=whisper_config.beam_size,
-                    vad_filter=whisper_config.vad_filter,
-                )
-                
-                # Store info for later
-                info_container['info'] = info
-                
-                # Feed segments to queue
-                for seg in segments_generator:
-                    segment = TranscriptionSegment(
-                        start=seg.start,
-                        end=seg.end,
-                        text=seg.text.strip(),
-                        confidence=round(math.exp(seg.avg_logprob), 4)
-                    )
-                    
-                    # Put segment in queue (thread-safe)
-                    loop.call_soon_threadsafe(
-                        segment_queue.put_nowait,
-                        segment.to_dict()
-                    )
-                
-            except Exception as e:
-                transcription_error = e
-                logger.error(f"Transcription error: {e}")
-            finally:
-                # Signal completion
-                loop.call_soon_threadsafe(transcription_done.set)
-        
-        async def consume_and_save():
-            """Consumer: Save segments progressively"""
-            segment_buffer = []
+            """Transcribe audio and collect all segments"""
+            segments_generator, info = self._whisper_model.transcribe(
+                str(audio_path),
+                language=whisper_config.language if whisper_config.language else None,
+                beam_size=whisper_config.beam_size,
+                vad_filter=whisper_config.vad_filter,
+            )
+            
+            # Collect all segments
+            segments = []
             full_text_parts = []
-            total_segments = 0
             
-            while not transcription_done.is_set() or not segment_queue.empty():
-                try:
-                    # Wait for segment with timeout
-                    segment = await asyncio.wait_for(segment_queue.get(), timeout=0.1)
-                    
-                    segment_buffer.append(segment)
-                    full_text_parts.append(segment['text'])
-                    total_segments += 1
-                    
-                    # Save batch when buffer is full
-                    if len(segment_buffer) >= self.CHUNK_BATCH_SIZE:
-                        await self.mongodb_service.append_transcript_chunk(
-                            track_ref_id=track_ref_id,
-                            new_segments=segment_buffer
-                        )
-                        logger.debug(f"💾 Saved batch (total: {total_segments} segments)")
-                        segment_buffer.clear()
-                    
-                except asyncio.TimeoutError:
-                    # No segment available, check if done
-                    continue
-            
-            # Save remaining segments
-            if segment_buffer:
-                logger.info(f"💾 Saving final batch of {len(segment_buffer)} segments")
-                await self.mongodb_service.append_transcript_chunk(
-                    track_ref_id=track_ref_id,
-                    new_segments=segment_buffer
+            for seg in segments_generator:
+                segment = TranscriptionSegment(
+                    start=seg.start,
+                    end=seg.end,
+                    text=seg.text.strip(),
+                    confidence=round(math.exp(seg.avg_logprob), 4)
                 )
+                
+                segment_dict = segment.to_dict()
+                segments.append(segment_dict)
+                full_text_parts.append(segment_dict['text'])
             
-            return full_text_parts, total_segments
+            full_text = " ".join(full_text_parts)
+            
+            return segments, full_text
         
-        # Start transcription in thread pool
-        transcribe_task = loop.run_in_executor(None, transcribe_in_thread)
-        
-        # Start consuming and saving
-        full_text_parts, total_segments = await consume_and_save()
-        
-        # Wait for transcription thread to finish
-        await transcribe_task
-        
-        # Check for errors
-        if transcription_error:
-            raise RuntimeError(f"Transcription failed: {transcription_error}")
-        
-        # Build results
-        full_text = " ".join(full_text_parts)
-        info = info_container.get('info')
-        
-        if not info:
-            raise RuntimeError("Transcription info not available")
-        
-        lang_prob = info.language_probability
-        if math.isnan(lang_prob):
-            lang_prob = 0.0
-        
-        info_dict = {
-            "language": info.language,
-            "language_probability": lang_prob,
-            "duration": info.duration,
-            "duration_after_vad": info.duration_after_vad,
-        }
+        # Run in thread pool
+        segments, full_text = await loop.run_in_executor(
+            None,
+            transcribe_in_thread
+        )
         
         logger.info(
-            f"✅ Progressive transcription complete: {total_segments} segments, "
+            f"✅ Transcription complete: {len(segments)} segments, "
             f"{len(full_text)} characters"
         )
         
-        return full_text, total_segments, info_dict
+        return segments, full_text
+    
+    async def _send_batches_to_redis(
+        self,
+        track_ref_id: str,
+        segments: List[Dict],
+    ) -> int:
+        """
+        Split segments into batches and send to Redis as SaveTranscriptionTask.
+        
+        Args:
+            track_ref_id: Egress ID / Track reference
+            segments: All transcription segments
+            
+        Returns:
+            Number of batches sent
+        """
+        if not self._redis_producer:
+            raise RuntimeError("Redis producer not initialized")
+        
+        total_segments = len(segments)
+        num_batches = math.ceil(total_segments / self.CHUNK_BATCH_SIZE)
+        
+        logger.info(
+            f"📤 Sending {total_segments} segments in {num_batches} batches "
+            f"({self.CHUNK_BATCH_SIZE} per batch)"
+        )
+        
+        for chunk_idx in range(num_batches):
+            # Calculate batch range
+            start_idx = chunk_idx * self.CHUNK_BATCH_SIZE
+            end_idx = min(start_idx + self.CHUNK_BATCH_SIZE, total_segments)
+            batch_segments = segments[start_idx:end_idx]
+            
+            # Get time range
+            start_time = batch_segments[0]['start']
+            end_time = batch_segments[-1]['end']
+            
+            # Check if this is the final batch
+            is_final = (chunk_idx == num_batches - 1)
+            
+            # Create task
+            task = SaveTranscriptionTask(
+                track_ref_id=track_ref_id,
+                segments=batch_segments,
+                chunk_index=chunk_idx,
+                start_time=start_time,
+                end_time=end_time,
+                item_count=len(batch_segments),
+                is_final=is_final,
+                status="pending",
+            )
+            
+            # Send to Redis
+            task_id = await self._redis_producer.enqueue(task)
+            
+            logger.info(
+                f"📥 Sent batch {chunk_idx + 1}/{num_batches}: "
+                f"{len(batch_segments)} segments, "
+                f"time={start_time:.1f}-{end_time:.1f}s, "
+                f"final={is_final}, task_id={task_id}"
+            )
+        
+        logger.info(f"✅ All {num_batches} batches sent to Redis")
+        return num_batches
             
     
     
@@ -356,14 +349,15 @@ class WhisperTranscriptionProcessor:
     
     async def process(self, task: TranscriptionStreamTask) -> str:
         """
-        Process a transcription task with progressive saving.
+        Process a transcription task by sending batches to Redis.
         
         Main entry point that orchestrates the entire transcription flow:
         1. Initialize resources
         2. Download audio from MinIO
-        3. Transcribe with progressive chunk saving
-        4. Update status to "completed"
-        5. Cleanup temp files
+        3. Transcribe and collect segments in memory
+        4. Split into batches and send to Redis
+        5. Orchestrator consumer will save to MongoDB progressively
+        6. Cleanup temp files
         
         Args:
             task: TranscriptionStreamTask with file information
@@ -377,9 +371,7 @@ class WhisperTranscriptionProcessor:
         await self.initialize()
         
         logger.info(f"🎯 Processing transcription task: {task.filename}")
-        logger.info(
-            f"   Egress: {task.egress_id}\n"
-        )
+        logger.info(f"   Egress: {task.egress_id}\n")
         
         local_file: Optional[Path] = None
         track_ref_id = task.egress_id
@@ -388,40 +380,27 @@ class WhisperTranscriptionProcessor:
             # STEP 1: Download audio from MinIO
             local_file, file_size_mb = await self._download_from_minio(task.filename)
             
-            # STEP 2: Transcribe with progressive saving
-            full_text, num_segments, info = await self._transcribe_with_progressive_saving(
-                audio_path=local_file,
-                track_ref_id=track_ref_id
-            )
+            # STEP 2: Transcribe and collect all segments
+            segments, full_text = await self._transcribe_and_collect(local_file)
             
-            # STEP 4: Update status to completed
-            logger.info("✅ Updating track status to 'completed'...")
-            
-            success = await self.mongodb_service.update_track_status(
+            # STEP 3: Send batches to Redis
+            num_batches = await self._send_batches_to_redis(
                 track_ref_id=track_ref_id,
-                status="completed"
+                segments=segments,
             )
             
-            if not success:
-                logger.warning("Failed to update status to 'completed'")
-            
-            # STEP 5: Log final results
-            lang_prob = info['language_probability']
-            lang_prob_str = f"{lang_prob:.1%}" if not math.isnan(lang_prob) else "N/A"
-            
+            # STEP 4: Log final results
             logger.info(
                 f"\n{'='*60}\n"
-                f"✅ TRANSCRIPTION COMPLETE\n"
+                f"✅ TRANSCRIPTION COMPLETE - BATCHES SENT TO REDIS\n"
                 f"{'='*60}\n"
                 f"File: {task.filename}\n"
                 f"Size: {file_size_mb:.2f} MB\n"
-                f"Language: {info['language']} (confidence: {lang_prob_str})\n"
-                f"Duration: {info['duration']:.2f}s\n"
-                f"Duration after VAD: {info['duration_after_vad']:.2f}s\n"
-                f"Total segments: {num_segments}\n"
+                f"Total segments: {len(segments)}\n"
+                f"Batches sent: {num_batches}\n"
                 f"Text length: {len(full_text)} characters\n"
                 f"Track ID: {track_ref_id}\n"
-                f"Status: completed\n"
+                f"Status: Pending save in Redis queue\n"
                 f"{'='*60}"
             )
             
@@ -429,24 +408,10 @@ class WhisperTranscriptionProcessor:
             
         except Exception as e:
             logger.error(f"❌ Failed to process transcription: {e}")
-            
-            # Update status to failed if we created metadata
-            if track_ref_id:
-                logger.info("Updating track status to 'failed'...")
-                try:
-                    await self.mongodb_service.update_track_status(
-                        track_ref_id=track_ref_id,
-                        status="failed"
-                    )
-                except Exception as update_error:
-                    logger.error(f"Failed to update status to 'failed': {update_error}")
-            
             raise
             
         finally:
-            # ============================================================
-            # STEP 6: Always cleanup temp file
-            # ============================================================
+            # STEP 5: Always cleanup temp file
             if local_file:
                 self._cleanup_temp_file(local_file)
     
@@ -466,13 +431,14 @@ class WhisperTranscriptionProcessor:
             except Exception as e:
                 logger.warning(f"Failed to remove temp directory: {e}")
         
-        # Disconnect MongoDB
-        if self.mongodb_service:
-            await self.mongodb_service.disconnect()
+        # Close Redis producer
+        if self._redis_producer:
+            await self._redis_producer.close()
         
         # Reset state
         self._whisper_model = None
         self._minio_client = None
+        self._redis_producer = None
         self._initialized = False
         
         logger.info("✅ WhisperTranscriptionProcessor shutdown complete")
@@ -482,9 +448,6 @@ class WhisperTranscriptionProcessor:
 # PUBLIC API
 # ============================================================
 
-def get_whisper_processor() -> WhisperTranscriptionProcessor:
-    """Get the singleton Whisper processor instance."""
-    return WhisperTranscriptionProcessor.get_instance()
 
 
 async def transcribe_task(task: TranscriptionStreamTask) -> str:
@@ -500,5 +463,5 @@ async def transcribe_task(task: TranscriptionStreamTask) -> str:
     Returns:
         Full transcribed text
     """
-    processor = get_whisper_processor()
+    processor = WhisperTranscriptionProcessor()
     return await processor.process(task)

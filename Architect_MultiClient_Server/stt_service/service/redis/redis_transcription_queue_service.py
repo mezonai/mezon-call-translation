@@ -11,18 +11,22 @@ Replaces asyncio.Queue with Redis Streams for:
 import asyncio
 import logging
 import time
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Callable
 
-from ..models import TranscriptionStreamTask
-from ..models.stream_base import StreamTaskStatus
-from .redis_stream_service import (
+from stt_service.models.transcription_task import TranscriptionStreamTask
+from stt_service.models.stream_base import StreamTaskStatus
+from stt_service.service.redis.redis_stream_service import (
     RedisStreamService,
     create_stream_service,
 )
+from stt_service.utils.decorator import singleton
 
 logger = logging.getLogger(__name__)
 stream_key = "transcription:stream"
 group_name = "transcription-workers"
+
+CONSUMER_TASK_NAME = "redis-transcription-consumer"
+ORPHAN_RECOVERY_TASK_NAME = "redis-orphan-recovery"
 
 # ========================================
 # Transcription-specific factory function
@@ -40,6 +44,7 @@ def get_redis_stream_service() -> 'RedisStreamService[TranscriptionStreamTask]':
     return create_stream_service(task_class=TranscriptionStreamTask, stream_key=stream_key, group_name=group_name)
 
 
+@singleton
 class RedisTranscriptionQueueService:
     """
     Redis Stream-based transcription queue service.
@@ -57,8 +62,6 @@ class RedisTranscriptionQueueService:
     4. Periodically claim orphaned tasks from crashed workers
     """
     
-    _instance: Optional['RedisTranscriptionQueueService'] = None
-    
     def __init__(self):
         self._redis_service: Optional[RedisStreamService[TranscriptionStreamTask]] = None
         self._consumer_task: Optional[asyncio.Task] = None
@@ -75,18 +78,6 @@ class RedisTranscriptionQueueService:
         }
         
         logger.info("RedisTranscriptionQueueService initialized")
-    
-    @classmethod
-    def get_instance(cls) -> 'RedisTranscriptionQueueService':
-        """Get singleton instance."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-    
-    @classmethod
-    def reset_instance(cls) -> None:
-        """Reset singleton (for testing)."""
-        cls._instance = None
     
     def set_processor(self, processor: Callable):
         """
@@ -137,13 +128,13 @@ class RedisTranscriptionQueueService:
         # Start consumer loop
         self._consumer_task = asyncio.create_task(
             self._consumer_loop(),
-            name="redis-transcription-consumer"
+            name=CONSUMER_TASK_NAME
         )
         
         # Start orphan recovery task
         self._orphan_recovery_task = asyncio.create_task(
             self._orphan_recovery_loop(),
-            name="redis-orphan-recovery"
+            name=ORPHAN_RECOVERY_TASK_NAME
         )
         
         logger.info(
@@ -365,19 +356,5 @@ class RedisTranscriptionQueueService:
                 logger.error(f"Orphan recovery error: {e}", exc_info=True)
         
         logger.info("Orphan recovery loop ended")
-    
 
-# ========================================
-# Singleton accessor functions
-# ========================================
-
-_queue_service: Optional[RedisTranscriptionQueueService] = None
-
-
-def get_redis_transcription_queue_service() -> RedisTranscriptionQueueService:
-    """Get the singleton Redis transcription queue service."""
-    global _queue_service
-    if _queue_service is None:
-        _queue_service = RedisTranscriptionQueueService.get_instance()
-    return _queue_service
 

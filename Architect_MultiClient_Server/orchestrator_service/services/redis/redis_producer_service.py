@@ -4,10 +4,8 @@ Generic Redis Producer Service for sending tasks to Redis Stream.
 This service allows producing tasks directly to Redis Stream using XADD.
 Supports any task type implementing ProducerTaskProtocol.
 """
-
-import redis.asyncio as redis
 from redis.asyncio import ConnectionPool, Redis
-from typing import ClassVar, Dict, Any, Generic, Optional, Type, TypeVar, List
+from typing import ClassVar, Dict, Any, Generic, Optional, Type, TypeVar
 
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config

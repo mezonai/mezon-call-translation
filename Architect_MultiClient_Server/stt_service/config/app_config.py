@@ -80,16 +80,6 @@ class MinIOConfig:
     secure: bool = False  # Use HTTPS
 
 @dataclass
-class MongoDBConfig:
-    host: str = "localhost"  # hoặc "mongodb" nếu chạy trong Docker
-    port: int = 27017
-    username: str = "root"
-    password: str = "rootpassword"
-    database: str = "mezon_transcripts"
-    collection: str = "transcripts"
-    chunk_size: int = 50  # Maximum segments per chunk
-
-@dataclass
 class RedisConfig:
     """Redis configuration for streams and caching."""
     host: str = "localhost"
@@ -121,6 +111,10 @@ class WhisperConfig:
     sample_rate: int = 16000
     language: str = ""  # Empty = auto-detect, or specify: "en", "vi", "ja", etc.
 
+@dataclass
+class TranscirptConfig:
+    chunk_size: int = 50  # chunk_size is the number of segments to batch together before sending to Redis.
+
 
 @dataclass
 class MetricsConfig:
@@ -150,7 +144,7 @@ class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     minio: MinIOConfig = field(default_factory=MinIOConfig)
-    mongodb: MongoDBConfig = field(default_factory=MongoDBConfig)
+    Transcirpt: TranscirptConfig = field(default_factory=TranscirptConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
@@ -220,15 +214,9 @@ class ConfigManager:
         config.minio.bucket = os.getenv("MINIO_BUCKET", config.minio.bucket)
         config.minio.secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
         
-        # MongoDB configuration
-        config.mongodb.host = os.getenv("MONGODB_HOST", config.mongodb.host)
-        config.mongodb.port = int(os.getenv("MONGODB_PORT", config.mongodb.port))
-        config.mongodb.username = os.getenv("MONGODB_USERNAME", config.mongodb.username)
-        config.mongodb.password = os.getenv("MONGODB_PASSWORD", config.mongodb.password)
-        config.mongodb.database = os.getenv("MONGODB_DATABASE", config.mongodb.database)
-        config.mongodb.collection = os.getenv("MONGODB_COLLECTION", config.mongodb.collection)
-        config.mongodb.chunk_size = int(os.getenv("MONGODB_CHUNK_SIZE", config.mongodb.chunk_size))
-        
+        # Transcription configuration
+        config.Transcirpt.chunk_size = int(os.getenv("TRANSCRIPT_CHUNK_SIZE", config.Transcirpt.chunk_size))
+
         # Redis configuration
         config.redis.host = os.getenv("REDIS_HOST", config.redis.host)
         config.redis.port = int(os.getenv("REDIS_PORT", config.redis.port))
@@ -244,7 +232,6 @@ class ConfigManager:
         config.redis.worker_timeout_sec = float(os.getenv("REDIS_WORKER_TIMEOUT_SEC", config.redis.worker_timeout_sec))
         
         # Whisper configuration
-        config.whisper.enabled = os.getenv("ENABLE_WHISPER", "true").lower() == "true"
         config.whisper.model_size = os.getenv("WHISPER_MODEL_SIZE", config.whisper.model_size)
         config.whisper.device = os.getenv("WHISPER_DEVICE", config.whisper.device)
         config.whisper.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", config.whisper.compute_type)
