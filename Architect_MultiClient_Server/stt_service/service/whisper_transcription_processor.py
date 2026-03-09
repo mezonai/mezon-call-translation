@@ -377,7 +377,7 @@ class WhisperTranscriptionProcessor:
         except Exception as e:
             # Ensure thread completes even on error
             await transcription_task
-            raise
+            raise e
     
     
     def _cleanup_temp_file(self, file_path: Path):
