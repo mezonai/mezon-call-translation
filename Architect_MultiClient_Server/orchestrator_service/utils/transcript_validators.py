@@ -229,8 +229,9 @@ SkipQuery = Annotated[int, Query(
     description=f"Number of records to skip ({VC.MIN_SKIP}-{VC.MAX_SKIP})"
 )]
 
-SearchQuery = Annotated[str, Query(
+SearchQuery = Annotated[Optional[str], Query(
+    default=None,
     min_length=VC.MIN_SEARCH_QUERY_LENGTH,
     max_length=VC.MAX_SEARCH_QUERY_LENGTH,
-    description=f"Search text ({VC.MIN_SEARCH_QUERY_LENGTH}-{VC.MAX_SEARCH_QUERY_LENGTH} chars)"
+    description=f"Search by room name or participant identity ({VC.MIN_SEARCH_QUERY_LENGTH}-{VC.MAX_SEARCH_QUERY_LENGTH} chars)"
 )]
