@@ -1,18 +1,38 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   getRoomById, 
   getRoomStatisticsById, 
   getSummaryByRoomId
 } from '../services/api';
+import { formatDate } from '../utils/datetime';
+import { getStatusBadge } from '../utils/display';
 
 const RoomDetail = () => {
   const { roomId } = useParams();
   const navigate = useNavigate();
-  
+  const [searchParams] = useSearchParams();
+  const fromPage = searchParams.get('from_page') || '0';
+  const fromStatus = searchParams.get('status') || '';
+  const fromSearch = searchParams.get('search') || '';
+  const fromTimePreset = searchParams.get('time_preset') || '';
+  const fromUtc = searchParams.get('from_utc') || '';
+  const toUtc = searchParams.get('to_utc') || '';
+  const hasBackParams = fromPage !== '0' || fromStatus || fromSearch || fromTimePreset;
+  const backToListUrl = hasBackParams
+    ? `/?${new URLSearchParams({
+        ...(fromPage !== '0' && { page: fromPage }),
+        ...(fromStatus && { status: fromStatus }),
+        ...(fromSearch && { search: fromSearch }),
+        ...(fromTimePreset && { time_preset: fromTimePreset }),
+        ...(fromUtc && { from_utc: fromUtc }),
+        ...(toUtc && { to_utc: toUtc })
+      }).toString()}`
+    : '/';
+
   const [room, setRoom] = useState(null);
   const [statistics, setStatistics] = useState(null);
-  const [summaries, setSummaries] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
@@ -35,7 +55,7 @@ const RoomDetail = () => {
 
       setRoom(roomData.room);
       setStatistics(statsData.statistics);
-      setSummaries(summaryData.data || []);
+      setSummary(summaryData.data);
     } catch (err) {
       setError(err.message || 'Failed to fetch room data');
       console.error('Error fetching room data:', err);
@@ -85,11 +105,6 @@ const RoomDetail = () => {
       });
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleString('vi-VN');
-  };
-
   const formatDuration = (seconds) => {
     if (!seconds) return '0s';
     const hours = Math.floor(seconds / 3600);
@@ -102,21 +117,6 @@ const RoomDetail = () => {
       return `${minutes}m ${secs}s`;
     }
     return `${secs}s`;
-  };
-
-  const getStatusBadge = (status) => {
-    const statusColors = {
-      completed: 'bg-green-100 text-green-800',
-      processing: 'bg-yellow-100 text-yellow-800',
-      pending: 'bg-gray-100 text-gray-800',
-      error: 'bg-red-100 text-red-800'
-    };
-    
-    return (
-      <span className={`px-3 py-1 text-sm font-medium rounded-full ${statusColors[status] || statusColors.pending}`}>
-        {status || 'unknown'}
-      </span>
-    );
   };
 
   if (loading) {
@@ -139,7 +139,7 @@ const RoomDetail = () => {
             Retry
           </button>
           <button 
-            onClick={() => navigate('/')}
+            onClick={() => navigate(backToListUrl)}
             className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
           >
             Back to List
@@ -154,7 +154,7 @@ const RoomDetail = () => {
       <div className="text-center py-12">
         <p className="text-gray-500">Room not found</p>
         <button 
-          onClick={() => navigate('/')}
+          onClick={() => navigate(backToListUrl)}
           className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
         >
           Back to List
@@ -169,7 +169,7 @@ const RoomDetail = () => {
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate(backToListUrl)}
             className="text-gray-600 hover:text-gray-900"
           >
             ← Back
@@ -273,12 +273,6 @@ const RoomDetail = () => {
                   <div className="text-sm font-medium text-gray-500">Completed At</div>
                   <div className="mt-1 text-gray-900">{formatDate(room.completed_at)}</div>
                 </div>
-                <div>
-                  <div className="text-sm font-medium text-gray-500">Total Tracks</div>
-                  <div className="mt-1 text-gray-900">
-                    {room.total_tracks || 0}
-                  </div>
-                </div>
               </div>
             </div>
           )}
@@ -287,11 +281,11 @@ const RoomDetail = () => {
           {activeTab === 'participants' && (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-gray-900">Full Transcript</h3>
-              {summaries && summaries.length > 0 && summaries[0].full_text ? (
+              {summary && summary.full_text ? (
                 <div className="border border-gray-200 rounded-lg p-6">
                   <div className="bg-gray-50 rounded p-4 max-h-[600px] overflow-y-auto">
                     <div className="space-y-1">
-                      {parseFullText(summaries[0].full_text).map((item, idx) => (
+                      {parseFullText(summary.full_text).map((item, idx) => (
                         <div key={idx}>
                           {item.isHeader && (
                             // Header with timestamp and username
@@ -328,56 +322,51 @@ const RoomDetail = () => {
           {activeTab === 'summary' && (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-gray-900">Meeting Summary</h3>
-              {summaries && summaries.length > 0 && summaries[0].summary_data ? (
+              {summary && summary.summary_data ? (
                 <div className="space-y-6">
-                  {summaries.map((summaryItem, idx) => {
-                    const summaryData = summaryItem.summary_data;
-                    return (
-                      <div key={idx} className="border border-gray-200 rounded-lg p-6">
-                        <div className="mb-6">
-                          <div className="text-sm text-gray-500 mb-1">Created at</div>
-                          <div className="text-gray-900">{formatDate(summaryItem.created_at)}</div>
+                  <div className="border border-gray-200 rounded-lg p-6">
+                    <div className="mb-6">
+                      <div className="text-sm text-gray-500 mb-1">Created at</div>
+                      <div className="text-gray-900">{formatDate(summary.created_at)}</div>
+                    </div>
+
+                    {/* Summary */}
+                    {summary.summary_data && (
+                      <div className="mb-6">
+                        <h4 className="font-semibold text-gray-900 mb-3 text-lg">Summary</h4>
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                          <p className="text-gray-800 leading-relaxed">{summary.summary_data.summary}</p>
                         </div>
-
-                        {/* Summary */}
-                        {summaryData.summary && (
-                          <div className="mb-6">
-                            <h4 className="font-semibold text-gray-900 mb-3 text-lg">Summary</h4>
-                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                              <p className="text-gray-800 leading-relaxed">{summaryData.summary}</p>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Action Items by Person */}
-                        {summaryData.action_items && Object.keys(summaryData.action_items).length > 0 && (
-                          <div>
-                            <h4 className="font-semibold text-gray-900 mb-3 text-lg">Action Items</h4>
-                            <div className="space-y-4">
-                              {Object.entries(summaryData.action_items).map(([person, tasks], i) => (
-                                <div key={i} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                                  <div className="flex items-center mb-2">
-                                    <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center font-semibold text-sm mr-3">
-                                      {person.charAt(0).toUpperCase()}
-                                    </div>
-                                    <h5 className="font-medium text-gray-900 text-base">{person}</h5>
-                                  </div>
-                                  <ul className="ml-13 space-y-1">
-                                    {tasks.map((task, taskIdx) => (
-                                      <li key={taskIdx} className="flex items-start">
-                                        <span className="text-blue-500 mr-2 mt-1">•</span>
-                                        <span className="text-gray-700">{task}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                       </div>
-                    );
-                  })}
+                    )}
+
+                    {/* Action Items by Person */}
+                    {summary.summary_data.action_items && Object.keys(summary.summary_data.action_items).length > 0 && (
+                      <div>
+                        <h4 className="font-semibold text-gray-900 mb-3 text-lg">Action Items</h4>
+                        <div className="space-y-4">
+                          {Object.entries(summary.summary_data.action_items).map(([person, tasks], i) => (
+                            <div key={i} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                              <div className="flex items-center mb-2">
+                                <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center font-semibold text-sm mr-3">
+                                  {person.charAt(0).toUpperCase()}
+                                </div>
+                                <h5 className="font-medium text-gray-900 text-base">{person}</h5>
+                              </div>
+                              <ul className="ml-13 space-y-1">
+                                {tasks.map((task, taskIdx) => (
+                                  <li key={taskIdx} className="flex items-start">
+                                    <span className="text-blue-500 mr-2 mt-1">•</span>
+                                    <span className="text-gray-700">{task}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">

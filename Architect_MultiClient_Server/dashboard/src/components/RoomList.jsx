@@ -1,29 +1,127 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getRooms } from '../services/api';
+import { formatDate } from '../utils/datetime';
+import { getStatusBadge } from '../utils/display';
+import { ROOM_STATUS_FILTER_OPTIONS } from '../constants/roomStatus';
+import { TIME_RANGE_PRESET, TIME_RANGE_PRESET_OPTIONS, getTimeRangeForPreset } from '../constants/timeRange';
+
+const SEARCH_DEBOUNCE_MS = 500;
+
+const RefreshIcon = () => (
+  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+  </svg>
+);
+
+/** Shared modern dropdown style */
+const selectClass =
+  'pl-4 pr-10 py-2.5 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl shadow-sm ' +
+  'focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none ' +
+  'hover:border-gray-300 transition-colors min-w-0 appearance-none bg-no-repeat bg-[length:1.25rem_1.25rem] bg-[right_0.75rem_center] cursor-pointer';
+
+const SKELETON_ROWS = 10;
+
+function TableSkeleton() {
+  return (
+    <tbody className="bg-white divide-y divide-gray-200">
+      {Array.from({ length: SKELETON_ROWS }).map((_, i) => (
+        <tr key={i} className="animate-pulse">
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="h-4 bg-gray-200 rounded w-48 max-w-full" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="h-5 bg-gray-200 rounded-full w-20" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="h-4 bg-gray-200 rounded w-28" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="h-4 bg-gray-200 rounded w-28" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="h-4 bg-gray-200 rounded w-24" />
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  );
+}
 
 const RoomList = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const pageFromUrl = Math.max(0, parseInt(searchParams.get('page') || '0', 10) || 0);
+
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [currentPage, setCurrentPage] = useState(0);
+  const [currentPage, setCurrentPage] = useState(() => pageFromUrl);
   const [totalRooms, setTotalRooms] = useState(0);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(() => searchParams.get('search') || '');
+  const [searchDebounced, setSearchDebounced] = useState(() => searchParams.get('search') || '');
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || '');
+  const [timePreset, setTimePreset] = useState(() => searchParams.get('time_preset') || TIME_RANGE_PRESET.NONE);
+  const debounceRef = useRef(null);
+  const appliedSearchRef = useRef(searchParams.get('search') || '');
   const navigate = useNavigate();
 
   const ITEMS_PER_PAGE = 20;
 
+  // Debounce search → update searchDebounced after SEARCH_DEBOUNCE_MS; reset page only when applied search changes
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      const next = searchTerm.trim();
+      const prev = appliedSearchRef.current;
+      appliedSearchRef.current = next;
+      setSearchDebounced(next);
+      if (next !== prev) setCurrentPage(0);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [searchTerm]);
+
+  const getFromToUtc = useCallback(() => getTimeRangeForPreset(timePreset), [timePreset]);
+
+  // Keep URL in sync with page, status, search (debounced), time range
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    if (currentPage > 0) params.set('page', String(currentPage));
+    else params.delete('page');
+    if (statusFilter) params.set('status', statusFilter);
+    else params.delete('status');
+    if (searchDebounced.trim()) params.set('search', searchDebounced.trim());
+    else params.delete('search');
+    if (timePreset && timePreset !== TIME_RANGE_PRESET.NONE) {
+      params.set('time_preset', timePreset);
+      const { fromUtc, toUtc } = getFromToUtc();
+      if (fromUtc) params.set('from_utc', fromUtc);
+      if (toUtc) params.set('to_utc', toUtc);
+    } else {
+      params.delete('time_preset');
+      params.delete('from_utc');
+      params.delete('to_utc');
+    }
+    setSearchParams(params, { replace: true });
+  }, [currentPage, statusFilter, searchDebounced, timePreset, getFromToUtc]);
+
   useEffect(() => {
     fetchRooms();
-  }, [currentPage]);
+  }, [currentPage, statusFilter, searchDebounced, timePreset]);
 
   const fetchRooms = async () => {
     try {
       setLoading(true);
       setError(null);
+      const { fromUtc, toUtc } = getFromToUtc();
       const data = await getRooms({
         limit: ITEMS_PER_PAGE,
-        skip: currentPage * ITEMS_PER_PAGE
+        skip: currentPage * ITEMS_PER_PAGE,
+        ...(statusFilter && { status: statusFilter }),
+        ...(searchDebounced.trim() && { search: searchDebounced.trim() }),
+        ...(fromUtc && { from_utc: fromUtc }),
+        ...(toUtc && { to_utc: toUtc })
       });
       setRooms(data.rooms || []);
       setTotalRooms(data.total || 0);
@@ -35,50 +133,55 @@ const RoomList = () => {
     }
   };
 
-  const filteredRooms = rooms.filter(room =>
-    room.room_name?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
   const totalPages = Math.ceil(totalRooms / ITEMS_PER_PAGE);
 
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleString('vi-VN');
+  const goToRoom = (roomId) => {
+    const params = new URLSearchParams();
+    if (currentPage > 0) params.set('from_page', String(currentPage));
+    if (statusFilter) params.set('status', statusFilter);
+    if (searchDebounced.trim()) params.set('search', searchDebounced.trim());
+    if (timePreset && timePreset !== TIME_RANGE_PRESET.NONE) {
+      params.set('time_preset', timePreset);
+      const { fromUtc, toUtc } = getFromToUtc();
+      if (fromUtc) params.set('from_utc', fromUtc);
+      if (toUtc) params.set('to_utc', toUtc);
+    }
+    const query = params.toString();
+    navigate(`/room/${roomId}${query ? `?${query}` : ''}`);
   };
-
-  const getStatusBadge = (status) => {
-    const statusColors = {
-      completed: 'bg-green-100 text-green-800',
-      processing: 'bg-yellow-100 text-yellow-800',
-      pending: 'bg-gray-100 text-gray-800',
-      error: 'bg-red-100 text-red-800'
-    };
-    
-    return (
-      <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColors[status] || statusColors.pending}`}>
-        {status || 'unknown'}
-      </span>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-        <p className="text-red-800">Error: {error}</p>
-        <button 
-          onClick={fetchRooms}
-          className="mt-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-        >
-          Retry
-        </button>
+      <div>
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Meeting Rooms</h2>
+          <div className="flex gap-4 items-center">
+            <div className="flex-1 flex gap-3">
+              <input
+                type="text"
+                placeholder="Search by room name or participant..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="flex-1 px-4 py-2.5 text-sm border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none hover:border-gray-300 transition-colors"
+              />
+              <select value={statusFilter} onChange={() => {}} className={`${selectClass} min-w-[140px]`} style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")` }}>
+                {ROOM_STATUS_FILTER_OPTIONS.map((opt) => (<option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>))}
+              </select>
+              <select value={timePreset} onChange={() => {}} className={`${selectClass} min-w-[160px]`} style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")` }}>
+                {TIME_RANGE_PRESET_OPTIONS.map((opt) => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
+              </select>
+            </div>
+            <button onClick={fetchRooms} className="px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl shadow-sm hover:bg-blue-700 hover:shadow transition inline-flex items-center">
+              <RefreshIcon /> Refresh
+            </button>
+          </div>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <p className="text-red-800">Error: {error}</p>
+          <button onClick={fetchRooms} className="mt-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -89,19 +192,50 @@ const RoomList = () => {
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Meeting Rooms</h2>
         
         <div className="flex gap-4 items-center">
-          <div className="flex-1">
+          <div className="flex-1 flex gap-3">
             <input
               type="text"
-              placeholder="Search rooms..."
+              placeholder="Search by room name or participant..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="flex-1 px-4 py-2.5 text-sm border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none hover:border-gray-300 transition-colors"
             />
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setCurrentPage(0);
+              }}
+              className={`${selectClass} min-w-[140px]`}
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`
+              }}
+            >
+              {ROOM_STATUS_FILTER_OPTIONS.map((opt) => (
+                <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <select
+              value={timePreset}
+              onChange={(e) => {
+                setTimePreset(e.target.value);
+                setCurrentPage(0);
+              }}
+              className={`${selectClass} min-w-[160px]`}
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`
+              }}
+            >
+              {TIME_RANGE_PRESET_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           </div>
           <button
             onClick={fetchRooms}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+            className="px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl shadow-sm hover:bg-blue-700 hover:shadow transition inline-flex items-center"
           >
+            <RefreshIcon />
             Refresh
           </button>
         </div>
@@ -112,36 +246,39 @@ const RoomList = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Room Name
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Status
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Tracks
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Created At
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                  Completed At
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
             </thead>
+            {loading ? (
+              <TableSkeleton />
+            ) : (
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredRooms.length === 0 ? (
+              {rooms.length === 0 ? (
                 <tr>
                   <td colSpan="5" className="px-6 py-4 text-center text-gray-500">
                     No rooms found
                   </td>
                 </tr>
               ) : (
-                filteredRooms.map((room) => (
-                  <tr 
-                    key={room._id} 
+                rooms.map((room) => (
+                  <tr
+                    key={room._id}
                     className="hover:bg-gray-50 cursor-pointer transition"
-                    onClick={() => navigate(`/room/${room._id}`)}
+                    onClick={() => goToRoom(room._id)}
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
@@ -152,16 +289,16 @@ const RoomList = () => {
                       {getStatusBadge(room.status)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {room.completed_tracks || 0}
+                      {formatDate(room.created_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatDate(room.created_at)}
+                      {formatDate(room.completed_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          navigate(`/room/${room._id}`);
+                          goToRoom(room._id);
                         }}
                         className="text-blue-600 hover:text-blue-900 font-medium"
                       >
@@ -172,11 +309,12 @@ const RoomList = () => {
                 ))
               )}
             </tbody>
+            )}
           </table>
         </div>
 
         {/* Pagination */}
-        {totalPages > 1 && (
+        {!loading && totalPages > 1 && (
           <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
             <div className="flex-1 flex justify-between sm:hidden">
               <button

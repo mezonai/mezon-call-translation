@@ -16,11 +16,20 @@ class SummaryActionItemsResult(BaseModel):
 
 class RoomSummary(BaseModel):
     """Model for storing room conversation summary"""
-    room_id: str
-    room_name: str
-    participants: List[str] = []
-    summary_data: Dict[str, Any]
-    full_text: str
-    created_at: datetime = Field(default_factory= datetime.utcnow())
-    total_segments: int = 0
-    metadata: Optional[Dict[str, Any]] = None
+    room_id: str = Field(description="Room ID", default="")
+    room_name: str = Field(description="Room Name", default="")
+    participants: List[str] = Field(description="Participants", default=[])
+    summary_data: Dict[str, Any] = Field(description="Summary Data", default={})
+    full_text: str = Field(description="Full Text", default="")
+    created_at: datetime = Field(description="Created At", default_factory= datetime.utcnow())
+    total_segments: int = Field(description="Total Segments", default=0)
+
+class RoomSummaryResponse(BaseModel):
+    room_id: str = Field(description="Room ID", default="")
+    room_name: str = Field(description="Room Name", default="")
+    participants: List[str] = Field(description="Participants", default=[])
+    summary_data: Dict[str, Any] = Field(description="Summary Data", default={})
+    full_text: str = Field(description="Full Text", default="")
+    created_at: str = Field(description="Created At", default="")
+    completed_at: str = Field(description="Completed At", default="")
+    total_segments: int = Field(description="Total Segments", default=0)

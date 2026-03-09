@@ -54,42 +54,8 @@ def verify_simple_secret(credentials: HTTPAuthorizationCredentials) -> bool:
     Returns:
         True if valid, False otherwise
     """
-    if not credentials:
-        return False
-    
     # Simple comparison with configured secret
     return credentials.credentials == API_SECRET
-
-
-def verify_jwt_token(credentials: HTTPAuthorizationCredentials) -> Optional[Dict[str, Any]]:
-    """
-    Verify JWT token with HMAC-SHA256.
-    
-    TODO: Implement JWT verification
-    - Decode JWT token
-    - Verify signature using HMAC-SHA256
-    - Validate expiration
-    - Extract claims (user_id, roles, etc.)
-    
-    Args:
-        credentials: HTTP Authorization credentials
-        
-    Returns:
-        Dict containing user info/claims if valid, None otherwise
-    """
-    # Placeholder for future JWT implementation
-    # Example structure:
-    # try:
-    #     payload = jwt.decode(
-    #         credentials.credentials,
-    #         API_SECRET,
-    #         algorithms=["HS256"]
-    #     )
-    #     return payload
-    # except jwt.InvalidTokenError:
-    #     return None
-    
-    raise NotImplementedError("JWT authentication not yet implemented")
 
 
 async def verify_api_key(
@@ -97,10 +63,6 @@ async def verify_api_key(
 ) -> Dict[str, Any]:
     """
     Verify API authentication credentials.
-    
-    Current implementation: Simple secret key validation
-    Future: Can switch to JWT validation by calling verify_jwt_token()
-    
     Args:
         credentials: HTTP Authorization credentials from Bearer token
         
@@ -123,9 +85,7 @@ async def verify_api_key(
             detail="Missing Authorization header",
             headers={"WWW-Authenticate": "Bearer"}
         )
-    
-    # Verify token/secret
-    # TODO: Switch to verify_jwt_token() when implementing JWT
+
     is_valid = verify_simple_secret(credentials)
     
     if not is_valid:
@@ -135,19 +95,9 @@ async def verify_api_key(
             detail="Invalid API credentials",
             headers={"WWW-Authenticate": "Bearer"}
         )
-    
+
     logger.debug("API authentication successful")
-    
-    # Return authentication info
-    # When implementing JWT, this can include user claims:
-    # return {
-    #     "authenticated": True,
-    #     "method": "jwt",
-    #     "user_id": claims.get("user_id"),
-    #     "roles": claims.get("roles", []),
-    #     "exp": claims.get("exp")
-    # }
-    
+
     return {
         "authenticated": True,
         "method": "secret"
