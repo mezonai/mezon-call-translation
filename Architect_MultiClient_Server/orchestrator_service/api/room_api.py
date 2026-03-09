@@ -29,23 +29,45 @@ logger = get_logger(__name__)
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,
+    search: Optional[str] = Query(default=None, max_length=VC.MAX_SEARCH_QUERY_LENGTH, description="Search by room name or participant identity"),
+    from_utc: Optional[datetime] = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
+    to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
 ):
     """
     List all rooms with optional filters.
-    
-    - **status**: Filter rooms by status (e.g., 'processing', 'completed')
+
+    - **status**: Filter rooms by status (e.g. 'pending', 'completed')
+    - **search**: Search by room name or participant identity (matches tracks)
+    - **from_utc**: Only rooms created at or after this time (UTC)
+    - **to_utc**: Only rooms created at or before this time (UTC)
     - **limit**: Maximum number of rooms to return
     - **skip**: Number of records to skip for pagination
     """
+    if from_utc is not None and to_utc is not None and from_utc >= to_utc:
+        raise HTTPException(status_code=400, detail="from_utc must be before to_utc")
+    search_trimmed = search.strip() if search else None
+    if search_trimmed == "":
+        search_trimmed = None
     try:
         mongodb = get_mongodb_service()
         if not mongodb.connected:
             await mongodb.connect()
-        # Query without date range (standard list with pagination)
-        rooms = await mongodb.list_rooms(status=status, limit=limit, skip=skip)
-        total = await mongodb.count_rooms_by_status(status)
+        rooms = await mongodb.list_rooms(
+            status=status,
+            search=search_trimmed,
+            from_utc=from_utc,
+            to_utc=to_utc,
+            limit=limit,
+            skip=skip,
+        )
+        total = await mongodb.count_rooms(
+            status=status,
+            search=search_trimmed,
+            from_utc=from_utc,
+            to_utc=to_utc,
+        )
         return {
             "status": "ok",
             "total": total,

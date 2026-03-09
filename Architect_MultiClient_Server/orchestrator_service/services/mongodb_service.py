@@ -135,11 +135,12 @@ class MongoDBService:
             logger.exception(f"Unexpected error when fetching room by ID {e}")
             raise
 
-    async def list_rooms(self, status: str = None, limit: int = 100, 
-                        skip: int = 0) -> List[Dict[str, Any]]:
-        """List rooms with optional status filter"""
+    async def list_rooms(self, status: str = None, search: str = None,
+                        from_utc: datetime = None, to_utc: datetime = None,
+                        limit: int = 100, skip: int = 0) -> List[Dict[str, Any]]:
+        """List rooms with optional status, search (room_name or participant_identity), and time range."""
         try:
-            query = {"status": status} if status else {}
+            query = await self._build_rooms_list_query(status=status, search=search, from_utc=from_utc, to_utc=to_utc)
             cursor = self.rooms_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
             room_list: list[dict] = await cursor.to_list(length=limit)
             for room in room_list:
@@ -151,10 +152,60 @@ class MongoDBService:
             logger.error(f"Failed to list rooms: {e}")
             return []
 
-    async def count_rooms_by_status(self, status: str = None) -> int:
-        """Count rooms by status"""
+    async def _build_rooms_list_query(
+        self,
+        status: str = None,
+        search: str = None,
+        from_utc: datetime = None,
+        to_utc: datetime = None,
+    ) -> Dict[str, Any]:
+        """Build query dict for list_rooms / count_rooms. Search matches room_name or participant_identity in tracks."""
+        import re
+        and_parts = []
+        if status:
+            and_parts.append({"status": status})
+        if from_utc is not None or to_utc is not None:
+            created_at = {}
+            if from_utc is not None:
+                created_at["$gte"] = from_utc
+            if to_utc is not None:
+                created_at["$lte"] = to_utc
+            and_parts.append({"created_at": created_at})
+        if search and search.strip():
+            search = search.strip()
+            room_ids_from_tracks = []
+            try:
+                room_ids_from_tracks = await self.tracks_collection.distinct(
+                    "room_ref_id",
+                    {"participant_identity": search}
+                )
+            except Exception as e:
+                logger.debug(f"Tracks distinct for search failed: {e}")
+            if room_ids_from_tracks:
+                and_parts.append({
+                    "$or": [
+                        {"room_name": search},
+                        {"_id": {"$in": room_ids_from_tracks}},
+                    ]
+                })
+            else:
+                and_parts.append({"room_name": search})
+        if not and_parts:
+            return {}
+        if len(and_parts) == 1:
+            return and_parts[0]
+        return {"$and": and_parts}
+
+    async def count_rooms(
+        self,
+        status: str = None,
+        search: str = None,
+        from_utc: datetime = None,
+        to_utc: datetime = None,
+    ) -> int:
+        """Count rooms with same filters as list_rooms."""
         try:
-            query = {"status": status} if status else {}
+            query = await self._build_rooms_list_query(status=status, search=search, from_utc=from_utc, to_utc=to_utc)
             return await self.rooms_collection.count_documents(query)
         except Exception as e:
             logger.error(f"Failed to count rooms: {e}")
