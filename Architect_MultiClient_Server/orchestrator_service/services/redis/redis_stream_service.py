@@ -40,13 +40,14 @@ import redis.asyncio as redis
 from redis.asyncio import ConnectionPool, Redis
 from redis.exceptions import ResponseError
 
-from ..config import get_config
-from ..models.stream_base import (
+from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.stream_base import (
     StreamTaskProtocol,
     StreamTaskStatus,
 )
+from orchestrator_service.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Type variable bound to StreamTaskProtocol
@@ -120,6 +121,18 @@ class RedisStreamService(Generic[T]):
         self._running = False
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._recovery_task: Optional[asyncio.Task] = None
+        
+        # Set defaults for missing config fields
+        if not hasattr(self._config, 'block_timeout_ms'):
+            self._config.block_timeout_ms = 5000
+        if not hasattr(self._config, 'max_retries'):
+            self._config.max_retries = 3
+        if not hasattr(self._config, 'claim_min_idle_time_ms'):
+            self._config.claim_min_idle_time_ms = 60000
+        if not hasattr(self._config, 'heartbeat_interval_sec'):
+            self._config.heartbeat_interval_sec = 10
+        if not hasattr(self._config, 'worker_timeout_sec'):
+            self._config.worker_timeout_sec = 60
         
         # Keys - use provided values or fall back to config
         self._stream_key = stream_key

@@ -4,6 +4,7 @@ Service for generating room summaries
 from datetime import datetime
 from typing import Optional, Dict, Any
 
+from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.models.summary_models import RoomSummary, SummaryActionItemsResult
 from orchestrator_service.config.application_config import get_config
@@ -216,6 +217,13 @@ Conversation content:
             result["_id"] = saved_id
             return result
         
+        #9. Send SSE event summary done
+        room = await self.mongodb.get_room_by_id(room_id)
+        metadata_channal  = MetadataChannel()
+        await metadata_channal.push_room_summary_done(
+            room_id=room_id,
+            room_name=room.get("room_name", "Unknown")
+        )
         return None
 
 # Singleton

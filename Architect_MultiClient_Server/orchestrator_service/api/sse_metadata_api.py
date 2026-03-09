@@ -6,16 +6,14 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
 
-# Initialize SSE infrastructure
-sse_manager = SSEManager()
-metadata_channel = MetadataChannel(sse_manager)
+# Get singleton instances
+metadata_channel = MetadataChannel()
 
 
 # ==================== Pydantic Models ====================

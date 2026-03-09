@@ -8,7 +8,7 @@ Supports multiple queue types through generic type parameter.
 import logging
 from typing import Dict, Any, Optional, List, Type, TypeVar, Generic, ClassVar
 
-from orchestrator_service.services.redis_producer_service import (
+from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
 )
