@@ -1,15 +1,35 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   getRoomById, 
   getRoomStatisticsById, 
   getSummaryByRoomId
 } from '../services/api';
+import { formatDate } from '../utils/datetime';
+import { getStatusBadge } from '../utils/display';
 
 const RoomDetail = () => {
   const { roomId } = useParams();
   const navigate = useNavigate();
-  
+  const [searchParams] = useSearchParams();
+  const fromPage = searchParams.get('from_page') || '0';
+  const fromStatus = searchParams.get('status') || '';
+  const fromSearch = searchParams.get('search') || '';
+  const fromTimePreset = searchParams.get('time_preset') || '';
+  const fromUtc = searchParams.get('from_utc') || '';
+  const toUtc = searchParams.get('to_utc') || '';
+  const hasBackParams = fromPage !== '0' || fromStatus || fromSearch || fromTimePreset;
+  const backToListUrl = hasBackParams
+    ? `/?${new URLSearchParams({
+        ...(fromPage !== '0' && { page: fromPage }),
+        ...(fromStatus && { status: fromStatus }),
+        ...(fromSearch && { search: fromSearch }),
+        ...(fromTimePreset && { time_preset: fromTimePreset }),
+        ...(fromUtc && { from_utc: fromUtc }),
+        ...(toUtc && { to_utc: toUtc })
+      }).toString()}`
+    : '/';
+
   const [room, setRoom] = useState(null);
   const [statistics, setStatistics] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -85,11 +105,6 @@ const RoomDetail = () => {
       });
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleString('vi-VN');
-  };
-
   const formatDuration = (seconds) => {
     if (!seconds) return '0s';
     const hours = Math.floor(seconds / 3600);
@@ -102,21 +117,6 @@ const RoomDetail = () => {
       return `${minutes}m ${secs}s`;
     }
     return `${secs}s`;
-  };
-
-  const getStatusBadge = (status) => {
-    const statusColors = {
-      completed: 'bg-green-100 text-green-800',
-      processing: 'bg-yellow-100 text-yellow-800',
-      pending: 'bg-gray-100 text-gray-800',
-      error: 'bg-red-100 text-red-800'
-    };
-    
-    return (
-      <span className={`px-3 py-1 text-sm font-medium rounded-full ${statusColors[status] || statusColors.pending}`}>
-        {status || 'unknown'}
-      </span>
-    );
   };
 
   if (loading) {
@@ -139,7 +139,7 @@ const RoomDetail = () => {
             Retry
           </button>
           <button 
-            onClick={() => navigate('/')}
+            onClick={() => navigate(backToListUrl)}
             className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
           >
             Back to List
@@ -154,7 +154,7 @@ const RoomDetail = () => {
       <div className="text-center py-12">
         <p className="text-gray-500">Room not found</p>
         <button 
-          onClick={() => navigate('/')}
+          onClick={() => navigate(backToListUrl)}
           className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
         >
           Back to List
@@ -169,7 +169,7 @@ const RoomDetail = () => {
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate(backToListUrl)}
             className="text-gray-600 hover:text-gray-900"
           >
             ← Back

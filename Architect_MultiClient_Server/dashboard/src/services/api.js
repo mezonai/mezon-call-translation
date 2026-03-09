@@ -13,14 +13,16 @@ const apiClient = axios.create({
 
 // Room APIs
 export const getRooms = async (params = {}) => {
-  const { limit = 20, skip = 0, status = null } = params;
-  const queryParams = new URLSearchParams({
-    limit,
-    skip,
-    ...(status && { status })
-  });
-  
-  const response = await apiClient.get(`/api/transcripts/rooms?${queryParams}`);
+  const { limit = 20, skip = 0, status = null, search = null, from_utc = null, to_utc = null } = params;
+  const queryParams = new URLSearchParams();
+  queryParams.set('limit', String(limit));
+  queryParams.set('skip', String(skip));
+  if (status) queryParams.set('status', status);
+  if (search && search.trim()) queryParams.set('search', search.trim());
+  if (from_utc) queryParams.set('from_utc', from_utc);
+  if (to_utc) queryParams.set('to_utc', to_utc);
+
+  const response = await apiClient.get(`/api/transcripts/rooms?${queryParams.toString()}`);
   return response.data;
 };
 
