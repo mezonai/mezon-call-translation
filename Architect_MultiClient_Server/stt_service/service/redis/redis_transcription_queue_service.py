@@ -70,6 +70,10 @@ class RedisTranscriptionQueueService:
         self._processor: Optional[Callable] = None
         self._current_task: Optional[TranscriptionStreamTask] = None
         
+        # Lock to prevent double processing of same task
+        self._processing_task_ids: set[str] = set()  # Track tasks currently being processed
+        self._processing_lock = asyncio.Lock()
+        
         # Stats (local counters, Redis has authoritative stats)
         self._local_stats = {
             "tasks_processed_this_session": 0,
@@ -242,14 +246,25 @@ class RedisTranscriptionQueueService:
         task: TranscriptionStreamTask
     ) -> bool:
         """
-        Process a single transcription task.
+        Process a single transcription task with single-task-at-a-time enforcement.
+        Ensures only ONE task is processed at a time in this service instance.
         
         Args:
             task: TranscriptionStreamTask from Redis
         
         Returns:
-            True if processing succeeded, False otherwise
+            True if processing succeeded, False otherwise or if another task is being processed
         """
+        # Check if ANY task is currently being processed (enforce single-task processing)
+        async with self._processing_lock:
+            if self._processing_task_ids:
+                logger.warning(
+                    f"⚠️ Task {task.task_id} skipped - another task is already being processed "
+                    f"(current: {list(self._processing_task_ids)})"
+                )
+                return False
+            self._processing_task_ids.add(task.task_id)
+        
         task.status = StreamTaskStatus.PROCESSING
         task.started_processing_at = time.time()
         
@@ -298,6 +313,10 @@ class RedisTranscriptionQueueService:
                 logger.error(f"Task {task.task_id} moved to dead letter queue")
             
             return False
+        finally:
+            # Always remove from processing set
+            async with self._processing_lock:
+                self._processing_task_ids.discard(task.task_id)
     
     async def _orphan_recovery_loop(self) -> None:
         """
@@ -316,7 +335,14 @@ class RedisTranscriptionQueueService:
         while self._running:
             try:
                 await asyncio.sleep(claim_interval)
-                
+                # Check if any task is currently being processed
+                async with self._processing_lock:
+                    if self._processing_task_ids:
+                        logger.info(
+                            f"⚠️ Service is busy processing: {list(self._processing_task_ids)}. "
+                            f"Claimed tasks will be processed sequentially when current task completes."
+                        )
+                        continue
                 if not self._running:
                     break
                 

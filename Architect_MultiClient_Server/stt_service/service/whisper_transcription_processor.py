@@ -203,7 +203,7 @@ class WhisperTranscriptionProcessor:
     async def _transcribe_and_collect(
         self,
         audio_path: Path,
-    ) -> tuple[List[Dict], str, Dict[str, Any]]:
+    ) -> tuple[List[Dict], str]:
         """
         Transcribe audio and collect all segments in memory.
         
@@ -211,7 +211,7 @@ class WhisperTranscriptionProcessor:
             audio_path: Path to audio file
             
         Returns:
-            Tuple of (segments_list, full_text, info_dict)
+            Tuple of (segments_list, full_text)
         """
         if not self._whisper_model:
             raise RuntimeError("Whisper model not initialized")
@@ -227,32 +227,37 @@ class WhisperTranscriptionProcessor:
         
         def transcribe_in_thread():
             """Transcribe audio and collect all segments"""
-            segments_generator, info = self._whisper_model.transcribe(
-                str(audio_path),
-                language=whisper_config.language if whisper_config.language else None,
-                beam_size=whisper_config.beam_size,
-                vad_filter=whisper_config.vad_filter,
-            )
-            
-            # Collect all segments
-            segments = []
-            full_text_parts = []
-            
-            for seg in segments_generator:
-                segment = TranscriptionSegment(
-                    start=seg.start,
-                    end=seg.end,
-                    text=seg.text.strip(),
-                    confidence=round(math.exp(seg.avg_logprob), 4)
+            try:
+                segments_generator, info = self._whisper_model.transcribe(
+                    str(audio_path),
+                    language=whisper_config.language if whisper_config.language else None,
+                    beam_size=whisper_config.beam_size,
+                    vad_filter=whisper_config.vad_filter,
                 )
                 
-                segment_dict = segment.to_dict()
-                segments.append(segment_dict)
-                full_text_parts.append(segment_dict['text'])
-            
-            full_text = " ".join(full_text_parts)
-            
-            return segments, full_text
+                # Collect all segments
+                segments = []
+                full_text_parts = []
+                
+                for seg in segments_generator:
+                    segment = TranscriptionSegment(
+                        start=seg.start,
+                        end=seg.end,
+                        text=seg.text.strip(),
+                        confidence=round(math.exp(seg.avg_logprob), 4)
+                    )
+                    
+                    segment_dict = segment.to_dict()
+                    segments.append(segment_dict)
+                    full_text_parts.append(segment_dict['text'])
+                
+                full_text = " ".join(full_text_parts)
+                
+                return segments, full_text
+                
+            except Exception as e:
+                logger.error(f"❌ Transcription failed in thread: {e}", exc_info=True)
+                raise RuntimeError(f"Whisper transcription failed: {e}") from e
         
         # Run in thread pool
         segments, full_text = await loop.run_in_executor(
