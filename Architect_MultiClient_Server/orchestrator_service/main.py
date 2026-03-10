@@ -10,11 +10,10 @@ from orchestrator_service.config.application_config import get_config
 from contextlib import asynccontextmanager
 
 from orchestrator_service.api.dispatch_api import router as dispatch_router
-from orchestrator_service.api.tts_api import router as tts_router
-from orchestrator_service.api.chat_external_api import router as chat_external_router
 from orchestrator_service.api.sse_transcript_api import router as stream_router
 from orchestrator_service.api.sse_chat_external_api import router as sse_chat_external_router
 from orchestrator_service.api.sse_metadata_api import router as sse_metadata_router
+from orchestrator_service.api.sse_agent_request_api import router as sse_agent_request_router
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.webhook_api import router as webhook_router, egress_service
 from orchestrator_service.api.room_api import router as room_router
@@ -51,7 +50,6 @@ def signal_exit(signum, frame):
     # Call synchronous method to notify all SSE connections
     # This sends shutdown messages to all queues without awaiting
     sse_manager.signal_shutdown()
-        # Gọi lại handler gốc của Uvicorn
     
     if callable(original_sigint):
         original_sigint(signum, frame)
@@ -156,11 +154,10 @@ app.add_middleware(
 
 # Include routers
 app.include_router(dispatch_router, prefix="/api")
-app.include_router(tts_router, prefix="/api")
 app.include_router(stream_router, prefix="/api", tags=["sse transcript"])
 app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat external"])
 app.include_router(sse_metadata_router, prefix="/api", tags=["sse metadata"])
-app.include_router(chat_external_router, prefix="/api", tags=["sse chat external"])
+app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent requests"])
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
 app.include_router(queue_router)  # Has prefix="/api/queue"
 app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
