@@ -63,7 +63,7 @@ async def entrypoint(ctx: agents.JobContext):
     
     # Register cleanup callback
     cleanup = create_cleanup_callback(
-        orchestrator, session_id, room_id,
+        orchestrator, session_id,
         event_handlers, transcript_manager, tts_manager
     )
     ctx.add_shutdown_callback(cleanup)
