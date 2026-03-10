@@ -4,7 +4,8 @@ Agent Request Handler
 Handles requests received via SSE from orchestrator.
 Provides handlers for different request types and integrates with agent services.
 """
-
+import json
+import time
 import logging
 from typing import Any, Dict
 
@@ -34,19 +35,12 @@ class AgentRequestHandler:
         
         Returns:
             True if handled successfully
-        
-        Payload format:
-        {
-            "action": "enable" | "disable",
-            "params": {}
-        }
         """
         try:
             action = payload.get("action")
-            params = payload.get("params", {})
             
             self.logger.info(
-                f"[Agent Request Handler] Transcript control: action={action}, params={params}"
+                f"[Agent Request Handler] Transcript control: action={action}"
             )
             
             if not control_state or not event_handlers:
@@ -103,12 +97,6 @@ class AgentRequestHandler:
         
         Returns:
             True if handled successfully
-        
-        Payload format:
-        {
-            "text": "Text to speak",
-            "sender_identity": "sender name (optional)"
-        }
         """
         try:
             text = payload.get("text")
@@ -165,17 +153,8 @@ class AgentRequestHandler:
         
         Returns:
             True if handled successfully
-        
-        Payload format:
-        {
-            "message": "Message text to send",
-            "sender_name": "Sender name (optional, default: 'Agent')"
-        }
         """
-        try:
-            import json
-            import time
-            
+        try:            
             message = payload.get("message")
             sender_name = payload.get("sender_name", "Agent")
             
@@ -241,17 +220,6 @@ def create_request_handlers(
     
     Returns:
         Dictionary mapping request_type to handler callable
-    
-    Example:
-        handlers = create_request_handlers(
-            control_state=control_state,
-            event_handlers=event_handlers,
-            tts_manager=tts_manager,
-            room_context=ctx
-        )
-        
-        for request_type, handler in handlers.items():
-            orchestrator_client.register_request_handler(request_type, handler)
     """
     handler = AgentRequestHandler()
     
