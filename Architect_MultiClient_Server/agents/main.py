@@ -61,6 +61,13 @@ async def entrypoint(ctx: agents.JobContext):
     # Initialize TTS Manager (optional)
     tts_manager = await initialize_tts_manager(ctx, session_id)
     
+    # Register cleanup callback
+    cleanup = create_cleanup_callback(
+        orchestrator, session_id, room_id,
+        event_handlers, transcript_manager, tts_manager
+    )
+    ctx.add_shutdown_callback(cleanup)
+
     # Connect to room
     await ctx.connect()
     p = ctx.room.local_participant
@@ -78,13 +85,6 @@ async def entrypoint(ctx: agents.JobContext):
     
     # Register with orchestrator and get room_id
     room_id = await register_with_orchestrator(orchestrator, session_id)
-    
-    # Register cleanup callback
-    cleanup = create_cleanup_callback(
-        orchestrator, session_id, room_id,
-        event_handlers, transcript_manager, tts_manager
-    )
-    ctx.add_shutdown_callback(cleanup)
     
     # Start SSE agent request listener
     await start_agent_request_listener(
