@@ -13,7 +13,7 @@ from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.auth.transcript_auth import verify_api_key
-
+from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 # Import để có thể access egress_service
 from orchestrator_service.api.webhook_api import egress_service
 
@@ -64,7 +64,7 @@ async def register_room(
     registry = get_room_registry()
     stt_room_id = None
     tracks_started = 0
-    
+
     # 1. Start room in STT service FIRST
     try:
         stt_response = await transcription_service.start_room(request.room_name)
@@ -133,6 +133,9 @@ async def register_room(
         logger.error(f"Error setting up recordings: {e}", exc_info=True)
         # Continue - room is already registered
     
+    metadata_channel = MetadataChannel()
+    asyncio.create_task(metadata_channel.push_room_started(stt_room_id, request.room_name))
+    
     return {
         "status": "ok",
         "message": f"Room '{request.room_name}' registered successfully",
@@ -174,7 +177,6 @@ async def unregister_room(
                 detail=f"Room '{request.room_name}' not found in registry"
             )
         
-        
         # Unregister room from registry
         if not await registry.unregister_room(request.room_name):
             raise HTTPException(
@@ -199,6 +201,9 @@ async def unregister_room(
             logger.error(f"Error finalizing room '{request.room_name}': {e}", exc_info=True)
             # Don't fail unregistration if finalization fails
         
+        metadata_channel = MetadataChannel()
+        asyncio.create_task(metadata_channel.push_room_ended(room_id, request.room_name))
+
         return {
             "status": "ok",
             "message": f"Room '{request.room_name}' unregistered successfully",

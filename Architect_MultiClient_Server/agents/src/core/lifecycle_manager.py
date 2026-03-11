@@ -61,12 +61,6 @@ async def register_with_orchestrator(
     room_id = await orchestrator.register_room(session_id)
     if room_id:
         logger.info(f"✅ Room registered with orchestrator (room_id: {room_id})")
-        
-        event_session_started = await orchestrator.push_event_session_started(session_id, room_id)
-        if event_session_started:
-            logger.info("✅ session_started event pushed to orchestrator successfully")
-        else:
-            logger.warning(f"⚠️ Failed to push session_started event: {event_session_started.get('message')}")
     else:
         logger.warning("⚠️ Failed to get room_id from orchestrator")
     
@@ -126,7 +120,6 @@ async def start_agent_request_listener(
 def create_cleanup_callback(
     orchestrator: OrchestratorClient,
     session_id: str,
-    room_id: Optional[str],
     event_handlers: EventHandlers,
     transcript_manager: TranscriptManager,
     tts_manager: Optional[TTSManager]
@@ -166,8 +159,6 @@ def create_cleanup_callback(
         # Unregister room and push session_ended event
         try:
             await orchestrator.unregister_room(session_id)
-            if room_id:
-                await orchestrator.push_event_session_ended(session_id, room_id)
         except Exception as e:
             logger.error(f"unregister or session_ended event failed: {e}")
         
