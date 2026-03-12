@@ -11,12 +11,14 @@ from fastapi.responses import StreamingResponse
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
 from orchestrator_service.auth.verify_account import authenticate_account
-from orchestrator_service.services.mongodb_service import get_mongodb_service
+from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.decorator import singleton
 
 logger = get_logger(__name__)
 
 
+@singleton
 class MetadataChannel:
     """
     Metadata Channel for agent metadata events.
@@ -29,15 +31,12 @@ class MetadataChannel:
     CHANNEL_TYPE = "metadata"
     CONTEXT_KEY = "metadata_global"  # Single global context for all bots
     
-    def __init__(self, manager: SSEManager):
+    def __init__(self):
         """
-        Initialize metadata channel.
-        
-        Args:
-            manager: Shared SSEManager instance
+        Initialize metadata channel with singleton dependencies.
         """
-        self.manager = manager
-        self.mongodb_service = get_mongodb_service()
+        self.manager = SSEManager()
+        self.mongodb_service = MongoDBService()
     
     async def create_connection(
         self,

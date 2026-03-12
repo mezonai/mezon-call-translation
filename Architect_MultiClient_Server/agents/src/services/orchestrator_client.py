@@ -6,12 +6,14 @@ Architecture:
 - Connection Pooling: Reuses HTTP connections (max 10 connections, 5 keepalive)
 - Thread-Safe: Uses asyncio.Lock for singleton initialization
 - Auto-Reconnect: HTTP client reinitializes if closed
+- SSE Listener: Background task to receive requests from orchestrator
 
 
 """
 import asyncio
 import httpx
-from typing import Optional
+import json
+from typing import Optional, Callable, Dict, Any
 from src.logger import get_logger
 from src.config.application_config import get_config
 
@@ -32,6 +34,13 @@ class OrchestratorClient:
         self.config = get_config()
         self.logger = get_logger(__name__)
         self._http_client: Optional[httpx.AsyncClient] = None
+        
+        # SSE listener state
+        self._sse_listener_task: Optional[asyncio.Task] = None
+        self._sse_stop_event = asyncio.Event()
+        self._request_handlers: Dict[str, Callable] = {}
+        self._agent_id: Optional[str] = None
+        self._room_name: Optional[str] = None
     
     @classmethod
     def get_instance(cls) -> 'OrchestratorClient':
@@ -345,3 +354,239 @@ class OrchestratorClient:
         except Exception as e:
             self.logger.error(f"[API] Failed to push session ended event: {e}")
             return False
+    
+    # ==================== SSE Agent Request Listener ====================
+    
+    def register_request_handler(self, request_type: str, handler: Callable):
+        """
+        Register a handler for a specific request type.
+        
+        Args:
+            request_type: Type of request (e.g., "transcript_control", "tts_play")
+            handler: Async callable that takes (payload: dict) and returns None
+        """
+        self._request_handlers[request_type] = handler
+        self.logger.info(f"[SSE] Registered handler for request type: {request_type}")
+    
+    def unregister_request_handler(self, request_type: str):
+        """Unregister a handler for a request type."""
+        if request_type in self._request_handlers:
+            del self._request_handlers[request_type]
+            self.logger.debug(f"[SSE] Unregistered handler for request type: {request_type}")
+    
+    def clear_all_handlers(self):
+        """Clear all registered handlers to prevent memory leaks."""
+        count = len(self._request_handlers)
+        self._request_handlers.clear()
+        if count > 0:
+            self.logger.info(f"[SSE] Cleared {count} request handler(s)")
+    
+    async def start_agent_request_listener(
+        self,
+        agent_id: str,
+        room_name: Optional[str] = None
+    ):
+        """
+        Start background task to listen for agent requests via SSE.
+        
+        Args:
+            agent_id: Unique agent identifier
+            room_name: Optional room name (subscribe to room-specific requests)
+        """
+        if self._sse_listener_task and not self._sse_listener_task.done():
+            self.logger.warning("[SSE] Agent request listener already running")
+            return
+        
+        self._agent_id = agent_id
+        self._room_name = room_name
+        self._sse_stop_event.clear()
+        
+        # Start listener task
+        self._sse_listener_task = asyncio.create_task(
+            self._agent_request_listener_task()
+        )
+        
+        self.logger.info(
+            f"[SSE] Started agent request listener: agent_id={agent_id}, "
+            f"room_name={room_name or 'global'}"
+        )
+    
+    async def stop_agent_request_listener(self):
+        """Stop the SSE agent request listener."""
+        if not self._sse_listener_task or self._sse_listener_task.done():
+            self.logger.info("[SSE] Agent request listener not running")
+            return
+        
+        self.logger.info("[SSE] Stopping agent request listener...")
+        self._sse_stop_event.set()
+        
+        try:
+            # Wait for task to complete with timeout
+            await asyncio.wait_for(self._sse_listener_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            self.logger.warning("[SSE] Timeout waiting for listener to stop, cancelling...")
+            self._sse_listener_task.cancel()
+            try:
+                await self._sse_listener_task
+            except asyncio.CancelledError:
+                pass
+        
+        self.logger.info("[SSE] Agent request listener stopped")
+    
+    async def _agent_request_listener_task(self):
+        """
+        Background task that listens to SSE endpoint for agent requests.
+        Auto-reconnects on connection loss with exponential backoff.
+        """
+        retry_delay = 1.0
+        max_retry_delay = 60.0
+        
+        while not self._sse_stop_event.is_set():
+            try:
+                # Ensure HTTP client is ready
+                if not self._http_client or self._http_client.is_closed:
+                    await self.start()
+                
+                # Build SSE endpoint URL
+                url = f"{self.config.orchestrator.base_url}/api/sse/agent-requests"
+                params = {"agent_id": self._agent_id}
+                if self._room_name:
+                    params["room_name"] = self._room_name
+                
+            
+                self.logger.info(f"[SSE] Connecting to orchestrator: {url}")
+                
+                # Connect to SSE endpoint (streaming)
+                async with self._http_client.stream(
+                    "GET",
+                    url,
+                    params=params,
+                    timeout=None  # No timeout for SSE
+                ) as response:
+                    if response.status_code != 200:
+                        self.logger.error(
+                            f"[SSE] Failed to connect: HTTP {response.status_code}"
+                        )
+                        await asyncio.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 2, max_retry_delay)
+                        continue
+                    
+                    self.logger.info("[SSE] Connected to orchestrator successfully")
+                    retry_delay = 1.0  # Reset retry delay on successful connection
+                    
+                    # Read SSE events
+                    buffer = ""
+                    async for chunk in response.aiter_text():
+                        if self._sse_stop_event.is_set():
+                            self.logger.info("[SSE] Stop event detected, closing connection")
+                            break
+                        
+                        buffer += chunk
+                        
+                        # Process complete SSE events (separated by double newline)
+                        while "\n\n" in buffer:
+                            event_data, buffer = buffer.split("\n\n", 1)
+                            await self._process_sse_event(event_data)
+                    
+                    self.logger.warning("[SSE] Connection closed by server")
+            
+            except httpx.HTTPError as e:
+                self.logger.error(f"[SSE] HTTP error: {e}")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, max_retry_delay)
+            
+            except asyncio.CancelledError:
+                self.logger.info("[SSE] Listener task cancelled")
+                break
+            
+            except Exception as e:
+                self.logger.error(f"[SSE] Unexpected error: {e}", exc_info=True)
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, max_retry_delay)
+        
+        self.logger.info("[SSE] Agent request listener task exiting")
+    
+    async def _process_sse_event(self, event_data: str):
+        """
+        Process a single SSE event.
+        
+        Args:
+            event_data: Raw SSE event data (may contain multiple lines)
+        """
+        try:
+            # Parse SSE event format
+            event_type = None
+            data_lines = []
+            
+            for line in event_data.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                
+                if line.startswith("event:"):
+                    event_type = line[6:].strip()
+                elif line.startswith("data:"):
+                    data_lines.append(line[5:].strip())
+            
+            # Handle different event types
+            if event_type == "connected":
+                data = json.loads(data_lines[0]) if data_lines else {}
+                self.logger.info(f"[SSE] Connection confirmed: {data}")
+                return
+            
+            if event_type == "heartbeat":
+                # Ignore heartbeat events
+                return
+            
+            if event_type == "disconnect":
+                data = json.loads(data_lines[0]) if data_lines else {}
+                self.logger.warning(f"[SSE] Disconnect event received: {data}")
+                return
+            
+            # Parse data event (agent request)
+            if data_lines:
+                data_json = "\n".join(data_lines)
+                request_data = json.loads(data_json)
+                await self._handle_agent_request(request_data)
+        
+        except json.JSONDecodeError as e:
+            self.logger.error(f"[SSE] Failed to parse event data: {e}")
+        except Exception as e:
+            self.logger.error(f"[SSE] Error processing event: {e}", exc_info=True)
+    
+    async def _handle_agent_request(self, request_data: Dict[str, Any]):
+        """
+        Handle incoming agent request from orchestrator.
+        
+        Args:
+            request_data: Request data containing request_id, request_type, and payload
+        """
+        try:
+            request_id = request_data.get("request_id")
+            request_type = request_data.get("request_type")
+            payload = request_data.get("payload", {})
+            timestamp = request_data.get("timestamp")
+            
+            self.logger.info(
+                f"[SSE] Received request: id={request_id}, type={request_type}, "
+                f"timestamp={timestamp}"
+            )
+            
+            # Find and call handler
+            handler = self._request_handlers.get(request_type)
+            if handler:
+                try:
+                    await handler(payload)
+                    self.logger.info(f"[SSE] Request {request_id} handled successfully")
+                except Exception as e:
+                    self.logger.error(
+                        f"[SSE] Error handling request {request_id}: {e}",
+                        exc_info=True
+                    )
+            else:
+                self.logger.warning(
+                    f"[SSE] No handler registered for request type: {request_type}"
+                )
+        
+        except Exception as e:
+            self.logger.error(f"[SSE] Error in request handler: {e}", exc_info=True)

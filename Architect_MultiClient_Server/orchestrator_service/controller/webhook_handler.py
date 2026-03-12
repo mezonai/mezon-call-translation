@@ -48,7 +48,7 @@ class WebhookHandler:
                 room_name = event.get("egressInfo", {}).get("roomName", "")
             
             # Check if room is registered
-            if room_name and not self.room_registry.is_registered(room_name):
+            if room_name and not await self.room_registry.is_registered(room_name):
                 logger.info(f"  ⏭ Room '{room_name}' not registered, skipping event")
                 return WebhookResponse(received=True, action="room_not_registered")
         
@@ -97,10 +97,11 @@ class WebhookHandler:
     
     async def _handle_track_unpublished(self, event: Dict) -> WebhookResponse:
         """Handle when a track is unpublished"""
+        room_name = event.get("room", {}).get("name", "")
         track_sid = event.get("track", {}).get("sid", "")
         
-        if self.egress_service.mark_unpublished(track_sid):
-            logger.info(f"  Track {track_sid} unpublished, egress auto-stop")
+        if await self.egress_service.mark_unpublished(room_name, track_sid):
+            logger.info(f"  Track {track_sid} unpublished in room {room_name}, egress auto-stop")
             return WebhookResponse(received=True, action="egress_removed")
         
         return WebhookResponse(received=True, action="no_active_egress")
@@ -137,7 +138,7 @@ class WebhookHandler:
         
         # Get or create room to obtain room_ref_id
         try:
-            room_ref_id = self.room_registry.get_room_id(room_name)
+            room_ref_id = await self.room_registry.get_room_id(room_name)
             
             # Save track metadata (filename will be updated later when egress ends)
             asyncio.create_task(

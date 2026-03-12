@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb_service import get_mongodb_service
+from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
@@ -51,7 +51,7 @@ async def list_rooms(
     if search_trimmed == "":
         search_trimmed = None
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         rooms = await mongodb.list_rooms(
@@ -93,7 +93,7 @@ async def get_room_by_id(
     - **room_id**: The ObjectId of the room to retrieve
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -136,7 +136,7 @@ async def get_room_statistics_by_id(
     - Total transcript segments
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         

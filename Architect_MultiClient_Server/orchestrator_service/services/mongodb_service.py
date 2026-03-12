@@ -10,31 +10,20 @@ from typing import Optional, Dict, Any, List
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pymongo import ReturnDocument
-import logging
 from pymongo.errors import PyMongoError
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
 from orchestrator_service.models.summary_models import RoomSummaryResponse
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
-
+@singleton
 class MongoDBService:
     """Service for storing track-based transcripts in MongoDB"""
 
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if self._initialized:
-            return
-
         self.config = get_config()
-        
         # Build MongoDB URI with authentication
         self.mongo_uri = self._build_mongo_uri()
         self.database_name = self.config.mongodb.database
@@ -52,7 +41,12 @@ class MongoDBService:
         self.chunks_collection = None
         self.summary_collection = None
         self.connected = False
-        self._initialized = True
+
+        logger.info(
+            f"MongoDBService initialized (DB={self.database_name}, "
+            f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, "
+            f"{self.chunks_collection_name}, {self.summary_collection_name})"
+        )
 
         logger.info(
             f"MongoDBService initialized (DB={self.database_name}, "
@@ -790,16 +784,123 @@ class MongoDBService:
             logger.error(f"Failed to get summary by room id: {e}")
             return []
 
-    # ========================================
-    # 🏭 SINGLETON PATTERN
-    # ========================================
+    # ==========================================================
+    # 🔥 TRANSCRIPTION PROGRESSIVE SAVE METHODS
+    # ==========================================================
 
-    @classmethod
-    def get_instance(cls) -> "MongoDBService":
-        """Get singleton instance"""
-        return cls()
+    def _split_into_chunks(self, segments: List[Dict]) -> List[List[Dict]]:
+        """Split segments into chunks of CHUNK_SIZE"""
+        CHUNK_SIZE = 50
+        chunks = []
+        for i in range(0, len(segments), CHUNK_SIZE):
+            chunk = segments[i:i + CHUNK_SIZE]
+            chunks.append(chunk)
+        return chunks
 
+    def _create_chunk_document(
+        self,
+        track_ref_id: str,
+        chunk_index: int,
+        segments: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Create a chunk document from segments"""
+        if not segments:
+            raise ValueError("Cannot create chunk document with empty segments")
 
-def get_mongodb_service() -> MongoDBService:
-    """Convenience function to get MongoDB service instance"""
-    return MongoDBService.get_instance()
+        return {
+            "track_ref_id": track_ref_id,
+            "chunk_index": chunk_index,
+            "start_time": segments[0].get("start", 0),
+            "end_time": segments[-1].get("end", 0),
+            "item_count": len(segments),
+            "segments": segments,
+        }
+
+    async def update_track_status(
+        self,
+        track_ref_id: str,
+        status: str
+    ) -> dict[str, Any]:
+        """
+        Update track status.
+        
+        Args:
+            track_ref_id: Track _id (egress_id string)
+            status: New status ('processing' | 'completed' | 'failed')
+            
+        Returns:
+            Updated track document if successful, None if failed
+        """
+        if not self.connected:
+            return None
+
+        try:
+            # Atomically update and return the document
+            updated_track = await self.tracks_collection.find_one_and_update(
+                {"_id": track_ref_id},
+                {"$set": {"status": status, "updated_at": datetime.utcnow()}},
+                return_document=ReturnDocument.AFTER
+            )
+            
+            if not updated_track:
+                logger.error(f"Track not found: track_id={track_ref_id}")
+                return None
+            
+            old_status = updated_track.get("status", status)
+            
+            logger.info(f"📝 Track status updated: {old_status} → {status} (track_id={track_ref_id})")
+            
+            return updated_track
+
+        except Exception as e:
+            logger.error(f"Failed to update track status: {e}")
+            return None
+        
+    async def append_transcript_chunk(
+        self,
+        track_ref_id: str,
+        new_segments: List[Dict[str, Any]]
+    ) -> bool:
+        """Append new segments as additional chunks"""
+        if not new_segments:
+            return True
+
+        last_chunk = await self.chunks_collection.find_one(
+            {"track_ref_id": track_ref_id},
+            sort=[("chunk_index", -1)]
+        )
+
+        start_index = (last_chunk["chunk_index"] + 1) if last_chunk else 0
+        chunks = self._split_into_chunks(new_segments)
+        chunk_documents = []
+
+        for i, chunk_segments in enumerate(chunks):
+            chunk_doc = self._create_chunk_document(
+                track_ref_id=track_ref_id,
+                chunk_index=start_index + i,
+                segments=chunk_segments
+            )
+            chunk_documents.append(chunk_doc)
+
+        try:
+            if chunk_documents:
+                await self.chunks_collection.insert_many(chunk_documents)
+                
+                # Update chunk_count in tracks collection
+                await self.tracks_collection.update_one(
+                    {"_id": track_ref_id},
+                    {
+                        "$inc": {"chunk_count": len(chunk_documents)}
+                    }
+                )
+
+                logger.info(
+                    f"✅ Appended {len(chunk_documents)} chunks "
+                    f"for track_ref_id={track_ref_id}"
+                )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to append chunks: {e}")
+            return False
+

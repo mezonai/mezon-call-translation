@@ -11,7 +11,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb_service import get_mongodb_service
+from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
@@ -49,7 +49,7 @@ async def get_chunks_by_track(
     - **skip**: Number of records to skip for pagination
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -92,7 +92,7 @@ async def get_chunk_by_index(
     - **chunk_index**: The index of the chunk to retrieve
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -136,7 +136,7 @@ async def get_chunks_by_time_range(
     validate_time_range(start_time, end_time)
     
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -174,7 +174,7 @@ async def get_full_transcript(
     Returns all transcript segments in order.
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -204,7 +204,7 @@ async def search_transcript(
     - **q**: Text to search for (case-insensitive)
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -240,7 +240,7 @@ async def get_segments_by_confidence(
     validate_confidence_range(min_confidence, max_confidence)
     
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
         
@@ -277,7 +277,7 @@ async def health_check():
     Returns MongoDB connection status.
     """
     try:
-        mongodb = get_mongodb_service()
+        mongodb = MongoDBService()
         connected = mongodb.connected
         
         if not connected:

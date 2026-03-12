@@ -4,7 +4,8 @@ Service for generating room summaries
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from orchestrator_service.services.mongodb_service import get_mongodb_service
+from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
+from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.models.summary_models import RoomSummary, SummaryActionItemsResult
 from orchestrator_service.config.application_config import get_config
 from google import genai
@@ -17,7 +18,7 @@ class SummaryService:
     """Service to handle room summarization logic"""
     
     def __init__(self):
-        self.mongodb = get_mongodb_service()
+        self.mongodb = MongoDBService()
         self.config = get_config()
         self.genai_client = None
         
@@ -216,6 +217,13 @@ Conversation content:
             result["_id"] = saved_id
             return result
         
+        #9. Send SSE event summary done
+        room = await self.mongodb.get_room_by_id(room_id)
+        metadata_channal  = MetadataChannel()
+        await metadata_channal.push_room_summary_done(
+            room_id=room_id,
+            room_name=room.get("room_name", "Unknown")
+        )
         return None
 
 # Singleton
