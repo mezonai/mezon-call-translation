@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.local_llm_service import LocalLLMService
 from orchestrator_service.models.summary_models import RoomSummary, SummaryActionItemsResult
 from orchestrator_service.config.application_config import get_config
 from google import genai
@@ -21,7 +22,12 @@ class SummaryService:
         self.mongodb = MongoDBService()
         self.config = get_config()
         self.genai_client = None
-        
+        self.local_llm = LocalLLMService(
+            base_url=self.config.llm.local_llm_base_url,
+            model_name=self.config.llm.local_llm_model,
+            api_key=self.config.llm.local_llm_api_key,
+            timeout=self.config.llm.local_llm_timeout,
+        )
         if self.config.llm.gemini_api_key:
             try:
                 self.genai_client = genai.Client(api_key=self.config.llm.gemini_api_key)
@@ -189,7 +195,7 @@ Conversation content:
         full_text = "\n".join(text_lines)
         
         # 6. Generate Summary via LLM
-        summary_data_result = self.summarize_conversation(full_text)
+        summary_data_result = await self.local_llm.summarize_conversation_local(full_text)
         action_items = summary_data_result.action_items
         action_items_dict = {action_item.participant_identity: action_item.participant_actions for action_item in action_items}
         summary_data = {

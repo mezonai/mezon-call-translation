@@ -3,13 +3,14 @@ DataChannel Dispatcher - Routes DataChannel messages to appropriate handlers
 """
 import asyncio
 import json
-import logging
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from src.utils.participant_identity import parse_participant_identity
 
+from src.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
 
 
 def parse_json_bytes(data: bytes) -> Optional[dict]:

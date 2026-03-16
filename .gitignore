@@ -14,3 +14,4 @@ examples/
 Architect_MultiClient_Server/stress_test_server/
 .env.backup.*
 .vscode/
+\tests
