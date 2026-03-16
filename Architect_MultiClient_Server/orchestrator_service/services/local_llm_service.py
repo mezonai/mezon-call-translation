@@ -103,7 +103,6 @@ class LocalLLMService:
                 headers=self._build_headers(),
                 json=payload,
             )
-        print(f"Response: {response.json()}")
         response.raise_for_status()
         result = response.json()
         json_data = extract_json_from_llm(result)
