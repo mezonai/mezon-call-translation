@@ -33,6 +33,7 @@ class MongoDBService:
         self.tracks_collection_name = "tracks"
         self.chunks_collection_name = "transcript_chunks"
         self.summary_collection_name = "rooms_summary"
+        self.events_collection_name = "metadata_events"
 
         self.client: Optional[AsyncIOMotorClient] = None
         self.db = None
@@ -40,17 +41,18 @@ class MongoDBService:
         self.tracks_collection = None
         self.chunks_collection = None
         self.summary_collection = None
+        self.events_collection = None
         self.connected = False
 
         logger.info(
             f"MongoDBService initialized (DB={self.database_name}, "
             f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, "
-            f"{self.chunks_collection_name}, {self.summary_collection_name})"
+            f"{self.chunks_collection_name}, {self.summary_collection_name}, {self.events_collection_name})"
         )
 
         logger.info(
             f"MongoDBService initialized (DB={self.database_name}, "
-            f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, {self.chunks_collection_name}, {self.summary_collection_name})"
+            f"Collections={self.rooms_collection_name}, {self.tracks_collection_name}, {self.chunks_collection_name}, {self.summary_collection_name}, {self.events_collection_name})"
         )
 
     def _build_mongo_uri(self) -> str:
@@ -78,7 +80,8 @@ class MongoDBService:
             self.tracks_collection = self.db[self.tracks_collection_name]
             self.chunks_collection = self.db[self.chunks_collection_name]
             self.summary_collection = self.db[self.summary_collection_name]
-            
+            self.events_collection = self.db[self.events_collection_name]
+
             # Test connection
             await self.client.admin.command("ping")
 
@@ -783,6 +786,148 @@ class MongoDBService:
         except Exception as e:
             logger.error(f"Failed to get summary by room id: {e}")
             return []
+
+    # ========================================
+    # 📅 METADATA EVENTS COLLECTION QUERIES
+    # ========================================
+
+    async def save_metadata_event(self, event_data: Dict[str, Any]) -> Optional[str]:
+        """
+        Save metadata event to MongoDB with TTL.
+        Events will be automatically deleted after 3 days.
+
+        Args:
+            event_data: Event document with fields:
+                - event_id: UUID string
+                - event_type: room_started | room_ended | room_record_done | room_summary_done
+                - room_id: Room identifier
+                - room_name: Room name
+                - metadata: Event-specific data
+                - created_at: UTC datetime for TTL
+                - timestamp: ISO 8601 string
+
+        Returns:
+            String representation of _id if successful, None if failed
+        """
+        try:
+            result = await self.events_collection.insert_one(event_data)
+            logger.info(f"📅 Metadata event saved: _id={result.inserted_id}, type={event_data.get('event_type')}")
+            return str(result.inserted_id)
+        except Exception as e:
+            logger.error(f"Failed to save metadata event: {e}")
+            return None
+
+    async def get_metadata_events(
+        self,
+        event_type: Optional[str] = None,
+        room_id: Optional[str] = None,
+        from_utc: Optional[datetime] = None,
+        to_utc: Optional[datetime] = None,
+        limit: int = 100,
+        skip: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        Get metadata events with optional filters.
+
+        Args:
+            event_type: Filter by event type
+            room_id: Filter by room ID
+            from_utc: Start of time range (inclusive)
+            to_utc: End of time range (inclusive)
+            limit: Maximum number of events to return
+            skip: Number of events to skip (for pagination)
+
+        Returns:
+            List of event documents
+        """
+        try:
+            query = self._build_metadata_events_query(event_type, room_id, from_utc, to_utc)
+            cursor = self.events_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+            events = await cursor.to_list(length=limit)
+
+            # Convert ObjectId to string for JSON serialization
+            for event in events:
+                event["_id"] = str(event["_id"])
+                if isinstance(event.get("created_at"), datetime):
+                    event["created_at"] = event["created_at"].isoformat() + "Z"
+
+            return events
+        except Exception as e:
+            logger.error(f"Failed to get metadata events: {e}")
+            return []
+
+    async def count_metadata_events(
+        self,
+        event_type: Optional[str] = None,
+        room_id: Optional[str] = None,
+        from_utc: Optional[datetime] = None,
+        to_utc: Optional[datetime] = None
+    ) -> int:
+        """
+        Count metadata events with optional filters.
+
+        Args:
+            event_type: Filter by event type
+            room_id: Filter by room ID
+            from_utc: Start of time range (inclusive)
+            to_utc: End of time range (inclusive)
+
+        Returns:
+            Count of events matching the filters
+        """
+        try:
+            query = self._build_metadata_events_query(event_type, room_id, from_utc, to_utc)
+            return await self.events_collection.count_documents(query)
+        except Exception as e:
+            logger.error(f"Failed to count metadata events: {e}")
+            return 0
+
+    async def get_metadata_event_by_event_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get single metadata event by event_id (UUID).
+
+        Args:
+            event_id: Event UUID
+
+        Returns:
+            Event document if found, None otherwise
+        """
+        try:
+            event = await self.events_collection.find_one({"event_id": event_id})
+            if event:
+                event["_id"] = str(event["_id"])
+                if isinstance(event.get("created_at"), datetime):
+                    event["created_at"] = event["created_at"].isoformat() + "Z"
+            return event
+        except Exception as e:
+            logger.error(f"Failed to get metadata event by event_id: {e}")
+            return None
+
+    def _build_metadata_events_query(
+        self,
+        event_type: Optional[str] = None,
+        room_id: Optional[str] = None,
+        from_utc: Optional[datetime] = None,
+        to_utc: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """Build query dict for metadata events with filters"""
+        query = {}
+
+        if event_type:
+            query["event_type"] = event_type
+
+        if room_id:
+            query["room_id"] = room_id
+
+        if from_utc is not None or to_utc is not None:
+            created_at = {}
+            if from_utc is not None:
+                created_at["$gte"] = from_utc
+            if to_utc is not None:
+                created_at["$lte"] = to_utc
+            query["created_at"] = created_at
+
+        return query
 
     # ==========================================================
     # 🔥 TRANSCRIPTION PROGRESSIVE SAVE METHODS
