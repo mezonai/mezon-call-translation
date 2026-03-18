@@ -2,10 +2,12 @@
 Local LLM service (OpenAI-compatible API)
 """
 import json
+import logging
 import re
 from typing import Any, Dict
-
+from orchestrator_service.utils.logger import get_logger
 import httpx
+from pydantic import ValidationError
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -122,8 +124,8 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),  # Maximum 3 retry attempts
         wait=wait_exponential(multiplier=1, min=10, max=60),  # 10s → 20s → 40s
-        retry=retry_if_exception_type((httpx.HTTPError, ValueError)),  # Retry on HTTP/parse errors
-        before_sleep=before_sleep_log(logger, "WARNING"),  # Log before each retry
+        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError)),  # Retry on HTTP/parse/validation errors
+        before_sleep=before_sleep_log(logger, logging.WARNING),  # Log before each retry
         reraise=True,  # Re-raise the exception after all retries exhausted
     )
     async def summarize_conversation(self, conversation_text: str) -> SummaryActionItemsResult:
@@ -133,7 +135,7 @@ class LocalLLMService(BaseLLMService):
         This method automatically retries on failures with exponential backoff:
         - Max retries: 3 attempts
         - Backoff: 10s → 20s → 40s (max 60s)
-        - Retries on: HTTP errors, connection issues, JSON parse failures
+        - Retries on: HTTP errors, connection issues, JSON parse failures, and validation errors
 
         Args:
             conversation_text: Formatted conversation transcript
@@ -144,6 +146,7 @@ class LocalLLMService(BaseLLMService):
         Raises:
             httpx.HTTPStatusError: If API request fails after all retries
             ValueError: If response cannot be parsed after all retries
+            ValidationError: If parsed JSON doesn't match schema after all retries
         """
         prompt = build_prompt_summary(conversation_text)
 
@@ -165,7 +168,6 @@ class LocalLLMService(BaseLLMService):
         response.raise_for_status()
         result = response.json()
         json_data = extract_json_from_llm(result)
-
         # Validate and parse JSON into SummaryActionItemsResult
         summary_result = SummaryActionItemsResult.model_validate(json_data)
         logger.info("Successfully generated summary using Local LLM")
