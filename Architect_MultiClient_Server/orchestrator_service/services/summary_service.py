@@ -216,7 +216,6 @@ Conversation content:
             result["_id"] = saved_id
             
             #9. Notify clients via SSE if summary generation is successful
-            room = await self.mongodb.get_room_by_id(room_id)
             metadata_channal  = MetadataChannel()
             await metadata_channal.push_room_summary_done(
                 room_id=room_id,
