@@ -113,7 +113,7 @@ Conversation content:
         room = await self.mongodb.get_room_by_id(room_id)
         if not room:
             logger.warning(f"Room not found: {room_id}")
-            return None
+            return None   
         
         # 2. Get all tracks
         tracks = await self.mongodb.get_tracks_by_room(room_id)
@@ -210,20 +210,19 @@ Conversation content:
         
         # 8. Save to DB
         saved_id = await self.mongodb.save_room_summary(summary_model.model_dump())
-        
         if saved_id:
             logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
             result = summary_model.model_dump()
             result["_id"] = saved_id
+            
+            #9. Notify clients via SSE if summary generation is successful
+            metadata_channal  = MetadataChannel()
+            await metadata_channal.push_room_summary_done(
+                room_id=room_id,
+                room_name=room.get("room_name", "Unknown")
+            )
             return result
-        
-        #9. Send SSE event summary done
-        room = await self.mongodb.get_room_by_id(room_id)
-        metadata_channal  = MetadataChannel()
-        await metadata_channal.push_room_summary_done(
-            room_id=room_id,
-            room_name=room.get("room_name", "Unknown")
-        )
+ 
         return None
 
 # Singleton
