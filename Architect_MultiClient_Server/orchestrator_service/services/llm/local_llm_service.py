@@ -5,7 +5,6 @@ import json
 import logging
 import re
 from typing import Any, Dict
-from orchestrator_service.utils.logger import get_logger
 import httpx
 from pydantic import ValidationError
 from tenacity import (
@@ -17,8 +16,8 @@ from tenacity import (
 )
 
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
-from orchestrator_service.services.llm.prompt import build_prompt_summary
-from orchestrator_service.models.summary_models import SummaryActionItemsResult
+from orchestrator_service.services.llm.prompt import build_prompt_action_items, build_prompt_summary
+from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -121,40 +120,12 @@ class LocalLLMService(BaseLLMService):
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         return headers
 
-    @retry(
-        stop=stop_after_attempt(3),  # Maximum 3 retry attempts
-        wait=wait_exponential(multiplier=1, min=10, max=60),  # 10s → 20s → 40s
-        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError)),  # Retry on HTTP/parse/validation errors
-        before_sleep=before_sleep_log(logger, logging.WARNING),  # Log before each retry
-        reraise=True,  # Re-raise the exception after all retries exhausted
-    )
-    async def summarize_conversation(self, conversation_text: str) -> SummaryActionItemsResult:
-        """
-        Summarize conversation using local OpenAI-compatible LLM with automatic retry.
-
-        This method automatically retries on failures with exponential backoff:
-        - Max retries: 3 attempts
-        - Backoff: 10s → 20s → 40s (max 60s)
-        - Retries on: HTTP errors, connection issues, JSON parse failures, and validation errors
-
-        Args:
-            conversation_text: Formatted conversation transcript
-
-        Returns:
-            SummaryActionItemsResult with summary and action items
-
-        Raises:
-            httpx.HTTPStatusError: If API request fails after all retries
-            ValueError: If response cannot be parsed after all retries
-            ValidationError: If parsed JSON doesn't match schema after all retries
-        """
-        prompt = build_prompt_summary(conversation_text)
-
+    async def _call_local_llm(self, prompt: str, json_schema: Dict[str, Any]) -> Dict[str, Any]:
         payload = {
             "model": self.config.model,
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
-            "json_schema": SummaryActionItemsResult.model_json_schema(),
+            "json_schema": json_schema,
             "max_tokens": 15000,
             "temperature": 0,
         }
@@ -167,8 +138,55 @@ class LocalLLMService(BaseLLMService):
             )
         response.raise_for_status()
         result = response.json()
-        json_data = extract_json_from_llm(result)
-        # Validate and parse JSON into SummaryActionItemsResult
-        summary_result = SummaryActionItemsResult.model_validate(json_data)
-        logger.info("Successfully generated summary using Local LLM")
-        return summary_result
+        return extract_json_from_llm(result)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=10, max=60),
+        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    async def summarize_summary(self, conversation_text: str) -> SummaryResult:
+        prompt = build_prompt_summary(conversation_text)
+        json_data = await self._call_local_llm(prompt, SummaryResult.model_json_schema())
+        return SummaryResult.model_validate(json_data)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=10, max=60),
+        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    async def summarize_action_items(self, conversation_text: str) -> ActionItemsResult:
+        prompt = build_prompt_action_items(conversation_text)
+        json_data = await self._call_local_llm(prompt, ActionItemsResult.model_json_schema())
+        return ActionItemsResult.model_validate(json_data)
+
+    async def summarize_conversation(self, conversation_text: str) -> SummaryActionItemsResult:
+        """
+        Summarize conversation by running 2 focused local LLM requests.
+
+        Args:
+            conversation_text: Formatted conversation transcript
+
+        Returns:
+            SummaryActionItemsResult with summary and action items
+
+        Raises:
+            Exception: If one of the requests fails
+        """
+        summary_result = await self.summarize_summary(conversation_text)
+        action_items_result = await self.summarize_action_items(conversation_text)
+        logger.info("Successfully generated summary and action items using Local LLM (2 requests)")
+        return SummaryActionItemsResult(
+            summary=(
+                f"CONTEXT\n{summary_result.context}\n\n"
+                f"KEY DISCUSSIONS\n{summary_result.key_discussions}\n\n"
+                f"DECISIONS\n{summary_result.decisions}\n\n"
+                f"UNRESOLVED ISSUES\n{summary_result.unresolved_issues}\n\n"
+                f"NEXT FOCUS\n{summary_result.next_focus}"
+            ),
+            action_items=action_items_result.action_items,
+        )

@@ -4,8 +4,8 @@ Gemini LLM service implementation
 from google import genai
 
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
-from orchestrator_service.services.llm.prompt import build_prompt_summary
-from orchestrator_service.models.summary_models import SummaryActionItemsResult
+from orchestrator_service.services.llm.prompt import build_prompt_action_items, build_prompt_summary
+from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -32,38 +32,48 @@ class GeminiLLMService(BaseLLMService):
             logger.error(f"Failed to initialize Gemini client: {e}")
             raise
 
+    async def summarize_summary(self, conversation_text: str) -> SummaryResult:
+        prompt = build_prompt_summary(conversation_text)
+        response = await self.client.aio.models.generate_content(
+            model=self.config.model,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_json_schema": SummaryResult.model_json_schema(),
+            },
+        )
+        return SummaryResult.model_validate_json(response.text)
+
+    async def summarize_action_items(self, conversation_text: str) -> ActionItemsResult:
+        prompt = build_prompt_action_items(conversation_text)
+        response = await self.client.aio.models.generate_content(
+            model=self.config.model,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_json_schema": ActionItemsResult.model_json_schema(),
+            },
+        )
+        return ActionItemsResult.model_validate_json(response.text)
+
     async def summarize_conversation(self, conversation_text: str) -> SummaryActionItemsResult:
-        """
-        Summarize conversation using Gemini API with structured JSON response.
-
-        Args:
-            conversation_text: Formatted conversation transcript
-
-        Returns:
-            SummaryActionItemsResult with summary and action items
-
-        Raises:
-            Exception: If Gemini API call fails
-        """
+        """Run 2 Gemini requests: one for summary and one for action items."""
         try:
-            prompt = build_prompt_summary(conversation_text)
-
-            response = self.client.models.generate_content(
-                model=self.config.model,
-                contents=prompt,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_json_schema": SummaryActionItemsResult.model_json_schema(),
-                },
+            summary_result = await self.summarize_summary(conversation_text)
+            action_items_result = await self.summarize_action_items(conversation_text)
+            logger.info("Successfully generated summary and action items using Gemini (2 requests)")
+            return SummaryActionItemsResult(
+                summary=(
+                    f"CONTEXT\n{summary_result.context}\n\n"
+                    f"KEY DISCUSSIONS\n{summary_result.key_discussions}\n\n"
+                    f"DECISIONS\n{summary_result.decisions}\n\n"
+                    f"UNRESOLVED ISSUES\n{summary_result.unresolved_issues}\n\n"
+                    f"NEXT FOCUS\n{summary_result.next_focus}"
+                ),
+                action_items=action_items_result.action_items,
             )
-
-            summary_result = SummaryActionItemsResult.model_validate_json(response.text)
-            logger.info("Successfully generated summary using Gemini")
-            return summary_result
-
         except Exception as e:
             logger.error(f"Gemini summarization error: {e}")
-            # Return error summary instead of raising
             return SummaryActionItemsResult(
                 summary=f"An error occurred during summarization: {e}",
                 action_items=[]
