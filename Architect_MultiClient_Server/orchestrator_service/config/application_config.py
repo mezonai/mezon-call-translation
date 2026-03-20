@@ -223,26 +223,21 @@ class LoggerConfig:
 
 @dataclass
 class LLMConfig:
-    """Configuration for LLM services (Gemini, OpenAI, etc.)"""
-    # Gemini configuration
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
-
-    # Local LLM configuration (OpenAI-compatible API)
-    local_llm_base_url: str = "https://localhost:8080/v1/chat/completions"
-    local_llm_model: str = "Qwen3.5-35B-A3B"
-    local_llm_api_key: str = ""
-    local_llm_timeout: int = 120
+    """Unified LLM configuration for all providers (Gemini, Local, OpenAI, etc.)"""
+    provider: str = "local" # "gemini" | "local" | "openai"
+    api_key: str = ""
+    model: str  = "Qwen3.5-35B-A3B"
+    base_url: str = None 
+    timeout: int = 120
 
     @classmethod
     def from_env(cls) -> 'LLMConfig':
         return cls(
-            gemini_api_key=os.getenv('GEMINI_API_KEY', ''),
-            gemini_model=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash'),
-            local_llm_base_url=os.getenv('LOCAL_LLM_BASE_URL', 'http://localhost:8080/v1/chat/completions'),
-            local_llm_model=os.getenv('LOCAL_LLM_MODEL', 'default'),
-            local_llm_api_key=os.getenv('LOCAL_LLM_API_KEY', ''),
-            local_llm_timeout=int(os.getenv('LOCAL_LLM_TIMEOUT', '120')),
+            provider=os.getenv('LLM_PROVIDER', 'local').lower(),
+            base_url=os.getenv('LLM_URL', 'http://localhost:8080/v1/chat/completions'),
+            model=os.getenv('LLM_MODEL', 'Qwen3.5-35B-A3B'),
+            api_key=os.getenv('LLM_API_KEY', ''),
+            timeout=int(os.getenv('LLM_TIMEOUT', '120')),
         )
 
     def validate(self) -> bool:
