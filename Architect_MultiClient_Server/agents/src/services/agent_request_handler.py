@@ -7,6 +7,7 @@ Provides handlers for different request types and integrates with agent services
 import json
 import time
 import logging
+import uuid
 from typing import Any, Dict
 
 from src.models.agent_request_type import AgentRequestType
@@ -177,9 +178,10 @@ class AgentRequestHandler:
             
             # Prepare chat message payload (compatible with lk-chat-topic format)
             chat_payload = {
+                "id": str(uuid.uuid4()),
+                "timestamp": int(time.time() * 1000),
                 "message": message,
-                "sender_name": sender_name,
-                "timestamp": int(time.time() * 1000)
+                "ignoreLegacy": False
             }
             
             # Send message via DataChannel (sendText equivalent)

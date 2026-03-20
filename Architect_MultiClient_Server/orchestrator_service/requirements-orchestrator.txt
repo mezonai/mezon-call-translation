@@ -27,6 +27,7 @@ pymongo>=4.5.0                 # MongoDB Python driver (sync operations)
 # AI & LLM Services
 # ========================================
 google-genai>=0.3.0            # Google Gemini API SDK
+tenacity>=8.0.0                # Retry library with exponential backoff
 
 # ========================================
 # Redis Queue
