@@ -51,18 +51,3 @@ class BaseLLMService(ABC):
             Exception: If extraction fails
         """
         pass
-
-    async def summarize_conversation(self, conversation_text: str) -> SummaryActionItemsResult:
-        """Backward-compatible helper that combines 2 focused LLM requests."""
-        summary_result = await self.summarize_summary(conversation_text)
-        action_items_result = await self.summarize_action_items(conversation_text)
-        return SummaryActionItemsResult(
-            summary=(
-                f"CONTEXT\n{summary_result.context}\n\n"
-                f"KEY DISCUSSIONS\n{summary_result.key_discussions}\n\n"
-                f"DECISIONS\n{summary_result.decisions}\n\n"
-                f"UNRESOLVED ISSUES\n{summary_result.unresolved_issues}\n\n"
-                f"NEXT FOCUS\n{summary_result.next_focus}"
-            ),
-            action_items=action_items_result.action_items,
-        )
