@@ -52,7 +52,7 @@ def extract_json_from_llm(result: dict) -> Dict[str, Any]:
     try:
         return json.loads(raw)
     except Exception:
-        logger.warning("Direct JSON parse failed, attempting to extract JSON from LLM output")
+        logger.warning(f"Direct JSON parse failed, attempting to extract JSON from LLM outputL: {raw}")
         pass
 
     # 2) Extract balanced JSON object candidates
@@ -126,7 +126,7 @@ class LocalLLMService(BaseLLMService):
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
             "json_schema": json_schema,
-            "max_tokens": 15000,
+            "max_tokens": 150000,
             "temperature": 0,
         }
 

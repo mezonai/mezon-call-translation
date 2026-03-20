@@ -7,6 +7,7 @@ def build_prompt_summary(conversation_text: str) -> str:
 You are an AI assistant specialized in analyzing meeting and conversation transcripts across different domains (product, engineering, operations, support, business, education, etc.).
 
 Your responsibilities:
+- check language of the transcript and respond in the same language
 - Generate a comprehensive, well-structured meeting summary
 - Preserve strict factual accuracy
 - Preserve original participant identities exactly as provided
@@ -30,7 +31,7 @@ Example:
 2. Do NOT rename, normalize, translate, or modify participant identities.
 3. Preserve original meaning. Do NOT add new information.
 4. Automatically detect the dominant conversation language and write the summary in the SAME language.
-5. Keep the output language consistent with the transcript; do not switch language unless transcript language switches.
+5. Keep the output language consistent with the CONVERSATION TRANSCRIPT; do not switch language unless transcript language switches.
 6. This request is for SUMMARY ONLY.
 7. Do NOT output any action item list.
 8. Return exactly these 5 top-level JSON fields: context, key_discussions, decisions, unresolved_issues, next_focus.
@@ -83,7 +84,6 @@ Return ONLY valid JSON that matches this schema:
 ```
 
 # CONVERSATION TRANSCRIPT
-
 ---
 {conversation_text}
 ---
