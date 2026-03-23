@@ -2,12 +2,17 @@
 SSE Metadata API
 Endpoints for bot to receive agent metadata events via SSE
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, Dict, Any
+from datetime import datetime
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.models.metadata_event_models import MetadataEventType
+
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -195,3 +200,108 @@ async def push_session_summary_done_api(req: SessionSummaryDoneRequest):
         room_name=req.room_name
     )
     return result
+
+@router.get("/metadata", response_description="List metadata events")
+async def list_metadata_events(
+    event_type: Optional[str] = Query(None, description="Filter by event type (room_started, room_ended, room_record_done, room_summary_done)"),
+    room_id: Optional[str] = Query(None, description="Filter by room ID"),
+    from_utc: Optional[datetime] = Query(None, description="Start of time range (UTC, ISO 8601)"),
+    to_utc: Optional[datetime] = Query(None, description="End of time range (UTC, ISO 8601)"),
+    limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    sort_order: str = Query("desc", description="Sort order: 'asc' for ascending, 'desc' for descending (default: 'desc')"),
+    auth: Dict[str, Any] = Depends(verify_api_key)
+):
+    """
+    Get metadata events with optional filters.
+    Events are automatically deleted after 3 days (TTL).
+
+    - **event_type**: Filter by event type (room_started, room_ended, room_record_done, room_summary_done)
+    - **room_id**: Filter by room ID
+    - **from_utc**: Only events created at or after this time (UTC)
+    - **to_utc**: Only events created at or before this time (UTC)
+    - **limit**: Maximum number of events to return (1-1000)
+    - **skip**: Number of records to skip for pagination
+    - **sort_order**: Sort direction for created_at ('asc' = ascending/oldest first, 'desc' = descending/newest first, default: 'desc')
+    """
+    # Validate event_type
+    if MetadataEventType.is_valid(event_type) is False:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid event_type. Must be one of: {', '.join(MetadataEventType)}"
+        )
+
+    # Validate time range
+    if from_utc is not None and to_utc is not None and from_utc >= to_utc:
+        raise HTTPException(status_code=400, detail="from_utc must be before to_utc")
+
+    # Validate sort_order
+    if sort_order not in ["asc", "desc"]:
+        raise HTTPException(status_code=400, detail="sort_order must be 'asc' (ascending) or 'desc' (descending)")
+
+    try:
+        mongodb = MongoDBService()
+        if not mongodb.connected:
+            await mongodb.connect()
+
+        # Get events and count
+        events = await mongodb.get_metadata_events(
+            event_type=event_type,
+            room_id=room_id,
+            from_utc=from_utc,
+            to_utc=to_utc,
+            limit=limit,
+            skip=skip,
+            sort_order=sort_order
+        )
+
+        total = await mongodb.count_metadata_events(
+            event_type=event_type,
+            room_id=room_id,
+            from_utc=from_utc,
+            to_utc=to_utc
+        )
+        return {
+            "status": "ok",
+            "total": total,
+            "limit": limit,
+            "skip": skip,
+            "ttl_seconds": 259200,  # 3 days in seconds
+            "data": events
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to list metadata events: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list metadata events: {str(e)}")
+
+
+@router.get("/metadata/{event_id}", response_description="Get metadata event by event_id")
+async def get_metadata_event_by_id(
+    event_id: str,
+    auth: Dict[str, Any] = Depends(verify_api_key)
+):
+    """
+    Get single metadata event by event_id (UUID).
+
+    - **event_id**: Event UUID
+    """
+    try:
+        mongodb = MongoDBService()
+        if not mongodb.connected:
+            await mongodb.connect()
+
+        event = await mongodb.get_metadata_event_by_event_id(event_id)
+
+        if not event:
+            raise HTTPException(status_code=404, detail=f"Event not found: {event_id}")
+
+        return {
+            "status": "ok",
+            "data": event
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get metadata event: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get metadata event: {str(e)}")

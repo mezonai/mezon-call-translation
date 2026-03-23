@@ -14,6 +14,7 @@ from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.models.metadata_event_models import MetadataEventType
 
 logger = get_logger(__name__)
 
@@ -25,7 +26,7 @@ class MetadataChannel:
     Context: global (all bots receive the same events)
     
     Use case: All bots connect and receive the same metadata events about room lifecycle
-    Events: room_started, room_ended, room_record_done
+    Events: room_started, room_ended, room_record_done, room_summary_done
     """
     
     CHANNEL_TYPE = "metadata"
@@ -134,7 +135,37 @@ class MetadataChannel:
             },
             "metadata": metadata
         }
-    
+
+    async def _save_event_to_db(self, event_data: Dict[str, Any]) -> Optional[str]:
+        """
+        Save metadata event to MongoDB with TTL.
+        Events will be automatically deleted after 3 days.
+
+        Args:
+            event_data: Event data from _create_base_event
+
+        Returns:
+            Database _id as string if successful, None if failed
+        """
+        try:
+            # Prepare document with event_id as _id and created_at for TTL
+            doc = {
+                "_id": event_data["event_id"],  # Use event_id as document _id
+                "event_type": event_data["event_type"],
+                "room_id": event_data["room"]["room_id"],
+                "room_name": event_data["room"]["room_name"],
+                "metadata": event_data["metadata"],
+                "created_at": datetime.utcnow(),
+                "timestamp": event_data["timestamp"]
+            }
+            event_db_id = await self.mongodb_service.save_metadata_event(doc)
+            if event_db_id:
+                logger.info(f"[Metadata Channel] Saved event to DB: {event_db_id}")
+            return event_db_id
+        except Exception as e:
+            logger.error(f"[Metadata Channel] Failed to save event to DB: {e}")
+            return None
+
     async def push_room_started(
         self,
         room_id: str,
@@ -160,7 +191,7 @@ class MetadataChannel:
         
         # Prepare event data
         event_data = self._create_base_event(
-            event_type="room_started",
+            event_type=MetadataEventType.ROOM_STARTED,
             room_id=room_id,
             room_name=room_name,
             metadata={}
@@ -178,9 +209,12 @@ class MetadataChannel:
             f"(room_id={room_id}, room_name={room_name})"
         )
         
+        # Save event to MongoDB with TTL
+        await self._save_event_to_db(event_data)
+
         return {
             "status": "ok",
-            "event_type": "room_started",
+            "event_type": MetadataEventType.ROOM_STARTED,
             "event_id": event_data["event_id"],
             "room_id": room_id,
             "room_name": room_name,
@@ -221,7 +255,7 @@ class MetadataChannel:
         
         # Prepare event data
         event_data = self._create_base_event(
-            event_type="room_ended",
+            event_type=MetadataEventType.ROOM_ENDED,
             room_id=room_id,
             room_name=room_name,
             metadata=metadata
@@ -238,10 +272,13 @@ class MetadataChannel:
             f"[Metadata Channel] Pushed room_ended event to {broadcast_count} bots "
             f"(room_id={room_id}, room_name={room_name}, duration={duration_seconds}s)"
         )
-        
+
+        # Save event to MongoDB with TTL
+        await self._save_event_to_db(event_data)
+
         return {
             "status": "ok",
-            "event_type": "room_ended",
+            "event_type": MetadataEventType.ROOM_ENDED,
             "event_id": event_data["event_id"],
             "room_id": room_id,
             "room_name": room_name,
@@ -310,7 +347,7 @@ class MetadataChannel:
         
         # Prepare event data
         event_data = self._create_base_event(
-            event_type="room_record_done",
+            event_type=MetadataEventType.ROOM_RECORD_DONE,
             room_id=room_id,
             room_name=room_name,
             metadata=metadata
@@ -327,10 +364,13 @@ class MetadataChannel:
             f"[Metadata Channel] Pushed room_record_done event to {broadcast_count} bots "
             f"(room_id={room_id}, room_name={room_name}, files={len(file_results)})"
         )
-        
+
+        # Save event to MongoDB with TTL
+        await self._save_event_to_db(event_data)
+
         return {
             "status": "ok",
-            "event_type": "room_record_done",
+            "event_type": MetadataEventType.ROOM_RECORD_DONE,
             "event_id": event_data["event_id"],
             "room_id": room_id,
             "room_name": room_name,
@@ -367,7 +407,7 @@ class MetadataChannel:
         
         # Prepare event data
         event_data = self._create_base_event(
-            event_type="room_summary_done",
+            event_type=MetadataEventType.ROOM_SUMMARY_DONE,
             room_id=room_id,
             room_name=room_name,
             metadata={}
@@ -384,10 +424,13 @@ class MetadataChannel:
             f"[Metadata Channel] Pushed room_summary_done event to {broadcast_count} bots "
             f"(room_id={room_id}, room_name={room_name})"
         )
-        
+
+        # Save event to MongoDB with TTL
+        await self._save_event_to_db(event_data)
+
         return {
             "status": "ok",
-            "event_type": "room_summary_done",
+            "event_type": MetadataEventType.ROOM_SUMMARY_DONE,
             "event_id": event_data["event_id"],
             "room_id": room_id,
             "room_name": room_name,
