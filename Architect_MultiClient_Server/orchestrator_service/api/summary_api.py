@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Optional
 from orchestrator_service.services.mongodb_service import MongoDBService
 
-internal_router = APIRouter(prefix="/api/internal", tags=["Internal"])
 client_router = APIRouter(prefix="/api/summary", tags=["Summary"])
 
 @client_router.get("/room/{room_name}", response_description="Get summary by room ID")

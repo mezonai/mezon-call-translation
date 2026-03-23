@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.mongodb_service import MongoDBService
 from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.auth.mezon_jwt_auth import verify_mezon_jwt
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
     RoomNamePath,
@@ -159,3 +160,33 @@ async def get_room_statistics_by_id(
     except Exception as e:
         logger.error(f"Failed to get room statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/test/protected", response_description="Test endpoint with Mezon authentication")
+async def test_protected_endpoint(user: Dict[str, Any] = Depends(verify_mezon_jwt)):
+    """
+    Test endpoint requiring Mezon OAuth2 authentication.
+
+    This endpoint validates that the JWT token issued after Mezon login works correctly.
+    Returns information about the authenticated user.
+
+    Requires:
+        Authorization: Bearer <jwt_token>
+
+    Returns:
+        - Authenticated user information (user_id, username, display_name, avatar_url)
+        - Success message confirming authentication
+    """
+    logger.info(f"Test endpoint accessed by user: {user.get('username')} (ID: {user.get('user_id')})")
+
+    return {
+        "status": "ok",
+        "message": "You are authenticated with Mezon!",
+        "authenticated": True,
+        "user": {
+            "user_id": user.get("user_id"),
+            "username": user.get("username"),
+            "display_name": user.get("display_name"),
+            "avatar_url": user.get("avatar_url")
+        }
+    }

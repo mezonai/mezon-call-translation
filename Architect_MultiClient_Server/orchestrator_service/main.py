@@ -19,9 +19,9 @@ from orchestrator_service.api.webhook_api import router as webhook_router, egres
 from orchestrator_service.api.room_api import router as room_router
 from orchestrator_service.api.track_api import router as track_router
 from orchestrator_service.api.transcript_api import router as transcript_router
-from orchestrator_service.api.agent_control_api import router as agent_control_router
 from orchestrator_service.api.room_registry_api import router as room_registry_router
 from orchestrator_service.api.queue_api import router as queue_router
+from orchestrator_service.api.auth_api import router as auth_router
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
@@ -153,6 +153,7 @@ app.add_middleware(
 
 
 # Include routers
+app.include_router(auth_router)  # Mezon OAuth2 authentication
 app.include_router(dispatch_router, prefix="/api")
 app.include_router(stream_router, prefix="/api", tags=["sse transcript"])
 app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat external"])
@@ -163,7 +164,6 @@ app.include_router(queue_router)  # Has prefix="/api/queue"
 app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
 app.include_router(track_router)  # Has prefix="/api/transcripts/tracks"
 app.include_router(transcript_router)  # Has prefix="/api/transcripts"
-app.include_router(agent_control_router)  # Has prefix="/api/agent-control"
 app.include_router(room_registry_router)  # Has prefix="/api/room-registry"
 app.include_router(summary_internal_router)
 app.include_router(summary_client_router)

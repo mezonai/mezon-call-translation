@@ -1,15 +1,51 @@
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
-    ...(API_KEY && { 'x-api-key': API_KEY })
   }
 });
+
+// Request interceptor to add JWT token to all requests
+apiClient.interceptors.request.use(
+  (config) => {
+    // Get token from localStorage
+    const token = localStorage.getItem('auth_token');
+
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Response interceptor to handle authentication errors
+apiClient.interceptors.response.use(
+  (response) => {
+    return response;
+  },
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token expired or invalid - clear storage and redirect to login
+      localStorage.removeItem('auth_token');
+
+      // Only redirect if not already on login/callback pages
+      if (!window.location.pathname.startsWith('/login') &&
+        !window.location.pathname.startsWith('/callback')) {
+        window.location.href = '/login';
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 // Room APIs
 export const getRooms = async (params = {}) => {
@@ -51,7 +87,7 @@ export const getSummaryByRoom = async (roomName, startTime = null, endTime = nul
   const queryParams = new URLSearchParams();
   if (startTime) queryParams.append('start_time', startTime);
   if (endTime) queryParams.append('end_time', endTime);
-  
+
   const query = queryParams.toString();
   const url = `/api/summary/room/${roomName}${query ? `?${query}` : ''}`;
   const response = await apiClient.get(url);
@@ -76,7 +112,7 @@ export const getChunksByTrack = async (trackId, params = {}) => {
     skip,
     sorted_by_index
   });
-  
+
   const response = await apiClient.get(`/api/transcripts/tracks/${trackId}/chunks?${queryParams}`);
   return response.data;
 };
