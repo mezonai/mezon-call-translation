@@ -4,6 +4,7 @@ Integrated with agent logging system
 """
 import os
 import asyncio
+from enum import Enum
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
@@ -14,6 +15,20 @@ from kokoro import KPipeline
 from ..logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class KokoroVoice(str, Enum):
+    """Supported Kokoro voices used by this service."""
+
+    AF_HEART = "af_heart"
+    AF_BELLA = "af_bella"
+    AF_SARAH = "af_sarah"
+    AM_ADAM = "am_adam"
+    AM_MICHAEL = "am_michael"
+    BF_EMMA = "bf_emma"
+    BF_ISABELLA = "bf_isabella"
+    BM_GEORGE = "bm_george"
+    BM_LEWIS = "bm_lewis"
 
 
 class TTSEngine:
@@ -95,7 +110,7 @@ class TTSEngine:
     def synthesize(
         self,
         text: str,
-        voice: str = "af_heart",
+        voice: str | KokoroVoice = KokoroVoice.AF_HEART,
         speed: float = 1.0
     ) -> np.ndarray:
         """
@@ -104,7 +119,7 @@ class TTSEngine:
         Args:
             text: Text to synthesize
             voice: Voice name (default: af_heart - American Female)
-                   Available: af_heart, af_bella, af_sarah, am_adam, am_michael, etc.
+                   Accepts KokoroVoice enum or string value.
             speed: Speech speed multiplier (0.5-2.0, default: 1.0)
         
         Returns:
@@ -117,12 +132,13 @@ class TTSEngine:
             raise RuntimeError("TTS model not loaded. Call load() first.")
         
         try:
-            logger.info(f"Synthesizing: '{text[:50]}...' (voice={voice}, speed={speed}x)")
+            selected_voice = voice.value if isinstance(voice, KokoroVoice) else voice
+            logger.info(f"Synthesizing: '{text[:50]}...' (voice={selected_voice}, speed={speed}x)")
             
             # Generate audio using Kokoro
             generator = self.pipeline(
                 text,
-                voice=voice,
+                voice=selected_voice,
                 speed=speed,
                 split_pattern=r'\n+'
             )

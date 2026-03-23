@@ -11,12 +11,14 @@ logger = get_logger(__name__)
 config = get_config()
 
 
-async def process_text_to_audio(text: str) -> Optional[np.ndarray]:
+async def process_text_to_audio(text: str, voice: str = None, speed: float = None) -> Optional[np.ndarray]:
     """
     Process text to audio using the TTS client.
     
     Args:
         text: Text to process
+        voice: Voice to use (optional)
+        speed: Speech speed (optional)
     
     Returns:
         Audio data as numpy array (float32, [-1.0, 1.0])
@@ -27,8 +29,11 @@ async def process_text_to_audio(text: str) -> Optional[np.ndarray]:
 
     url = f"{config.tts_service.base_url}/api/tts/process"
     payload = {
-        "text": text
+        "text": text,
+        "voice": voice,
+        "speed": speed
     }
+    payload = {k: v for k, v in payload.items() if v is not None}
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

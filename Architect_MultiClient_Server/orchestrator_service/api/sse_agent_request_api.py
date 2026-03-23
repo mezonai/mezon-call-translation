@@ -44,7 +44,9 @@ class SendAgentRequestBody(BaseModel):
                     "payload": {
                         "request_type": "tts_play",
                         "text": "Hello from orchestrator",
-                        "sender_identity": "orchestrator"
+                        "sender_identity": "orchestrator",
+                        "voice": "af_heart",
+                        "speed": 1.0
                     },
                     "room_name": "my-room-123",
                     "agent_id": "agent_123"
