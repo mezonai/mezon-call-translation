@@ -13,7 +13,7 @@ import logging
 import tempfile
 import shutil
 import math
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -36,6 +36,7 @@ class TranscriptionSegment:
     end: float
     text: str
     confidence: float
+    metadata: Dict[str, Any] = None
 
     def to_dict(self) -> dict:
         return {
@@ -43,6 +44,7 @@ class TranscriptionSegment:
             "end": self.end,
             "text": self.text,
             "confidence": self.confidence,
+            "metadata": self.metadata,
         }
 
 
@@ -253,7 +255,14 @@ class WhisperTranscriptionProcessor:
                         start=seg.start,
                         end=seg.end,
                         text=seg.text.strip(),
-                        confidence=round(math.exp(seg.avg_logprob), 4)
+                        confidence=round(math.exp(seg.avg_logprob), 4),
+                        metadata={
+                            "avg_logprob": seg.avg_logprob,
+                            "compression_ratio": seg.compression_ratio,
+                            "no_speech_prob": seg.no_speech_prob,
+                            "words": seg.words,
+                            "temperature": seg.temperature,
+                        }
                     )
                     
                     segment_dict = segment.to_dict()
