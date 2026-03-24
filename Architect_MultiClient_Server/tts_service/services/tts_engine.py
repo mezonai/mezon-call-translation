@@ -110,7 +110,7 @@ class TTSEngine:
     def synthesize(
         self,
         text: str,
-        voice: str | KokoroVoice = KokoroVoice.AF_HEART,
+        voice: KokoroVoice = KokoroVoice.AF_HEART,
         speed: float = 1.0
     ) -> np.ndarray:
         """
