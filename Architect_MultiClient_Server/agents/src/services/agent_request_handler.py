@@ -121,7 +121,10 @@ class AgentRequestHandler:
             # Queue TTS request for processing
             await tts_manager._request_queue.put({
                 "text": text,
-                "sender_identity": sender_identity
+                "sender_identity": sender_identity,
+                "voice": payload.get("voice"),
+                "speed": payload.get("speed")
+
             })
             
             self.logger.info(
