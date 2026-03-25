@@ -62,14 +62,24 @@ class GeminiLLMService(BaseLLMService):
             summary_result = await self.summarize_summary(conversation_text)
             action_items_result = await self.summarize_action_items(conversation_text)
             logger.info("Successfully generated summary and action items using Gemini (2 requests)")
+
+            # Build summary with only non-empty fields
+            summary_parts = [
+                f"Context\n{summary_result.context}",
+                f"Key Discussions\n{summary_result.key_discussions}",
+            ]
+
+            if summary_result.decisions and summary_result.decisions.strip():
+                summary_parts.append(f"Decisions\n{summary_result.decisions}")
+
+            if summary_result.unresolved_issues and summary_result.unresolved_issues.strip():
+                summary_parts.append(f"Unresolved Issues\n{summary_result.unresolved_issues}")
+
+            if summary_result.next_focus and summary_result.next_focus.strip():
+                summary_parts.append(f"Next Focus\n{summary_result.next_focus}")
+
             return SummaryActionItemsResult(
-                summary=(
-                    f"CONTEXT\n{summary_result.context}\n\n"
-                    f"KEY DISCUSSIONS\n{summary_result.key_discussions}\n\n"
-                    f"DECISIONS\n{summary_result.decisions}\n\n"
-                    f"UNRESOLVED ISSUES\n{summary_result.unresolved_issues}\n\n"
-                    f"NEXT FOCUS\n{summary_result.next_focus}"
-                ),
+                summary="\n\n".join(summary_parts),
                 action_items=action_items_result.action_items,
             )
         except Exception as e:

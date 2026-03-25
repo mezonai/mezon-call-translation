@@ -209,6 +209,7 @@ async def list_metadata_events(
     to_utc: Optional[datetime] = Query(None, description="End of time range (UTC, ISO 8601)"),
     limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
+    sort_order: str = Query("desc", description="Sort order: 'asc' for ascending, 'desc' for descending (default: 'desc')"),
     auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
@@ -221,6 +222,7 @@ async def list_metadata_events(
     - **to_utc**: Only events created at or before this time (UTC)
     - **limit**: Maximum number of events to return (1-1000)
     - **skip**: Number of records to skip for pagination
+    - **sort_order**: Sort direction for created_at ('asc' = ascending/oldest first, 'desc' = descending/newest first, default: 'desc')
     """
     # Validate event_type
     if MetadataEventType.is_valid(event_type) is False:
@@ -232,6 +234,10 @@ async def list_metadata_events(
     # Validate time range
     if from_utc is not None and to_utc is not None and from_utc >= to_utc:
         raise HTTPException(status_code=400, detail="from_utc must be before to_utc")
+
+    # Validate sort_order
+    if sort_order not in ["asc", "desc"]:
+        raise HTTPException(status_code=400, detail="sort_order must be 'asc' (ascending) or 'desc' (descending)")
 
     try:
         mongodb = MongoDBService()
@@ -245,7 +251,8 @@ async def list_metadata_events(
             from_utc=from_utc,
             to_utc=to_utc,
             limit=limit,
-            skip=skip
+            skip=skip,
+            sort_order=sort_order
         )
 
         total = await mongodb.count_metadata_events(

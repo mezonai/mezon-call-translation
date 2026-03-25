@@ -824,7 +824,8 @@ class MongoDBService:
         from_utc: Optional[datetime] = None,
         to_utc: Optional[datetime] = None,
         limit: int = 100,
-        skip: int = 0
+        skip: int = 0,
+        sort_order: str = "desc"
     ) -> List[Dict[str, Any]]:
         """
         Get metadata events with optional filters.
@@ -836,13 +837,18 @@ class MongoDBService:
             to_utc: End of time range (inclusive)
             limit: Maximum number of events to return
             skip: Number of events to skip (for pagination)
+            sort_order: Sort direction for created_at field ("asc" for ascending, "desc" for descending, default: "desc")
 
         Returns:
             List of event documents
         """
         try:
             query = self._build_metadata_events_query(event_type, room_id, from_utc, to_utc)
-            cursor = self.events_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+
+            # Convert string sort_order to MongoDB sort direction
+            sort_direction = 1 if sort_order == "asc" else -1
+
+            cursor = self.events_collection.find(query).sort("created_at", sort_direction).skip(skip).limit(limit)
             events = await cursor.to_list(length=limit)
 
             # Convert ObjectId to string for JSON serialization

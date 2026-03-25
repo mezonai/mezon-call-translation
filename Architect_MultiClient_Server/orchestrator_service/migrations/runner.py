@@ -151,11 +151,11 @@ class MigrationRunner:
 async def main():
     """Main entry point for migration runner"""
     if len(sys.argv) < 2:
-        print("Usage: python -m orchestrator_service.migrations.runner <command>")
-        print("Commands:")
-        print("  up      - Run all pending migrations")
-        print("  down    - Rollback last migration")
-        print("  status  - Show migration status")
+        logger.info("Usage: python -m orchestrator_service.migrations.runner <command>")
+        logger.info("Commands:")
+        logger.info("  up      - Run all pending migrations")
+        logger.info("  down    - Rollback last migration")
+        logger.info("  status  - Show migration status")
         sys.exit(1)
 
     command = sys.argv[1].lower()
