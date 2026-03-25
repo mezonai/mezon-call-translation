@@ -14,36 +14,61 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
+  const [refreshToken, setRefreshToken] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Initialize auth state from localStorage on mount
   useEffect(() => {
     const initAuth = async () => {
-      const storedToken = localStorage.getItem('auth_token');
+      const authData = localStorage.getItem('auth');
 
-      if (storedToken) {
-        setToken(storedToken);
-
-        // Verify token and fetch user info
+      if (authData) {
         try {
-          const response = await apiClient.get('/api/auth/mezon/userinfo', {
-            headers: {
-              'Authorization': `Bearer ${storedToken}`
-            }
-          });
+          const { token: storedToken, refreshToken: storedRefreshToken } = JSON.parse(authData);
 
-          if (response.data && response.data.user) {
-            setUser(response.data.user);
-          } else {
-            // Invalid token, clear storage
-            localStorage.removeItem('auth_token');
-            setToken(null);
+          if (storedToken && storedRefreshToken) {
+            setToken(storedToken);
+            setRefreshToken(storedRefreshToken);
+
+            // Verify token and fetch user info
+            try {
+              const response = await apiClient.get('/api/auth/mezon/userinfo', {
+                headers: {
+                  'Authorization': `Bearer ${storedToken}`
+                }
+              });
+
+              if (response.data && response.data.user) {
+                setUser(response.data.user);
+              } else {
+                // Invalid token, clear storage
+                localStorage.removeItem('auth');
+                setToken(null);
+                setRefreshToken(null);
+              }
+            } catch (error) {
+              console.error('Failed to verify token:', error);
+
+              // If 401, try to refresh token
+              if (error.response?.status === 401 && storedRefreshToken) {
+                const refreshed = await refreshAccessToken(storedRefreshToken);
+                if (!refreshed) {
+                  // Refresh failed, clear everything
+                  localStorage.removeItem('auth');
+                  setToken(null);
+                  setRefreshToken(null);
+                }
+              } else {
+                // Other error, clear storage
+                localStorage.removeItem('auth');
+                setToken(null);
+                setRefreshToken(null);
+              }
+            }
           }
-        } catch (error) {
-          console.error('Failed to verify token:', error);
-          // Token might be expired or invalid
-          localStorage.removeItem('auth_token');
-          setToken(null);
+        } catch (err) {
+          console.error('Failed to parse auth data:', err);
+          localStorage.removeItem('auth');
         }
       }
 
@@ -53,16 +78,65 @@ export const AuthProvider = ({ children }) => {
     initAuth();
   }, []);
 
-  const login = (jwtToken, userData) => {
-    setToken(jwtToken);
+  const login = (accessToken, newRefreshToken, userData) => {
+    setToken(accessToken);
+    setRefreshToken(newRefreshToken);
     setUser(userData);
-    localStorage.setItem('auth_token', jwtToken);
+    localStorage.setItem('auth', JSON.stringify({
+      token: accessToken,
+      refreshToken: newRefreshToken
+    }));
   };
 
-  const logout = () => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('auth_token');
+  const refreshAccessToken = async (currentRefreshToken) => {
+    try {
+      const response = await apiClient.post('/api/auth/mezon/refresh', {
+        refresh_token: currentRefreshToken || refreshToken
+      });
+
+      if (response.data && response.data.access_token) {
+        const newAccessToken = response.data.access_token;
+        setToken(newAccessToken);
+
+        // Update stored token
+        const authData = localStorage.getItem('auth');
+        if (authData) {
+          const parsed = JSON.parse(authData);
+          localStorage.setItem('auth', JSON.stringify({
+            token: newAccessToken,
+            refreshToken: parsed.refreshToken
+          }));
+        }
+
+        console.log('Access token refreshed successfully');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Failed to refresh token:', error);
+      return false;
+    }
+  };
+
+  const logout = async () => {
+    try {
+      // Call backend to revoke tokens
+      if (token && refreshToken) {
+        await apiClient.post('/api/auth/mezon/logout',
+          { refresh_token: refreshToken },
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+      }
+    } catch (error) {
+      console.error('Logout API call failed:', error);
+      // Continue with local cleanup even if API call fails
+    } finally {
+      // Clear local state and storage
+      setToken(null);
+      setRefreshToken(null);
+      setUser(null);
+      localStorage.removeItem('auth');
+    }
   };
 
   const isAuthenticated = () => {
@@ -79,9 +153,11 @@ export const AuthProvider = ({ children }) => {
   const value = {
     user,
     token,
+    refreshToken,
     loading,
     login,
     logout,
+    refreshAccessToken,
     isAuthenticated,
     getAuthHeader
   };

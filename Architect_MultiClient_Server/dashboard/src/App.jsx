@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import RoomList from './components/RoomList'
 import RoomDetail from './components/RoomDetail'
@@ -29,6 +29,12 @@ const ProtectedRoute = ({ children }) => {
 // Main App Content with Navigation
 const AppContent = () => {
   const { user, logout, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -48,22 +54,22 @@ const AppContent = () => {
                     <img
                       src={user.avatar_url}
                       alt={user.display_name || user.username}
-                      className="h-8 w-8 rounded-full"
+                      className="h-8 w-8 rounded-full object-cover"
                     />
                   )}
                   <div className="text-sm">
                     <p className="font-medium text-gray-900">
                       {user.display_name || user.username}
                     </p>
-                    <p className="text-gray-500">
+                    <p className="text-gray-500 text-xs">
                       {user.username}
                     </p>
                   </div>
                 </div>
 
                 <button
-                  onClick={logout}
-                  className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  onClick={handleLogout}
+                  className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
                 >
                   Logout
                 </button>

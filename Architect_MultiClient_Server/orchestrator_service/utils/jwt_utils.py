@@ -11,8 +11,9 @@ Environment Variables:
 
 import os
 import jwt
+import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,7 +32,7 @@ if not JWT_SECRET:
 logger.info(f"JWT Configuration: Algorithm={JWT_ALGORITHM}, Expiry={JWT_EXPIRY_DAYS} days")
 
 
-def generate_jwt_token(user_data: Dict[str, Any], expiry_days: int = None) -> str:
+def generate_jwt_token(user_data: Dict[str, Any], expiry_days: int = None, jti: Optional[str] = None) -> str:
     """
     Generate a JWT token containing user information.
 
@@ -39,6 +40,7 @@ def generate_jwt_token(user_data: Dict[str, Any], expiry_days: int = None) -> st
         user_data: Dictionary containing user information
                   Expected fields: user_id, username, display_name (optional), avatar_url (optional)
         expiry_days: Token expiry in days (defaults to JWT_EXPIRY_DAYS env var)
+        jti: Optional JWT ID (unique identifier). If not provided, a new UUID will be generated.
 
     Returns:
         JWT token string
@@ -62,8 +64,12 @@ def generate_jwt_token(user_data: Dict[str, Any], expiry_days: int = None) -> st
     # Calculate expiration time
     exp_time = datetime.now(timezone.utc) + timedelta(days=expiry)
 
+    # Generate unique JTI (JWT ID) for token tracking and revocation
+    token_jti = jti if jti else str(uuid.uuid4())
+
     # Build JWT payload
     payload = {
+        "jti": token_jti,  # JWT ID for blacklist support
         "user_id": user_data["user_id"],
         "username": user_data.get("username", ""),
         "display_name": user_data.get("display_name", ""),
@@ -75,7 +81,7 @@ def generate_jwt_token(user_data: Dict[str, Any], expiry_days: int = None) -> st
     # Generate token
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
-    logger.debug(f"Generated JWT token for user_id={user_data['user_id']}, expires={exp_time}")
+    logger.debug(f"Generated JWT token for user_id={user_data['user_id']}, jti={token_jti}, expires={exp_time}")
 
     return token
 
@@ -167,3 +173,41 @@ def is_token_expired(token: str) -> bool:
     except Exception:
         # If we can't parse the token, consider it expired/invalid
         return True
+
+
+def get_token_jti(token: str) -> Optional[str]:
+    """
+    Get the JTI (JWT ID) from a token without full verification.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        JTI string if present, None otherwise
+    """
+    try:
+        # Decode without verification to get JTI
+        payload = jwt.decode(token, options={"verify_signature": False})
+        return payload.get("jti")
+    except Exception as e:
+        logger.error(f"Failed to get token JTI: {e}")
+        return None
+
+
+def decode_token_without_verification(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Decode a JWT token without signature verification.
+    Useful for getting claims from expired or untrusted tokens.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        Token payload dict if parseable, None otherwise
+    """
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+        return payload
+    except Exception as e:
+        logger.error(f"Failed to decode token: {e}")
+        return None

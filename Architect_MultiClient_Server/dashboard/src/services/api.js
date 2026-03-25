@@ -9,14 +9,37 @@ const apiClient = axios.create({
   }
 });
 
+// Flag to prevent infinite refresh loops
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+
+  failedQueue = [];
+};
+
 // Request interceptor to add JWT token to all requests
 apiClient.interceptors.request.use(
   (config) => {
     // Get token from localStorage
-    const token = localStorage.getItem('auth_token');
+    const authData = localStorage.getItem('auth');
 
-    if (token) {
-      config.headers['Authorization'] = `Bearer ${token}`;
+    if (authData) {
+      try {
+        const { token } = JSON.parse(authData);
+        if (token) {
+          config.headers['Authorization'] = `Bearer ${token}`;
+        }
+      } catch (err) {
+        console.error('Failed to parse auth data:', err);
+      }
     }
 
     return config;
@@ -26,20 +49,108 @@ apiClient.interceptors.request.use(
   }
 );
 
-// Response interceptor to handle authentication errors
+// Response interceptor to handle authentication errors and auto-refresh
 apiClient.interceptors.response.use(
   (response) => {
     return response;
   },
-  (error) => {
-    if (error.response?.status === 401) {
-      // Token expired or invalid - clear storage and redirect to login
-      localStorage.removeItem('auth_token');
+  async (error) => {
+    const originalRequest = error.config;
 
-      // Only redirect if not already on login/callback pages
-      if (!window.location.pathname.startsWith('/login') &&
-        !window.location.pathname.startsWith('/callback')) {
-        window.location.href = '/login';
+    // Handle 401 Unauthorized
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      // Don't try to refresh on login/refresh endpoints
+      if (originalRequest.url?.includes('/auth/mezon/exchange') ||
+          originalRequest.url?.includes('/auth/mezon/refresh')) {
+        return Promise.reject(error);
+      }
+
+      if (isRefreshing) {
+        // Already refreshing, queue this request
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then(token => {
+            originalRequest.headers['Authorization'] = `Bearer ${token}`;
+            return apiClient(originalRequest);
+          })
+          .catch(err => {
+            return Promise.reject(err);
+          });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      const authData = localStorage.getItem('auth');
+      let refreshToken = null;
+
+      if (authData) {
+        try {
+          const parsed = JSON.parse(authData);
+          refreshToken = parsed.refreshToken;
+        } catch (err) {
+          console.error('Failed to parse auth data:', err);
+        }
+      }
+
+      if (!refreshToken) {
+        // No refresh token, redirect to login
+        isRefreshing = false;
+        localStorage.removeItem('auth');
+
+        if (!window.location.pathname.startsWith('/login') &&
+            !window.location.pathname.startsWith('/callback')) {
+          window.location.href = '/login';
+        }
+
+        return Promise.reject(error);
+      }
+
+      try {
+        // Try to refresh the access token
+        const response = await axios.post(
+          `${API_BASE_URL}/api/auth/mezon/refresh`,
+          { refresh_token: refreshToken },
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+
+        if (response.data && response.data.access_token) {
+          const newAccessToken = response.data.access_token;
+
+          // Update stored token
+          localStorage.setItem('auth', JSON.stringify({
+            token: newAccessToken,
+            refreshToken: refreshToken
+          }));
+
+          // Update authorization header
+          apiClient.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
+          originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+
+          // Process queued requests
+          processQueue(null, newAccessToken);
+
+          isRefreshing = false;
+
+          // Retry original request
+          return apiClient(originalRequest);
+        } else {
+          throw new Error('No access token in refresh response');
+        }
+      } catch (refreshError) {
+        // Refresh failed, clear tokens and redirect to login
+        processQueue(refreshError, null);
+        isRefreshing = false;
+
+        localStorage.removeItem('auth');
+
+        if (!window.location.pathname.startsWith('/login') &&
+            !window.location.pathname.startsWith('/callback')) {
+          window.location.href = '/login';
+        }
+
+        return Promise.reject(refreshError);
       }
     }
 

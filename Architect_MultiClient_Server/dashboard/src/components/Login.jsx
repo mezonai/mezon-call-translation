@@ -33,10 +33,7 @@ const Login = () => {
 
     try {
       // Fetch OAuth2 configuration from backend
-      console.log('Fetching OAuth2 config from:', apiClient.defaults.baseURL);
       const response = await apiClient.get('/api/auth/mezon/config');
-      console.log('Response:', response);
-      console.log('Response data:', response.data);
       const { client_id, auth_url, redirect_uri } = response.data;
 
       // Generate and store CSRF state

@@ -25,7 +25,7 @@ from orchestrator_service.api.auth_api import router as auth_router
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
-from orchestrator_service.api.summary_api import internal_router as summary_internal_router, client_router as summary_client_router
+from orchestrator_service.api.summary_api import client_router as summary_client_router
 from orchestrator_service.services.redis.redis_save_transcription_service import RedisSaveTranscriptionService
 
 import signal
@@ -165,7 +165,6 @@ app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
 app.include_router(track_router)  # Has prefix="/api/transcripts/tracks"
 app.include_router(transcript_router)  # Has prefix="/api/transcripts"
 app.include_router(room_registry_router)  # Has prefix="/api/room-registry"
-app.include_router(summary_internal_router)
 app.include_router(summary_client_router)
 
 

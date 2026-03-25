@@ -6,10 +6,13 @@ Handles OAuth2 authentication flow with Mezon:
 2. Exchanges authorization code for access token
 3. Retrieves user information from Mezon
 4. Issues JWT tokens for authenticated sessions
+5. Supports token refresh and revocation (blacklist)
 
 Endpoints:
 - GET /api/auth/mezon/config - Public OAuth2 configuration
-- POST /api/auth/mezon/exchange - Exchange code for JWT token
+- POST /api/auth/mezon/exchange - Exchange code for JWT token + refresh token
+- POST /api/auth/mezon/refresh - Refresh access token
+- POST /api/auth/mezon/logout - Logout and revoke tokens
 - GET /api/auth/mezon/userinfo - Get current authenticated user
 """
 
@@ -17,12 +20,16 @@ import os
 import re
 import requests
 from typing import Dict, Any
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.jwt_utils import generate_jwt_token
+from orchestrator_service.utils.jwt_utils import generate_jwt_token, get_token_expiry, get_token_jti
 from orchestrator_service.auth.mezon_jwt_auth import verify_mezon_jwt
+from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.refresh_token_service import RefreshTokenService
+from orchestrator_service.services.token_blacklist_service import TokenBlacklistService
 
 logger = get_logger(__name__)
 
@@ -58,7 +65,10 @@ class ExchangeCodeRequest(BaseModel):
 
 
 class ExchangeCodeResponse(BaseModel):
-    token: str = Field(..., description="JWT token for authenticated sessions")
+    access_token: str = Field(..., description="JWT access token for authenticated sessions")
+    refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
+    token_type: str = Field(default="Bearer", description="Token type")
+    expires_in: int = Field(..., description="Access token expiry in seconds")
     user: Dict[str, Any] = Field(..., description="User information from Mezon")
 
 
@@ -213,13 +223,37 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
                 detail="Failed to retrieve user ID from Mezon"
             )
 
-        # Generate JWT token for user session
-        jwt_token = generate_jwt_token(user_data)
+        # Generate JWT access token for user session
+        access_token = generate_jwt_token(user_data)
+
+        # Get JTI from access token for refresh token linking
+        access_token_jti = get_token_jti(access_token)
+        if not access_token_jti:
+            raise HTTPException(status_code=500, detail="Failed to generate token ID")
+
+        # Connect to MongoDB and create refresh token
+        mongodb = MongoDBService()
+        if not mongodb.connected:
+            await mongodb.connect()
+
+        refresh_token_service = RefreshTokenService(mongodb.db)
+        refresh_token = await refresh_token_service.create_refresh_token(
+            user_id=user_data["user_id"],
+            access_token_jti=access_token_jti,
+            device_info=None  # Can be extended to capture device info from request
+        )
+
+        # Calculate token expiry in seconds (for frontend)
+        token_expiry = get_token_expiry(access_token)
+        expires_in = int((token_expiry - datetime.now(timezone.utc)).total_seconds())
 
         logger.info(f"Successfully authenticated user: {user_data['username']} (ID: {user_data['user_id']})")
 
         return ExchangeCodeResponse(
-            token=jwt_token,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="Bearer",
+            expires_in=expires_in,
             user=user_data
         )
 
@@ -265,3 +299,175 @@ async def get_current_user(user: Dict[str, Any] = Depends(verify_mezon_jwt)):
             "avatar_url": user.get("avatar_url")
         }
     }
+
+
+# New Request/Response Models for Refresh and Logout
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(..., description="Refresh token obtained from login")
+
+
+class RefreshTokenResponse(BaseModel):
+    access_token: str = Field(..., description="New JWT access token")
+    token_type: str = Field(default="Bearer", description="Token type")
+    expires_in: int = Field(..., description="Access token expiry in seconds")
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str = Field(..., description="Refresh token to revoke")
+
+
+@router.post("/refresh", response_model=RefreshTokenResponse)
+async def refresh_access_token(request: RefreshTokenRequest):
+    """
+    Refresh an expired access token using a valid refresh token.
+
+    The old access token is automatically blacklisted, and a new one is issued.
+    The refresh token remains valid for future refreshes until it expires.
+
+    Args:
+        request: RefreshTokenRequest with refresh_token
+
+    Returns:
+        RefreshTokenResponse with new access_token
+
+    Raises:
+        HTTPException: 401 if refresh token is invalid or expired
+    """
+    try:
+        # Connect to MongoDB
+        mongodb = MongoDBService()
+        if not mongodb.connected:
+            await mongodb.connect()
+
+        # Validate refresh token
+        refresh_token_service = RefreshTokenService(mongodb.db)
+        token_doc = await refresh_token_service.validate_refresh_token(request.refresh_token)
+
+        if not token_doc:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired refresh token. Please login again."
+            )
+
+        # Get user data from token
+        user_data = {
+            "user_id": token_doc["user_id"],
+            # Note: We don't have username, display_name, avatar_url in refresh token doc
+            # In production, you might want to fetch from user database or cache
+            "username": "",
+            "display_name": "",
+            "avatar_url": ""
+        }
+
+        # Blacklist the old access token (if not already expired/blacklisted)
+        old_jti = token_doc["access_token_jti"]
+        blacklist_service = TokenBlacklistService(mongodb.db)
+
+        # We need to get the expiry of the old token - for now,assume it's expired
+        # In production, you might want to store this or calculate
+        await blacklist_service.blacklist_token(
+            jti=old_jti,
+            user_id=user_data["user_id"],
+            expires_at=datetime.now(timezone.utc),  # Already expired
+            reason="refreshed"
+        )
+
+        # Generate new access token
+        new_access_token = generate_jwt_token(user_data)
+        new_jti = get_token_jti(new_access_token)
+
+        if not new_jti:
+            raise HTTPException(status_code=500, detail="Failed to generate new token")
+
+        # Update refresh token doc with new access_token_jti
+        await refresh_token_service.collection.update_one(
+            {"token_id": token_doc["token_id"]},
+            {"$set": {"access_token_jti": new_jti}}
+        )
+
+        # Calculate expiry
+        token_expiry = get_token_expiry(new_access_token)
+        expires_in = int((token_expiry - datetime.now(timezone.utc)).total_seconds())
+
+        logger.info(f"Access token refreshed for user_id={user_data['user_id']}")
+
+        return RefreshTokenResponse(
+            access_token=new_access_token,
+            token_type="Bearer",
+            expires_in=expires_in
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error refreshing token: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to refresh token: {str(e)}"
+        )
+
+
+@router.post("/logout")
+async def logout(
+    request: LogoutRequest,
+    user: Dict[str, Any] = Depends(verify_mezon_jwt)
+):
+    """
+    Logout user and revoke access token + refresh token.
+
+    Adds the current access token to the blacklist and revokes the refresh token.
+    Client should delete both tokens from storage after calling this.
+
+    Args:
+        request: LogoutRequest with refresh_token
+        user: Current authenticated user from JWT
+
+    Returns:
+        Success message
+
+    Requires:
+        Authorization: Bearer <access_token>
+    """
+    try:
+        # Connect to MongoDB
+        mongodb = MongoDBService()
+        if not mongodb.connected:
+            await mongodb.connect()
+
+        # Get JTI from current access token
+        jti = user.get("jti")
+        user_id = user.get("user_id")
+
+        if not jti:
+            raise HTTPException(status_code=400, detail="Invalid token format")
+
+        # Blacklist the access token
+        blacklist_service = TokenBlacklistService(mongodb.db)
+        token_expiry = datetime.fromtimestamp(user.get("exp"), tz=timezone.utc)
+
+        await blacklist_service.blacklist_token(
+            jti=jti,
+            user_id=user_id,
+            expires_at=token_expiry,
+            reason="logout"
+        )
+
+        # Revoke the refresh token
+        refresh_token_service = RefreshTokenService(mongodb.db)
+        await refresh_token_service.revoke_refresh_token(request.refresh_token)
+
+        logger.info(f"User logged out: user_id={user_id}, jti={jti}")
+
+        return {
+            "status": "ok",
+            "message": "Logged out successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during logout: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Logout failed: {str(e)}"
+        )

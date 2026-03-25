@@ -35,25 +35,21 @@ const Callback = () => {
         // Clear stored state
         sessionStorage.removeItem('oauth_state');
 
-        // Exchange authorization code for JWT token
-        console.log('Exchanging authorization code for token...');
-
+        // Exchange authorization code for JWT tokens
         const response = await apiClient.post('/api/auth/mezon/exchange', {
           code: code,
           state: state
         });
 
-        const { token, user } = response.data;
+        const { access_token, refresh_token, user } = response.data;
 
-        if (!token || !user) {
+        if (!access_token || !refresh_token || !user) {
           setError('Authentication failed: invalid response from server.');
           return;
         }
 
-        console.log('Authentication successful!', user);
-
         // Store authentication in context and localStorage
-        login(token, user);
+        login(access_token, refresh_token, user);
 
         // Redirect to dashboard home
         navigate('/', { replace: true });
