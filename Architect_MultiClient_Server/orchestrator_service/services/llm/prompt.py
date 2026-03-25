@@ -63,19 +63,20 @@ Return these fields with clear content:
 - Concrete decisions made
 - Agreements or resolutions reached
 - Include who made or confirmed the decision if mentioned
-- If no formal decisions were made, write exactly:
-  "No formal decisions were made in this conversation"
+- If no formal decisions were made, return empty string
 
 4. unresolved_issues
 - Parking lot items
 - Open questions
 - Problems discussed but not resolved
+- If none exist, return empty string
 
 5. next_focus
 - Expected outcomes after this conversation
 - Next steps at a high level
 - Priorities moving forward
 - Overall direction or conclusion
+- If none identified, return empty string
 
 # OUTPUT FORMAT
 Return ONLY valid JSON that matches this schema:
@@ -93,7 +94,8 @@ Return ONLY valid JSON that matches this schema:
 * Is the language consistent with the transcript?
 * Is the summary written with no markdown headings?
 * Are participant identities preserved exactly?
-* Are all 5 required JSON fields present and non-empty?
+* Are all 5 required JSON fields present?
+* Can decisions, unresolved_issues, and next_focus be empty strings if not applicable?
 * Are discussions written in paragraph form?
 * Is every key statement grounded in transcript evidence (not assumptions)?
 """
