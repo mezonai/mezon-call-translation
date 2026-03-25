@@ -13,7 +13,7 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
+  const [accessToken, setAccessToken] = useState(null);
   const [refreshToken, setRefreshToken] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -24,10 +24,10 @@ export const AuthProvider = ({ children }) => {
 
       if (authData) {
         try {
-          const { token: storedToken, refreshToken: storedRefreshToken } = JSON.parse(authData);
+          const { accessToken: storedToken, refreshToken: storedRefreshToken } = JSON.parse(authData);
 
           if (storedToken && storedRefreshToken) {
-            setToken(storedToken);
+            setAccessToken(storedToken);
             setRefreshToken(storedRefreshToken);
 
             // Verify token and fetch user info
@@ -43,7 +43,7 @@ export const AuthProvider = ({ children }) => {
               } else {
                 // Invalid token, clear storage
                 localStorage.removeItem('auth');
-                setToken(null);
+                setAccessToken(null);
                 setRefreshToken(null);
               }
             } catch (error) {
@@ -55,13 +55,13 @@ export const AuthProvider = ({ children }) => {
                 if (!refreshed) {
                   // Refresh failed, clear everything
                   localStorage.removeItem('auth');
-                  setToken(null);
+                  setAccessToken(null);
                   setRefreshToken(null);
                 }
               } else {
                 // Other error, clear storage
                 localStorage.removeItem('auth');
-                setToken(null);
+                setAccessToken(null);
                 setRefreshToken(null);
               }
             }
@@ -79,11 +79,11 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = (accessToken, newRefreshToken, userData) => {
-    setToken(accessToken);
+    setAccessToken(accessToken);
     setRefreshToken(newRefreshToken);
     setUser(userData);
     localStorage.setItem('auth', JSON.stringify({
-      token: accessToken,
+      accessToken: accessToken,
       refreshToken: newRefreshToken
     }));
   };
@@ -96,14 +96,14 @@ export const AuthProvider = ({ children }) => {
 
       if (response.data && response.data.access_token) {
         const newAccessToken = response.data.access_token;
-        setToken(newAccessToken);
+        setAccessToken(newAccessToken);
 
         // Update stored token
         const authData = localStorage.getItem('auth');
         if (authData) {
           const parsed = JSON.parse(authData);
           localStorage.setItem('auth', JSON.stringify({
-            token: newAccessToken,
+            accessToken: newAccessToken,
             refreshToken: parsed.refreshToken
           }));
         }
@@ -121,10 +121,10 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       // Call backend to revoke tokens
-      if (token && refreshToken) {
+      if (accessToken && refreshToken) {
         await apiClient.post('/api/auth/mezon/logout',
           { refresh_token: refreshToken },
-          { headers: { 'Authorization': `Bearer ${token}` } }
+          { headers: { 'Authorization': `Bearer ${accessToken}` } }
         );
       }
     } catch (error) {
@@ -132,7 +132,7 @@ export const AuthProvider = ({ children }) => {
       // Continue with local cleanup even if API call fails
     } finally {
       // Clear local state and storage
-      setToken(null);
+      setAccessToken(null);
       setRefreshToken(null);
       setUser(null);
       localStorage.removeItem('auth');
@@ -140,19 +140,19 @@ export const AuthProvider = ({ children }) => {
   };
 
   const isAuthenticated = () => {
-    return !!token && !!user;
+    return !!accessToken && !!user;
   };
 
   const getAuthHeader = () => {
-    if (token) {
-      return { 'Authorization': `Bearer ${token}` };
+    if (accessToken) {
+      return { 'Authorization': `Bearer ${accessToken}` };
     }
     return {};
   };
 
   const value = {
     user,
-    token,
+    accessToken,
     refreshToken,
     loading,
     login,

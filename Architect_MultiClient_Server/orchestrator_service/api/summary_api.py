@@ -4,7 +4,7 @@ Internal API endpoints for room summary
 from fastapi import APIRouter, Query
 from datetime import datetime
 from typing import Optional
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 
 client_router = APIRouter(prefix="/api/summary", tags=["Summary"])
 

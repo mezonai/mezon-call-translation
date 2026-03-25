@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.models.summary_models import RoomSummary
 from orchestrator_service.config.application_config import get_config

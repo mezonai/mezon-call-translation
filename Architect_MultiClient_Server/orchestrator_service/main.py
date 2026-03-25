@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.config.application_config import get_config
 from contextlib import asynccontextmanager
 

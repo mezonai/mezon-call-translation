@@ -17,6 +17,8 @@ from orchestrator_service.migrations.migration_base import MigrationBase
 
 # Import all migrations here
 from orchestrator_service.migrations.migration_001_create_metadata_events_indexes import CreateMetadataEventsIndexes
+from orchestrator_service.migrations.migration_002_create_refresh_tokens_indexes import CreateRefreshTokensIndexes
+from orchestrator_service.migrations.migration_003_create_token_blacklist_indexes import CreateTokenBlacklistIndexes
 
 logger = get_logger(__name__)
 
@@ -27,6 +29,8 @@ class MigrationRunner:
     # Register all migrations here in order
     MIGRATIONS: List[Type[MigrationBase]] = [
         CreateMetadataEventsIndexes,
+        CreateRefreshTokensIndexes,
+        CreateTokenBlacklistIndexes,
     ]
 
     def __init__(self):

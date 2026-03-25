@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
 from orchestrator_service.auth.verify_account import authenticate_account
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.models.metadata_event_models import MetadataEventType

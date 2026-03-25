@@ -41,39 +41,6 @@ class TokenBlacklistService:
         """
         self.db = db
         self.collection = db.token_blacklist
-        self._indexes_created = False
-
-    async def ensure_indexes(self):
-        """Create necessary indexes for blacklist collection"""
-        if self._indexes_created:
-            return
-
-        try:
-            # TTL index - auto-delete expired blacklist entries
-            await self.collection.create_index(
-                "expires_at",
-                expireAfterSeconds=0,
-                name="ttl_expires_at"
-            )
-
-            # Unique index on jti for fast lookup
-            await self.collection.create_index(
-                "jti",
-                unique=True,
-                name="unique_jti"
-            )
-
-            # Index on user_id
-            await self.collection.create_index(
-                "user_id",
-                name="idx_user_id"
-            )
-
-            self._indexes_created = True
-            logger.info("✅ Token blacklist indexes created")
-
-        except Exception as e:
-            logger.error(f"Failed to create blacklist indexes: {e}")
 
     def _hash_token(self, token: str) -> str:
         """
@@ -108,8 +75,6 @@ class TokenBlacklistService:
         Returns:
             True if blacklisted successfully, False otherwise
         """
-        await self.ensure_indexes()
-
         blacklist_doc = {
             "jti": jti,
             "user_id": user_id,

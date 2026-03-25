@@ -47,45 +47,7 @@ class RefreshTokenService:
         """
         self.db = db
         self.collection = db.refresh_tokens
-        self._indexes_created = False
 
-    async def ensure_indexes(self):
-        """Create necessary indexes for refresh tokens collection"""
-        if self._indexes_created:
-            return
-
-        try:
-            # TTL index - auto-delete expired tokens
-            await self.collection.create_index(
-                "expires_at",
-                expireAfterSeconds=0,
-                name="ttl_expires_at"
-            )
-
-            # Unique index on token_id
-            await self.collection.create_index(
-                "token_id",
-                unique=True,
-                name="unique_token_id"
-            )
-
-            # Index on user_id for querying user's tokens
-            await self.collection.create_index(
-                "user_id",
-                name="idx_user_id"
-            )
-
-            # Index on access_token_jti for quick lookup
-            await self.collection.create_index(
-                "access_token_jti",
-                name="idx_access_token_jti"
-            )
-
-            self._indexes_created = True
-            logger.info("✅ Refresh token indexes created")
-
-        except Exception as e:
-            logger.error(f"Failed to create refresh token indexes: {e}")
 
     def _hash_token(self, token: str) -> str:
         """
@@ -127,8 +89,6 @@ class RefreshTokenService:
         Returns:
             The raw refresh token (send to client, store hash in DB)
         """
-        await self.ensure_indexes()
-
         # Generate refresh token
         refresh_token = self.generate_refresh_token()
         token_hash = self._hash_token(refresh_token)

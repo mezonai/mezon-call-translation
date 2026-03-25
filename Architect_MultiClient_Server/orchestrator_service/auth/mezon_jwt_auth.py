@@ -25,8 +25,8 @@ import jwt
 
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.jwt_utils import verify_jwt_token
-from orchestrator_service.services.mongodb_service import MongoDBService
-from orchestrator_service.services.token_blacklist_service import TokenBlacklistService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.token_blacklist_service import TokenBlacklistService
 
 logger = get_logger(__name__)
 

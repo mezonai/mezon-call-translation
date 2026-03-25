@@ -27,9 +27,9 @@ from pydantic import BaseModel, Field
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.jwt_utils import generate_jwt_token, get_token_expiry, get_token_jti
 from orchestrator_service.auth.mezon_jwt_auth import verify_mezon_jwt
-from orchestrator_service.services.mongodb_service import MongoDBService
-from orchestrator_service.services.refresh_token_service import RefreshTokenService
-from orchestrator_service.services.token_blacklist_service import TokenBlacklistService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.refresh_token_service import RefreshTokenService
+from orchestrator_service.services.mongodb.token_blacklist_service import TokenBlacklistService
 
 logger = get_logger(__name__)
 

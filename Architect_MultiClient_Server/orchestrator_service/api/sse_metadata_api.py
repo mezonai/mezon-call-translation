@@ -9,7 +9,7 @@ from datetime import datetime
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.metadata_event_models import MetadataEventType
 

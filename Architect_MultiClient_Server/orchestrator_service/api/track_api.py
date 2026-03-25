@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
