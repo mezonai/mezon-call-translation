@@ -115,14 +115,16 @@ class TTSManager:
                 try:
                     text = request_data["text"]
                     sender_identity = request_data["sender_identity"]
-                    
+                    voice = request_data.get("voice")
+                    speed = request_data.get("speed")
+
                     logger.info(
                         f"📋 Processing queued TTS request "
                         f"(queue_size={self._request_queue.qsize()}): '{text[:30]}...'"
                     )
                     
                     # Process the request
-                    await self._process_tts_request(text, sender_identity)
+                    await self._process_tts_request(text, sender_identity, voice=voice, speed=speed)
                     
                 except Exception as e:
                     logger.error(f"Error processing queued TTS request: {e}", exc_info=True)
@@ -182,150 +184,6 @@ class TTSManager:
             self.track_published = False
             return False
     
-    def register_data_channel_handler(self):
-        """
-        Register DataChannel handler for TTS control messages
-        
-        This sets up the handler to listen for topic='tts_control'
-        and process TTS requests from the room.
-        """
-        if self.handler_registered:
-            logger.warning("TTS DataChannel handler already registered")
-            return
-        
-        try:
-            # Register handler for data received events
-            def on_tts_data(data_packet):
-                # Only handle our topic
-                if data_packet.topic == "tts_control":
-                    asyncio.create_task(self.handle_tts_data(data_packet))
-            
-            self.ctx.room.on("data_received", on_tts_data)
-            self.handler_registered = True
-            
-            logger.info("✅ TTS DataChannel handler registered for topic='tts_control'")
-            
-        except Exception as e:
-            logger.error(f"Failed to register TTS DataChannel handler: {e}", exc_info=True)
-    
-    async def handle_tts_data(self, data_packet):
-        """
-        Handle TTS request from DataChannel
-        
-        Args:
-            data_packet: DataPacket from LiveKit containing TTS request
-        
-        Expected data format (JSON):
-        {
-            "type": "tts_request",
-            "text": "Text to synthesize",
-            "language": "en" (optional),
-            "voice": "default" (optional)
-        }
-        """
-        try:
-            logger.info("🎤 TTS DataChannel message received!")
-            
-            # Parse incoming data
-            data = self._parse_tts_data(data_packet.data)
-            
-            if not data:
-                logger.warning("Failed to parse TTS data")
-                return
-            
-            logger.info(f"📝 Parsed TTS data: type={data.get('type')}, text_length={len(data.get('text', ''))}")
-            
-            # Validate request type
-            if data.get("type") != "tts_request":
-                logger.debug(f"Ignoring non-TTS request: {data.get('type')}")
-                return
-            
-            # Extract text
-            text = data.get("text", "").strip()
-            if not text:
-                logger.warning("Received TTS request with empty text")
-                await self._send_tts_status("error", {
-                    "error": "Empty text in TTS request"
-                })
-                return
-            
-            # Get sender identity
-            sender_identity = data_packet.participant.identity if data_packet.participant else "unknown"
-            
-            logger.info(f"✅ Valid TTS request from {sender_identity}: '{text[:50]}{'...' if len(text) > 50 else ''}'")
-            
-            # Log additional metadata
-            if "language" in data:
-                logger.debug(f"TTS language: {data['language']}")
-            if "voice" in data:
-                logger.debug(f"TTS voice: {data['voice']}")
-            
-            # Queue TTS request for sequential processing
-            queue_size = self._request_queue.qsize()
-            
-            if queue_size >= 10:
-                logger.warning(f"⚠️ TTS queue full ({queue_size} requests), rejecting new request")
-                await self._send_tts_status("error", {
-                    "error": "TTS queue is full, please try again later",
-                    "queue_size": queue_size
-                })
-                return
-            
-            # Add to queue
-            await self._request_queue.put({
-                "text": text,
-                "sender_identity": sender_identity
-            })
-            
-            self.stats["queued_requests"] += 1
-            
-            logger.info(
-                f"✅ TTS request queued "
-                f"(position={queue_size + 1}, processing={self._is_processing})"
-            )
-            
-            # Send queued status
-            await self._send_tts_status("queued", {
-                "text_length": len(text),
-                "queue_position": queue_size + 1,
-                "is_processing": self._is_processing
-            })
-            
-        except Exception as e:
-            logger.error(f"Error handling TTS data: {e}", exc_info=True)
-            await self._send_tts_status("error", {
-                "error": str(e)
-            })
-    
-    def _parse_tts_data(self, data: bytes) -> Optional[dict]:
-        """
-        Parse TTS data from bytes to dictionary
-        
-        Args:
-            data: Raw bytes data from DataChannel
-        
-        Returns:
-            Parsed dictionary or None if parsing fails
-        """
-        try:
-            # Decode bytes to string
-            data_str = data.decode('utf-8')
-            
-            # Parse JSON
-            parsed = json.loads(data_str)
-            
-            return parsed
-            
-        except UnicodeDecodeError as e:
-            logger.error(f"Failed to decode TTS data: {e}")
-            return None
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse TTS JSON: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error parsing TTS data: {e}")
-            return None
-    
     async def _send_tts_status(
         self,
         status: str,
@@ -376,13 +234,15 @@ class TTSManager:
         
         return False
     
-    async def _process_tts_request(self, text: str, sender_identity: str = "unknown"):
+    async def _process_tts_request(self, text: str, sender_identity: str = "unknown", voice: str = None, speed: float = None):
         """
         Process TTS request: synthesize text and stream audio to room
         
         Args:
             text: Text to synthesize
             sender_identity: Identity of the sender (for logging)
+            voice: Voice to use (optional)
+            speed: Speech speed (optional)
         """
         request_start = time.time()
         self.stats["total_requests"] += 1
@@ -404,7 +264,7 @@ class TTSManager:
             logger.info("Step 1/2: Synthesizing audio...")
             synthesis_start = time.time()
             
-            audio_data = await process_text_to_audio(text)
+            audio_data = await process_text_to_audio(text, voice=voice, speed=speed)
             
             synthesis_time = time.time() - synthesis_start
             self.stats["total_synthesis_time"] += synthesis_time

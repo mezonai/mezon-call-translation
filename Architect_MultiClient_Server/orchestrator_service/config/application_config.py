@@ -223,17 +223,24 @@ class LoggerConfig:
 
 @dataclass
 class LLMConfig:
-    """Configuration for LLM services (Gemini, OpenAI, etc.)"""
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
-    
+    """Unified LLM configuration for all providers (Gemini, Local, OpenAI, etc.)"""
+    provider: str = "local" # "gemini" | "local" | "openai"
+    api_key: str = ""
+    model: str  = "Qwen3.5-35B-A3B"
+    base_url: str = None 
+    timeout: int = 120
+    language: str = "Vietnamese"
     @classmethod
     def from_env(cls) -> 'LLMConfig':
         return cls(
-            gemini_api_key=os.getenv('GEMINI_API_KEY', ''),
-            gemini_model=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash'),
+            provider=os.getenv('LLM_PROVIDER', 'local').lower(),
+            base_url=os.getenv('LLM_URL', 'http://localhost:8080/v1/chat/completions'),
+            model=os.getenv('LLM_MODEL', 'Qwen3.5-35B-A3B'),
+            api_key=os.getenv('LLM_API_KEY', ''),
+            timeout=int(os.getenv('LLM_TIMEOUT', '120')),
+            language=os.getenv('LLM_LANGUAGE', 'Vietnamese'),
         )
-    
+
     def validate(self) -> bool:
         # Optional validation if needed
         return True

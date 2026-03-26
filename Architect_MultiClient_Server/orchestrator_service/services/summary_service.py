@@ -6,9 +6,9 @@ from typing import Optional, Dict, Any
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.services.mongodb_service import MongoDBService
-from orchestrator_service.models.summary_models import RoomSummary, SummaryActionItemsResult
+from orchestrator_service.services.llm.factory import create_llm_service
+from orchestrator_service.models.summary_models import RoomSummary
 from orchestrator_service.config.application_config import get_config
-from google import genai
 
 from orchestrator_service.utils.logger import get_logger
 
@@ -16,79 +16,13 @@ logger = get_logger(__name__)
 
 class SummaryService:
     """Service to handle room summarization logic"""
-    
+
     def __init__(self):
         self.mongodb = MongoDBService()
         self.config = get_config()
-        self.genai_client = None
-        
-        if self.config.llm.gemini_api_key:
-            try:
-                self.genai_client = genai.Client(api_key=self.config.llm.gemini_api_key)
-            except Exception as e:
-                logger.error(f"Failed to initialize Gemini client: {e}")
-
-    def summarize_conversation(self, conversation_text: str) -> SummaryActionItemsResult:
-        """
-        Summarize conversation using Google Gemini (New SDK).
-        Returns a dictionary with 'summary' and 'action_items'.
-        """
-        if not self.genai_client:
-            return {"summary": "Summarization unavailable: Gemini API key not configured or SDK missing.", "action_items": {}}
-
-        try:
-            # Using Gemini 2.5 Flash model (or from config)
-            model_name = self.config.llm.gemini_model or 'gemini-2.5-flash'
-            
-            prompt = f"""
-You are an AI assistant specialized in summarizing conversations and extracting action items.
-
-The conversation content is formatted as:
-
-    [time] participant_identity: transcript_text
-
-Example:
-    [10:05] participant_identity_1: We should migrate Redis next week.
-    [10:06] participant_identity_2: I will handle the configuration.
-
-Important rules:
-
-1. The "participant_identity" is the exact identity after the timestamp.
-2. When extracting action items, you MUST use the exact participant_identity as provided.
-3. Do NOT rename, normalize, translate, or modify participant identities.
-4. Only extract action items that are explicitly stated or clearly committed by a participant.
-5. Do NOT invent tasks or infer implicit responsibilities.
-6. If no action items are mentioned, return an empty list.
-7. Preserve the original meaning. Do NOT add new information.
-8. Automatically detect the language of the conversation and return the summary in the SAME language.
-
-Your tasks:
-
-1. Provide a concise summary highlighting:
-   - Key discussion points
-   - Decisions made (if any)
-
-2. Extract and list all actionable tasks/to-dos, grouped by participant_identifier.
-
-Conversation content:
-{conversation_text}
-            """
-
-            response = self.genai_client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_json_schema": SummaryActionItemsResult.model_json_schema(),
-                },
-            )
-            
-            summary_data_result = SummaryActionItemsResult.model_validate_json(response.text)
-            return summary_data_result
-
-        except Exception as e:
-            logger.error(f"Gemini summarization error: {e}")
-            return SummaryActionItemsResult(summary=f"An error occurred during summarization: {e}", action_items=[])
+        # Create LLM service based on configured provider
+        self.llm_service = create_llm_service(self.config.llm)
+        logger.info(f"SummaryService initialized with LLM provider: {self.config.llm.provider}")
 
     async def generate_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -187,9 +121,9 @@ Conversation content:
                 last_participant = participant
         
         full_text = "\n".join(text_lines)
-        
-        # 6. Generate Summary via LLM
-        summary_data_result = self.summarize_conversation(full_text)
+
+        # 6. Generate Summary via LLM (uses configured provider)
+        summary_data_result = await self.llm_service.summarize_conversation(conversation_text = full_text, language=self.config.llm.language)
         action_items = summary_data_result.action_items
         action_items_dict = {action_item.participant_identity: action_item.participant_actions for action_item in action_items}
         summary_data = {
