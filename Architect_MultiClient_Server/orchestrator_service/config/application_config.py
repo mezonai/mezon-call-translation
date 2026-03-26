@@ -229,7 +229,7 @@ class LLMConfig:
     model: str  = "Qwen3.5-35B-A3B"
     base_url: str = None 
     timeout: int = 120
-
+    language: str = "Vietnamese"
     @classmethod
     def from_env(cls) -> 'LLMConfig':
         return cls(
@@ -238,6 +238,7 @@ class LLMConfig:
             model=os.getenv('LLM_MODEL', 'Qwen3.5-35B-A3B'),
             api_key=os.getenv('LLM_API_KEY', ''),
             timeout=int(os.getenv('LLM_TIMEOUT', '120')),
+            language=os.getenv('LLM_LANGUAGE', 'Vietnamese'),
         )
 
     def validate(self) -> bool:
