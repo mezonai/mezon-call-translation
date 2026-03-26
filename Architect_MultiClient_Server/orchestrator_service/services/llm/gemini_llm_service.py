@@ -32,8 +32,8 @@ class GeminiLLMService(BaseLLMService):
             logger.error(f"Failed to initialize Gemini client: {e}")
             raise
 
-    async def summarize_summary(self, conversation_text: str) -> SummaryResult:
-        prompt = build_prompt_summary(conversation_text)
+    async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
+        prompt = build_prompt_summary(conversation_text, language)
         response = await self.client.aio.models.generate_content(
             model=self.config.model,
             contents=prompt,
@@ -44,8 +44,8 @@ class GeminiLLMService(BaseLLMService):
         )
         return SummaryResult.model_validate_json(response.text)
 
-    async def summarize_action_items(self, conversation_text: str) -> ActionItemsResult:
-        prompt = build_prompt_action_items(conversation_text)
+    async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
+        prompt = build_prompt_action_items(conversation_text, language)
         response = await self.client.aio.models.generate_content(
             model=self.config.model,
             contents=prompt,
@@ -56,11 +56,11 @@ class GeminiLLMService(BaseLLMService):
         )
         return ActionItemsResult.model_validate_json(response.text)
 
-    async def summarize_conversation(self, conversation_text: str) -> SummaryActionItemsResult:
+    async def summarize_conversation(self, conversation_text: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """Run 2 Gemini requests: one for summary and one for action items."""
         try:
-            summary_result = await self.summarize_summary(conversation_text)
-            action_items_result = await self.summarize_action_items(conversation_text)
+            summary_result = await self.summarize_summary(conversation_text, language)
+            action_items_result = await self.summarize_action_items(conversation_text, language)
             logger.info("Successfully generated summary and action items using Gemini (2 requests)")
 
             # Build summary with only non-empty fields

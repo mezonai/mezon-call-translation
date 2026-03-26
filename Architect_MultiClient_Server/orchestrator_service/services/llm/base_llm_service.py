@@ -19,7 +19,7 @@ class BaseLLMService(ABC):
         self.config = config
 
     @abstractmethod
-    async def summarize_summary(self, conversation_text: str) -> SummaryResult:
+    async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
         """
         Generate only summary/context from conversation transcript.
 
@@ -36,7 +36,7 @@ class BaseLLMService(ABC):
         pass
 
     @abstractmethod
-    async def summarize_action_items(self, conversation_text: str) -> ActionItemsResult:
+    async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
         """
         Extract only action items from conversation transcript.
 

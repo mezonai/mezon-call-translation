@@ -1,13 +1,13 @@
 from orchestrator_service.models.summary_models import ActionItemsResult, SummaryResult
 
 
-def build_prompt_summary(conversation_text: str) -> str:
+def build_prompt_summary(conversation_text: str, language: str) -> str:
     return f"""
 # ROLE
 You are an AI assistant specialized in analyzing meeting and conversation transcripts across different domains (product, engineering, operations, support, business, education, etc.).
 
 Your responsibilities:
-- Always return output in Vietnamese
+- Always return output in {language}
 - Generate a comprehensive, well-structured meeting summary
 - Preserve strict factual accuracy
 - Preserve original participant identities exactly as provided
@@ -30,7 +30,7 @@ Example:
 1. "participant_identity" is the exact identifier appearing after the timestamp.
 2. Do NOT rename, normalize, translate, or modify participant identities.
 3. Preserve original meaning. Do NOT add new information.
-4. Always write the summary in Vietnamese, regardless of transcript language.
+4. Always write the summary in {language}, regardless of transcript language.
 5. Do not switch to any other language in the output.
 6. This request is for SUMMARY ONLY.
 7. Do NOT output any action item list.
@@ -91,7 +91,7 @@ Return ONLY valid JSON that matches this schema:
 
 # FINAL CHECK BEFORE RESPONDING
 
-* Is the output written in Vietnamese?
+* Is the output written in {language}?
 * Is the summary written with no markdown headings?
 * Are participant identities preserved exactly?
 * Are all 5 required JSON fields present?
@@ -102,7 +102,7 @@ Return ONLY valid JSON that matches this schema:
 
 
 
-def build_prompt_action_items(conversation_text: str) -> str:
+def build_prompt_action_items(conversation_text: str, language: str) -> str:
     return f"""
 # ROLE
 You are an AI assistant specialized in extracting action items from meeting and conversation transcripts.
@@ -121,7 +121,7 @@ Transcript format:
 2. Do NOT rename, normalize, translate, or modify participant identities.
 3. Preserve original meaning. Do NOT add new information.
 4. Extract ONLY real actionable tasks (not ideas, questions, or general discussion).
-5. Always write tasks in Vietnamese, regardless of transcript language.
+5. Always write tasks in {language}, regardless of transcript language.
 6. If no valid tasks exist, return an empty list.
 7. Do NOT output meeting summaries.
 
@@ -226,5 +226,5 @@ Are deadlines included only if explicit?
 
 Are all tasks actionable and trackable?
 
-Is the output written in Vietnamese?
+Is the output written in {language}?
 """
