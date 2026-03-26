@@ -9,20 +9,20 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
+from orchestrator_service.auth.jwt_auth import verify_jwt
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.auth.jwt_auth import verify_jwt
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
-    RoomNamePath,
     StatusQuery,
     LimitQuery,
     SkipQuery,
-    validate_date_range
 )
 from bson import ObjectId
 
-router = APIRouter(prefix="/api/transcripts/rooms", tags=["Rooms"])
+router = APIRouter(prefix="/transcripts/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
 
@@ -34,6 +34,7 @@ async def list_rooms(
     to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
+    user: Dict[str, Any] = Depends(verify_jwt)
 ):
     """
     List all rooms with optional filters.
@@ -85,7 +86,7 @@ async def list_rooms(
 @router.get("/id/{room_id}", response_description="Get room by ID")
 async def get_room_by_id(
     room_id: str,
-    auth: Dict[str, Any] = Depends(verify_api_key)
+    user: Dict[str, Any] = Depends(verify_jwt)
 ):
     """
     Get room details by room ID.
@@ -123,7 +124,7 @@ async def get_room_by_id(
 @router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
 async def get_room_statistics_by_id(
     room_id: str,
-    auth: Dict[str, Any] = Depends(verify_api_key)
+    user: Dict[str, Any] = Depends(verify_jwt)
 ):
     """
     Get detailed statistics for a specific room by ID.

@@ -8,14 +8,6 @@ Features:
 - Verify JWT signature and expiration
 - Check if token is blacklisted (revoked)
 - Extract user information from token claims
-
-Usage:
-    from orchestrator_service.auth.mezon_jwt_auth import verify_mezon_jwt
-
-    @router.get("/endpoint")
-    async def endpoint(user: dict = Depends(verify_mezon_jwt)):
-        # user contains: user_id, username, display_name, avatar_url, jti
-        pass
 """
 
 from typing import Optional, Dict, Any
@@ -34,7 +26,7 @@ logger = get_logger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-async def verify_mezon_jwt(
+async def verify_jwt(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security)
 ) -> Dict[str, Any]:
     """

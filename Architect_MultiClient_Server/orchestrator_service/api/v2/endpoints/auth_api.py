@@ -7,6 +7,7 @@ Handles OAuth2 authentication flow with Mezon:
 3. Retrieves user information from Mezon
 4. Issues JWT tokens for authenticated sessions
 5. Supports token refresh and revocation (blacklist)
+6. Bot account authentication
 
 Endpoints:
 - GET /api/auth/mezon/config - Public OAuth2 configuration
@@ -14,6 +15,7 @@ Endpoints:
 - POST /api/auth/mezon/refresh - Refresh access token
 - POST /api/auth/mezon/logout - Logout and revoke tokens
 - GET /api/auth/mezon/userinfo - Get current authenticated user
+- POST /api/auth/mezon/bot/login - Bot account login with Mezon credentials
 """
 
 import os
@@ -26,7 +28,8 @@ from pydantic import BaseModel, Field
 
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.jwt_utils import generate_jwt_token, get_token_expiry, get_token_jti
-from orchestrator_service.auth.mezon_jwt_auth import verify_mezon_jwt
+from orchestrator_service.auth.jwt_auth import verify_jwt
+from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.services.mongodb.refresh_token_service import RefreshTokenService
 from orchestrator_service.services.mongodb.token_blacklist_service import TokenBlacklistService
@@ -275,7 +278,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
 
 
 @router.get("/userinfo")
-async def get_current_user(user: Dict[str, Any] = Depends(verify_mezon_jwt)):
+async def get_current_user(user: Dict[str, Any] = Depends(verify_jwt)):
     """
     Get information about the currently authenticated user.
 
@@ -314,6 +317,32 @@ class RefreshTokenResponse(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh_token: str = Field(..., description="Refresh token to revoke")
+
+class AccountModel(BaseModel):
+    appid: str
+    token: str
+
+class BotLoginRequest(BaseModel):
+    account: AccountModel = Field(..., description="Bot account credentials")
+    class Config:
+            json_schema_extra = {
+                "examples": [
+                    {
+                        "account": {
+                            "appid": "string",
+                            "token": "string"
+                        }
+                    }
+                ]
+            }
+
+class BotLoginResponse(BaseModel):
+    access_token: str = Field(..., description="JWT access token for bot session")
+    refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
+    api_url: str = Field(..., description="Mezon API URL")
+    ws_url: str = Field(..., description="Mezon WebSocket URL")
+    mezon_token: str = Field(..., description="Mezon JWT token")
+    mezon_refresh_token: str = Field(..., description="Mezon refresh token")
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
@@ -410,7 +439,7 @@ async def refresh_access_token(request: RefreshTokenRequest):
 @router.post("/logout")
 async def logout(
     request: LogoutRequest,
-    user: Dict[str, Any] = Depends(verify_mezon_jwt)
+    user: Dict[str, Any] = Depends(verify_jwt)
 ):
     """
     Logout user and revoke access token + refresh token.
@@ -470,4 +499,100 @@ async def logout(
         raise HTTPException(
             status_code=500,
             detail=f"Logout failed: {str(e)}"
+        )
+
+
+@router.post("/bot/login", response_model=BotLoginResponse)
+async def bot_login(request: BotLoginRequest):
+    """
+    Authenticate a bot account with Mezon and generate JWT tokens.
+
+    This endpoint allows bots to authenticate with their account credentials.
+    It communicates with a Mezon authentication service to verify the account
+    and extract user information, then generates both a Mezon JWT token and 
+    our own JWT token for the bot session.
+
+    Args:
+        request: BotLoginRequest containing bot account credentials
+
+    Returns:
+        BotLoginResponse with access_token, mezon_token, and other user info
+
+    Raises:
+        HTTPException: 401 if account authentication fails, 500 on server error
+    """
+    try:
+        logger.info("🤖 Bot login attempt")
+
+        # Authenticate account with Mezon
+        auth_result = await authenticate_account(request.account)
+
+        if not auth_result:
+            logger.warning("❌ Bot authentication failed")
+            raise HTTPException(
+                status_code=401,
+                detail="Account authentication failed. Invalid credentials."
+            )
+
+        # Extract authentication data
+        mezon_token = auth_result["token"]
+        mezon_refresh_token = auth_result["refresh_token"]
+        user_id = auth_result["user_id"]
+        api_url = auth_result["api_url"]
+        ws_url = auth_result["ws_url"]
+        payload = auth_result["payload"]
+
+        # Extract user info from JWT payload
+        username = payload.get("usn", "")  # usn = username in Mezon JWT
+        tid = payload.get("tid", "")       # tid = team id
+        uid = payload.get("uid", "")       # uid = user id (numeric)
+
+        logger.debug(f"Payload extracted: tid={tid}, uid={uid}, usn={username}")
+
+        # Prepare user data for our JWT token
+        user_data = {
+            "user_id": str(user_id),
+            "username": username,
+            "display_name": username,  # Use username as display name
+            "avatar_url": ""
+        }
+
+        # Generate our JWT access token for the bot
+        access_token = generate_jwt_token(user_data)
+
+        # Get JTI from access token for refresh token linking
+        access_token_jti = get_token_jti(access_token)
+        if not access_token_jti:
+            raise HTTPException(status_code=500, detail="Failed to generate token ID")
+
+        # Connect to MongoDB and create refresh token
+        mongodb = MongoDBService()
+        if not mongodb.connected:
+            await mongodb.connect()
+
+        refresh_token_service = RefreshTokenService(mongodb.db)
+        refresh_token = await refresh_token_service.create_refresh_token(
+            user_id=str(user_id),
+            access_token_jti=access_token_jti,
+            device_info=None
+        )
+
+        logger.info(f"✅ Bot authenticated: user_id={user_id}, username={username}")
+
+        return BotLoginResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            api_url=api_url,
+            ws_url=ws_url,
+            mezon_token=mezon_token,
+            mezon_refresh_token=mezon_refresh_token
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Bot login error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Bot authentication failed: {str(e)}"
         )

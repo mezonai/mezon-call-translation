@@ -21,12 +21,13 @@ from orchestrator_service.api.track_api import router as track_router
 from orchestrator_service.api.transcript_api import router as transcript_router
 from orchestrator_service.api.room_registry_api import router as room_registry_router
 from orchestrator_service.api.queue_api import router as queue_router
-from orchestrator_service.api.auth_api import router as auth_router
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.api.summary_api import client_router as summary_client_router
 from orchestrator_service.services.redis.redis_save_transcription_service import RedisSaveTranscriptionService
+
+from orchestrator_service.api.v2.router import api_router as api_router_v2  # Import the v2 API router
 
 import signal
 
@@ -153,7 +154,6 @@ app.add_middleware(
 
 
 # Include routers
-app.include_router(auth_router)  # Mezon OAuth2 authentication
 app.include_router(dispatch_router, prefix="/api")
 app.include_router(stream_router, prefix="/api", tags=["sse transcript"])
 app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat external"])
@@ -167,4 +167,6 @@ app.include_router(transcript_router)  # Has prefix="/api/transcripts"
 app.include_router(room_registry_router)  # Has prefix="/api/room-registry"
 app.include_router(summary_client_router)
 
+
+app.include_router(api_router_v2, prefix="/api/v2")
 
