@@ -7,6 +7,7 @@ import {
 } from '../services/api';
 import { formatDate } from '../utils/datetime';
 import { getStatusBadge } from '../utils/display';
+import MultilineText from './ui/MultilineText';
 
 const RoomDetail = () => {
   const { roomId } = useParams();
@@ -335,7 +336,10 @@ const RoomDetail = () => {
                       <div className="mb-6">
                         <h4 className="font-semibold text-gray-900 mb-3 text-lg">Summary</h4>
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                          <p className="text-gray-800 leading-relaxed">{summary.summary_data.summary}</p>
+                          <MultilineText
+                            text={summary.summary_data.summary}
+                            className="text-gray-800 leading-relaxed"
+                          />
                         </div>
                       </div>
                     )}
