@@ -145,7 +145,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
     logger.info(f"Exchanging authorization code for token (state={request.state})")
 
     # Debug logging to verify configuration
-    logger.debug(f"Client ID (first 10 chars): {oauth2_config.client_id[:10] if oauth2_config.client_id else 'EMPTY'}...")
+    logger.debug(f"Client ID: {oauth2_config.client_id if oauth2_config.client_id else 'EMPTY'}...")
     logger.debug(f"Client Secret configured: {'YES' if oauth2_config.client_secret else 'NO'}")
     logger.debug(f"Redirect URI: {oauth2_config.redirect_uri}")
 

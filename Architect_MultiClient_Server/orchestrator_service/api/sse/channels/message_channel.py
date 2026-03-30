@@ -3,12 +3,10 @@ Message Channel for transcript/translation messages
 Handles SSE connections for room-based message streaming
 """
 from typing import Optional, Dict, Any
-from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
-from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
