@@ -29,11 +29,11 @@ from typing import (
     TypeVar,
 )
 
-import redis.asyncio as redis
-from redis.asyncio import ConnectionPool, Redis
+from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
 from stt_service.config.app_config import get_config
+from stt_service.service.redis.connection_pool import get_connection_manager
 from stt_service.models.stream_base import (
     StreamTaskProtocol,
     StreamTaskStatus,
@@ -107,7 +107,6 @@ class RedisStreamService(Generic[T]):
         """
         self._task_class: Type[T] = task_class
         self._config = get_config().redis
-        self._pool: Optional[ConnectionPool] = None
         self._redis: Optional[Redis] = None
         self._consumer_id: str = self._generate_consumer_id()
         self._running = False
@@ -184,23 +183,15 @@ class RedisStreamService(Generic[T]):
             return
         
         try:
-            # Create connection pool
-            self._pool = ConnectionPool(
-                host=self._config.host,
-                port=self._config.port,
-                password=self._config.password or None,
-                db=self._config.db,
-                max_connections=self._config.max_connections,
-                socket_timeout=self._config.socket_timeout,
-                socket_connect_timeout=self._config.socket_connect_timeout,
-                decode_responses=False,  # We handle decoding manually for stream data
-            )
-            
-            self._redis = Redis(connection_pool=self._pool)
-            
-            # Test connection
+            manager = get_connection_manager()
+            if not manager.is_connected:
+                await manager.connect()
+            self._redis = Redis(connection_pool=manager.get_pool())
             await self._redis.ping()
-            logger.info(f"✅ Connected to Redis at {self._config.host}:{self._config.port}")
+            logger.info(
+                f"✅ Redis stream service using shared pool at "
+                f"{self._config.host}:{self._config.port}"
+            )
             
             # Create consumer group (idempotent)
             await self._ensure_consumer_group()
@@ -211,7 +202,6 @@ class RedisStreamService(Generic[T]):
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
             self._redis = None
-            self._pool = None
             raise ConnectionError(f"Redis connection failed: {e}")
     
     async def _ensure_consumer_group(self) -> None:
@@ -263,12 +253,8 @@ class RedisStreamService(Generic[T]):
             await self._unregister_worker()
             await self._redis.close()
             self._redis = None
-        
-        if self._pool:
-            await self._pool.disconnect()
-            self._pool = None
-        
-        logger.info("Redis connection closed")
+
+        logger.info("Redis stream client released (shared pool kept open)")
     
     async def release_my_pending_tasks(self) -> int:
         """

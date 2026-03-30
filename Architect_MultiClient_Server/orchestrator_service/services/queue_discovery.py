@@ -6,10 +6,9 @@ No manual registration required - automatically discovers queues.
 """
 
 import logging
-from typing import Dict, List, Optional, Set
-import redis.asyncio as redis
+from typing import Dict, List, Optional
 
-from orchestrator_service.config.application_config import get_config
+from orchestrator_service.services.redis.connection_pool import get_redis_connection
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +32,11 @@ class QueueDiscovery:
         Returns:
             List of stream key names found in Redis
         """
-        config = get_config().redis
         redis_client = None
-        
+
         try:
-            redis_client = redis.Redis(
-                host=config.host,
-                port=config.port,
-                password=config.password or None,
-                db=config.db,
-                decode_responses=True,
-            )
-            
+            redis_client = await get_redis_connection()
+
             # Scan for stream keys (pattern: *:stream)
             streams = []
             cursor = 0
@@ -76,9 +68,9 @@ class QueueDiscovery:
             logger.error(f"Error discovering streams: {e}")
             return []
         finally:
-            if redis_client:
+            if redis_client is not None:
                 await redis_client.close()
-    
+
     @staticmethod
     async def get_stream_info(stream_key: str) -> Optional[Dict]:
         """
@@ -90,18 +82,11 @@ class QueueDiscovery:
         Returns:
             Dictionary with stream info or None if not found
         """
-        config = get_config().redis
         redis_client = None
-        
+
         try:
-            redis_client = redis.Redis(
-                host=config.host,
-                port=config.port,
-                password=config.password or None,
-                db=config.db,
-                decode_responses=True,
-            )
-            
+            redis_client = await get_redis_connection()
+
             # Check if stream exists
             key_type = await redis_client.type(stream_key)
             if key_type != "stream":
@@ -136,9 +121,9 @@ class QueueDiscovery:
             logger.error(f"Error getting stream info for {stream_key}: {e}")
             return None
         finally:
-            if redis_client:
+            if redis_client is not None:
                 await redis_client.close()
-    
+
     @staticmethod
     async def list_queues() -> List[Dict]:
         """
@@ -186,19 +171,12 @@ class QueueDiscovery:
             f"{queue_name}:stream",
             queue_name,
         ]
-        
-        config = get_config().redis
+
         redis_client = None
-        
+
         try:
-            redis_client = redis.Redis(
-                host=config.host,
-                port=config.port,
-                password=config.password or None,
-                db=config.db,
-                decode_responses=True,
-            )
-            
+            redis_client = await get_redis_connection()
+
             for key in possible_keys:
                 key_type = await redis_client.type(key)
                 if key_type == "stream":
@@ -210,6 +188,6 @@ class QueueDiscovery:
             logger.error(f"Error checking queue existence for {queue_name}: {e}")
             return False
         finally:
-            if redis_client:
+            if redis_client is not None:
                 await redis_client.close()
 

@@ -3,12 +3,14 @@ Generic Redis Producer Service for sending tasks to Redis Stream.
 
 This service allows producing tasks directly to Redis Stream using XADD.
 Supports any task type implementing ProducerTaskProtocol.
+Uses the shared Redis connection pool (RedisConnectionManager).
 """
-from redis.asyncio import ConnectionPool, Redis
+from redis.asyncio import Redis
 from typing import ClassVar, Dict, Any, Generic, Optional, Type, TypeVar
 
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.models.stream_base import (
     ProducerTaskProtocol,
     StreamTaskStatus,
@@ -47,7 +49,6 @@ class RedisProducerService(Generic[T]):
         """
         self._task_class = task_class
         self._config = get_config().redis
-        self._pool: Optional[ConnectionPool] = None
         self._redis: Optional[Redis] = None
         
         # Keys - use provided value or fall back to config
@@ -99,43 +100,26 @@ class RedisProducerService(Generic[T]):
             return
         
         try:
-            # Create connection pool
-            self._pool = ConnectionPool(
-                host=self._config.host,
-                port=self._config.port,
-                password=self._config.password or None,
-                db=self._config.db,
-                max_connections=self._config.max_connections,
-                socket_timeout=self._config.socket_timeout,
-                socket_connect_timeout=self._config.socket_connect_timeout,
-                decode_responses=False,  # Handle decoding manually
-            )
-            
-            self._redis = Redis(connection_pool=self._pool)
-            
-            # Test connection
+            manager = get_connection_manager()
+            if not manager.is_connected:
+                await manager.connect()
+            self._redis = Redis(connection_pool=manager.get_pool())
             await self._redis.ping()
             logger.info(
-                f"✅ Connected to Redis at {self._config.host}:{self._config.port}"
+                f"✅ Redis producer using shared pool at {self._config.host}:{self._config.port}"
             )
-            
+
         except Exception as e:
             logger.error(f"✗ Failed to connect to Redis: {e}")
             self._redis = None
-            self._pool = None
             raise ConnectionError(f"Redis connection failed: {e}")
     
     async def close(self) -> None:
-        """Close Redis connection and cleanup resources."""
+        """Release this client's connections back to the shared pool (does not tear down the pool)."""
         if self._redis:
             await self._redis.close()
             self._redis = None
-        
-        if self._pool:
-            await self._pool.disconnect()
-            self._pool = None
-        
-        logger.info("Redis connection closed")
+        logger.debug("Redis producer client released to shared pool")
     
     async def enqueue(self, task: T) -> str:
         """
@@ -208,10 +192,12 @@ class RedisProducerService(Generic[T]):
             
             # Get stats
             stats_data = await self._redis.hgetall(self._stats_key)
-            stats = {
-                k.decode(): v.decode()
-                for k, v in stats_data.items()
-            } if stats_data else {}
+            stats = {}
+            if stats_data:
+                for k, v in stats_data.items():
+                    ks = k.decode() if isinstance(k, bytes) else str(k)
+                    vs = v.decode() if isinstance(v, bytes) else str(v)
+                    stats[ks] = vs
             
             # Count active workers
             workers_key = f"{self._stream_key}:workers"
