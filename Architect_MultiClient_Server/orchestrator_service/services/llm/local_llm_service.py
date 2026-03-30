@@ -147,8 +147,8 @@ class LocalLLMService(BaseLLMService):
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
-    async def summarize_summary(self, conversation_text: str) -> SummaryResult:
-        prompt = build_prompt_summary(conversation_text)
+    async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
+        prompt = build_prompt_summary(conversation_text, language)
         json_data = await self._call_local_llm(prompt, SummaryResult.model_json_schema())
         return SummaryResult.model_validate(json_data)
 
@@ -159,12 +159,12 @@ class LocalLLMService(BaseLLMService):
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
-    async def summarize_action_items(self, conversation_text: str) -> ActionItemsResult:
-        prompt = build_prompt_action_items(conversation_text)
+    async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
+        prompt = build_prompt_action_items(conversation_text, language)
         json_data = await self._call_local_llm(prompt, ActionItemsResult.model_json_schema())
         return ActionItemsResult.model_validate(json_data)
 
-    async def summarize_conversation(self, conversation_text: str) -> SummaryActionItemsResult:
+    async def summarize_conversation(self, conversation_text: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """
         Summarize conversation by running 2 focused local LLM requests.
 
@@ -177,8 +177,8 @@ class LocalLLMService(BaseLLMService):
         Raises:
             Exception: If one of the requests fails
         """
-        summary_result = await self.summarize_summary(conversation_text)
-        action_items_result = await self.summarize_action_items(conversation_text)
+        summary_result = await self.summarize_summary(conversation_text, language)
+        action_items_result = await self.summarize_action_items(conversation_text, language)
         logger.info("Successfully generated summary and action items using Local LLM (2 requests)")
 
         # Build summary with only non-empty fields

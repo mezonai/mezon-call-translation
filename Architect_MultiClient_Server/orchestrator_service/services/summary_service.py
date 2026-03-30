@@ -123,7 +123,7 @@ class SummaryService:
         full_text = "\n".join(text_lines)
 
         # 6. Generate Summary via LLM (uses configured provider)
-        summary_data_result = await self.llm_service.summarize_conversation(full_text)
+        summary_data_result = await self.llm_service.summarize_conversation(conversation_text = full_text, language=self.config.llm.language)
         action_items = summary_data_result.action_items
         action_items_dict = {action_item.participant_identity: action_item.participant_actions for action_item in action_items}
         summary_data = {
