@@ -36,7 +36,7 @@ const Callback = () => {
         sessionStorage.removeItem('oauth_state');
 
         // Exchange authorization code for JWT tokens
-        const response = await apiClient.post('/api/auth/mezon/exchange', {
+        const response = await apiClient.post('/api/v2/auth/mezon/exchange', {
           code: code,
           state: state
         });

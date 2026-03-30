@@ -5,8 +5,9 @@ Endpoints for agents to receive requests from orchestrator via SSE
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
-from datetime import datetime
 
+from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.auth.authorization import get_auth_context, AuthContext, require_any_permission
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.agent_request_channel import AgentRequestChannel
 from orchestrator_service.models.agent_request_payloads import (
@@ -30,7 +31,7 @@ class SendAgentRequestBody(BaseModel):
     payload: AgentRequestPayload = Field(..., discriminator="request_type", description="Request payload with type-specific schema")
     room_name: Optional[str] = Field(None, description="Room name to target agents in specific room")
     agent_id: Optional[str] = Field(None, description="Agent ID to target specific agent")
-    
+
     class Config:
         json_schema_extra = {
             "examples": [
@@ -89,6 +90,7 @@ class AgentStatusResponse(BaseModel):
 async def sse_agent_requests_endpoint(
     agent_id: str,
     room_name: str,
+    auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
     SSE endpoint for agents to receive requests from orchestrator.
@@ -111,7 +113,7 @@ async def sse_agent_requests_endpoint(
 
 @router.post("/dispatch/agent-request", response_model=SendAgentRequestResponse)
 async def send_agent_request(request: SendAgentRequestBody,
-    user: Dict[str, Any] = Depends(verify_jwt)):
+    auth: AuthContext = Depends(require_any_permission("agent:control"))):
     """
     Send request to agent(s) via SSE with type-safe payloads.
     

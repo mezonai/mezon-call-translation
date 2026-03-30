@@ -41,15 +41,13 @@ class MetadataChannel:
     
     async def create_connection(
         self,
-        appid: str,
-        token: str
+        appid: str
     ) -> StreamingResponse:
         """
         Create SSE connection for metadata channel.
         
         Args:
             appid: Application ID for authentication
-            token: Authentication token
         
         Returns:
             StreamingResponse with SSE events
@@ -57,11 +55,6 @@ class MetadataChannel:
         Raises:
             HTTPException: If authentication fails
         """
-        # Authenticate
-        account = {"appid": appid, "token": token}
-        if not await authenticate_account(account):
-            raise HTTPException(status_code=401, detail="Account authentication failed")
-        
         context_key = self.CONTEXT_KEY
         
         # Close existing connection from same appid

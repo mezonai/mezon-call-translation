@@ -9,13 +9,6 @@ Handles OAuth2 authentication flow with Mezon:
 5. Supports token refresh and revocation (blacklist)
 6. Bot account authentication
 
-Endpoints:
-- GET /api/auth/mezon/config - Public OAuth2 configuration
-- POST /api/auth/mezon/exchange - Exchange code for JWT token + refresh token
-- POST /api/auth/mezon/refresh - Refresh access token
-- POST /api/auth/mezon/logout - Logout and revoke tokens
-- GET /api/auth/mezon/userinfo - Get current authenticated user
-- POST /api/auth/mezon/bot/login - Bot account login with Mezon credentials
 """
 
 import os
@@ -33,32 +26,39 @@ from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.services.mongodb.refresh_token_service import RefreshTokenService
 from orchestrator_service.services.mongodb.token_blacklist_service import TokenBlacklistService
+from orchestrator_service.services.mongodb.user_permission_service import UserPermissionService
+from orchestrator_service.config.application_config import get_config
 
 logger = get_logger(__name__)
 
-# OAuth2 Configuration from environment
-MEZON_CLIENT_ID = os.getenv("MEZON_CLIENT_ID", "")
-MEZON_CLIENT_SECRET = os.getenv("MEZON_CLIENT_SECRET", "")
-MEZON_REDIRECT_URI = os.getenv("MEZON_REDIRECT_URI", "http://localhost:3000/callback")
+# Default permissions for new users (regular user)
+DEFAULT_USER_PERMISSIONS = [
+    "rooms:view_own",
+]
 
-# Mezon OAuth2 endpoints
-MEZON_AUTH_URL = "https://oauth2.mezon.ai/oauth2/auth"
-MEZON_TOKEN_URL = "https://oauth2.mezon.ai/oauth2/token"
-MEZON_USERINFO_URL = "https://oauth2.mezon.ai/userinfo"
+# Default permissions for bot accounts
+DEFAULT_BOT_PERMISSIONS = [
+    "metadata_events:view_all",
+    "chat_external:view_all",
+    "agent:control",
+]
+
+# Get OAuth2 configuration from centralized config
+oauth2_config = get_config().oauth2
 
 # Validate configuration on startup
-if not MEZON_CLIENT_ID:
+if not oauth2_config.client_id:
     logger.warning("⚠️  MEZON_CLIENT_ID is not set. OAuth2 authentication will fail!")
-if not MEZON_CLIENT_SECRET:
+if not oauth2_config.client_secret:
     logger.warning("⚠️  MEZON_CLIENT_SECRET is not set. OAuth2 authentication will fail!")
 
 logger.info(f"Mezon OAuth2 Configuration:")
-logger.info(f"  - Client ID: {'configured' if MEZON_CLIENT_ID else 'NOT SET'}")
-logger.info(f"  - Client Secret: {'configured' if MEZON_CLIENT_SECRET else 'NOT SET'}")
-logger.info(f"  - Redirect URI: {MEZON_REDIRECT_URI}")
+logger.info(f"  - Client ID: {'configured' if oauth2_config.client_id else 'NOT SET'}")
+logger.info(f"  - Client Secret: {'configured' if oauth2_config.client_secret else 'NOT SET'}")
+logger.info(f"  - Redirect URI: {oauth2_config.redirect_uri}")
 
 # Router
-router = APIRouter(prefix="/api/auth/mezon", tags=["Authentication"])
+router = APIRouter(prefix="/auth/mezon", tags=["Authentication"])
 
 
 # Request/Response Models
@@ -92,16 +92,16 @@ async def get_oauth_config():
     Returns:
         OAuth2ConfigResponse with client_id, auth_url, and redirect_uri
     """
-    if not MEZON_CLIENT_ID:
+    if not oauth2_config.client_id:
         raise HTTPException(
             status_code=500,
             detail="Mezon OAuth2 is not configured. Please set MEZON_CLIENT_ID."
         )
 
     return OAuth2ConfigResponse(
-        client_id=MEZON_CLIENT_ID,
-        auth_url=MEZON_AUTH_URL,
-        redirect_uri=MEZON_REDIRECT_URI
+        client_id=oauth2_config.client_id,
+        auth_url=oauth2_config.auth_url,
+        redirect_uri=oauth2_config.redirect_uri
     )
 
 
@@ -135,7 +135,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
         )
 
     # Check OAuth2 configuration
-    if not MEZON_CLIENT_ID or not MEZON_CLIENT_SECRET:
+    if not oauth2_config.client_id or not oauth2_config.client_secret:
         logger.error("Mezon OAuth2 credentials not configured")
         raise HTTPException(
             status_code=500,
@@ -145,9 +145,9 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
     logger.info(f"Exchanging authorization code for token (state={request.state})")
 
     # Debug logging to verify configuration
-    logger.debug(f"Client ID (first 10 chars): {MEZON_CLIENT_ID[:10] if MEZON_CLIENT_ID else 'EMPTY'}...")
-    logger.debug(f"Client Secret configured: {'YES' if MEZON_CLIENT_SECRET else 'NO'}")
-    logger.debug(f"Redirect URI: {MEZON_REDIRECT_URI}")
+    logger.debug(f"Client ID (first 10 chars): {oauth2_config.client_id[:10] if oauth2_config.client_id else 'EMPTY'}...")
+    logger.debug(f"Client Secret configured: {'YES' if oauth2_config.client_secret else 'NO'}")
+    logger.debug(f"Redirect URI: {oauth2_config.redirect_uri}")
 
     try:
         # Exchange authorization code for access token
@@ -156,16 +156,16 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
             'grant_type': 'authorization_code',
             'code': request.code,
             'state': request.state,
-            'client_id': MEZON_CLIENT_ID.strip() if MEZON_CLIENT_ID else '',
-            'client_secret': MEZON_CLIENT_SECRET.strip() if MEZON_CLIENT_SECRET else '',
-            'redirect_uri': MEZON_REDIRECT_URI.strip() if MEZON_REDIRECT_URI else ''
+            'client_id': oauth2_config.client_id.strip() if oauth2_config.client_id else '',
+            'client_secret': oauth2_config.client_secret.strip() if oauth2_config.client_secret else '',
+            'redirect_uri': oauth2_config.redirect_uri.strip() if oauth2_config.redirect_uri else ''
         }
 
         logger.debug("Sending token exchange request to Mezon (client_secret_post)")
         logger.debug(f"Request data keys: {list(token_data.keys())}")
 
         token_response = requests.post(
-            MEZON_TOKEN_URL,
+            oauth2_config.token_url,
             data=token_data,  # Form-encoded data with credentials in body
             headers={'Content-Type': 'application/x-www-form-urlencoded'},
             timeout=10  # 10 second timeout
@@ -194,7 +194,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
         logger.debug("Fetching user info from Mezon")
 
         userinfo_response = requests.get(
-            MEZON_USERINFO_URL,
+            oauth2_config.userinfo_url,
             headers={'Authorization': f'Bearer {access_token}'},
             timeout=10
         )
@@ -226,7 +226,38 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
                 detail="Failed to retrieve user ID from Mezon"
             )
 
-        # Generate JWT access token for user session
+        # Connect to MongoDB
+        mongodb = MongoDBService()
+        if not mongodb.connected:
+            await mongodb.connect()
+
+        # Create or update user with default permissions
+        user_permission_service = UserPermissionService(mongodb.db)
+
+        # Check if user already exists
+        existing_user = await user_permission_service.get_user_info(user_data["user_id"])
+
+        if not existing_user:
+            # First login - create user with default permissions
+            logger.info(f"First login for user_id={user_data['user_id']}, assigning default user permissions")
+            await user_permission_service.create_or_update_user(
+                user_id=user_data["user_id"],
+                username=user_data.get("username", ""),
+                display_name=user_data.get("display_name", ""),
+                permissions=DEFAULT_USER_PERMISSIONS
+            )
+            logger.info(f"Assigned {len(DEFAULT_USER_PERMISSIONS)} default permissions to new user")
+        else:
+            # Existing user - just update basic info (keep existing permissions)
+            await user_permission_service.create_or_update_user(
+                user_id=user_data["user_id"],
+                username=user_data.get("username", ""),
+                display_name=user_data.get("display_name", ""),
+                permissions=None  # Don't update permissions for existing users
+            )
+            logger.debug(f"Updated user info for user_id={user_data['user_id']}")
+
+        # Generate JWT access token
         access_token = generate_jwt_token(user_data)
 
         # Get JTI from access token for refresh token linking
@@ -378,9 +409,12 @@ async def refresh_access_token(request: RefreshTokenRequest):
                 detail="Invalid or expired refresh token. Please login again."
             )
 
-        # Get user data from token
+        # Get user_id from refresh token
+        user_id = token_doc["user_id"]
+
+        # Get user data from token (permissions will be loaded from DB on each request)
         user_data = {
-            "user_id": token_doc["user_id"],
+            "user_id": user_id,
             # Note: We don't have username, display_name, avatar_url in refresh token doc
             # In production, you might want to fetch from user database or cache
             "username": "",
@@ -523,9 +557,9 @@ async def bot_login(request: BotLoginRequest):
     """
     try:
         logger.info("🤖 Bot login attempt")
-
+        account = request.account.model_dump() 
         # Authenticate account with Mezon
-        auth_result = await authenticate_account(request.account)
+        auth_result = await authenticate_account(account)
 
         if not auth_result:
             logger.warning("❌ Bot authentication failed")
@@ -557,6 +591,37 @@ async def bot_login(request: BotLoginRequest):
             "avatar_url": ""
         }
 
+        # Connect to MongoDB
+        mongodb = MongoDBService()
+        if not mongodb.connected:
+            await mongodb.connect()
+
+        # Create or update bot user with default bot permissions
+        user_permission_service = UserPermissionService(mongodb.db)
+
+        # Check if bot user already exists
+        existing_bot = await user_permission_service.get_user_info(str(user_id))
+
+        if not existing_bot:
+            # First bot login - create bot user with default bot permissions
+            logger.info(f"First bot login for user_id={user_id}, assigning default bot permissions")
+            await user_permission_service.create_or_update_user(
+                user_id=str(user_id),
+                username=username,
+                display_name=username,
+                permissions=DEFAULT_BOT_PERMISSIONS
+            )
+            logger.info(f"Assigned {len(DEFAULT_BOT_PERMISSIONS)} default bot permissions")
+        else:
+            # Existing bot - just update basic info (keep existing permissions)
+            await user_permission_service.create_or_update_user(
+                user_id=str(user_id),
+                username=username,
+                display_name=username,
+                permissions=None  # Don't update permissions for existing bots
+            )
+            logger.debug(f"Updated bot info for user_id={user_id}")
+
         # Generate our JWT access token for the bot
         access_token = generate_jwt_token(user_data)
 
@@ -565,11 +630,7 @@ async def bot_login(request: BotLoginRequest):
         if not access_token_jti:
             raise HTTPException(status_code=500, detail="Failed to generate token ID")
 
-        # Connect to MongoDB and create refresh token
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-
+        # Create refresh token (MongoDB already connected above)
         refresh_token_service = RefreshTokenService(mongodb.db)
         refresh_token = await refresh_token_service.create_refresh_token(
             user_id=str(user_id),

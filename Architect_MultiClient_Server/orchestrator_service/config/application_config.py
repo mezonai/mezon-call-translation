@@ -279,6 +279,37 @@ class RedisConfig:
 
 
 # ============================================================================
+# OAuth2 Configuration
+# ============================================================================
+
+@dataclass
+class OAuth2Config:
+    """Mezon OAuth2 configuration"""
+    client_id: str = ""
+    client_secret: str = ""
+    redirect_uri: str = "http://localhost:3000/callback"
+
+    # Mezon OAuth2 endpoints (fixed)
+    auth_url: str = "https://oauth2.mezon.ai/oauth2/auth"
+    token_url: str = "https://oauth2.mezon.ai/oauth2/token"
+    userinfo_url: str = "https://oauth2.mezon.ai/userinfo"
+
+    @classmethod
+    def from_env(cls) -> 'OAuth2Config':
+        """Create OAuth2 config from environment variables"""
+        return cls(
+            client_id=os.getenv('MEZON_CLIENT_ID', ''),
+            client_secret=os.getenv('MEZON_CLIENT_SECRET', ''),
+            redirect_uri=os.getenv('MEZON_REDIRECT_URI', 'http://localhost:3000/callback'),
+        )
+
+    def validate(self) -> bool:
+        """Validate OAuth2 configuration"""
+        # Client ID and Secret are required
+        return bool(self.client_id and self.client_secret)
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -308,10 +339,11 @@ class Config:
         self.minio = MinIOConfig.from_env()
         self.llm = LLMConfig.from_env()
         self.redis = RedisConfig.from_env()
-        
+        self.oauth2 = OAuth2Config.from_env()
+
         self._initialized = True
         self._validate_all()
-    
+
     def _validate_all(self):
         """Validate all configuration sections"""
         if not self.livekit.validate():

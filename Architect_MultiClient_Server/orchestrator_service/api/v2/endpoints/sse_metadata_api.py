@@ -7,12 +7,12 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from datetime import datetime
 
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.metadata_event_models import MetadataEventType
-from orchestrator_service.auth.jwt_auth import verify_jwt
 
 
 logger = get_logger(__name__)
@@ -108,8 +108,8 @@ class SessionSummaryDoneRequest(RoomInfo):
 # ==================== SSE Endpoint ====================
 
 @router.get("/sse/metadata")
-async def sse_metadata_endpoint(appid: str, token: str,
-    user: Dict[str, Any] = Depends(verify_jwt)):
+async def sse_metadata_endpoint(
+    auth: AuthContext = Depends(require_any_permission("metadata_events:view_all"))):
     """
     SSE endpoint for bot to receive agent metadata events.
     
@@ -120,13 +120,13 @@ async def sse_metadata_endpoint(appid: str, token: str,
     Returns:
         StreamingResponse with SSE events
     """
-    return await metadata_channel.create_connection(appid, token)
+    return await metadata_channel.create_connection(auth.user_id)
 
 
 # ==================== Push Endpoints ====================
 
 @router.post("/push_metadata/session_started")
-async def push_session_started_api(req: SessionStartedRequest):
+async def push_session_started_api(req: SessionStartedRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push session_started event to all connected bots via SSE.
     
@@ -145,7 +145,7 @@ async def push_session_started_api(req: SessionStartedRequest):
 
 
 @router.post("/push_metadata/session_ended")
-async def push_session_ended_api(req: SessionEndedRequest):
+async def push_session_ended_api(req: SessionEndedRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push session_ended event to all connected bots via SSE.
     
@@ -165,7 +165,7 @@ async def push_session_ended_api(req: SessionEndedRequest):
 
 
 @router.post("/push_metadata/session_record_done")
-async def push_session_record_done_api(req: SessionRecordDoneRequest):
+async def push_session_record_done_api(req: SessionRecordDoneRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push session_record_done event to all connected bots via SSE.
     File results are automatically fetched from MongoDB based on room_id.
@@ -185,7 +185,7 @@ async def push_session_record_done_api(req: SessionRecordDoneRequest):
 
 
 @router.post("/push_metadata/session_summary_done")
-async def push_session_summary_done_api(req: SessionSummaryDoneRequest):
+async def push_session_summary_done_api(req: SessionSummaryDoneRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push session_summary_done event to all connected bots via SSE.
     Notifies that room summary/analysis has been completed.
@@ -212,7 +212,7 @@ async def list_metadata_events(
     limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     sort_order: str = Query("desc", description="Sort order: 'asc' for ascending, 'desc' for descending (default: 'desc')"),
-    auth: Dict[str, Any] = Depends(verify_api_key)
+    auth: AuthContext = Depends(require_any_permission("metadata_events:view_all"))
 ):
     """
     Get metadata events with optional filters.
@@ -227,7 +227,7 @@ async def list_metadata_events(
     - **sort_order**: Sort direction for created_at ('asc' = ascending/oldest first, 'desc' = descending/newest first, default: 'desc')
     """
     # Validate event_type
-    if MetadataEventType.is_valid(event_type) is False:
+    if event_type is not None and MetadataEventType.is_valid(event_type) is False:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid event_type. Must be one of: {', '.join(MetadataEventType)}"
@@ -280,7 +280,7 @@ async def list_metadata_events(
 @router.get("/metadata/{event_id}", response_description="Get metadata event by event_id")
 async def get_metadata_event_by_id(
     event_id: str,
-    auth: Dict[str, Any] = Depends(verify_api_key)
+    auth: AuthContext = Depends(require_any_permission("metadata_events:view_all"))
 ):
     """
     Get single metadata event by event_id (UUID).

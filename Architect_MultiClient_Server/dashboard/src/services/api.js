@@ -61,7 +61,7 @@ apiClient.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry) {
       // Don't try to refresh on login/refresh endpoints
       if (originalRequest.url?.includes('/auth/mezon/exchange') ||
-          originalRequest.url?.includes('/auth/mezon/refresh')) {
+        originalRequest.url?.includes('/auth/mezon/refresh')) {
         return Promise.reject(error);
       }
 
@@ -100,7 +100,7 @@ apiClient.interceptors.response.use(
         localStorage.removeItem('auth');
 
         if (!window.location.pathname.startsWith('/login') &&
-            !window.location.pathname.startsWith('/callback')) {
+          !window.location.pathname.startsWith('/callback')) {
           window.location.href = '/login';
         }
 
@@ -110,7 +110,7 @@ apiClient.interceptors.response.use(
       try {
         // Try to refresh the access token
         const response = await axios.post(
-          `${API_BASE_URL}/api/auth/mezon/refresh`,
+          `${API_BASE_URL}/api/v2/auth/mezon/refresh`,
           { refresh_token: refreshToken },
           { headers: { 'Content-Type': 'application/json' } }
         );
@@ -146,7 +146,7 @@ apiClient.interceptors.response.use(
         localStorage.removeItem('auth');
 
         if (!window.location.pathname.startsWith('/login') &&
-            !window.location.pathname.startsWith('/callback')) {
+          !window.location.pathname.startsWith('/callback')) {
           window.location.href = '/login';
         }
 
@@ -169,7 +169,7 @@ export const getRooms = async (params = {}) => {
   if (from_utc) queryParams.set('from_utc', from_utc);
   if (to_utc) queryParams.set('to_utc', to_utc);
 
-  const response = await apiClient.get(`/api/transcripts/rooms?${queryParams.toString()}`);
+  const response = await apiClient.get(`/api/v2/transcripts/rooms?${queryParams.toString()}`);
   return response.data;
 };
 

@@ -72,11 +72,6 @@ async def verify_api_key(
     Raises:
         HTTPException: If authentication fails or is missing
     """
-    # Skip authentication if disabled (for development)
-    if not AUTH_ENABLED:
-        logger.debug("Authentication disabled - skipping verification")
-        return {"authenticated": False, "method": "disabled"}
-    
     # Check if credentials provided
     if not credentials:
         logger.warning("Missing Authorization header")

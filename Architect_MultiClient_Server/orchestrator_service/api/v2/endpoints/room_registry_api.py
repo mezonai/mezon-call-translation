@@ -14,7 +14,6 @@ from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-# Import để có thể access egress_service
 from orchestrator_service.api.webhook_api import egress_service
 
 router = APIRouter(prefix="/room-registry", tags=["Room Registry"])

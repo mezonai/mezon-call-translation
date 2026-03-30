@@ -32,7 +32,7 @@ export const AuthProvider = ({ children }) => {
 
             // Verify token and fetch user info
             try {
-              const response = await apiClient.get('/api/auth/mezon/userinfo', {
+              const response = await apiClient.get('/api/v2/auth/mezon/userinfo', {
                 headers: {
                   'Authorization': `Bearer ${storedToken}`
                 }
@@ -90,7 +90,7 @@ export const AuthProvider = ({ children }) => {
 
   const refreshAccessToken = async (currentRefreshToken) => {
     try {
-      const response = await apiClient.post('/api/auth/mezon/refresh', {
+      const response = await apiClient.post('/api/v2/auth/mezon/refresh', {
         refresh_token: currentRefreshToken || refreshToken
       });
 
@@ -122,7 +122,7 @@ export const AuthProvider = ({ children }) => {
     try {
       // Call backend to revoke tokens
       if (accessToken && refreshToken) {
-        await apiClient.post('/api/auth/mezon/logout',
+        await apiClient.post('/api/v2/auth/mezon/logout',
           { refresh_token: refreshToken },
           { headers: { 'Authorization': `Bearer ${accessToken}` } }
         );

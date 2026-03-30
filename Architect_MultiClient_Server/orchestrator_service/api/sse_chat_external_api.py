@@ -5,8 +5,8 @@ Endpoints for bot to receive chat external events via SSE
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
 
+from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.chat_external_channel import ChatExternalChannel
 from orchestrator_service.utils.logger import get_logger
@@ -51,7 +51,13 @@ async def sse_chat_external_endpoint(appid: str, token: str):
     Returns:
         StreamingResponse with SSE events
     """
-    return await chat_external_channel.create_connection(appid, token)
+
+    # Authenticate
+    account = {"appid": appid, "token": token}
+    if not await authenticate_account(account):
+        return HTTPException(status_code=401, detail="Account authentication failed")
+
+    return await chat_external_channel.create_connection(appid)
 
 
 @router.post("/agent_push_chat_external")

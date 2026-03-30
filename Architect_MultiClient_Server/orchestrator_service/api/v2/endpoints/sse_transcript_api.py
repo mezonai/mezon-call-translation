@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
-from datetime import datetime
+from typing import Any, Dict, Optional
 
+from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.message_channel import MessageChannel
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.auth.jwt_auth import verify_jwt
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -23,7 +23,7 @@ class PushMessageRequest(BaseModel):
 
 
 @router.post("/push_transcript")
-async def push_transcript_api(req: PushMessageRequest):
+async def push_transcript_api(req: PushMessageRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push transcript to all SSE connections in a room.
     
@@ -43,8 +43,8 @@ async def push_transcript_api(req: PushMessageRequest):
 
 
 @router.get("/sse/stream_transcript")
-async def sse_endpoint(appid: str, token: str, room: str,
-    user: Dict[str, Any] = Depends(verify_jwt)):
+async def sse_endpoint(room: str,
+    auth: AuthContext = Depends(require_any_permission("rooms:view_all"))):
     """
     SSE endpoint for real-time message streaming.
     
@@ -56,4 +56,4 @@ async def sse_endpoint(appid: str, token: str, room: str,
     Returns:
         StreamingResponse with SSE events
     """
-    return await message_channel.create_connection(appid, token, room)
+    return await message_channel.create_connection(auth.user_id, room)

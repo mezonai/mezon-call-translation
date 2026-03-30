@@ -36,6 +36,8 @@ def generate_jwt_token(user_data: Dict[str, Any], expiry_days: int = None, jti: 
     """
     Generate a JWT token containing user information.
 
+    Note: Permissions are NOT stored in JWT. They are loaded from database on each request.
+
     Args:
         user_data: Dictionary containing user information
                   Expected fields: user_id, username, display_name (optional), avatar_url (optional)
@@ -67,7 +69,7 @@ def generate_jwt_token(user_data: Dict[str, Any], expiry_days: int = None, jti: 
     # Generate unique JTI (JWT ID) for token tracking and revocation
     token_jti = jti if jti else str(uuid.uuid4())
 
-    # Build JWT payload
+    # Build JWT payload (NO role - permissions loaded from DB)
     payload = {
         "jti": token_jti,  # JWT ID for blacklist support
         "user_id": user_data["user_id"],
@@ -95,6 +97,7 @@ def verify_jwt_token(token: str) -> Dict[str, Any]:
 
     Returns:
         Dictionary containing decoded user claims:
+        - jti: JWT ID
         - user_id: User ID
         - username: Username
         - display_name: Display name

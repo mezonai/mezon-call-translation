@@ -8,13 +8,13 @@ Automatically discovers available queues from Redis.
 import logging
 from fastapi import APIRouter, HTTPException, status, Path, Depends
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.services.queue_service import (
-    get_queue_service_by_name,
+    get_queue_service_by_name
 )
 from orchestrator_service.services.queue_discovery import QueueDiscovery
-from orchestrator_service.auth.jwt_auth import verify_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class QueueListResponse(BaseModel):
 # ========================================
 
 @router.get("/list", response_model=QueueListResponse)
-async def list_available_queues(user: Dict[str, Any] = Depends(verify_jwt)):
+async def list_available_queues(auth: AuthContext = Depends(require_any_permission("queues:view_stats"))):
     """
     List all available queues discovered from Redis.
     
@@ -99,7 +99,7 @@ async def list_available_queues(user: Dict[str, Any] = Depends(verify_jwt)):
 @router.get("/{queue_name}/stats", response_model=QueueStatsResponse)
 async def get_queue_stats_by_name(
     queue_name: str = Path(..., description="Queue identifier (e.g., transcription, tts)"),
-    user: Dict[str, Any] = Depends(verify_jwt)
+    auth: AuthContext = Depends(require_any_permission("queues:view_stats"))
 ):
     """
     Get statistics for a specific queue.
@@ -135,7 +135,7 @@ async def get_queue_stats_by_name(
 async def get_task_status_by_queue(
     queue_name: str = Path(..., description="Queue identifier"),
     task_id: str = Path(..., description="Task ID"),
-    user: Dict[str, Any] = Depends(verify_jwt)
+    auth: AuthContext = Depends(require_any_permission("queues:view_stats"))
 ):
     """
     Get status of a specific task in a queue.
@@ -189,7 +189,7 @@ async def get_task_status_by_queue(
 @router.get("/{queue_name}/pending")
 async def get_pending_tasks_by_queue(
     queue_name: str = Path(..., description="Queue identifier"),
-    user: Dict[str, Any] = Depends(verify_jwt)
+    auth: AuthContext = Depends(require_any_permission("queues:view_stats"))
 ):
     """
     Get list of pending tasks in a specific queue.
@@ -231,7 +231,7 @@ async def get_pending_tasks_by_queue(
 # ========================================
 
 @router.get("/overview")
-async def get_all_queues_overview(user: Dict[str, Any] = Depends(verify_jwt)):
+async def get_all_queues_overview(auth: AuthContext = Depends(require_any_permission("queues:view_stats"))):
     """
     Get overview of all queues discovered from Redis.
     

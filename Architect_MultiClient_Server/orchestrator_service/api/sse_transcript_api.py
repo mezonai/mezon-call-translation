@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
+from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.message_channel import MessageChannel
 from orchestrator_service.utils.logger import get_logger
@@ -53,4 +54,8 @@ async def sse_endpoint(appid: str, token: str, room: str):
     Returns:
         StreamingResponse with SSE events
     """
-    return await message_channel.create_connection(appid, token, room)
+    account = {"appid": appid, "token": token}
+    if not await authenticate_account(account):
+        return HTTPException(status_code=401, detail="Account authentication failed")
+
+    return await message_channel.create_connection(appid, room)

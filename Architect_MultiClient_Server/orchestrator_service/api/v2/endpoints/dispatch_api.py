@@ -1,6 +1,8 @@
 from google.protobuf.json_format import MessageToDict
 from enum import Enum
 from typing import Dict, Any, Optional
+
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 try:
     from livekit import api
     from livekit.api import twirp_client
@@ -9,11 +11,8 @@ except ImportError:
     LIVEKIT_AVAILABLE = False
 
 from fastapi import APIRouter, HTTPException, Depends
-import httpx
 from pydantic import BaseModel, Field
-from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.services.livekit_client import get_livekit_service
-from orchestrator_service.auth.jwt_auth import verify_jwt
 
 router = APIRouter()
 
@@ -151,9 +150,8 @@ async def cancel_dispatch(room_name: str) -> Dict[str, Any]:
         return {"status": DispatchStatus.ERROR, "message": f"Failed to cancel dispatch: {e}"}
 
 @router.post("/create_dispatch")
-async def api_create_dispatch(body: DispatchRequestModel, user: Dict[str, Any] = Depends(verify_jwt)) -> Dict[str, Any]:
+async def api_create_dispatch(body: DispatchRequestModel, auth: AuthContext = Depends(require_any_permission("agent:control"))) -> Dict[str, Any]:
     """Create a dispatch for the specified room."""
-    await verify_account(body.account.dict())
     
     result = await ensure_dispatch(body.room_name)
     if result["status"] == DispatchStatus.ERROR:
@@ -162,9 +160,8 @@ async def api_create_dispatch(body: DispatchRequestModel, user: Dict[str, Any] =
     return result
 
 @router.post("/cancel_dispatch")
-async def api_cancel_dispatch(body: DispatchRequestModel, user: Dict[str, Any] = Depends(verify_jwt),) -> Dict[str, Any]:
+async def api_cancel_dispatch(body: DispatchRequestModel, auth: AuthContext = Depends(require_any_permission("agent:control"))) -> Dict[str, Any]:
     """Cancel a dispatch for the specified room."""
-    await verify_account(body.account.dict())
     
     result = await cancel_dispatch(body.room_name)
     if result["status"] == DispatchStatus.ERROR:

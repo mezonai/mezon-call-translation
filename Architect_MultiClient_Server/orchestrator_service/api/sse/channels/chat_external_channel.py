@@ -38,7 +38,6 @@ class ChatExternalChannel:
     async def create_connection(
         self,
         appid: str,
-        token: str
     ) -> StreamingResponse:
         """
         Create SSE connection for chat external channel.
@@ -53,11 +52,6 @@ class ChatExternalChannel:
         Raises:
             HTTPException: If authentication fails
         """
-        # Authenticate
-        account = {"appid": appid, "token": token}
-        if not await authenticate_account(account):
-            raise HTTPException(status_code=401, detail="Account authentication failed")
-        
         context_key = self.CONTEXT_KEY
         
         # Close existing connection from same appid

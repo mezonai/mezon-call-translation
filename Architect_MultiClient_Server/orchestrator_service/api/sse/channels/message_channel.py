@@ -47,7 +47,6 @@ class MessageChannel:
     async def create_connection(
         self,
         appid: str,
-        token: str,
         room: str
     ) -> StreamingResponse:
         """
@@ -64,10 +63,6 @@ class MessageChannel:
         Raises:
             HTTPException: If authentication fails
         """
-        # Authenticate
-        account = {"appid": appid, "token": token}
-        if not await authenticate_account(account):
-            raise HTTPException(status_code=401, detail="Account authentication failed")
         
         context_key = self.get_context_key(room)
         
