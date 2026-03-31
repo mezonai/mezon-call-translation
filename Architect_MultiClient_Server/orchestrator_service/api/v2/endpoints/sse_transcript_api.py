@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.message_channel import MessageChannel
 from orchestrator_service.utils.logger import get_logger
@@ -44,7 +45,7 @@ async def push_transcript_api(req: PushMessageRequest, auth: Dict[str, Any] = De
 
 @router.get("/sse/stream_transcript")
 async def sse_endpoint(room: str,
-    auth: AuthContext = Depends(require_any_permission("rooms:view_all"))):
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL))):
     """
     SSE endpoint for real-time message streaming.
     

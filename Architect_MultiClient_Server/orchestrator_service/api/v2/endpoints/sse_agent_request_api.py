@@ -2,18 +2,18 @@
 SSE Agent Request API
 Endpoints for agents to receive requests from orchestrator via SSE
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
 from orchestrator_service.auth.transcript_auth import verify_api_key
-from orchestrator_service.auth.authorization import get_auth_context, AuthContext, require_any_permission
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import AGENT_CONTROL
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.agent_request_channel import AgentRequestChannel
 from orchestrator_service.models.agent_request_payloads import (
     AgentRequestPayload,
 )
-from orchestrator_service.auth.jwt_auth import verify_jwt
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -113,7 +113,7 @@ async def sse_agent_requests_endpoint(
 
 @router.post("/dispatch/agent-request", response_model=SendAgentRequestResponse)
 async def send_agent_request(request: SendAgentRequestBody,
-    auth: AuthContext = Depends(require_any_permission("agent:control"))):
+    auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL))):
     """
     Send request to agent(s) via SSE with type-safe payloads.
     

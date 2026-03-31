@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from datetime import datetime
 from typing import Optional
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
@@ -16,7 +17,7 @@ async def get_summary_by_room_name(
     room_name: str,
     start_time: Optional[datetime] = Query(None, description="Start time for room summary (ISO format: 2024-01-01T00:00:00)"),
     end_time: Optional[datetime] = Query(None, description="End time for room summary (ISO format: 2024-01-31T23:59:59)"),
-    auth: AuthContext = Depends(require_any_permission("rooms:view_all", "rooms:view_own"))
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
 ):
     """
     Get summary by room name.
@@ -40,7 +41,7 @@ async def get_summary_by_room_name(
 @client_router.get("/room/id/{room_id}", response_description="Get summary by room ID")
 async def get_summary_by_room_id(
     room_id: str,
-    auth: AuthContext = Depends(require_any_permission("rooms:view_all", "rooms:view_own"))
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
 ):
     """
     Get summary by room id.

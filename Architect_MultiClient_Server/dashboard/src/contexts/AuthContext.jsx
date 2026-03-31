@@ -24,11 +24,14 @@ export const AuthProvider = ({ children }) => {
 
       if (authData) {
         try {
-          const { accessToken: storedToken, refreshToken: storedRefreshToken } = JSON.parse(authData);
+          const { accessToken: storedToken, refreshToken: storedRefreshToken, user: storedUser } = JSON.parse(authData);
 
           if (storedToken && storedRefreshToken) {
             setAccessToken(storedToken);
             setRefreshToken(storedRefreshToken);
+            if (storedUser) {
+              setUser(storedUser);
+            }
 
             // Verify token and fetch user info
             try {
@@ -45,6 +48,7 @@ export const AuthProvider = ({ children }) => {
                 localStorage.removeItem('auth');
                 setAccessToken(null);
                 setRefreshToken(null);
+                setUser(null);
               }
             } catch (error) {
               console.error('Failed to verify token:', error);
@@ -57,18 +61,21 @@ export const AuthProvider = ({ children }) => {
                   localStorage.removeItem('auth');
                   setAccessToken(null);
                   setRefreshToken(null);
+                  setUser(null);
                 }
               } else {
                 // Other error, clear storage
                 localStorage.removeItem('auth');
                 setAccessToken(null);
                 setRefreshToken(null);
+                setUser(null);
               }
             }
           }
         } catch (err) {
           console.error('Failed to parse auth data:', err);
           localStorage.removeItem('auth');
+          setUser(null);
         }
       }
 
@@ -84,7 +91,8 @@ export const AuthProvider = ({ children }) => {
     setUser(userData);
     localStorage.setItem('auth', JSON.stringify({
       accessToken: accessToken,
-      refreshToken: newRefreshToken
+      refreshToken: newRefreshToken,
+      user: userData
     }));
   };
 
@@ -96,17 +104,28 @@ export const AuthProvider = ({ children }) => {
 
       if (response.data && response.data.access_token) {
         const newAccessToken = response.data.access_token;
+        const newRefreshToken = response.data.refresh_token || currentRefreshToken || refreshToken;
         setAccessToken(newAccessToken);
+        if (newRefreshToken) {
+          setRefreshToken(newRefreshToken);
+        }
 
         // Update stored token
         const authData = localStorage.getItem('auth');
+        let storedUser = null;
         if (authData) {
-          const parsed = JSON.parse(authData);
-          localStorage.setItem('auth', JSON.stringify({
-            accessToken: newAccessToken,
-            refreshToken: parsed.refreshToken
-          }));
+          try {
+            storedUser = JSON.parse(authData).user || null;
+          } catch (err) {
+            console.error('Failed to parse auth data:', err);
+          }
         }
+
+        localStorage.setItem('auth', JSON.stringify({
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+          user: storedUser || user
+        }));
 
         console.log('Access token refreshed successfully');
         return true;

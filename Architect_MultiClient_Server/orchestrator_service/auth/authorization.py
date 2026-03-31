@@ -11,39 +11,14 @@ Features:
 
 from typing import Dict, Any, Set, Optional
 from fastapi import Depends, HTTPException
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.auth.jwt_auth import verify_jwt
 from orchestrator_service.services.mongodb.user_permission_service import UserPermissionService
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL
 
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-# Global UserPermissionService instance (initialized on startup)
-_user_permission_service: Optional[UserPermissionService] = None
-
-
-def set_user_permission_service(service: UserPermissionService):
-    """
-    Set the global user permission service instance.
-    Should be called during application startup.
-
-    Args:
-        service: UserPermissionService instance
-    """
-    global _user_permission_service
-    _user_permission_service = service
-    logger.info("User permission service initialized for authorization")
-
-
-def get_user_permission_service() -> Optional[UserPermissionService]:
-    """
-    Get the global user permission service instance.
-
-    Returns:
-        UserPermissionService instance or None if not initialized
-    """
-    return _user_permission_service
-
 
 class AuthContext:
     """
@@ -128,7 +103,7 @@ class AuthContext:
     @property
     def can_view_all_rooms(self) -> bool:
         """Can view all rooms"""
-        return self.has_permission("rooms:view_all")
+        return self.has_permission(ROOMS_VIEW_ALL)
 
     def __repr__(self) -> str:
         return f"AuthContext(user_id={self.user_id}, username={self.username}, permissions={len(self.permissions)})"
@@ -151,7 +126,11 @@ async def get_auth_context(
 
     # Try to load permissions from database
     permissions: Set[str] = set()
-    permission_service = get_user_permission_service()
+    mongodb = MongoDBService()
+    if not mongodb.connected:
+        await mongodb.connect()
+
+    permission_service = UserPermissionService(mongodb)
 
     if permission_service and user_id:
         try:

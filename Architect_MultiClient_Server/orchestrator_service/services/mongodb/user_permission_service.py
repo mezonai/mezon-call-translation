@@ -12,11 +12,12 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Set
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from stt_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-
+@singleton
 class UserPermissionService:
     """Service for managing flat user permissions in MongoDB"""
 
@@ -69,7 +70,8 @@ class UserPermissionService:
         user_id: str,
         username: str,
         display_name: Optional[str] = None,
-        permissions: Optional[List[str]] = None
+        permissions: Optional[List[str]] = None,
+        avatar_url: Optional[str] = None
     ) -> bool:
         """
         Create or update user with permissions.
@@ -79,6 +81,7 @@ class UserPermissionService:
             username: Username
             display_name: Display name
             permissions: List of permission strings (if None, keeps existing or initializes empty)
+            avatar_url: URL of the user's avatar
 
         Returns:
             True if successful
@@ -99,6 +102,9 @@ class UserPermissionService:
             # Only add permissions to $set if explicitly provided
             if permissions is not None:
                 set_doc["permissions"] = permissions
+
+            if avatar_url is not None:
+                set_doc["avatar_url"] = avatar_url
 
             # Build $setOnInsert - fields to set ONLY for new documents
             set_on_insert_doc = {

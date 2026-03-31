@@ -10,7 +10,6 @@ Manages refresh tokens in MongoDB with the following features:
 Collections:
     refresh_tokens:
         - _id: ObjectId
-        - token_id: Unique token identifier
         - user_id: User ID from Mezon
         - refresh_token_hash: SHA256 hash of refresh token
         - access_token_jti: JTI of current access token
@@ -20,7 +19,6 @@ Collections:
         - is_revoked: Boolean flag
 """
 
-import os
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -28,11 +26,9 @@ from typing import Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.config.application_config import get_config
 
 logger = get_logger(__name__)
-
-# Configuration
-REFRESH_TOKEN_EXPIRY_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRY_DAYS", "30"))
 
 
 class RefreshTokenService:
@@ -84,7 +80,7 @@ class RefreshTokenService:
             user_id: User ID from Mezon
             access_token_jti: JTI of the associated access token
             device_info: Optional device/client information
-            expiry_days: Optional custom expiry in days (default: REFRESH_TOKEN_EXPIRY_DAYS)
+            expiry_days: Optional custom expiry in days 
 
         Returns:
             The raw refresh token (send to client, store hash in DB)
@@ -92,15 +88,14 @@ class RefreshTokenService:
         # Generate refresh token
         refresh_token = self.generate_refresh_token()
         token_hash = self._hash_token(refresh_token)
-        token_id = secrets.token_urlsafe(32)
 
         # Calculate expiration
-        expiry = expiry_days if expiry_days is not None else REFRESH_TOKEN_EXPIRY_DAYS
+        auth_config = get_config().auth
+        expiry = expiry_days if expiry_days is not None else auth_config.refresh_token_expiry_days
         expires_at = datetime.now(timezone.utc) + timedelta(days=expiry)
 
         # Store in database
         token_doc = {
-            "token_id": token_id,
             "user_id": user_id,
             "refresh_token_hash": token_hash,
             "access_token_jti": access_token_jti,
@@ -112,7 +107,7 @@ class RefreshTokenService:
 
         try:
             result = await self.collection.insert_one(token_doc)
-            logger.info(f"Created refresh token for user_id={user_id}, token_id={token_id}")
+            logger.info(f"Created refresh token for user_id={user_id}, _id={result.inserted_id}")
             return refresh_token
 
         except Exception as e:
@@ -150,6 +145,56 @@ class RefreshTokenService:
 
         except Exception as e:
             logger.error(f"Failed to validate refresh token: {e}")
+            return None
+
+    async def rotate_refresh_token(
+        self,
+        token_id: Any,
+        new_access_token_jti: str,
+        expiry_days: Optional[int] = None
+    ) -> Optional[str]:
+        """
+        Rotate a refresh token in-place and return the new raw token.
+
+        Args:
+            token_id: Refresh token document _id
+            new_access_token_jti: New access token JTI
+            expiry_days: Optional custom expiry in days
+
+        Returns:
+            New raw refresh token if updated, None otherwise
+        """
+        new_refresh_token = self.generate_refresh_token()
+        token_hash = self._hash_token(new_refresh_token)
+        auth_config = get_config().auth
+        expiry = expiry_days if expiry_days is not None else auth_config.refresh_token_expiry_days
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expiry)
+
+        try:
+            result = await self.collection.update_one(
+                {"_id": token_id, "is_revoked": False},
+                {
+                    "$set": {
+                        "refresh_token_hash": token_hash,
+                        "access_token_jti": new_access_token_jti,
+                        "expires_at": expires_at,
+                        "created_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+
+            if result.modified_count > 0:
+                logger.debug(f"Rotated refresh token for _id={token_id}")
+                return new_refresh_token
+
+            if result.matched_count == 0:
+                logger.warning(f"Refresh token not found or revoked for _id={token_id}")
+            else:
+                logger.debug(f"Refresh token rotation had no changes for _id={token_id}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to rotate refresh token: {e}")
             return None
 
     async def revoke_refresh_token(self, refresh_token: str) -> bool:

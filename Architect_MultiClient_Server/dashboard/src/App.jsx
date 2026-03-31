@@ -50,16 +50,16 @@ const AppContent = () => {
             {isAuthenticated() && user && (
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-3">
-                  {user.avatar_url && (
+                  {user.avatar && (
                     <img
-                      src={user.avatar_url}
+                      src={user.avatar}
                       alt={user.display_name || user.username}
                       className="h-8 w-8 rounded-full object-cover"
                     />
                   )}
                   <div className="text-sm">
                     <p className="font-medium text-gray-900">
-                      {user.display_name || user.username}
+                      {user.display_name}
                     </p>
                     <p className="text-gray-500 text-xs">
                       {user.username}

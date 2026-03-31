@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import METADATA_EVENTS_VIEW_ALL
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
@@ -109,7 +110,7 @@ class SessionSummaryDoneRequest(RoomInfo):
 
 @router.get("/sse/metadata")
 async def sse_metadata_endpoint(
-    auth: AuthContext = Depends(require_any_permission("metadata_events:view_all"))):
+    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL))):
     """
     SSE endpoint for bot to receive agent metadata events.
     
@@ -212,7 +213,7 @@ async def list_metadata_events(
     limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     sort_order: str = Query("desc", description="Sort order: 'asc' for ascending, 'desc' for descending (default: 'desc')"),
-    auth: AuthContext = Depends(require_any_permission("metadata_events:view_all"))
+    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL))
 ):
     """
     Get metadata events with optional filters.
@@ -280,7 +281,7 @@ async def list_metadata_events(
 @router.get("/metadata/{event_id}", response_description="Get metadata event by event_id")
 async def get_metadata_event_by_id(
     event_id: str,
-    auth: AuthContext = Depends(require_any_permission("metadata_events:view_all"))
+    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL))
 ):
     """
     Get single metadata event by event_id (UUID).

@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Dict, Any, Optional
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import AGENT_CONTROL
 try:
     from livekit import api
     from livekit.api import twirp_client
@@ -150,7 +151,7 @@ async def cancel_dispatch(room_name: str) -> Dict[str, Any]:
         return {"status": DispatchStatus.ERROR, "message": f"Failed to cancel dispatch: {e}"}
 
 @router.post("/create_dispatch")
-async def api_create_dispatch(body: DispatchRequestModel, auth: AuthContext = Depends(require_any_permission("agent:control"))) -> Dict[str, Any]:
+async def api_create_dispatch(body: DispatchRequestModel, auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL))) -> Dict[str, Any]:
     """Create a dispatch for the specified room."""
     
     result = await ensure_dispatch(body.room_name)
@@ -160,7 +161,7 @@ async def api_create_dispatch(body: DispatchRequestModel, auth: AuthContext = De
     return result
 
 @router.post("/cancel_dispatch")
-async def api_cancel_dispatch(body: DispatchRequestModel, auth: AuthContext = Depends(require_any_permission("agent:control"))) -> Dict[str, Any]:
+async def api_cancel_dispatch(body: DispatchRequestModel, auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL))) -> Dict[str, Any]:
     """Cancel a dispatch for the specified room."""
     
     result = await cancel_dispatch(body.room_name)

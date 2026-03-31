@@ -825,11 +825,9 @@ class MongoDBService:
                 if end_time:
                     query["created_at"]["$lte"] = end_time
 
-            # ⭐ filter user
+            # filter user
             if user_id:
                 query["participants"] = user_id
-                # hoặc:
-                # query["participants"] = {"$in": [user_id]}
 
             # 2. get rooms
             cursor = self.rooms_collection.find(query).sort("created_at", 1)
@@ -1170,7 +1168,7 @@ class MongoDBService:
         """
 
         try:
-            # 🚀 Build match condition cho tracks (filter sớm)
+            # Build match condition cho tracks
             track_match = {
                 "participant_identity": user_id
             }
@@ -1185,7 +1183,7 @@ class MongoDBService:
                 if to_utc:
                     track_match["created_at"]["$lt"] = to_utc
 
-            # 🚀 Build match condition cho rooms
+            # Build match condition cho rooms
             room_match = {}
 
             if status:
@@ -1196,19 +1194,14 @@ class MongoDBService:
                     {"room.room_name": {"$regex": search, "$options": "i"}}
                 ]
 
-            # 🚀 Pipeline tối ưu
+            # Aggregation pipeline:
             pipeline = [
-                # 1. Filter từ tracks
                 {"$match": track_match},
-
-                # 2. Group theo room (loại duplicate)
                 {
                     "$group": {
                         "_id": "$room_ref_id"
                     }
                 },
-
-                # 3. Join rooms
                 {
                     "$lookup": {
                         "from": "rooms",
@@ -1219,19 +1212,16 @@ class MongoDBService:
                 },
                 {"$unwind": "$room"},
 
-                # 4. Filter thêm từ rooms (nếu có)
                 *( [{"$match": room_match}] if room_match else [] ),
 
-                # 5. Sort + pagination
                 {"$sort": {"room.created_at": -1}},
                 {"$skip": skip},
                 {"$limit": limit},
 
-                # 6. Output room
                 {"$replaceRoot": {"newRoot": "$room"}}
             ]
 
-            # 🚀 Execute pipeline
+            # Execute pipeline
             cursor = self.tracks_collection.aggregate(pipeline)
             room_list = [doc async for doc in cursor]
 
@@ -1239,7 +1229,7 @@ class MongoDBService:
                 logger.debug(f"No rooms found for user_id={user_id}")
                 return []
 
-            # 🚀 Format output (giữ nguyên logic cũ)
+            # Format output
             for room in room_list:
                 room["_id"] = str(room["_id"])
                 room["created_at"] = convert_to_iso_8601(room["created_at"])
@@ -1278,7 +1268,7 @@ class MongoDBService:
             # participant_identity = user_id (direct match)
             track_pipeline = [
                 {"$match": {"participant_identity": user_id}},
-                {"$group": {"_id": "$room_id"}}
+                {"$group": {"_id": "$room_ref_id"}}
             ]
 
             cursor = self.tracks_collection.aggregate(track_pipeline)

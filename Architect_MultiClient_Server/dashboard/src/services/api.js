@@ -33,9 +33,9 @@ apiClient.interceptors.request.use(
 
     if (authData) {
       try {
-        const { token } = JSON.parse(authData);
-        if (token) {
-          config.headers['Authorization'] = `Bearer ${token}`;
+        const { accessToken } = JSON.parse(authData);
+        if (accessToken) {
+          config.headers['Authorization'] = `Bearer ${accessToken}`;
         }
       } catch (err) {
         console.error('Failed to parse auth data:', err);
@@ -117,11 +117,12 @@ apiClient.interceptors.response.use(
 
         if (response.data && response.data.access_token) {
           const newAccessToken = response.data.access_token;
+          const newRefreshToken = response.data.refresh_token || refreshToken;
 
-          // Update stored token
+          // Update stored tokens
           localStorage.setItem('auth', JSON.stringify({
-            token: newAccessToken,
-            refreshToken: refreshToken
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken
           }));
 
           // Update authorization header

@@ -9,18 +9,19 @@ Environment Variables:
     JWT_EXPIRY_DAYS: Token expiry in days (default: 1)
 """
 
-import os
 import jwt
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.config.application_config import get_config
 
 logger = get_logger(__name__)
 
-# Load configuration from environment
-JWT_SECRET = os.getenv("JWT_SECRET", "")
-JWT_EXPIRY_DAYS = int(os.getenv("JWT_EXPIRY_DAYS", "1"))
+# Load configuration from centralized config
+auth_config = get_config().auth
+JWT_SECRET = auth_config.jwt_secret
+JWT_EXPIRY_DAYS = auth_config.jwt_expiry_days
 JWT_ALGORITHM = "HS256"
 
 # Validate configuration on module load
@@ -73,9 +74,6 @@ def generate_jwt_token(user_data: Dict[str, Any], expiry_days: int = None, jti: 
     payload = {
         "jti": token_jti,  # JWT ID for blacklist support
         "user_id": user_data["user_id"],
-        "username": user_data.get("username", ""),
-        "display_name": user_data.get("display_name", ""),
-        "avatar_url": user_data.get("avatar_url", ""),
         "exp": exp_time,
         "iat": datetime.now(timezone.utc),  # Issued at
     }

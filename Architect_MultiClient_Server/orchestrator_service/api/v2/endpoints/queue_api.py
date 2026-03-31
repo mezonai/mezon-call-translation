@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import QUEUES_VIEW_STATS
 from orchestrator_service.services.queue_service import (
     get_queue_service_by_name
 )
@@ -65,7 +66,7 @@ class QueueListResponse(BaseModel):
 # ========================================
 
 @router.get("/list", response_model=QueueListResponse)
-async def list_available_queues(auth: AuthContext = Depends(require_any_permission("queues:view_stats"))):
+async def list_available_queues(auth: AuthContext = Depends(require_any_permission(QUEUES_VIEW_STATS))):
     """
     List all available queues discovered from Redis.
     
@@ -99,7 +100,7 @@ async def list_available_queues(auth: AuthContext = Depends(require_any_permissi
 @router.get("/{queue_name}/stats", response_model=QueueStatsResponse)
 async def get_queue_stats_by_name(
     queue_name: str = Path(..., description="Queue identifier (e.g., transcription, tts)"),
-    auth: AuthContext = Depends(require_any_permission("queues:view_stats"))
+    auth: AuthContext = Depends(require_any_permission(QUEUES_VIEW_STATS))
 ):
     """
     Get statistics for a specific queue.
@@ -135,7 +136,7 @@ async def get_queue_stats_by_name(
 async def get_task_status_by_queue(
     queue_name: str = Path(..., description="Queue identifier"),
     task_id: str = Path(..., description="Task ID"),
-    auth: AuthContext = Depends(require_any_permission("queues:view_stats"))
+    auth: AuthContext = Depends(require_any_permission(QUEUES_VIEW_STATS))
 ):
     """
     Get status of a specific task in a queue.
@@ -189,7 +190,7 @@ async def get_task_status_by_queue(
 @router.get("/{queue_name}/pending")
 async def get_pending_tasks_by_queue(
     queue_name: str = Path(..., description="Queue identifier"),
-    auth: AuthContext = Depends(require_any_permission("queues:view_stats"))
+    auth: AuthContext = Depends(require_any_permission(QUEUES_VIEW_STATS))
 ):
     """
     Get list of pending tasks in a specific queue.
@@ -231,7 +232,7 @@ async def get_pending_tasks_by_queue(
 # ========================================
 
 @router.get("/overview")
-async def get_all_queues_overview(auth: AuthContext = Depends(require_any_permission("queues:view_stats"))):
+async def get_all_queues_overview(auth: AuthContext = Depends(require_any_permission(QUEUES_VIEW_STATS))):
     """
     Get overview of all queues discovered from Redis.
     

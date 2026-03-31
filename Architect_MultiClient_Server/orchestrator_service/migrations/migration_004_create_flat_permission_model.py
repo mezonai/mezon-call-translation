@@ -13,6 +13,14 @@ users have direct permissions.
 from datetime import datetime, timezone
 from orchestrator_service.migrations.migration_base import MigrationBase
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.constants.permissions import (
+    ROOMS_VIEW_ALL,
+    ROOMS_VIEW_OWN,
+    QUEUES_VIEW_STATS,
+    METADATA_EVENTS_VIEW_ALL,
+    CHAT_EXTERNAL_VIEW_ALL,
+    AGENT_CONTROL,
+)
 
 logger = get_logger(__name__)
 
@@ -46,25 +54,25 @@ class CreateFlatPermissionModel(MigrationBase):
             # Define all permissions with metadata
             all_permissions = [
                 # Rooms permissions
-                {"_id": "rooms:view_all", "resource": "rooms", "action": "view_all",
+                {"_id": ROOMS_VIEW_ALL, "resource": "rooms", "action": "view_all",
                  "description": "View all rooms in the system"},
-                {"_id": "rooms:view_own", "resource": "rooms", "action": "view_own",
+                {"_id": ROOMS_VIEW_OWN, "resource": "rooms", "action": "view_own",
                  "description": "View only participated rooms"},
 
                 # Queues permissions
-                {"_id": "queues:view_stats", "resource": "queues", "action": "view_stats",
+                {"_id": QUEUES_VIEW_STATS, "resource": "queues", "action": "view_stats",
                  "description": "View queue statistics"},
 
                 # Metadata events permissions
-                {"_id": "metadata_events:view_all", "resource": "metadata_events", "action": "view_all",
+                {"_id": METADATA_EVENTS_VIEW_ALL, "resource": "metadata_events", "action": "view_all",
                  "description": "View all metadata events"},
 
                 # Chat external permissions
-                {"_id": "chat_external:view_all", "resource": "chat_external", "action": "view_all",
+                {"_id": CHAT_EXTERNAL_VIEW_ALL, "resource": "chat_external", "action": "view_all",
                  "description": "View all external chat messages"},
 
                 # Agent permissions
-                {"_id": "agent:control", "resource": "agent", "action": "control",
+                {"_id": AGENT_CONTROL, "resource": "agent", "action": "control",
                  "description": "Control agent dispatch and operations"},
             ]
 

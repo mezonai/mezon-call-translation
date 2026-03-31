@@ -3,7 +3,6 @@ Migration: Create indexes for refresh_tokens collection
 
 This migration creates:
 - TTL index on expires_at field (auto-delete expired tokens)
-- Unique index on token_id for token identification
 - Index on user_id for querying user's tokens
 - Index on access_token_jti for quick lookup
 """
@@ -37,22 +36,14 @@ class CreateRefreshTokensIndexes(MigrationBase):
             )
             logger.info("✅ Created TTL index on refresh_tokens.expires_at")
 
-            # 2. Unique index on token_id
-            await tokens_collection.create_index(
-                "token_id",
-                unique=True,
-                name="unique_token_id"
-            )
-            logger.info("✅ Created unique index on refresh_tokens.token_id")
-
-            # 3. Index on user_id for querying user's tokens
+            # 2. Index on user_id for querying user's tokens
             await tokens_collection.create_index(
                 "user_id",
                 name="idx_user_id"
             )
             logger.info("✅ Created index on refresh_tokens.user_id")
 
-            # 4. Index on access_token_jti for quick lookup
+            # 3. Index on access_token_jti for quick lookup
             await tokens_collection.create_index(
                 "access_token_jti",
                 name="idx_access_token_jti"
@@ -73,7 +64,6 @@ class CreateRefreshTokensIndexes(MigrationBase):
             # Drop indexes by name
             index_names = [
                 "ttl_expires_at",
-                "unique_token_id",
                 "idx_user_id",
                 "idx_access_token_jti"
             ]

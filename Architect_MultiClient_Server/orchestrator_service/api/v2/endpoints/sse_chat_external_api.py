@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any
 
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import CHAT_EXTERNAL_VIEW_ALL
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.chat_external_channel import ChatExternalChannel
@@ -42,7 +43,7 @@ class PushChatExternalRequest(BaseModel):
 
 
 @router.get("/sse/chat_external")
-async def sse_chat_external_endpoint(auth: AuthContext = Depends(require_any_permission("chat_external:view_all"))):
+async def sse_chat_external_endpoint(auth: AuthContext = Depends(require_any_permission(CHAT_EXTERNAL_VIEW_ALL))):
     """
     SSE endpoint for bot to receive chat external events.
     

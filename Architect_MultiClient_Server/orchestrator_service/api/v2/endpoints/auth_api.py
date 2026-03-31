@@ -28,20 +28,12 @@ from orchestrator_service.services.mongodb.refresh_token_service import RefreshT
 from orchestrator_service.services.mongodb.token_blacklist_service import TokenBlacklistService
 from orchestrator_service.services.mongodb.user_permission_service import UserPermissionService
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.constants.permissions import (
+    DEFAULT_USER_PERMISSIONS,
+    DEFAULT_BOT_PERMISSIONS
+)
 
 logger = get_logger(__name__)
-
-# Default permissions for new users (regular user)
-DEFAULT_USER_PERMISSIONS = [
-    "rooms:view_own",
-]
-
-# Default permissions for bot accounts
-DEFAULT_BOT_PERMISSIONS = [
-    "metadata_events:view_all",
-    "chat_external:view_all",
-    "agent:control",
-]
 
 # Get OAuth2 configuration from centralized config
 oauth2_config = get_config().oauth2
@@ -112,6 +104,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
 
     After user authorizes on Mezon and is redirected back with an authorization code,
     this endpoint:
+
     1. Exchanges code for Mezon access token
     2. Retrieves user information from Mezon
     3. Generates a JWT token for the user session
@@ -212,10 +205,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
 
         # Extract user data (field names may vary based on Mezon API)
         user_data = {
-            "user_id": str(user_info.get("id") or user_info.get("user_id") or user_info.get("sub", "")),
-            "username": user_info.get("username", ""),
-            "display_name": user_info.get("display_name") or user_info.get("name", ""),
-            "avatar_url": user_info.get("avatar_url") or user_info.get("picture", "")
+            "user_id": user_info.get("user_id")
         }
 
         # Validate that we got a user_id
@@ -242,18 +232,20 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
             logger.info(f"First login for user_id={user_data['user_id']}, assigning default user permissions")
             await user_permission_service.create_or_update_user(
                 user_id=user_data["user_id"],
-                username=user_data.get("username", ""),
-                display_name=user_data.get("display_name", ""),
-                permissions=DEFAULT_USER_PERMISSIONS
+                username=user_info.get("username", ""),
+                display_name=user_info.get("display_name", ""),
+                permissions=DEFAULT_USER_PERMISSIONS,
+                avatar_url=user_info.get("avatar", "")
             )
             logger.info(f"Assigned {len(DEFAULT_USER_PERMISSIONS)} default permissions to new user")
         else:
             # Existing user - just update basic info (keep existing permissions)
             await user_permission_service.create_or_update_user(
                 user_id=user_data["user_id"],
-                username=user_data.get("username", ""),
-                display_name=user_data.get("display_name", ""),
-                permissions=None  # Don't update permissions for existing users
+                username=user_info.get("username", ""),
+                display_name=user_info.get("display_name", ""),
+                permissions=None,  # Don't update permissions for existing users
+                avatar_url=user_info.get("avatar", "")
             )
             logger.debug(f"Updated user info for user_id={user_data['user_id']}")
 
@@ -264,11 +256,6 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
         access_token_jti = get_token_jti(access_token)
         if not access_token_jti:
             raise HTTPException(status_code=500, detail="Failed to generate token ID")
-
-        # Connect to MongoDB and create refresh token
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
 
         refresh_token_service = RefreshTokenService(mongodb.db)
         refresh_token = await refresh_token_service.create_refresh_token(
@@ -281,14 +268,14 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
         token_expiry = get_token_expiry(access_token)
         expires_in = int((token_expiry - datetime.now(timezone.utc)).total_seconds())
 
-        logger.info(f"Successfully authenticated user: {user_data['username']} (ID: {user_data['user_id']})")
+        logger.info(f"Successfully authenticated user: {user_info['username']} (ID: {user_data['user_id']})")
 
         return ExchangeCodeResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="Bearer",
             expires_in=expires_in,
-            user=user_data
+            user=user_info
         )
 
     except requests.RequestException as e:
@@ -323,14 +310,19 @@ async def get_current_user(user: Dict[str, Any] = Depends(verify_jwt)):
         Authorization: Bearer <jwt_token>
     """
     logger.debug(f"Returning user info for user_id={user.get('user_id')}")
+    mongodb = MongoDBService()
+    if not mongodb.connected:
+        await mongodb.connect()
+    user_permission_service = UserPermissionService(mongodb.db)
+    user_info = await user_permission_service.get_user_info(user.get("user_id"))
 
     return {
         "status": "ok",
         "user": {
-            "user_id": user.get("user_id"),
-            "username": user.get("username"),
-            "display_name": user.get("display_name"),
-            "avatar_url": user.get("avatar_url")
+            "user_id": user_info.get("user_id"),
+            "username": user_info.get("username"),
+            "display_name": user_info.get("display_name"),
+            "avatar": user_info.get("avatar_url")
         }
     }
 
@@ -342,6 +334,7 @@ class RefreshTokenRequest(BaseModel):
 
 class RefreshTokenResponse(BaseModel):
     access_token: str = Field(..., description="New JWT access token")
+    refresh_token: str = Field(..., description="New refresh token for future access tokens")
     token_type: str = Field(default="Bearer", description="Token type")
     expires_in: int = Field(..., description="Access token expiry in seconds")
 
@@ -388,7 +381,7 @@ async def refresh_access_token(request: RefreshTokenRequest):
         request: RefreshTokenRequest with refresh_token
 
     Returns:
-        RefreshTokenResponse with new access_token
+        RefreshTokenResponse with new access_token and refresh_token
 
     Raises:
         HTTPException: 401 if refresh token is invalid or expired
@@ -414,12 +407,7 @@ async def refresh_access_token(request: RefreshTokenRequest):
 
         # Get user data from token (permissions will be loaded from DB on each request)
         user_data = {
-            "user_id": user_id,
-            # Note: We don't have username, display_name, avatar_url in refresh token doc
-            # In production, you might want to fetch from user database or cache
-            "username": "",
-            "display_name": "",
-            "avatar_url": ""
+            "user_id": user_id
         }
 
         # Blacklist the old access token (if not already expired/blacklisted)
@@ -442,11 +430,16 @@ async def refresh_access_token(request: RefreshTokenRequest):
         if not new_jti:
             raise HTTPException(status_code=500, detail="Failed to generate new token")
 
-        # Update refresh token doc with new access_token_jti
-        await refresh_token_service.collection.update_one(
-            {"token_id": token_doc["token_id"]},
-            {"$set": {"access_token_jti": new_jti}}
+        # Rotate refresh token with new access token JTI and expiry
+        new_refresh_token = await refresh_token_service.rotate_refresh_token(
+            token_doc["_id"],
+            new_jti
         )
+        if not new_refresh_token:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to rotate refresh token"
+            )
 
         # Calculate expiry
         token_expiry = get_token_expiry(new_access_token)
@@ -456,6 +449,7 @@ async def refresh_access_token(request: RefreshTokenRequest):
 
         return RefreshTokenResponse(
             access_token=new_access_token,
+            refresh_token=new_refresh_token,
             token_type="Bearer",
             expires_in=expires_in
         )
@@ -585,10 +579,7 @@ async def bot_login(request: BotLoginRequest):
 
         # Prepare user data for our JWT token
         user_data = {
-            "user_id": str(user_id),
-            "username": username,
-            "display_name": username,  # Use username as display name
-            "avatar_url": ""
+            "user_id": str(user_id)
         }
 
         # Connect to MongoDB

@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.services.mongodb.user_permission_service import UserPermissionService
-from orchestrator_service.auth.authorization import set_user_permission_service
 from orchestrator_service.config.application_config import get_config
 from contextlib import asynccontextmanager
 
@@ -74,14 +73,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("❌ MongoDB connection failed on startup")
     logger.info("✅ MongoDB connected on startup")
 
-    # Initialize User Permission Service for flat permission model
-    try:
-        user_permission_service = UserPermissionService(mongodb.db)
-        set_user_permission_service(user_permission_service)
-        logger.info("✅ User permission service initialized (flat permission model)")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize user permission service: {e}")
-        raise
+    user_permission_service = UserPermissionService(mongodb.db)
 
     # Connect Redis Connection Pool (shared by all repositories)
     try:

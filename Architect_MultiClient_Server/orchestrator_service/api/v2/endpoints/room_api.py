@@ -9,11 +9,10 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
-from orchestrator_service.auth.jwt_auth import verify_jwt
 from orchestrator_service.auth.authorization import get_auth_context, require_any_permission, AuthContext
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
-from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
     StatusQuery,
@@ -34,7 +33,7 @@ async def list_rooms(
     to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
-    auth: AuthContext = Depends(require_any_permission("rooms:view_all", "rooms:view_own"))
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
 ):
     """
     List rooms based on user permissions:

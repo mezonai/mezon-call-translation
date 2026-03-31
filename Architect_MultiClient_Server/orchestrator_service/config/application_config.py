@@ -5,7 +5,6 @@ All configuration values are loaded from environment variables with sensible def
 
 import os
 from dataclasses import dataclass
-from typing import Tuple
 
 # Try to load .env file if dotenv is available
 try:
@@ -218,6 +217,29 @@ class LoggerConfig:
 
 
 # ============================================================================
+# Auth/JWT Configuration
+# ============================================================================
+
+@dataclass
+class AuthConfig:
+    """Authentication and token configuration"""
+    jwt_secret: str = ""
+    jwt_expiry_days: int = 1
+    refresh_token_expiry_days: int = 5
+    transcript_api_secret: str = ""
+
+    @classmethod
+    def from_env(cls) -> 'AuthConfig':
+        """Create Auth config from environment variables"""
+        return cls(
+            jwt_secret=os.getenv('JWT_SECRET', ''),
+            jwt_expiry_days=int(os.getenv('JWT_EXPIRY_DAYS', '1')),
+            refresh_token_expiry_days=int(os.getenv('REFRESH_TOKEN_EXPIRY_DAYS', '5')),
+            transcript_api_secret=os.getenv('TRANSCRIPT_API_SECRET', ''),
+        )
+
+
+# ============================================================================
 # LLM Configuration
 # ============================================================================
 
@@ -289,11 +311,9 @@ class OAuth2Config:
     client_id: str = ""
     client_secret: str = ""
     redirect_uri: str = "http://localhost:3000/callback"
-
-    # Mezon OAuth2 endpoints (fixed)
-    auth_url: str = "https://oauth2.mezon.ai/oauth2/auth"
-    token_url: str = "https://oauth2.mezon.ai/oauth2/token"
-    userinfo_url: str = "https://oauth2.mezon.ai/userinfo"
+    auth_url: str = "https://your-oauth2-domain/oauth2/auth"
+    token_url: str = "https://your-oauth2-domain/oauth2/token"
+    userinfo_url: str = "https://your-oauth2-domain/userinfo"
 
     @classmethod
     def from_env(cls) -> 'OAuth2Config':
@@ -302,6 +322,9 @@ class OAuth2Config:
             client_id=os.getenv('MEZON_CLIENT_ID', ''),
             client_secret=os.getenv('MEZON_CLIENT_SECRET', ''),
             redirect_uri=os.getenv('MEZON_REDIRECT_URI', 'http://localhost:3000/callback'),
+            auth_url=os.getenv('MEZON_AUTH_URL', 'https://your-oauth2-domain/oauth2/auth'),
+            token_url=os.getenv('MEZON_TOKEN_URL', 'https://your-oauth2-domain/oauth2/token'),
+            userinfo_url=os.getenv('MEZON_USERINFO_URL', 'https://your-oauth2-domain/userinfo'),
         )
 
     def validate(self) -> bool:
@@ -337,6 +360,7 @@ class Config:
         self.mongodb = MongoDBConfig.from_env()
         self.server = ServerConfig.from_env()
         self.logger = LoggerConfig.from_env()
+        self.auth = AuthConfig.from_env()
         self.minio = MinIOConfig.from_env()
         self.llm = LLMConfig.from_env()
         self.redis = RedisConfig.from_env()
@@ -351,7 +375,8 @@ class Config:
             raise ValueError("Invalid LiveKit configuration")
         if not self.minio.validate():
             raise ValueError("Invalid MinIO configuration")
-
+        if not self.oauth2.validate():
+            raise ValueError("Invalid OAuth2 configuration")
     
     @classmethod
     def get_instance(cls) -> 'Config':
