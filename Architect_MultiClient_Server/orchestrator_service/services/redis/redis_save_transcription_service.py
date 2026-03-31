@@ -14,7 +14,7 @@ from orchestrator_service.services.redis.redis_stream_service import (
     RedisStreamService,
     create_stream_service,
 )
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.services.summary_service import get_summary_service

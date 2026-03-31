@@ -2,8 +2,8 @@
 Room Registry API - Manager active rooms for webhook processing
 """
 import asyncio
-from typing import Optional
-from fastapi import APIRouter, HTTPException
+from typing import Dict, Any, Optional
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from livekit import api
 
@@ -12,11 +12,11 @@ from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-# Import để có thể access egress_service
 from orchestrator_service.api.webhook_api import egress_service
 
-router = APIRouter(prefix="/api/room-registry", tags=["Room Registry"])
+router = APIRouter(prefix="/room-registry", tags=["Room Registry"])
 logger = get_logger(__name__)
 
 # Initialize transcription service
@@ -49,7 +49,7 @@ class RoomStatusResponse(BaseModel):
 @router.post("/register", response_description="Register a room for webhook processing")
 async def register_room(
     request: RoomRegisterRequest,
-    
+    auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """Register a room in the registry so that webhooks can handle events for that room.
     **Example:**
@@ -148,7 +148,7 @@ async def register_room(
 @router.post("/unregister", response_description="Unregister a room")
 async def unregister_room(
     request: RoomUnregisterRequest,
-    
+    auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
     Unregister a room from the registry.
@@ -225,7 +225,7 @@ async def unregister_room(
 @router.get("/status/{room_name}", response_model=RoomStatusResponse)
 async def get_room_status(
     room_name: str,
-    
+    auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
     Check status registration for a room.
@@ -253,7 +253,7 @@ async def get_room_status(
 
 @router.get("/list", response_description="List all registered rooms")
 async def list_registered_rooms(
-    
+    auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
     Get a list of all currently registered rooms.
@@ -279,7 +279,7 @@ async def list_registered_rooms(
 
 @router.delete("/clear-all", response_description="Clear all registered rooms")
 async def clear_all_rooms(
-    
+    auth: Dict[str, Any] = Depends(verify_api_key)
 ):
     """
     clear all registered rooms from the registry.

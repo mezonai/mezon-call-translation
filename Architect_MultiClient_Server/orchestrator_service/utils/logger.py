@@ -2,13 +2,14 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from orchestrator_service.config.application_config import get_config
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 
-log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
+log_level_str = get_config().logger.level
 log_level = getattr(logging, log_level_str, logging.INFO)
 
 def setup_logger(name: str) -> logging.Logger:

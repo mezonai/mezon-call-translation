@@ -2,11 +2,14 @@
 SSE Chat External API
 Endpoints for bot to receive chat external events via SSE
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, Any
 
-from orchestrator_service.auth.verify_account import authenticate_account
+
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import CHAT_EXTERNAL_VIEW_ALL
+from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.chat_external_channel import ChatExternalChannel
 from orchestrator_service.utils.logger import get_logger
@@ -40,28 +43,20 @@ class PushChatExternalRequest(BaseModel):
 
 
 @router.get("/sse/chat_external")
-async def sse_chat_external_endpoint(appid: str, token: str):
+async def sse_chat_external_endpoint(auth: AuthContext = Depends(require_any_permission(CHAT_EXTERNAL_VIEW_ALL))):
     """
     SSE endpoint for bot to receive chat external events.
     
     Args:
-        appid: Application ID for authentication and connection management
-        token: Authentication token
     
     Returns:
         StreamingResponse with SSE events
     """
-
-    # Authenticate
-    account = {"appid": appid, "token": token}
-    if not await authenticate_account(account):
-        return HTTPException(status_code=401, detail="Account authentication failed")
-
-    return await chat_external_channel.create_connection(appid)
+    return await chat_external_channel.create_connection(auth.user_id)
 
 
 @router.post("/agent_push_chat_external")
-async def push_chat_external_api(req: PushChatExternalRequest):
+async def push_chat_external_api(req: PushChatExternalRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push chat external event to all connected bots via SSE.
     

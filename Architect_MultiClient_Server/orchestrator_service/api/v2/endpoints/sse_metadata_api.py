@@ -2,15 +2,17 @@
 SSE Metadata API
 Endpoints for bot to receive agent metadata events via SSE
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 
-from orchestrator_service.auth.verify_account import authenticate_account
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import METADATA_EVENTS_VIEW_ALL
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.metadata_event_models import MetadataEventType
 
 
@@ -107,7 +109,8 @@ class SessionSummaryDoneRequest(RoomInfo):
 # ==================== SSE Endpoint ====================
 
 @router.get("/sse/metadata")
-async def sse_metadata_endpoint(appid: str, token: str):
+async def sse_metadata_endpoint(
+    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL))):
     """
     SSE endpoint for bot to receive agent metadata events.
     
@@ -118,17 +121,13 @@ async def sse_metadata_endpoint(appid: str, token: str):
     Returns:
         StreamingResponse with SSE events
     """
-    account = {"appid": appid, "token": token}
-    if not await authenticate_account(account):
-        return HTTPException(status_code=401, detail="Account authentication failed")
-
-    return await metadata_channel.create_connection(appid)
+    return await metadata_channel.create_connection(auth.user_id)
 
 
 # ==================== Push Endpoints ====================
 
 @router.post("/push_metadata/session_started")
-async def push_session_started_api(req: SessionStartedRequest):
+async def push_session_started_api(req: SessionStartedRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push session_started event to all connected bots via SSE.
     
@@ -147,7 +146,7 @@ async def push_session_started_api(req: SessionStartedRequest):
 
 
 @router.post("/push_metadata/session_ended")
-async def push_session_ended_api(req: SessionEndedRequest):
+async def push_session_ended_api(req: SessionEndedRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push session_ended event to all connected bots via SSE.
     
@@ -167,7 +166,7 @@ async def push_session_ended_api(req: SessionEndedRequest):
 
 
 @router.post("/push_metadata/session_record_done")
-async def push_session_record_done_api(req: SessionRecordDoneRequest):
+async def push_session_record_done_api(req: SessionRecordDoneRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push session_record_done event to all connected bots via SSE.
     File results are automatically fetched from MongoDB based on room_id.
@@ -187,7 +186,7 @@ async def push_session_record_done_api(req: SessionRecordDoneRequest):
 
 
 @router.post("/push_metadata/session_summary_done")
-async def push_session_summary_done_api(req: SessionSummaryDoneRequest):
+async def push_session_summary_done_api(req: SessionSummaryDoneRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push session_summary_done event to all connected bots via SSE.
     Notifies that room summary/analysis has been completed.
@@ -214,7 +213,7 @@ async def list_metadata_events(
     limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     sort_order: str = Query("desc", description="Sort order: 'asc' for ascending, 'desc' for descending (default: 'desc')"),
-    
+    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL))
 ):
     """
     Get metadata events with optional filters.
@@ -282,7 +281,7 @@ async def list_metadata_events(
 @router.get("/metadata/{event_id}", response_description="Get metadata event by event_id")
 async def get_metadata_event_by_id(
     event_id: str,
-    
+    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL))
 ):
     """
     Get single metadata event by event_id (UUID).
