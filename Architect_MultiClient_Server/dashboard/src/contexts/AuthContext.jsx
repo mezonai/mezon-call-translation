@@ -1,7 +1,13 @@
-import { createContext, useContext, useState, useEffect } from 'react';
-import apiClient from '../services/api';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import {
+  getCurrentUser,
+  logoutSession,
+  refreshAuthTokens,
+  setAuthRefreshHandler
+} from '../services/api';
 
 const AuthContext = createContext(null);
+let refreshPromise = null;
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -35,14 +41,10 @@ export const AuthProvider = ({ children }) => {
 
             // Verify token and fetch user info
             try {
-              const response = await apiClient.get('/api/v2/auth/mezon/userinfo', {
-                headers: {
-                  'Authorization': `Bearer ${storedToken}`
-                }
-              });
+              const data = await getCurrentUser(storedToken);
 
-              if (response.data && response.data.user) {
-                setUser(response.data.user);
+              if (data && data.user) {
+                setUser(data.user);
               } else {
                 // Invalid token, clear storage
                 localStorage.removeItem('auth');
@@ -56,7 +58,7 @@ export const AuthProvider = ({ children }) => {
               // If 401, try to refresh token
               if (error.response?.status === 401 && storedRefreshToken) {
                 const refreshed = await refreshAccessToken(storedRefreshToken);
-                if (!refreshed) {
+                if (!refreshed?.accessToken) {
                   // Refresh failed, clear everything
                   localStorage.removeItem('auth');
                   setAccessToken(null);
@@ -96,21 +98,26 @@ export const AuthProvider = ({ children }) => {
     }));
   };
 
-  const refreshAccessToken = async (currentRefreshToken) => {
-    try {
-      const response = await apiClient.post('/api/v2/auth/mezon/refresh', {
-        refresh_token: currentRefreshToken || refreshToken
-      });
-
-      if (response.data && response.data.access_token) {
-        const newAccessToken = response.data.access_token;
-        const newRefreshToken = response.data.refresh_token || currentRefreshToken || refreshToken;
-        setAccessToken(newAccessToken);
-        if (newRefreshToken) {
-          setRefreshToken(newRefreshToken);
+  const refreshAccessToken = useCallback(async (refreshTokenOverride = null) => {
+    if (!refreshPromise) {
+      refreshPromise = (async () => {
+        const tokenToUse = refreshTokenOverride || refreshToken;
+        if (!tokenToUse) {
+          throw new Error('Missing refresh token');
         }
 
-        // Update stored token
+        const data = await refreshAuthTokens(tokenToUse);
+
+        if (!data || !data.access_token || !data.refresh_token) {
+          throw new Error('No access token or refresh token in refresh response');
+        }
+
+        const newAccessToken = data.access_token;
+        const newRefreshToken = data.refresh_token;
+        setAccessToken(newAccessToken);
+        setRefreshToken(newRefreshToken);
+
+
         const authData = localStorage.getItem('auth');
         let storedUser = null;
         if (authData) {
@@ -128,23 +135,36 @@ export const AuthProvider = ({ children }) => {
         }));
 
         console.log('Access token refreshed successfully');
-        return true;
-      }
-      return false;
+        return {
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken
+        };
+      })();
+    }
+
+    const currentPromise = refreshPromise;
+    try {
+      return await currentPromise;
     } catch (error) {
       console.error('Failed to refresh token:', error);
-      return false;
+      return null;
+    } finally {
+      if (refreshPromise === currentPromise) {
+        refreshPromise = null;
+      }
     }
-  };
+  }, [refreshToken, user]);
+
+  useEffect(() => {
+    setAuthRefreshHandler(refreshAccessToken);
+    return () => setAuthRefreshHandler(null);
+  }, [refreshAccessToken]);
 
   const logout = async () => {
     try {
       // Call backend to revoke tokens
       if (accessToken && refreshToken) {
-        await apiClient.post('/api/v2/auth/mezon/logout',
-          { refresh_token: refreshToken },
-          { headers: { 'Authorization': `Bearer ${accessToken}` } }
-        );
+        await logoutSession(accessToken, refreshToken);
       }
     } catch (error) {
       console.error('Logout API call failed:', error);
@@ -162,13 +182,6 @@ export const AuthProvider = ({ children }) => {
     return !!accessToken && !!user;
   };
 
-  const getAuthHeader = () => {
-    if (accessToken) {
-      return { 'Authorization': `Bearer ${accessToken}` };
-    }
-    return {};
-  };
-
   const value = {
     user,
     accessToken,
@@ -177,8 +190,7 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     refreshAccessToken,
-    isAuthenticated,
-    getAuthHeader
+    isAuthenticated
   };
 
   return (

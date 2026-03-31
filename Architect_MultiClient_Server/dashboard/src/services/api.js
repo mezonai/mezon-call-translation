@@ -9,20 +9,43 @@ const apiClient = axios.create({
   }
 });
 
-// Flag to prevent infinite refresh loops
-let isRefreshing = false;
-let failedQueue = [];
+let refreshHandler = null;
 
-const processQueue = (error, token = null) => {
-  failedQueue.forEach(prom => {
-    if (error) {
-      prom.reject(error);
-    } else {
-      prom.resolve(token);
-    }
+export const setAuthRefreshHandler = (handler) => {
+  refreshHandler = handler;
+};
+
+// Auth APIs
+export const getCurrentUser = async (accessToken) => {
+  const headers = accessToken ? { 'Authorization': `Bearer ${accessToken}` } : undefined;
+  const response = await apiClient.get('/api/v2/auth/mezon/userinfo', { headers });
+  return response.data;
+};
+
+export const refreshAuthTokens = async (refreshToken) => {
+  if (!refreshToken) {
+    throw new Error('Missing refresh token');
+  }
+
+  const response = await apiClient.post('/api/v2/auth/mezon/refresh', {
+    refresh_token: refreshToken
   });
 
-  failedQueue = [];
+  return response.data;
+};
+
+export const logoutSession = async (accessToken, refreshToken) => {
+  if (!accessToken || !refreshToken) {
+    throw new Error('Missing access token or refresh token');
+  }
+
+  const response = await apiClient.post(
+    '/api/v2/auth/mezon/logout',
+    { refresh_token: refreshToken },
+    { headers: { 'Authorization': `Bearer ${accessToken}` } }
+  );
+
+  return response.data;
 };
 
 // Request interceptor to add JWT token to all requests
@@ -65,22 +88,7 @@ apiClient.interceptors.response.use(
         return Promise.reject(error);
       }
 
-      if (isRefreshing) {
-        // Already refreshing, queue this request
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject });
-        })
-          .then(token => {
-            originalRequest.headers['Authorization'] = `Bearer ${token}`;
-            return apiClient(originalRequest);
-          })
-          .catch(err => {
-            return Promise.reject(err);
-          });
-      }
-
       originalRequest._retry = true;
-      isRefreshing = true;
 
       const authData = localStorage.getItem('auth');
       let refreshToken = null;
@@ -94,9 +102,8 @@ apiClient.interceptors.response.use(
         }
       }
 
-      if (!refreshToken) {
-        // No refresh token, redirect to login
-        isRefreshing = false;
+      if (!refreshToken || !refreshHandler) {
+        // No refresh token or handler, redirect to login
         localStorage.removeItem('auth');
 
         if (!window.location.pathname.startsWith('/login') &&
@@ -108,42 +115,17 @@ apiClient.interceptors.response.use(
       }
 
       try {
-        // Try to refresh the access token
-        const response = await axios.post(
-          `${API_BASE_URL}/api/v2/auth/mezon/refresh`,
-          { refresh_token: refreshToken },
-          { headers: { 'Content-Type': 'application/json' } }
-        );
-
-        if (response.data && response.data.access_token) {
-          const newAccessToken = response.data.access_token;
-          const newRefreshToken = response.data.refresh_token || refreshToken;
-
-          // Update stored tokens
-          localStorage.setItem('auth', JSON.stringify({
-            accessToken: newAccessToken,
-            refreshToken: newRefreshToken
-          }));
-
-          // Update authorization header
-          apiClient.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
-          originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
-
-          // Process queued requests
-          processQueue(null, newAccessToken);
-
-          isRefreshing = false;
-
-          // Retry original request
-          return apiClient(originalRequest);
-        } else {
-          throw new Error('No access token in refresh response');
+        const refreshed = await refreshHandler(refreshToken);
+        if (!refreshed?.accessToken) {
+          throw new Error('Refresh token failed');
         }
+
+        apiClient.defaults.headers.common['Authorization'] = `Bearer ${refreshed.accessToken}`;
+        originalRequest.headers['Authorization'] = `Bearer ${refreshed.accessToken}`;
+
+        return apiClient(originalRequest);
       } catch (refreshError) {
         // Refresh failed, clear tokens and redirect to login
-        processQueue(refreshError, null);
-        isRefreshing = false;
-
         localStorage.removeItem('auth');
 
         if (!window.location.pathname.startsWith('/login') &&
