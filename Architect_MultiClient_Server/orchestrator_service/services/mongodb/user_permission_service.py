@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Set
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from stt_service.utils.decorator import singleton
+from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
