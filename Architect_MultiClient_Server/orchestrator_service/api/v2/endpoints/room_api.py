@@ -6,9 +6,11 @@ Room API endpoints for querying room data from MongoDB
 """
 
 from datetime import datetime
-from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Query, Depends
 
+from orchestrator_service.auth.authorization import get_auth_context, require_any_permission, AuthContext
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
@@ -19,7 +21,7 @@ from orchestrator_service.utils.transcript_validators import (
 )
 from bson import ObjectId
 
-router = APIRouter(prefix="/api/transcripts/rooms", tags=["Rooms"])
+router = APIRouter(prefix="/transcripts/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
 
@@ -31,9 +33,12 @@ async def list_rooms(
     to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
 ):
     """
-    List all rooms with optional filters.
+    List rooms based on user permissions:
+    - Admin/Bot (rooms:view_all): See all rooms
+    - User (rooms:view_own): See only participated rooms
 
     - **status**: Filter rooms by status (e.g. 'pending', 'completed')
     - **search**: Search by room name or participant identity (matches tracks)
@@ -44,27 +49,52 @@ async def list_rooms(
     """
     if from_utc is not None and to_utc is not None and from_utc >= to_utc:
         raise HTTPException(status_code=400, detail="from_utc must be before to_utc")
+
     search_trimmed = search.strip() if search else None
     if search_trimmed == "":
         search_trimmed = None
+
     try:
         mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
-        rooms = await mongodb.list_rooms(
-            status=status,
-            search=search_trimmed,
-            from_utc=from_utc,
-            to_utc=to_utc,
-            limit=limit,
-            skip=skip,
-        )
-        total = await mongodb.count_rooms(
-            status=status,
-            search=search_trimmed,
-            from_utc=from_utc,
-            to_utc=to_utc,
-        )
+
+        # Check which permission user has
+        if auth.can_view_all_rooms:
+            # Admin/Bot - see all rooms
+            rooms = await mongodb.list_rooms(
+                status=status,
+                search=search_trimmed,
+                from_utc=from_utc,
+                to_utc=to_utc,
+                limit=limit,
+                skip=skip,
+            )
+            total = await mongodb.count_rooms(
+                status=status,
+                search=search_trimmed,
+                from_utc=from_utc,
+                to_utc=to_utc,
+            )
+        else:
+            # Regular user - filter by participation
+            rooms = await mongodb.list_rooms_by_user(
+                user_id=auth.user_id,
+                status=status,
+                search=search_trimmed,
+                from_utc=from_utc,
+                to_utc=to_utc,
+                limit=limit,
+                skip=skip,
+            )
+            total = await mongodb.count_rooms_by_user(
+                user_id=auth.user_id,
+                status=status,
+                search=search_trimmed,
+                from_utc=from_utc,
+                to_utc=to_utc,
+            )
+
         return {
             "status": "ok",
             "total": total,
@@ -82,30 +112,44 @@ async def list_rooms(
 @router.get("/id/{room_id}", response_description="Get room by ID")
 async def get_room_by_id(
     room_id: str,
-    
+    auth: AuthContext = Depends(get_auth_context)
 ):
     """
     Get room details by room ID.
-    
+    - Admin/Bot: Can access any room
+    - User: Can only access participated rooms
+
     - **room_id**: The ObjectId of the room to retrieve
     """
     try:
         mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
-        
+
+        if not auth.can_view_all_rooms:
+            # User must have participated in this room
+            has_access = await mongodb.user_has_room_access(room_id, auth.user_id)
+            if not has_access:
+                logger.warning(f"User {auth.user_id} denied access to room {room_id}")
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have access to this room"
+                )
+
         # Validate ObjectId format
         try:
             ObjectId(room_id)
         except Exception:
             raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
-        
+
         room = await mongodb.get_room_by_id(room_id)
         if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
-        
+
+        # Check access permission for regular users
+
         room["_id"] = str(room["_id"])
-        
+
         return {
             "status": "ok",
             "room": room
@@ -120,13 +164,15 @@ async def get_room_by_id(
 @router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
 async def get_room_statistics_by_id(
     room_id: str,
-    
+    auth: AuthContext = Depends(get_auth_context)
 ):
     """
     Get detailed statistics for a specific room by ID.
-    
+    - Admin/Bot: Can access any room
+    - User: Can only access participated rooms
+
     - **room_id**: The ObjectId of the room
-    
+
     Returns:
     - Total tracks, completed/remaining tracks
     - Total duration in seconds
@@ -136,13 +182,24 @@ async def get_room_statistics_by_id(
         mongodb = MongoDBService()
         if not mongodb.connected:
             await mongodb.connect()
-        
+
         # Validate ObjectId format
         try:
             ObjectId(room_id)
         except Exception:
             raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
-        
+
+        # Check access permission for regular users
+        if not auth.can_view_all_rooms:
+            # User must have participated in this room
+            has_access = await mongodb.user_has_room_access(room_id, auth.user_id)
+            if not has_access:
+                logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have access to this room"
+                )
+
         stats = await mongodb.get_room_statistics_by_id(room_id)
         if not stats:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")

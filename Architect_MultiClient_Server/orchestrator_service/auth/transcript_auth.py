@@ -17,30 +17,30 @@ Usage:
         pass
 """
 
-import os
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.config.application_config import get_config
 
 logger = get_logger(__name__)
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
 
-# Load configuration from environment
-AUTH_ENABLED = os.getenv("TRANSCRIPT_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
-API_SECRET = os.getenv("TRANSCRIPT_API_SECRET", "")
+# Load configuration from centralized config
+auth_config = get_config().auth
+API_SECRET = auth_config.transcript_api_secret
 
 # Validate configuration on startup
-if AUTH_ENABLED and not API_SECRET:
+if not API_SECRET:
     logger.warning(
         "⚠️  TRANSCRIPT_AUTH_ENABLED is true but TRANSCRIPT_API_SECRET is not set. "
         "Authentication will fail for all requests!"
     )
 
-logger.info(f"Transcript API Authentication: {'ENABLED' if AUTH_ENABLED else 'DISABLED'}")
-if AUTH_ENABLED:
+logger.info(f"Transcript API Authentication: {'ENABLED' if API_SECRET else 'DISABLED'}")
+if API_SECRET:
     logger.info(f"API Secret configured: {'Yes' if API_SECRET else 'No (WARNING!)'}")
 
 
@@ -72,11 +72,6 @@ async def verify_api_key(
     Raises:
         HTTPException: If authentication fails or is missing
     """
-    # Skip authentication if disabled (for development)
-    if not AUTH_ENABLED:
-        logger.debug("Authentication disabled - skipping verification")
-        return {"authenticated": False, "method": "disabled"}
-    
     # Check if credentials provided
     if not credentials:
         logger.warning("Missing Authorization header")

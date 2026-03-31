@@ -157,7 +157,6 @@ class MongoDBService:
         to_utc: datetime = None,
     ) -> Dict[str, Any]:
         """Build query dict for list_rooms / count_rooms. Search matches room_name or participant_identity in tracks."""
-        import re
         and_parts = []
         if status:
             and_parts.append({"status": status})
@@ -212,15 +211,6 @@ class MongoDBService:
     # ========================================
     # 🎵 TRACK COLLECTION QUERIES (READ ONLY)
     # ========================================
-
-    async def get_track_by_egress_id(self, egress_id: str) -> Optional[Dict[str, Any]]:
-        """Get track by egress_id (which is _id)"""
-        try:
-            return await self.tracks_collection.find_one({"_id": egress_id})
-        except Exception as e:
-            logger.error(f"Failed to get track: {e}")
-            return None
-
     async def get_track_by_id(self, track_id: str) -> Optional[Dict[str, Any]]:
         """Get track by _id (egress_id string)"""
         try:
@@ -241,11 +231,27 @@ class MongoDBService:
             logger.error(f"Failed to get tracks by room: {e}")
             return []
 
-    async def get_tracks_by_participant(self, participant_identity: str) -> List[Dict[str, Any]]:
-        """Get all tracks for a participant"""
+    async def get_tracks_by_participant(
+        self,
+        participant_identity: str,
+        status: str = None,
+        limit: int = None,
+        skip: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get all tracks for a participant with optional filters"""
         try:
-            cursor = self.tracks_collection.find({"participant_identity": participant_identity}).sort("created_at", -1)
-            return await cursor.to_list(None)
+            query = {"participant_identity": participant_identity}
+            if status:
+                query["status"] = status
+
+            cursor = self.tracks_collection.find(query).sort("created_at", -1)
+
+            if skip > 0:
+                cursor = cursor.skip(skip)
+            if limit is not None:
+                cursor = cursor.limit(limit)
+
+            return await cursor.to_list(length=limit)
         except Exception as e:
             logger.error(f"Failed to get tracks by participant: {e}")
             return []
@@ -270,6 +276,67 @@ class MongoDBService:
             return await self.tracks_collection.count_documents(query)
         except Exception as e:
             logger.error(f"Failed to count tracks: {e}")
+            return 0
+
+    async def count_tracks_by_participant(self, participant_identity: str, status: str = None) -> int:
+        """Count tracks for a participant with optional status filter"""
+        try:
+            query = {"participant_identity": participant_identity}
+            if status:
+                query["status"] = status
+            return await self.tracks_collection.count_documents(query)
+        except Exception as e:
+            logger.error(f"Failed to count tracks by participant: {e}")
+            return 0
+
+    async def get_tracks_by_participant_date_range(
+        self,
+        participant_identity: str,
+        start_date: datetime,
+        end_date: datetime,
+        status: str = None,
+        limit: int = 100,
+        skip: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get participant tracks within a date range with optional status filter and pagination"""
+        try:
+            query = {
+                "participant_identity": participant_identity,
+                "created_at": {
+                    "$gte": start_date,
+                    "$lte": end_date
+                }
+            }
+            if status:
+                query["status"] = status
+
+            cursor = self.tracks_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+            return await cursor.to_list(length=limit)
+        except Exception as e:
+            logger.error(f"Failed to get participant tracks by date range: {e}")
+            return []
+
+    async def count_tracks_by_participant_date_range(
+        self,
+        participant_identity: str,
+        start_date: datetime,
+        end_date: datetime,
+        status: str = None
+    ) -> int:
+        """Count participant tracks within a date range with optional status filter"""
+        try:
+            query = {
+                "participant_identity": participant_identity,
+                "created_at": {
+                    "$gte": start_date,
+                    "$lte": end_date
+                }
+            }
+            if status:
+                query["status"] = status
+            return await self.tracks_collection.count_documents(query)
+        except Exception as e:
+            logger.error(f"Failed to count participant tracks by date range: {e}")
             return 0
 
     async def get_tracks_by_date_range(self, start_date: datetime, 
@@ -737,37 +804,64 @@ class MongoDBService:
             return None
 
 
-    async def get_summary_by_room_name(self, room_name: str, start_time: Optional[datetime], end_time: Optional[datetime]) -> List[RoomSummaryResponse]:
-        """Get summary by room name"""
+    async def get_summary_by_room_name(
+        self,
+        room_name: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        user_id: Optional[str] = None
+    ) -> List[RoomSummaryResponse]:
+        """Get summary by room name + optional user filter"""
+
         try:
-            # 1. get room list
-            query = {"room_name": room_name}
+            # 1. build query
+            query: dict = {"room_name": room_name}
+
+            # filter time
             if start_time or end_time:
                 query["created_at"] = {}
                 if start_time:
                     query["created_at"]["$gte"] = start_time
                 if end_time:
                     query["created_at"]["$lte"] = end_time
+
+            # filter user
+            if user_id:
+                query["participants"] = user_id
+
+            # 2. get rooms
             cursor = self.rooms_collection.find(query).sort("created_at", 1)
             room_list: list[dict] = await cursor.to_list(None)
-            room_dict = {str(room["_id"]): room for room in room_list}
-            room_ids = [str(room["_id"]) for room in room_list]
 
-            # 2. get summary list
+            if not room_list:
+                return []
+
+            room_dict = {str(room["_id"]): room for room in room_list}
+            room_ids = list(room_dict.keys())
+
+            # 3. get summaries
             summary_list = await self.summary_collection.find(
                 {"room_id": {"$in": room_ids}}
             ).to_list(None)
 
-            # Override created_at and completed_at
+            # 4. map response
             summary_response_list = []
             for summary in summary_list:
                 summary_response = RoomSummaryResponse.model_construct(**summary)
-                created_at = room_dict.get(str(summary["room_id"])).get("created_at", "")
-                completed_at = room_dict.get(str(summary["room_id"])).get("completed_at", "")
-                summary_response.created_at = convert_to_iso_8601(created_at)
-                summary_response.completed_at = convert_to_iso_8601(completed_at)
+
+                room = room_dict.get(str(summary["room_id"]), {})
+
+                summary_response.created_at = convert_to_iso_8601(
+                    room.get("created_at")
+                )
+                summary_response.completed_at = convert_to_iso_8601(
+                    room.get("completed_at")
+                )
+
                 summary_response_list.append(summary_response)
+
             return summary_response_list
+
         except Exception as e:
             logger.error(f"Failed to get summary by room name: {e}")
             return []
@@ -1054,4 +1148,195 @@ class MongoDBService:
         except Exception as e:
             logger.error(f"Failed to append chunks: {e}")
             return False
+
+    # ========================================
+    # 🔐 AUTHORIZATION - USER FILTERING
+    # ========================================
+
+    async def list_rooms_by_user(
+        self,
+        user_id: str,
+        status: str = None,
+        search: str = None,
+        from_utc: datetime = None,
+        to_utc: datetime = None,
+        limit: int = 100,
+        skip: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        List rooms where user participated using optimized aggregation pipeline.
+        """
+
+        try:
+            # Build match condition cho tracks
+            track_match = {
+                "participant_identity": user_id
+            }
+
+            if status:
+                track_match["status"] = status
+
+            if from_utc or to_utc:
+                track_match["created_at"] = {}
+                if from_utc:
+                    track_match["created_at"]["$gte"] = from_utc
+                if to_utc:
+                    track_match["created_at"]["$lt"] = to_utc
+
+            # Build match condition cho rooms
+            room_match = {}
+
+            if status:
+                room_match["room.status"] = status
+
+            if search:
+                room_match["$or"] = [
+                    {"room.room_name": {"$regex": search, "$options": "i"}}
+                ]
+
+            # Aggregation pipeline:
+            pipeline = [
+                {"$match": track_match},
+                {
+                    "$group": {
+                        "_id": "$room_ref_id"
+                    }
+                },
+                {
+                    "$lookup": {
+                        "from": "rooms",
+                        "localField": "_id",
+                        "foreignField": "_id",
+                        "as": "room"
+                    }
+                },
+                {"$unwind": "$room"},
+
+                *( [{"$match": room_match}] if room_match else [] ),
+
+                {"$sort": {"room.created_at": -1}},
+                {"$skip": skip},
+                {"$limit": limit},
+
+                {"$replaceRoot": {"newRoot": "$room"}}
+            ]
+
+            # Execute pipeline
+            cursor = self.tracks_collection.aggregate(pipeline)
+            room_list = [doc async for doc in cursor]
+
+            if not room_list:
+                logger.debug(f"No rooms found for user_id={user_id}")
+                return []
+
+            # Format output
+            for room in room_list:
+                room["_id"] = str(room["_id"])
+                room["created_at"] = convert_to_iso_8601(room["created_at"])
+                room["completed_at"] = convert_to_iso_8601(room.get("completed_at"))
+
+            logger.debug(f"Found {len(room_list)} rooms for user_id={user_id}")
+            return room_list
+
+        except Exception as e:
+            logger.error(f"Failed to list rooms by user: {e}")
+            return []
+
+    async def count_rooms_by_user(
+        self,
+        user_id: str,
+        status: str = None,
+        search: str = None,
+        from_utc: datetime = None,
+        to_utc: datetime = None
+    ) -> int:
+        """
+        Count rooms where user participated.
+
+        Args:
+            user_id: Mezon user ID (participant_identity)
+            status: Filter by room status
+            search: Search by room_name or participant_identity
+            from_utc: Filter by created_at >= from_utc
+            to_utc: Filter by created_at < to_utc
+
+        Returns:
+            Number of rooms where user participated
+        """
+        try:
+            # Get room_ids where user has tracks
+            # participant_identity = user_id (direct match)
+            track_pipeline = [
+                {"$match": {"participant_identity": user_id}},
+                {"$group": {"_id": "$room_ref_id"}}
+            ]
+
+            cursor = self.tracks_collection.aggregate(track_pipeline)
+            user_room_ids = [doc["_id"] async for doc in cursor]
+
+            if not user_room_ids:
+                return 0
+
+            # Convert to ObjectId
+            room_object_ids = []
+            for rid in user_room_ids:
+                try:
+                    room_object_ids.append(ObjectId(rid))
+                except Exception:
+                    pass
+
+            if not room_object_ids:
+                return 0
+
+            # Build query with filters
+            query = await self._build_rooms_list_query(
+                status=status,
+                search=search,
+                from_utc=from_utc,
+                to_utc=to_utc
+            )
+            query["_id"] = {"$in": room_object_ids}
+
+            # Count documents
+            count = await self.rooms_collection.count_documents(query)
+
+            logger.debug(f"Counted {count} rooms for user_id={user_id}")
+            return count
+
+        except Exception as e:
+            logger.error(f"Failed to count rooms by user: {e}")
+            return 0
+
+    async def user_has_room_access(
+        self,
+        room_id: str,
+        user_id: str
+    ) -> bool:
+        """
+        Check if user has access to room.
+        User has access if they have any track in this room.
+        participant_identity = user_id, so direct equality check.
+
+        Args:
+            room_id: Room ID (can be string or ObjectId)
+            user_id: Mezon user ID (participant_identity)
+
+        Returns:
+            True if user has participated in the room, False otherwise
+        """
+        try:
+            track = await self.tracks_collection.find_one({
+                "room_ref_id": ObjectId(room_id),
+                "participant_identity": user_id
+            })
+
+            has_access = track is not None
+            logger.debug(f"user_has_room_access: user_id={user_id}, room_id={room_id}, has_access={has_access}")
+
+            return has_access
+
+        except Exception as e:
+            logger.error(f"Failed to check user room access: {e}")
+            return False
+
 

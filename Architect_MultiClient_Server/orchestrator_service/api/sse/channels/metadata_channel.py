@@ -5,13 +5,11 @@ Handles SSE connections for room lifecycle and recording events (global, not roo
 from typing import Optional, Dict, Any
 from datetime import datetime
 import uuid
-from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
-from orchestrator_service.auth.verify_account import authenticate_account
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.models.metadata_event_models import MetadataEventType
@@ -41,15 +39,13 @@ class MetadataChannel:
     
     async def create_connection(
         self,
-        appid: str,
-        token: str
+        appid: str
     ) -> StreamingResponse:
         """
         Create SSE connection for metadata channel.
         
         Args:
             appid: Application ID for authentication
-            token: Authentication token
         
         Returns:
             StreamingResponse with SSE events
@@ -57,11 +53,6 @@ class MetadataChannel:
         Raises:
             HTTPException: If authentication fails
         """
-        # Authenticate
-        account = {"appid": appid, "token": token}
-        if not await authenticate_account(account):
-            raise HTTPException(status_code=401, detail="Account authentication failed")
-        
         context_key = self.CONTEXT_KEY
         
         # Close existing connection from same appid

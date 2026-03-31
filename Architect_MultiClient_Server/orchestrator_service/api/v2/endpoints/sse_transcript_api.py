@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from orchestrator_service.auth.verify_account import authenticate_account
+from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.message_channel import MessageChannel
 from orchestrator_service.utils.logger import get_logger
@@ -22,7 +24,7 @@ class PushMessageRequest(BaseModel):
 
 
 @router.post("/push_transcript")
-async def push_transcript_api(req: PushMessageRequest):
+async def push_transcript_api(req: PushMessageRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push transcript to all SSE connections in a room.
     
@@ -42,7 +44,8 @@ async def push_transcript_api(req: PushMessageRequest):
 
 
 @router.get("/sse/stream_transcript")
-async def sse_endpoint(appid: str, token: str, room: str):
+async def sse_endpoint(room: str,
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL))):
     """
     SSE endpoint for real-time message streaming.
     
@@ -54,8 +57,4 @@ async def sse_endpoint(appid: str, token: str, room: str):
     Returns:
         StreamingResponse with SSE events
     """
-    account = {"appid": appid, "token": token}
-    if not await authenticate_account(account):
-        return HTTPException(status_code=401, detail="Account authentication failed")
-
-    return await message_channel.create_connection(appid, room)
+    return await message_channel.create_connection(auth.user_id, room)
