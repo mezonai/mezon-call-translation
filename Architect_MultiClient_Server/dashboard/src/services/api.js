@@ -115,7 +115,7 @@ apiClient.interceptors.response.use(
       }
 
       try {
-        const refreshed = await refreshHandler(refreshToken);
+        const refreshed = await refreshHandler();
         if (!refreshed?.accessToken) {
           throw new Error('Refresh token failed');
         }
