@@ -192,12 +192,10 @@ class RedisProducerService(Generic[T]):
             
             # Get stats
             stats_data = await self._redis.hgetall(self._stats_key)
-            stats = {}
-            if stats_data:
-                for k, v in stats_data.items():
-                    ks = k.decode() if isinstance(k, bytes) else str(k)
-                    vs = v.decode() if isinstance(v, bytes) else str(v)
-                    stats[ks] = vs
+            stats = {
+                k.decode(): v.decode()
+                for k, v in stats_data.items()
+            } if stats_data else {}
             
             # Count active workers
             workers_key = f"{self._stream_key}:workers"
