@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import apiClient from '../services/api';
 import LoadingSpinner from './LoadingSpinner';
 import ErrorMessage from './ErrorMessage';
 
@@ -10,6 +9,12 @@ const Login = () => {
   const [error, setError] = useState(null);
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
+
+  const oauthConfig = {
+    clientId: import.meta.env.VITE_MEZON_CLIENT_ID || '',
+    authUrl: import.meta.env.VITE_MEZON_AUTH_URL || '',
+    redirectUri: import.meta.env.VITE_MEZON_REDIRECT_URI || ''
+  };
 
   // Redirect to home if already authenticated
   useEffect(() => {
@@ -32,9 +37,10 @@ const Login = () => {
     setError(null);
 
     try {
-      // Fetch OAuth2 configuration from backend
-      const response = await apiClient.get('/api/v2/auth/mezon/config');
-      const { client_id, auth_url, redirect_uri } = response.data;
+      const { clientId, authUrl, redirectUri } = oauthConfig;
+      if (!clientId || !authUrl || !redirectUri) {
+        throw new Error('Missing OAuth2 client configuration. Please check VITE_MEZON_* environment variables.');
+      }
 
       // Generate and store CSRF state
       const state = generateRandomState();
@@ -42,20 +48,20 @@ const Login = () => {
 
       // Build authorization URL
       const params = new URLSearchParams({
-        client_id: client_id,
-        redirect_uri: redirect_uri,
+        client_id: clientId,
+        redirect_uri: redirectUri,
         response_type: 'code',
         scope: 'openid',
         state: state
       });
 
-      const authorizationUrl = `${auth_url}?${params.toString()}`;
+      const authorizationUrl = `${authUrl}?${params.toString()}`;
 
       // Redirect to Mezon authorization page
       window.location.href = authorizationUrl;
     } catch (err) {
       console.error('Failed to initiate login:', err);
-      setError(err.response?.data?.detail || 'Failed to connect to authentication service. Please try again.');
+      setError(err.message || 'Failed to connect to authentication service. Please try again.');
       setLoading(false);
     }
   };

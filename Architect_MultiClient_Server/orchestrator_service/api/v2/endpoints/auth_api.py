@@ -73,30 +73,6 @@ class OAuth2ConfigResponse(BaseModel):
     redirect_uri: str = Field(..., description="Registered redirect URI")
 
 
-@router.get("/config", response_model=OAuth2ConfigResponse)
-async def get_oauth_config():
-    """
-    Get Mezon OAuth2 configuration for frontend.
-
-    Returns client ID and authorization URL needed to initiate OAuth2 flow.
-    Frontend uses this to build the authorization redirect URL.
-
-    Returns:
-        OAuth2ConfigResponse with client_id, auth_url, and redirect_uri
-    """
-    if not oauth2_config.client_id:
-        raise HTTPException(
-            status_code=500,
-            detail="Mezon OAuth2 is not configured. Please set MEZON_CLIENT_ID."
-        )
-
-    return OAuth2ConfigResponse(
-        client_id=oauth2_config.client_id,
-        auth_url=oauth2_config.auth_url,
-        redirect_uri=oauth2_config.redirect_uri
-    )
-
-
 @router.post("/exchange", response_model=ExchangeCodeResponse)
 async def exchange_code_for_token(request: ExchangeCodeRequest):
     """
