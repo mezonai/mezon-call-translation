@@ -57,7 +57,7 @@ export const AuthProvider = ({ children }) => {
 
               // If 401, try to refresh token
               if (error.response?.status === 401 && storedRefreshToken) {
-                const refreshed = await refreshAccessToken(storedRefreshToken);
+                const refreshed = await refreshAccessToken();
                 if (!refreshed?.accessToken) {
                   // Refresh failed, clear everything
                   localStorage.removeItem('auth');
@@ -98,10 +98,10 @@ export const AuthProvider = ({ children }) => {
     }));
   };
 
-  const refreshAccessToken = useCallback(async (refreshTokenOverride = null) => {
+  const refreshAccessToken = useCallback(async () => {
     if (!refreshPromise) {
       refreshPromise = (async () => {
-        const tokenToUse = refreshTokenOverride || refreshToken;
+        const tokenToUse = refreshToken;
         if (!tokenToUse) {
           throw new Error('Missing refresh token');
         }
