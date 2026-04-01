@@ -28,7 +28,7 @@ def _pool_connection_kwargs(cfg) -> Dict[str, Any]:
         "db": cfg.db,
         "socket_timeout": cfg.socket_timeout,
         "socket_connect_timeout": cfg.socket_connect_timeout,
-        "decode_responses": True,
+        "decode_responses": False,
     }
 
 

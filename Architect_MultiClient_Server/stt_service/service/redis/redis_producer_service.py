@@ -15,6 +15,7 @@ from stt_service.models.stream_base import (
     ProducerTaskProtocol,
     StreamTaskStatus,
 )
+from stt_service.utils.decode import decode_value, decode_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,7 @@ class RedisProducerService(Generic[T]):
                 approximate=True
             )
             
-            message_id_str = message_id.decode() if isinstance(message_id, bytes) else str(message_id)
+            message_id_str = decode_value(message_id)
             
             # Store task metadata for quick lookup
             await self._redis.hset(
@@ -192,10 +193,7 @@ class RedisProducerService(Generic[T]):
             
             # Get stats
             stats_data = await self._redis.hgetall(self._stats_key)
-            stats = {
-                k.decode(): v.decode()
-                for k, v in stats_data.items()
-            } if stats_data else {}
+            stats = decode_mapping(stats_data) if stats_data else {}
             
             # Count active workers
             workers_key = f"{self._stream_key}:workers"

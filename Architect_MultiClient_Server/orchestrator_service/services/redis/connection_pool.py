@@ -2,6 +2,7 @@
 Shared Redis Connection Pool
 
 Single ConnectionPool per process for all Redis usage (hash repos, streams, producer).
+Uses decode_responses=False so stream workflows keep raw Redis behavior.
 """
 
 from typing import Any, Dict, Optional
@@ -29,7 +30,7 @@ def _pool_connection_kwargs(cfg) -> Dict[str, Any]:
         "db": cfg.db,
         "socket_timeout": cfg.socket_timeout,
         "socket_connect_timeout": cfg.socket_connect_timeout,
-        "decode_responses": True,
+        "decode_responses": False,
     }
 
 
