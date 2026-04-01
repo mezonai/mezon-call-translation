@@ -84,7 +84,7 @@ async def api_cancel_dispatch(body: DispatchRequestModel) -> DispatchActionRespo
     except LiveKitServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/participant/{room_id}", response_model=ParticipantListResponseModel)
+@router.get("/rooms/participant/{room_id}", response_model=ParticipantListResponseModel)
 async def list_participants(room_id: str) -> ParticipantListResponseModel:
     """List participants in a room."""
     mongodb_service = MongoDBService()
