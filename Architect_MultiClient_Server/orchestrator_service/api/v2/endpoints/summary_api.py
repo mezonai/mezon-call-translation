@@ -10,7 +10,7 @@ from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
-client_router = APIRouter(prefix="/api/summary", tags=["Summary"])
+client_router = APIRouter(prefix="/summary", tags=["Summary"])
 
 @client_router.get("/room/{room_name}", response_description="Get summary by room ID")
 async def get_summary_by_room_name(

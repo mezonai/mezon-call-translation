@@ -21,7 +21,7 @@ from orchestrator_service.utils.transcript_validators import (
 )
 from bson import ObjectId
 
-router = APIRouter(prefix="/transcripts/rooms", tags=["Rooms"])
+router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
 
@@ -112,7 +112,7 @@ async def list_rooms(
 @router.get("/id/{room_id}", response_description="Get room by ID")
 async def get_room_by_id(
     room_id: str,
-    auth: AuthContext = Depends(get_auth_context)
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
 ):
     """
     Get room details by room ID.
@@ -164,7 +164,7 @@ async def get_room_by_id(
 @router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
 async def get_room_statistics_by_id(
     room_id: str,
-    auth: AuthContext = Depends(get_auth_context)
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
 ):
     """
     Get detailed statistics for a specific room by ID.
@@ -214,3 +214,67 @@ async def get_room_statistics_by_id(
         logger.error(f"Failed to get room statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/audio_info/{room_id}", response_description="Get all audio info for a room")
+async def get_audio_info(
+    room_id: str,
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
+)-> dict[str, Any]:
+    """ 
+    Get all audio info for a specific room by ID.
+    
+    - **room_id**: The ObjectId of the room
+    
+    Returns:
+    - List of audio files associated with the room
+    """
+    try:
+        mongodb = MongoDBService()
+        if not mongodb.connected:
+            await mongodb.connect()
+
+        # Check access permission for regular users
+        if not auth.can_view_all_rooms:
+            # User must have participated in this room
+            has_access = await mongodb.user_has_room_access(room_id, auth.user_id)
+            if not has_access:
+                logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have access to this room"
+                )
+            # Fetch tracks from MongoDB and build file_results
+        file_results = []
+        try:
+            tracks = await mongodb.get_tracks_by_room(room_id)
+            if not tracks:
+                raise HTTPException(status_code=404, detail=f"No tracks found for room with ID '{room_id}'")
+            
+            for track in tracks:
+                audio_info = track.get("audio_info", {})
+                
+                started_at_ns = audio_info.get("started_at_ns")
+                ended_at_ns = audio_info.get("ended_at_ns")
+                
+                file_result = {
+                    "participant_identity": track.get("participant_identity", ""),
+                    "filename": audio_info.get("filename", ""),
+                    "started_at_ns": started_at_ns,
+                    "ended_at_ns": ended_at_ns
+                }
+                file_results.append(file_result)
+                return {
+                    "status": "ok",
+                    "file_results": file_results
+        }
+        except Exception as e:
+            logger.error(f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}")
+            return {
+                "status": "error",
+                "message": f"Failed to fetch audio info for room {room_id}: {str(e)}"
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get audio info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
