@@ -2,19 +2,26 @@
 Centralized LiveKit API Client Service
 Singleton pattern for efficient connection management
 """
-from typing import Optional
+from typing import Optional, Any, Dict
 from contextlib import asynccontextmanager
 
 try:
     from livekit import api
+    from livekit.api import twirp_client
     LIVEKIT_AVAILABLE = True
 except ImportError:
     LIVEKIT_AVAILABLE = False
 
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.json_utils import safe_json_loads_object
 from orchestrator_service.config.application_config import get_config
 
 logger = get_logger(__name__)
+
+
+class LiveKitServiceError(Exception):
+    """Raised when LiveKit operations fail."""
+    pass
 
 
 class LiveKitClientService:
@@ -109,7 +116,116 @@ class LiveKitClientService:
         """Get configured agent name"""
         config = get_config()
         return config.livekit.agent_name
-    
+
+    async def list_dispatches(self, room_name: str):
+        """List all dispatches for a room."""
+        client = self.get_client()
+        try:
+            dispatches = await client.agent_dispatch.list_dispatch(room_name=room_name)
+            if not isinstance(dispatches, list):
+                raise LiveKitServiceError(
+                    f"Unexpected list_dispatch response type: {type(dispatches).__name__}"
+                )
+            return dispatches
+        except Exception as e:
+            if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
+                raise LiveKitServiceError(f"LiveKit server error: {e}")
+            if isinstance(e, LiveKitServiceError):
+                raise
+            raise LiveKitServiceError(f"Failed to list dispatches: {e}")
+
+    async def find_agent_dispatch(self, dispatches, agent_name: Optional[str] = None) -> Optional[Any]:
+        """Find dispatch by configured or provided agent name."""
+        target_agent_name = agent_name or self.get_agent_name()
+        for dispatch in dispatches:
+            if dispatch.agent_name == target_agent_name:
+                return dispatch
+        return None
+
+    async def ensure_dispatch(self, room_name: str) -> Dict[str, Any]:
+        """
+        Ensure a dispatch exists for the given room.
+        Creates one if it doesn't exist.
+        """
+        client = self.get_client()
+        agent_name = self.get_agent_name()
+
+        dispatches = await self.list_dispatches(room_name)
+        if await self.find_agent_dispatch(dispatches, agent_name):
+            return {
+                "status": "exists",
+                "message": "Dispatch already exists"
+            }
+
+        try:
+            dispatch = await client.agent_dispatch.create_dispatch(
+                api.CreateAgentDispatchRequest(
+                    agent_name=agent_name,
+                    room=room_name
+                )
+            )
+            return {
+                "status": "created",
+                "dispatch": dispatch
+            }
+        except Exception as e:
+            if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
+                raise LiveKitServiceError(f"LiveKit server error: {e}")
+            raise LiveKitServiceError(f"Failed to create dispatch: {e}")
+
+    async def cancel_dispatch(self, room_name: str) -> Dict[str, Any]:
+        """Cancel an existing dispatch for the given room."""
+        client = self.get_client()
+        agent_name = self.get_agent_name()
+
+        dispatches = await self.list_dispatches(room_name)
+        target_dispatch = await self.find_agent_dispatch(dispatches, agent_name)
+
+        if not target_dispatch:
+            return {
+                "status": "not_found",
+                "message": f"No active dispatch found for agent '{agent_name}'"
+            }
+
+        try:
+            await client.agent_dispatch.delete_dispatch(
+                target_dispatch.id,
+                target_dispatch.room,
+            )
+            return {
+                "status": "cancelled",
+                "message": f"Dispatch for agent '{target_dispatch.agent_name}' has been cancelled.",
+                "dispatch": target_dispatch,
+            }
+        except Exception as e:
+            if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
+                raise LiveKitServiceError(f"Failed to cancel dispatch: {e}")
+            raise LiveKitServiceError(f"Failed to cancel dispatch: {e}")
+
+    async def list_participants(self, room_name: str):
+        """List participants in a room."""
+        client = self.get_client()
+        try:
+            response = await client.room.list_participants(
+                api.ListParticipantsRequest(room=room_name)
+            )
+            return [
+                {
+                    "identity": p.identity,
+                    "name": p.name,
+                    "state": api.ParticipantInfo.State.Name(p.state),
+                    "joined_at": p.joined_at,
+                    "metadata": safe_json_loads_object(p.metadata),
+                }
+                for p in response.participants
+            ]
+        except Exception as e:
+            if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
+                raise LiveKitServiceError(f"Failed to list participants: {e}")
+            if isinstance(e, LiveKitServiceError):
+                raise
+            raise LiveKitServiceError(f"Failed to list participants: {e}")
+
     async def cleanup(self):
         """Cleanup LiveKit client connection"""
         if self._client:
