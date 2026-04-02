@@ -73,10 +73,26 @@ class SendChatMessagePayload(BaseModel):
             }
         }
 
+class StartAudioRecordingPayload(BaseModel):
+    """Payload for start_audio_recording request"""
+    request_type: Literal[AgentRequestType.START_AUDIO_RECORDING]
+    track_id: str = Field(..., description="LiveKit track ID to record (e.g., from a TrackPublished event)")
+    file_output_path: str = Field(..., description="File path to save the recorded audio (e.g., s3://bucket/recordings/agent123_track456.wav)")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "request_type": "start_audio_recording",
+                "track_id": "livekit_track_id_123",
+                "file_output_path": "s3://my-bucket/recordings/agent123_track456.wav"
+            }
+        }
+
 
 # Discriminated Union of all payload types
 AgentRequestPayload = Union[
     TranscriptControlPayload,
     TtsPlayPayload,
-    SendChatMessagePayload
+    SendChatMessagePayload,
+    StartAudioRecordingPayload
 ]

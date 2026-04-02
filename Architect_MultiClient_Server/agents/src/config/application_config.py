@@ -343,6 +343,81 @@ class TTSConfig:
             return False
         return True
 
+
+# ============================================================================
+# MinIO / S3 Configuration
+# ============================================================================
+
+@dataclass
+class MinIOConfig:
+    """MinIO/S3 configuration for audio recording upload."""
+    endpoint: str = ""
+    access_key: str = ""
+    secret_key: str = ""
+    bucket: str = ""
+    region: str = "us-east-1"
+    secure: bool = False
+    force_path_style: bool = True
+
+    @classmethod
+    def from_env(cls) -> 'MinIOConfig':
+        """Create MinIO config from environment variables."""
+        return cls(
+            endpoint=os.getenv('MINIO_ENDPOINT', ''),
+            access_key=os.getenv('MINIO_ACCESS_KEY', ''),
+            secret_key=os.getenv('MINIO_SECRET_KEY', ''),
+            bucket=os.getenv('MINIO_BUCKET', ''),
+            region=os.getenv('MINIO_REGION', 'us-east-1'),
+            secure=bool(int(os.getenv('MINIO_SECURE', '0'))),
+            force_path_style=bool(int(os.getenv('MINIO_FORCE_PATH_STYLE', '1'))),
+        )
+
+    def is_configured(self) -> bool:
+        """Check if required credentials are present."""
+        return bool(self.endpoint and self.access_key and self.secret_key and self.bucket)
+
+
+# ============================================================================
+# Audio Recording Upload Configuration
+# ============================================================================
+
+@dataclass
+class RecordingUploadConfig:
+    """Chunking and multipart upload behavior for track recording."""
+    enabled: bool = True
+    part_size_mb: int = 8
+    max_retries: int = 3
+    ffmpeg_path: str = "ffmpeg"
+    opus_bitrate_kbps: int = 32
+
+    @classmethod
+    def from_env(cls) -> 'RecordingUploadConfig':
+        """Create recording upload config from environment variables."""
+        return cls(
+            enabled=bool(int(os.getenv('RECORDING_UPLOAD_ENABLED', '1'))),
+            part_size_mb=int(os.getenv('RECORDING_UPLOAD_PART_SIZE_MB', '8')),
+            max_retries=int(os.getenv('RECORDING_UPLOAD_MAX_RETRIES', '3')),
+            ffmpeg_path=os.getenv('RECORDING_FFMPEG_PATH', 'ffmpeg'),
+            opus_bitrate_kbps=int(os.getenv('RECORDING_OPUS_BITRATE_KBPS', '32')),
+        )
+
+    @property
+    def part_size_bytes(self) -> int:
+        return self.part_size_mb * 1024 * 1024
+
+    def validate(self) -> bool:
+        """Validate upload chunk settings.
+
+        S3 multipart requires each non-final part >= 5MB.
+        """
+        if self.part_size_mb < 5:
+            return False
+        if self.max_retries < 0:
+            return False
+        if self.opus_bitrate_kbps <= 0:
+            return False
+        return True
+
 # ============================================================================
 # Logger Configuration
 # ============================================================================
@@ -391,6 +466,8 @@ class Config:
         self.livekit = LiveKitConfig.from_env()
         self.orchestrator = OrchestratorConfig.from_env()
         self.tts_service = TTSConfig.from_env()
+        self.minio = MinIOConfig.from_env()
+        self.recording_upload = RecordingUploadConfig.from_env()
         self.logger = LoggerConfig.from_env()
         
         self._initialized = True
@@ -410,6 +487,8 @@ class Config:
             raise ValueError("Invalid orchestrator configuration")
         if not self.tts_service.validate():
             raise ValueError("Invalid TTS service configuration")
+        if not self.recording_upload.validate():
+            raise ValueError("Invalid recording upload configuration")
     
     @classmethod
     def get_instance(cls) -> 'Config':

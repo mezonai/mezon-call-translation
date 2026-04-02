@@ -13,6 +13,7 @@ from src.core.transcript_manager import TranscriptManager
 from src.logger import get_logger
 from src.core.vad_processor import RealTimeVADProcessor
 from src.core.agent_control_state import AgentControlState
+from src.services.audio_recording_manager import AudioRecordingManager
 from src.utils.participant_identity import parse_participant_identity
 
 
@@ -22,20 +23,110 @@ logger = get_logger(__name__)
 class EventHandlers:
     """Handles room events: track subscription, participant disconnect, audio streaming"""
     
-    def __init__(self, ctx, transcript_manager: TranscriptManager, control_state: AgentControlState, agent_manager=None):
+    def __init__(
+        self,
+        ctx,
+        transcript_manager: TranscriptManager,
+        control_state: AgentControlState,
+        recording_manager: AudioRecordingManager,
+        agent_manager=None,
+    ):
         self.ctx = ctx
         self.transcript_manager = transcript_manager
         self.control_state = control_state
+        self.recording_manager = recording_manager
         self.agent_manager = agent_manager
         self.active_clients = {}  # {participant_id: WebSocketClient}
         self.transcription_tasks = {}  # {speaker_id: asyncio.Task}
         self.pending_tracks = {}  # {speaker_id: (track, publication, participant)}
+        self.track_index = {}  # {track_id: (speaker_id, track, publication, participant)}
+        self.recording_tasks = {}  # {track_id: asyncio.Task}
         self.cleanup_lock = asyncio.Lock()
         self.logger = get_logger("event_handlers")
 
     def session_id_from_room(self) -> str:
         """Generate unique session ID from room metadata"""
-        return self.ctx.room.name or self.ctx.room.sid or f"room_{int(time.time())}"
+        return self.ctx.room.name
+
+    @staticmethod
+    def _track_id_from_publication(track: rtc.Track, publication: rtc.TrackPublication) -> str:
+        """Best-effort extraction of stable track id for request routing."""
+        publication_sid = getattr(publication, "sid", None)
+        if publication_sid:
+            return publication_sid
+        track_sid = getattr(track, "sid", None)
+        if track_sid:
+            return track_sid
+        return ""
+
+    async def has_track(self, track_id: str) -> bool:
+        """Check whether a track is currently known by the agent."""
+        async with self.cleanup_lock:
+            return track_id in self.track_index
+
+    async def start_audio_recording(self, track_id: str, file_output_path: str) -> bool:
+        """Start track recording and ensure there is an audio source feeding uploader."""
+        async with self.cleanup_lock:
+            track_context = self.track_index.get(track_id)
+
+        if not track_context:
+            logger.warning(f"Track '{track_id}' not found, cannot start recording")
+            return False
+
+        started = await self.recording_manager.start_recording(track_id, file_output_path)
+        if not started:
+            return False
+
+        speaker_id, track, publication, participant = track_context
+
+        async with self.cleanup_lock:
+            has_recording_task = track_id in self.recording_tasks
+
+            if has_recording_task:
+                return True
+            
+            task = asyncio.create_task(
+                self._manage_track_recording(track_id, track, publication, participant),
+                name=f"recording-{track_id}",
+            )
+            self.recording_tasks[track_id] = task
+
+        logger.info(f"Started dedicated recording stream task for track={track_id}")
+        return True
+
+    async def _manage_track_recording(
+        self,
+        track_id: str,
+        track: rtc.RemoteAudioTrack,
+        publication: rtc.TrackPublication,
+        participant: rtc.RemoteParticipant,
+    ):
+        """Recording-only stream path used when transcription task is not active."""
+        speaker_id = self._speaker_id_from_publication(participant, publication)
+        logger.info(f"Starting recording-only stream for {speaker_id} (track={track_id})")
+
+        try:
+            stream = rtc.AudioStream.from_track(
+                track=track,
+                sample_rate=SAMPLE_RATE,
+                num_channels=CHANNELS,
+            )
+
+            async for event in stream:
+                if not await self.recording_manager.has_active_recording(track_id):
+                    break
+                await self.recording_manager.append_audio(track_id, bytes(event.frame.data))
+
+        except asyncio.CancelledError:
+            logger.info(f"Recording-only task cancelled for track={track_id}")
+            raise
+        except Exception as e:
+            logger.error(f"Error in recording-only stream for track={track_id}: {e}")
+        finally:
+            await self.recording_manager.stop_recording(track_id)
+            async with self.cleanup_lock:
+                self.recording_tasks.pop(track_id, None)
+            logger.info(f"Recording-only stream ended for track={track_id}")
 
     def create_transcription_callback(self, participant_identity: str):
         """Factory to create callback for processing transcripts from Vosk server"""
@@ -137,10 +228,11 @@ class EventHandlers:
                     break
                 
                 frame = event.frame
+                frame_bytes = bytes(frame.data)
                 
                 # Convert bytes -> float32 [-1.0, 1.0] cho VAD processing
                 audio_data = np.frombuffer(
-                    bytes(frame.data), 
+                    frame_bytes,
                     dtype=np.int16
                 ).astype(np.float32) / 32767.0
                 
@@ -275,11 +367,14 @@ class EventHandlers:
         """Handle new audio track subscription"""
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             speaker_id = self._speaker_id_from_publication(participant, publication)
+            track_id = self._track_id_from_publication(track, publication)
             logger.info(f"New audio track from {speaker_id} (registered; gated)")
 
             async def register_and_maybe_start():
                 async with self.cleanup_lock:
                     self.pending_tracks[speaker_id] = (track, publication, participant)
+                    if track_id:
+                        self.track_index[track_id] = (speaker_id, track, publication, participant)
                 enabled = await self.control_state.get_transcription_enabled()
                 if enabled:
                     await self._start_transcription_for_speaker_id(speaker_id)
@@ -295,60 +390,93 @@ class EventHandlers:
         """Cleanup khi unsubscribe track"""
         if getattr(track, "kind", None) == rtc.TrackKind.KIND_AUDIO:
             pid = self._speaker_id_from_publication(participant, publication)
+            track_id = self._track_id_from_publication(track, publication)
             logger.info(f"Audio track unsubscribed for {pid}")
             
             async def cleanup_client():
+                client = None
+                transcription_task = None
+                recording_task = None
+
                 async with self.cleanup_lock:
                     self.pending_tracks.pop(pid, None)
-                    client = self.active_clients.get(pid)
-                    if client:
-                        await client.disconnect()
-                        self.active_clients.pop(pid, None)
-                        logger.info(f"Cleaned up client for {pid}")
-                    task = self.transcription_tasks.pop(pid, None)
-                    if task:
-                        task.cancel()
+                    client = self.active_clients.pop(pid, None)
+                    transcription_task = self.transcription_tasks.pop(pid, None)
+                    if track_id:
+                        self.track_index.pop(track_id, None)
+                        recording_task = self.recording_tasks.pop(track_id, None)
+
+                if client:
+                    await client.disconnect()
+                    logger.info(f"Cleaned up client for {pid}")
+
+                if transcription_task:
+                    transcription_task.cancel()
+
+                if recording_task:
+                    recording_task.cancel()
+
+                wait_tasks = [
+                    task for task in (transcription_task, recording_task)
+                    if task is not None
+                ]
+                if wait_tasks:
+                    await asyncio.gather(*wait_tasks, return_exceptions=True)
             
             asyncio.create_task(cleanup_client())
 
     def on_participant_disconnected(self, participant: rtc.RemoteParticipant):
         """Cleanup khi participant rời room"""
-        pid = participant.identity
+        participant_identity = participant.identity
+        pid = parse_participant_identity(participant_identity)
         logger.info(f"Participant {pid} disconnected")
         
         async def cleanup_participant():
+            clients_to_disconnect = []
+            transcription_tasks = []
+            recording_tasks = []
+
             async with self.cleanup_lock:
-                client = self.active_clients.get(pid)
-                if client:
-                    await client.disconnect()
-                    self.active_clients.pop(pid, None)
-                    logger.info(f"Cleaned up disconnected participant {pid}")
-                
                 # Cleanup pending tracks and tasks for this participant
                 self.pending_tracks.pop(pid, None)
-                task = self.transcription_tasks.pop(pid, None)
-                if task:
-                    task.cancel()
-            
-            # # Check the number of remaining remote participants
-            # remaining_participants = len(self.ctx.room.remote_participants)
-            # logger.info(f"Remaining remote participants: {remaining_participants}")
-            
-            # # If no one is left in the room, the agent will disconnect
-            # if remaining_participants == 0:
-            #     logger.info("No participants remaining in room, agent disconnecting...")
-            #     try:
-            #         await self.ctx.room.disconnect()
-            #         logger.info("Agent successfully disconnected from room")
-            #     except Exception as e:
-            #         logger.error(f"Error disconnecting agent from room: {e}")
+                self.pending_tracks.pop(f"{pid}-screen", None)
+
+                for key in (pid, f"{pid}-screen", participant_identity):
+                    client = self.active_clients.pop(key, None)
+                    if client:
+                        clients_to_disconnect.append((key, client))
+
+                    task = self.transcription_tasks.pop(key, None)
+                    if task:
+                        transcription_tasks.append(task)
+
+                for track_id, (_, _, _, track_participant) in list(self.track_index.items()):
+                    if getattr(track_participant, "identity", "") == participant_identity:
+                        self.track_index.pop(track_id, None)
+                        rec_task = self.recording_tasks.pop(track_id, None)
+                        if rec_task:
+                            recording_tasks.append(rec_task)
+
+            for key, client in clients_to_disconnect:
+                await client.disconnect()
+                logger.info(f"Cleaned up disconnected participant client {key}")
+
+            for task in transcription_tasks:
+                task.cancel()
+
+            for task in recording_tasks:
+                task.cancel()
+
+            wait_tasks = transcription_tasks + recording_tasks
+            if wait_tasks:
+                await asyncio.gather(*wait_tasks, return_exceptions=True)
         
         asyncio.create_task(cleanup_participant())
 
     async def safe_disconnect_all(self):
         """Disconnect all clients with timeout protection"""
         async with self.cleanup_lock:
-            if not self.active_clients:
+            if not self.active_clients and not self.recording_tasks:
                 return
                 
             logger.info(f"Disconnecting {len(self.active_clients)} active clients")
@@ -368,6 +496,12 @@ class EventHandlers:
                     )
                 except asyncio.TimeoutError:
                     logger.warning("Some clients took too long to disconnect")
-                    
+
+            for task in self.recording_tasks.values():
+                task.cancel()
+
             self.active_clients.clear()
-            logger.info("All clients disconnected")
+            self.recording_tasks.clear()
+
+        await self.recording_manager.stop_all_recordings()
+        logger.info("All clients disconnected")

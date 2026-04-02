@@ -3,6 +3,8 @@ LiveKit Agent entrypoint - Starts Vosk transcription agent + TTS
 """
 import asyncio
 from dotenv import load_dotenv
+
+from src.services.audio_recording_manager import AudioRecordingManager
 load_dotenv()
 
 from livekit import agents, api
@@ -51,7 +53,8 @@ async def entrypoint(ctx: agents.JobContext):
     session_id = ctx.room.name
     transcript_manager = TranscriptManager(ctx)
     control_state = AgentControlState(transcription_enabled=False)
-    event_handlers = EventHandlers(ctx, transcript_manager, control_state=control_state)
+    recording_manager = AudioRecordingManager()
+    event_handlers = EventHandlers(ctx, transcript_manager, control_state=control_state, recording_manager=recording_manager)
     
     # Register event handlers
     ctx.room.on("track_subscribed", event_handlers.on_track_subscribed)
