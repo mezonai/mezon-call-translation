@@ -21,7 +21,7 @@ from orchestrator_service.utils.transcript_validators import (
 )
 from bson import ObjectId
 
-router = APIRouter(prefix="/transcripts/rooms", tags=["Rooms"])
+router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
 

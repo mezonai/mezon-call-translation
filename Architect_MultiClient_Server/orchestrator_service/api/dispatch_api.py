@@ -4,7 +4,7 @@ from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException
 import httpx
 from pydantic import BaseModel
-from orchestrator_service.services.mongodb_service import MongoDBService
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.services.livekit_client import get_livekit_service, LiveKitServiceError
 
