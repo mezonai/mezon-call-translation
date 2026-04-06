@@ -2,6 +2,7 @@
 Room Registry API - Manager active rooms for webhook processing
 """
 import asyncio
+import datetime
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
@@ -94,9 +95,12 @@ async def register_room(
             )
             
             logger.info(f"Found {len(participants_response.participants)} participants")
-            
+            participants_data = []
             for participant in participants_response.participants:
-                await transcription_service.save_participant(room_id=stt_room_id, participant_identity=participant.identity)
+                participants_data.append({
+                    "participant_identity": participant.identity,
+                    "timestamp": datetime.now()
+                })
                 for track in participant.tracks:
                     # Check if audio track
                     is_audio = track.type == 0 or track.source == 4
@@ -123,7 +127,12 @@ async def register_room(
                             )
                         )
                         tracks_started += 1
-            
+
+            # Save all participants at once
+            if participants_data:
+                await transcription_service.save_participants_batch(stt_room_id, participants_data)
+
+
             logger.info(f"Started {tracks_started} audio track recordings")
         else:
             logger.warning("LiveKit API not available")

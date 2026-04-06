@@ -6,7 +6,7 @@ MongoDB service for storing STT records:
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -576,6 +576,89 @@ class MongoDBService:
         except Exception as e:
             logger.error(f"❌ Error adding participant: {e}")
             return False
+
+    async def save_batch_participants(
+        self,
+        room_id: Any,
+        participants: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Add multiple participants to a room in batch, ensuring uniqueness.
+        """
+        try:
+            if not participants:
+                return {"success": True, "added_count": 0, "skipped_count": 0}
+            
+            # Get room and existing participants (1 query)
+            room = await self.rooms_collection.find_one(
+                {"_id": room_id},
+                {"participants": 1}
+            )
+            
+            if not room:
+                logger.error(f"❌ Room {room_id} not found")
+                return {"success": False, "added_count": 0, "skipped_count": 0}
+            
+            # Get existing participant identities
+            existing_participants = room.get("participants", [])
+            existing_identities: Set[str] = {
+                p["participant_identity"] 
+                for p in existing_participants
+            }
+            
+            # Filter out duplicates (both in existing and in input batch)
+            seen_in_batch: Set[str] = set()
+            participants_to_add = []
+            skipped_count = 0
+            
+            for p in participants:
+                identity = p.get("participant_identity")
+                
+                if not identity:
+                    skipped_count += 1
+                    continue
+                
+                # Skip if already exists in room or already seen in this batch
+                if identity in existing_identities or identity in seen_in_batch:
+                    skipped_count += 1
+                    continue
+                
+                seen_in_batch.add(identity)
+                participants_to_add.append({
+                    "participant_identity": identity,
+                    "timestamp": p.get("timestamp", datetime.utcnow())
+                })
+            
+            # Insert all new participants at once (1 query)
+            if participants_to_add:
+                result = await self.rooms_collection.update_one(
+                    {"_id": room_id},
+                    {"$push": {"participants": {"$each": participants_to_add}}}
+                )
+                
+                added_count = len(participants_to_add) if result.modified_count > 0 else 0
+                
+                logger.info(
+                    f"✅ Batch save to room {room_id}: "
+                    f"Added {added_count}, Skipped {skipped_count}"
+                )
+                
+                return {
+                    "success": True,
+                    "added_count": added_count,
+                    "skipped_count": skipped_count
+                }
+            else:
+                logger.info(f"ℹ️  No new participants to add to room {room_id}")
+                return {
+                    "success": True,
+                    "added_count": 0,
+                    "skipped_count": skipped_count
+                }
+                
+        except Exception as e:
+            logger.error(f"❌ Error in save_batch_participants: {e}")
+            return {"success": False, "added_count": 0, "skipped_count": 0}
 
 
     async def check_event_record_done(
