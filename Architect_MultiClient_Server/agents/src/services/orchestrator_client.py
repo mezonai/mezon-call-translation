@@ -41,7 +41,8 @@ class OrchestratorClient:
         self._request_handlers: Dict[str, Callable] = {}
         self._agent_id: Optional[str] = None
         self._room_name: Optional[str] = None
-    
+        
+        
     @classmethod
     def get_instance(cls) -> 'OrchestratorClient':
         """Get singleton instance (thread-safe)"""
@@ -98,7 +99,7 @@ class OrchestratorClient:
         if not self._http_client or self._http_client.is_closed:
             await self.start()
         
-        url = f"{self.config.orchestrator.base_url}/api/room-registry/register"
+        url = f"{self.config.orchestrator.base_url}/api/v2/room-registry/register"
         
         payload = {
             "room_name": room_name
@@ -106,7 +107,7 @@ class OrchestratorClient:
         
         headers = {}
         if self.config.orchestrator.api_key:
-            headers["X-API-Key"] = self.config.orchestrator.api_key
+            headers["Authorization"] = f"Bearer {self.config.orchestrator.api_key}"
         
         try:
             response = await self._http_client.post(url, json=payload, headers=headers)
@@ -169,7 +170,7 @@ class OrchestratorClient:
         if not self._http_client or self._http_client.is_closed:
             await self.start()
         
-        url = f"{self.config.orchestrator.base_url}/api/room-registry/unregister"
+        url = f"{self.config.orchestrator.base_url}/api/v2/room-registry/unregister"
         
         payload = {
             "room_name": room_name
@@ -228,7 +229,7 @@ class OrchestratorClient:
         if not self._http_client or self._http_client.is_closed:
             await self.start()
         
-        url = f"{self.config.orchestrator.base_url}/api/agent_push_chat_external"
+        url = f"{self.config.orchestrator.base_url}/api/v2/agent_push_chat_external"
         
         payload = {
             "room_name": room_name,
@@ -239,9 +240,13 @@ class OrchestratorClient:
         
         if time_str:
             payload["time"] = time_str
-        
+
+        headers = {}
+        if self.config.orchestrator.api_key:
+            headers["Authorization"] = f"Bearer {self.config.orchestrator.api_key}"
+
         try:
-            response = await self._http_client.post(url, json=payload)
+            response = await self._http_client.post(url, json=payload, headers=headers)
             if response.status_code in [200, 201]:
                 result = response.json()
                 broadcast_count = result.get("broadcast_to", 0)
@@ -274,16 +279,20 @@ class OrchestratorClient:
         try:
             import time
             start_time = time.time()
-            url = f"{self.config.orchestrator.base_url}/api/push_transcript"
+            url = f"{self.config.orchestrator.base_url}/api/v2/push_transcript"
             payload = {
-                    "room_name": room_name, 
-                    "message": text, 
-                    "message_type": type, 
+                    "room_name": room_name,
+                    "message": text,
+                    "message_type": type,
                     "participant_identity": participant_identity
                 }
+            headers = {}
+            if self.config.orchestrator.api_key:
+                headers["Authorization"] = f"Bearer {self.config.orchestrator.api_key}"
             resp = await self._http_client.post(
                 url,
                 json=payload,
+                headers=headers,
                 timeout=1.0
             )
             self.logger.debug(
@@ -308,14 +317,18 @@ class OrchestratorClient:
     ) -> bool:
         """Send agent joined event to API server"""
         try:
-            url = f"{self.config.orchestrator.base_url}/api/push_metadata/session_started"
+            url = f"{self.config.orchestrator.base_url}/api/v2/push_metadata/session_started"
             payload = {
                 "room_name": room_name,
                 "room_id": room_id,
             }
+            headers = {}
+            if self.config.orchestrator.api_key:
+                headers["Authorization"] = f"Bearer {self.config.orchestrator.api_key}"
             resp = await self._http_client.post(
                 url,
-                json=payload
+                json=payload,
+                headers=headers
             )
             self.logger.info(
                 f"[API] Pushed agent joined event (room={room_name}), "
@@ -334,17 +347,22 @@ class OrchestratorClient:
     ) -> bool:
         """Send session ended event to API server"""
         try:
-            url = f"{self.config.orchestrator.base_url}/api/push_metadata/session_ended"
+            url = f"{self.config.orchestrator.base_url}/api/v2/push_metadata/session_ended"
             payload = {
                 "room_name": room_name,
                 "room_id": room_id,
             }
             if duration_seconds is not None:
                 payload["duration_seconds"] = duration_seconds
-            
+
+            headers = {}
+            if self.config.orchestrator.api_key:
+                headers["Authorization"] = f"Bearer {self.config.orchestrator.api_key}"
+
             resp = await self._http_client.post(
                 url,
-                json=payload
+                json=payload,
+                headers=headers
             )
             self.logger.info(
                 f"[API] Pushed session ended event (room={room_name}), "
@@ -448,19 +466,23 @@ class OrchestratorClient:
                     await self.start()
                 
                 # Build SSE endpoint URL
-                url = f"{self.config.orchestrator.base_url}/api/sse/agent-requests"
+                url = f"{self.config.orchestrator.base_url}/api/v2/sse/agent-requests"
                 params = {"agent_id": self._agent_id}
                 if self._room_name:
                     params["room_name"] = self._room_name
-                
-            
+
+                headers = {}
+                if self.config.orchestrator.api_key:
+                    headers["Authorization"] = f"Bearer {self.config.orchestrator.api_key}"
+
                 self.logger.info(f"[SSE] Connecting to orchestrator: {url}")
-                
+
                 # Connect to SSE endpoint (streaming)
                 async with self._http_client.stream(
                     "GET",
                     url,
                     params=params,
+                    headers=headers,
                     timeout=None  # No timeout for SSE
                 ) as response:
                     if response.status_code != 200:
