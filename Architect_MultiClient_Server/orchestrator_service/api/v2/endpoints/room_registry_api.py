@@ -2,7 +2,8 @@
 Room Registry API - Manager active rooms for webhook processing
 """
 import asyncio
-import datetime
+from datetime import datetime
+
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
@@ -99,7 +100,7 @@ async def register_room(
             for participant in participants_response.participants:
                 participants_data.append({
                     "participant_identity": participant.identity,
-                    "timestamp": datetime.now()
+                    "timestamp": datetime.utcnow()
                 })
                 for track in participant.tracks:
                     # Check if audio track

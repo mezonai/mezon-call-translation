@@ -607,7 +607,6 @@ class MongoDBService:
             }
             
             # Filter out duplicates (both in existing and in input batch)
-            seen_in_batch: Set[str] = set()
             participants_to_add = []
             skipped_count = 0
             
@@ -619,11 +618,10 @@ class MongoDBService:
                     continue
                 
                 # Skip if already exists in room or already seen in this batch
-                if identity in existing_identities or identity in seen_in_batch:
+                if identity in existing_identities:
                     skipped_count += 1
                     continue
-                
-                seen_in_batch.add(identity)
+            
                 participants_to_add.append({
                     "participant_identity": identity,
                     "timestamp": p.get("timestamp", datetime.utcnow())
@@ -1307,7 +1305,7 @@ class MongoDBService:
         """
 
         try:
-            # Build match condition trực tiếp trên rooms
+            # Build match condition to filter rooms where user is a participant
             match = {
                 "participants.participant_identity": user_id
             }
