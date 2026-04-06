@@ -27,7 +27,7 @@ export const refreshAuthTokens = async (refreshToken) => {
     throw new Error('Missing refresh token');
   }
 
-  const response = await apiClient.post('/api/v2/auth/mezon/refresh', {
+  const response = await apiClient.post('/api/v2/auth/refresh', {
     refresh_token: refreshToken
   });
 
@@ -40,7 +40,7 @@ export const logoutSession = async (accessToken, refreshToken) => {
   }
 
   const response = await apiClient.post(
-    '/api/v2/auth/mezon/logout',
+    '/api/v2/auth/logout',
     { refresh_token: refreshToken },
     { headers: { 'Authorization': `Bearer ${accessToken}` } }
   );

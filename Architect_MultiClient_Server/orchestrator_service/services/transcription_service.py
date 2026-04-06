@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Dict
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
@@ -168,6 +169,31 @@ class TranscriptionService:
 
         return None
     
+    async def save_participant(self, room_id: str, participant_identity: str, timestamp: datetime = None) -> bool:
+        """
+        Save participant info to MongoDB
+        
+        Args:
+            room_id: Room ID
+            participant_identity: Participant identity
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not self.mongodb_service.connected:
+                await self.mongodb_service.connect()
+            room_id = ObjectId(room_id)
+            result = await self.mongodb_service.save_participant(
+                room_id=room_id,
+                participant_identity=participant_identity,
+                timestamp=timestamp
+            )
+            return result
+        except Exception as e:
+            logger.exception(f"Failed to save participant: {e}")
+            return False
+
 
     async def save_track_metadata(
         self, 

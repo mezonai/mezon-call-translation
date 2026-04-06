@@ -96,10 +96,10 @@ async def register_room(
             logger.info(f"Found {len(participants_response.participants)} participants")
             
             for participant in participants_response.participants:
+                await transcription_service.save_participant(room_id=stt_room_id, participant_identity=participant.identity)
                 for track in participant.tracks:
                     # Check if audio track
                     is_audio = track.type == 0 or track.source == 4
-                    
                     if is_audio:
                         source_str = {
                             4: "SCREEN_SHARE_AUDIO",
