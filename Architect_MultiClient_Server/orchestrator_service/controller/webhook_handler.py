@@ -54,6 +54,7 @@ class WebhookHandler:
         
         
         handlers = {
+            "participant_joined": self._handle_participant_joined,
             "track_published": self._handle_track_published,
             "track_unpublished": self._handle_track_unpublished,
             "egress_started": self._handle_egress_started,
@@ -67,6 +68,18 @@ class WebhookHandler:
         
         logger.info(f"  (ignored)")
         return WebhookResponse(received=True, action="ignored")
+    
+    async def _handle_participant_joined(self, event: Dict) -> WebhookResponse:
+        """Handle when a participant joins - currently just logs the event"""
+        room_name = event.get("room", {}).get("name", "unknown")
+        identity = event.get("participant", {}).get("identity", "unknown")
+        room_id = await self.room_registry.get_room_id(room_name)
+        await self.transcription_service.save_participant(room_id, identity)
+
+        logger.info(f"  Room: {room_name}")
+        logger.info(f"  Participant joined: {identity}")
+        
+        return WebhookResponse(received=True, action="participant_joined_logged")
     
     async def _handle_track_published(self, event: Dict) -> WebhookResponse:
         """Handle when a track is published"""
