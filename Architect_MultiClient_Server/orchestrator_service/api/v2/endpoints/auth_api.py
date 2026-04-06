@@ -50,7 +50,7 @@ logger.info(f"  - Client Secret: {'configured' if oauth2_config.client_secret el
 logger.info(f"  - Redirect URI: {oauth2_config.redirect_uri}")
 
 # Router
-router = APIRouter(prefix="/auth/mezon", tags=["Authentication"])
+router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 # Request/Response Models
@@ -73,7 +73,7 @@ class OAuth2ConfigResponse(BaseModel):
     redirect_uri: str = Field(..., description="Registered redirect URI")
 
 
-@router.post("/exchange", response_model=ExchangeCodeResponse)
+@router.post("/mezon/exchange", response_model=ExchangeCodeResponse)
 async def exchange_code_for_token(request: ExchangeCodeRequest):
     """
     Exchange authorization code for JWT token.
@@ -271,7 +271,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
         )
 
 
-@router.get("/userinfo")
+@router.get("/mezon/userinfo")
 async def get_current_user(user: Dict[str, Any] = Depends(verify_jwt)):
     """
     Get information about the currently authenticated user.
@@ -339,10 +339,8 @@ class BotLoginRequest(BaseModel):
 class BotLoginResponse(BaseModel):
     access_token: str = Field(..., description="JWT access token for bot session")
     refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
-    api_url: str = Field(..., description="Mezon API URL")
-    ws_url: str = Field(..., description="Mezon WebSocket URL")
-    mezon_token: str = Field(..., description="Mezon JWT token")
-    mezon_refresh_token: str = Field(..., description="Mezon refresh token")
+    token_type: str = Field(default="Bearer", description="Token type")
+    expires_in: int = Field(..., description="Access token expiry in seconds")
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
@@ -506,7 +504,7 @@ async def logout(
         )
 
 
-@router.post("/bot/login", response_model=BotLoginResponse)
+@router.post("/mezon/bot/login", response_model=BotLoginResponse)
 async def bot_login(request: BotLoginRequest):
     """
     Authenticate a bot account with Mezon and generate JWT tokens.
@@ -539,11 +537,7 @@ async def bot_login(request: BotLoginRequest):
             )
 
         # Extract authentication data
-        mezon_token = auth_result["token"]
-        mezon_refresh_token = auth_result["refresh_token"]
         user_id = auth_result["user_id"]
-        api_url = auth_result["api_url"]
-        ws_url = auth_result["ws_url"]
         payload = auth_result["payload"]
 
         # Extract user info from JWT payload
@@ -605,15 +599,17 @@ async def bot_login(request: BotLoginRequest):
             device_info=None
         )
 
+        # Calculate token expiry in seconds (for frontend)
+        token_expiry = get_token_expiry(access_token)
+        expires_in = int((token_expiry - datetime.now(timezone.utc)).total_seconds())
+
         logger.info(f"✅ Bot authenticated: user_id={user_id}, username={username}")
 
         return BotLoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
-            api_url=api_url,
-            ws_url=ws_url,
-            mezon_token=mezon_token,
-            mezon_refresh_token=mezon_refresh_token
+            token_type="Bearer",
+            expires_in=expires_in
         )
 
     except HTTPException:
