@@ -33,7 +33,6 @@ class MongoDBService:
         self.tracks_collection_name = "tracks"
         self.chunks_collection_name = "transcript_chunks"
         self.summary_collection_name = "rooms_summary"
-        self.segments_collection_name = "room_segments"
         self.events_collection_name = "metadata_events"
 
         self.client: Optional[AsyncIOMotorClient] = None
@@ -42,7 +41,6 @@ class MongoDBService:
         self.tracks_collection = None
         self.chunks_collection = None
         self.summary_collection = None
-        self.segments_collection = None
         self.events_collection = None
         self.connected = False
 
@@ -82,7 +80,6 @@ class MongoDBService:
             self.tracks_collection = self.db[self.tracks_collection_name]
             self.chunks_collection = self.db[self.chunks_collection_name]
             self.summary_collection = self.db[self.summary_collection_name]
-            self.segments_collection = self.db[self.segments_collection_name]
             self.events_collection = self.db[self.events_collection_name]
 
             # Test connection
@@ -916,41 +913,6 @@ class MongoDBService:
     # 📝 ROOM SUMMARY QUERIES
     # ========================================
 
-    async def save_room_segments(self, room_id: str, segments: List[Dict[str, Any]]) -> Optional[str]:
-        """Save processed segments for a room (before summary generation)"""
-        try:
-            if not room_id or not segments:
-                return None
-
-            segment_doc = {
-                "room_id": room_id,
-                "segments": segments,
-                "created_at": datetime.utcnow(),
-                "count": len(segments)
-            }
-
-            result = await self.segments_collection.update_one(
-                {"room_id": room_id},
-                {"$set": segment_doc},
-                upsert=True
-            )
-
-            if result.upserted_id:
-                logger.info(f"✅ Saved {len(segments)} segments for room {room_id}")
-                return str(result.upserted_id)
-
-            # If updated an existing document, we need to find its ID
-            if result.matched_count > 0:
-                doc = await self.segments_collection.find_one({"room_id": room_id}, {"_id": 1})
-                if doc:
-                    logger.info(f"✅ Updated {len(segments)} segments for room {room_id}")
-                    return str(doc["_id"])
-
-            return None
-        except Exception as e:
-            logger.error(f"Failed to save room segments: {e}")
-            return None
-
     async def save_room_summary(self, summary_data: Dict[str, Any]) -> str:
         """Save or update room summary"""
         try:
@@ -977,6 +939,18 @@ class MongoDBService:
         except Exception as e:
             logger.error(f"Failed to save room summary: {e}")
             return None
+
+    async def update_room_summary(self, room_id: str, summary_data: Dict[str, Any]) -> bool:
+        """Update only the summary data for an existing room summary."""
+        try:
+            result = await self.summary_collection.update_one(
+                {"room_id": room_id},
+                {"$set": {"summary_data": summary_data}}
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            logger.error(f"Failed to update room summary: {e}")
+            return False
 
 
     async def get_summary_by_room_name(
