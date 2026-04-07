@@ -249,10 +249,9 @@ async def get_audio_info(
             tracks = await mongodb.get_tracks_by_room(room_id)
             if not tracks:
                 raise HTTPException(status_code=404, detail=f"No tracks found for room with ID '{room_id}'")
-            
             for track in tracks:
+                print(f"thông tin track: {track}")
                 audio_info = track.get("audio_info", {})
-                
                 started_at_ns = audio_info.get("started_at_ns")
                 ended_at_ns = audio_info.get("ended_at_ns")
                 
@@ -263,9 +262,9 @@ async def get_audio_info(
                     "ended_at_ns": ended_at_ns
                 }
                 file_results.append(file_result)
-                return {
-                    "status": "ok",
-                    "file_results": file_results
+            return {
+                "status": "ok",
+                "file_results": file_results
         }
         except Exception as e:
             logger.error(f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}")

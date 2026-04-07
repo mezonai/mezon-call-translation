@@ -97,6 +97,17 @@ class SummaryService:
         # 4. Sort by absolute time
         all_segments.sort(key=lambda x: x.get("absolute_start_ns", 0))
         
+        # === SAVE SEGMENTS FIRST ===
+        try:
+            saved_segments_id = await self.mongodb.save_room_segments(room_id, all_segments)
+            if saved_segments_id:
+                logger.info(f"✅ Segments saved for room {room_id} (ID: {saved_segments_id})")
+            else:
+                logger.warning(f"⚠️ Failed to save segments for room {room_id}, but continuing with summary generation")
+        except Exception as e:
+            logger.error(f"❌ Error saving segments for room {room_id}: {e}")
+            # Continue with summary generation even if segments save failed
+        
         # 5. Collect Full Text and Participants
         text_lines = []
         unique_participants = set()
@@ -122,42 +133,48 @@ class SummaryService:
         
         full_text = "\n".join(text_lines)
 
-        # 6. Generate Summary via LLM (uses configured provider)
-        summary_data_result = await self.llm_service.summarize_conversation(conversation_text = full_text, language=self.config.llm.language)
-        action_items = summary_data_result.action_items
-        action_items_dict = {action_item.participant_identity: action_item.participant_actions for action_item in action_items}
-        summary_data = {
-            "summary": summary_data_result.summary,
-            "action_items": action_items_dict
-        }
-        
-        # 7. Create Summary Object
-        summary_model = RoomSummary(
-            room_id=room_id,
-            room_name=room.get("room_name", "Unknown"),
-            participants=list(unique_participants),
-            summary_data=summary_data,
-            full_text=full_text,
-            created_at= datetime.utcnow(),
-            total_segments=len(all_segments)
-        )
-        
-        # 8. Save to DB
-        saved_id = await self.mongodb.save_room_summary(summary_model.model_dump())
-        if saved_id:
-            logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
-            result = summary_model.model_dump()
-            result["_id"] = saved_id
+        # === GENERATE AND SAVE SUMMARY ===
+        try:
+            # 6. Generate Summary via LLM (uses configured provider)
+            summary_data_result = await self.llm_service.summarize_conversation(conversation_text = full_text, language=self.config.llm.language)
+            action_items = summary_data_result.action_items
+            action_items_dict = {action_item.participant_identity: action_item.participant_actions for action_item in action_items}
+            summary_data = {
+                "summary": summary_data_result.summary,
+                "action_items": action_items_dict
+            }
             
-            #9. Notify clients via SSE if summary generation is successful
-            metadata_channal  = MetadataChannel()
-            await metadata_channal.push_room_summary_done(
+            # 7. Create Summary Object
+            summary_model = RoomSummary(
                 room_id=room_id,
-                room_name=room.get("room_name", "Unknown")
+                room_name=room.get("room_name", "Unknown"),
+                participants=list(unique_participants),
+                summary_data=summary_data,
+                full_text=full_text,
+                created_at= datetime.utcnow(),
+                total_segments=len(all_segments)
             )
-            return result
- 
-        return None
+            
+            # 8. Save summary to DB
+            saved_id = await self.mongodb.save_room_summary(summary_model.model_dump())
+            if saved_id:
+                logger.info(f"✅ Generated summary for room {room_id} (ID: {saved_id})")
+                result = summary_model.model_dump()
+                result["_id"] = saved_id
+                
+                # 9. Notify clients via SSE if summary generation is successful
+                metadata_channal  = MetadataChannel()
+                await metadata_channal.push_room_summary_done(
+                    room_id=room_id,
+                    room_name=room.get("room_name", "Unknown")
+                )
+                return result
+            else:
+                logger.error(f"❌ Failed to save summary for room {room_id}")
+                return None
+        except Exception as e:
+            logger.error(f"❌ Error in summary generation or saving for room {room_id}: {e}", exc_info=True)
+            return None
 
 # Singleton
 _summary_service = None

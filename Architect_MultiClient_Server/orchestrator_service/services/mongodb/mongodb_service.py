@@ -33,6 +33,7 @@ class MongoDBService:
         self.tracks_collection_name = "tracks"
         self.chunks_collection_name = "transcript_chunks"
         self.summary_collection_name = "rooms_summary"
+        self.segments_collection_name = "room_segments"
         self.events_collection_name = "metadata_events"
 
         self.client: Optional[AsyncIOMotorClient] = None
@@ -41,6 +42,7 @@ class MongoDBService:
         self.tracks_collection = None
         self.chunks_collection = None
         self.summary_collection = None
+        self.segments_collection = None
         self.events_collection = None
         self.connected = False
 
@@ -80,6 +82,7 @@ class MongoDBService:
             self.tracks_collection = self.db[self.tracks_collection_name]
             self.chunks_collection = self.db[self.chunks_collection_name]
             self.summary_collection = self.db[self.summary_collection_name]
+            self.segments_collection = self.db[self.segments_collection_name]
             self.events_collection = self.db[self.events_collection_name]
 
             # Test connection
@@ -845,10 +848,10 @@ class MongoDBService:
                 return {}
 
             created_at_raw: datetime = room.get("created_at")
-            completed_at_raw: datetime = room.get("completed_at")
+            finaled_at_raw: datetime = room.get("finalized_at")
             total_duration_sec: float = 0.0
-            if completed_at_raw and created_at_raw:
-                total_duration_sec = (completed_at_raw - created_at_raw).total_seconds()
+            if finaled_at_raw and created_at_raw:
+                total_duration_sec = (finaled_at_raw - created_at_raw).total_seconds()
             tracks = await self.get_tracks_by_room(room_id)
             total_segments = 0
             completed_tracks = 0
@@ -872,7 +875,7 @@ class MongoDBService:
                 "total_duration_sec": total_duration_sec,
                 "total_segments": total_segments,
                 "created_at": convert_to_iso_8601(created_at_raw),
-                "completed_at": convert_to_iso_8601(completed_at_raw) if completed_at_raw else None
+                "finalized_at": convert_to_iso_8601(finaled_at_raw) if finaled_at_raw else None
             }
         except Exception as e:
             logger.error(f"Failed to get room statistics by ID: {e}")
@@ -912,6 +915,41 @@ class MongoDBService:
     # ========================================
     # 📝 ROOM SUMMARY QUERIES
     # ========================================
+
+    async def save_room_segments(self, room_id: str, segments: List[Dict[str, Any]]) -> Optional[str]:
+        """Save processed segments for a room (before summary generation)"""
+        try:
+            if not room_id or not segments:
+                return None
+
+            segment_doc = {
+                "room_id": room_id,
+                "segments": segments,
+                "created_at": datetime.utcnow(),
+                "count": len(segments)
+            }
+
+            result = await self.segments_collection.update_one(
+                {"room_id": room_id},
+                {"$set": segment_doc},
+                upsert=True
+            )
+
+            if result.upserted_id:
+                logger.info(f"✅ Saved {len(segments)} segments for room {room_id}")
+                return str(result.upserted_id)
+
+            # If updated an existing document, we need to find its ID
+            if result.matched_count > 0:
+                doc = await self.segments_collection.find_one({"room_id": room_id}, {"_id": 1})
+                if doc:
+                    logger.info(f"✅ Updated {len(segments)} segments for room {room_id}")
+                    return str(doc["_id"])
+
+            return None
+        except Exception as e:
+            logger.error(f"Failed to save room segments: {e}")
+            return None
 
     async def save_room_summary(self, summary_data: Dict[str, Any]) -> str:
         """Save or update room summary"""
