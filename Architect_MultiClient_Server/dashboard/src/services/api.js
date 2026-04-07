@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const AUDIO_BASE_URL = import.meta.env.VITE_AUDIO_BASE_URL;
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -174,6 +175,26 @@ export const getRoomStatistics = async (roomName) => {
 export const getRoomStatisticsById = async (roomId) => {
   const response = await apiClient.get(`/api/v2/rooms/id/${roomId}/statistics`);
   return response.data;
+};
+
+export const getRoomAudioInfoById = async (roomId) => {
+  const response = await apiClient.get(`/api/v2/rooms/audio_info/${roomId}`);
+  return response.data;
+};
+
+export const buildAudioUrl = (filename) => {
+  if (!filename) {
+    return '';
+  }
+
+  const normalizedBase = AUDIO_BASE_URL.endsWith('/') ? AUDIO_BASE_URL : `${AUDIO_BASE_URL}/`;
+  const normalizedPath = filename
+    .split('/')
+    .filter(Boolean)
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
+
+  return new URL(normalizedPath, normalizedBase).toString();
 };
 
 // Summary APIs

@@ -845,10 +845,10 @@ class MongoDBService:
                 return {}
 
             created_at_raw: datetime = room.get("created_at")
-            completed_at_raw: datetime = room.get("completed_at")
+            finaled_at_raw: datetime = room.get("finalized_at")
             total_duration_sec: float = 0.0
-            if completed_at_raw and created_at_raw:
-                total_duration_sec = (completed_at_raw - created_at_raw).total_seconds()
+            if finaled_at_raw and created_at_raw:
+                total_duration_sec = (finaled_at_raw - created_at_raw).total_seconds()
             tracks = await self.get_tracks_by_room(room_id)
             total_segments = 0
             completed_tracks = 0
@@ -872,7 +872,7 @@ class MongoDBService:
                 "total_duration_sec": total_duration_sec,
                 "total_segments": total_segments,
                 "created_at": convert_to_iso_8601(created_at_raw),
-                "completed_at": convert_to_iso_8601(completed_at_raw) if completed_at_raw else None
+                "finalized_at": convert_to_iso_8601(finaled_at_raw) if finaled_at_raw else None
             }
         except Exception as e:
             logger.error(f"Failed to get room statistics by ID: {e}")
@@ -939,6 +939,18 @@ class MongoDBService:
         except Exception as e:
             logger.error(f"Failed to save room summary: {e}")
             return None
+
+    async def update_room_summary(self, room_id: str, summary_data: Dict[str, Any]) -> bool:
+        """Update only the summary data for an existing room summary."""
+        try:
+            result = await self.summary_collection.update_one(
+                {"room_id": room_id},
+                {"$set": {"summary_data": summary_data}}
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            logger.error(f"Failed to update room summary: {e}")
+            return False
 
 
     async def get_summary_by_room_name(

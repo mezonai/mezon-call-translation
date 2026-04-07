@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { 
-  getRoomById, 
-  getRoomStatisticsById, 
-  getSummaryByRoomId
+import {
+  getRoomStatisticsById,
+  getSummaryByRoomId,
+  getRoomAudioInfoById,
+  buildAudioUrl
 } from '../services/api';
 import { formatDate } from '../utils/datetime';
 import { getStatusBadge } from '../utils/display';
@@ -22,20 +23,22 @@ const RoomDetail = () => {
   const hasBackParams = fromPage !== '0' || fromStatus || fromSearch || fromTimePreset;
   const backToListUrl = hasBackParams
     ? `/?${new URLSearchParams({
-        ...(fromPage !== '0' && { page: fromPage }),
-        ...(fromStatus && { status: fromStatus }),
-        ...(fromSearch && { search: fromSearch }),
-        ...(fromTimePreset && { time_preset: fromTimePreset }),
-        ...(fromUtc && { from_utc: fromUtc }),
-        ...(toUtc && { to_utc: toUtc })
-      }).toString()}`
+      ...(fromPage !== '0' && { page: fromPage }),
+      ...(fromStatus && { status: fromStatus }),
+      ...(fromSearch && { search: fromSearch }),
+      ...(fromTimePreset && { time_preset: fromTimePreset }),
+      ...(fromUtc && { from_utc: fromUtc }),
+      ...(toUtc && { to_utc: toUtc })
+    }).toString()}`
     : '/';
 
-  const [room, setRoom] = useState(null);
   const [statistics, setStatistics] = useState(null);
   const [summary, setSummary] = useState(null);
+  const [audioFiles, setAudioFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const [audioError, setAudioError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
@@ -46,36 +49,59 @@ const RoomDetail = () => {
     try {
       setLoading(true);
       setError(null);
+      setAudioError(null);
 
       // Fetch room details, statistics, and summaries in parallel
-      const [roomData, statsData, summaryData] = await Promise.all([
-        getRoomById(roomId),
+      const [statsData, summaryData] = await Promise.all([
         getRoomStatisticsById(roomId),
         getSummaryByRoomId(roomId)
       ]);
 
-      setRoom(roomData.room);
       setStatistics(statsData.statistics);
       setSummary(summaryData.data);
+
+      setAudioLoading(true);
+      try {
+        const audioData = await getRoomAudioInfoById(roomId);
+        setAudioFiles(audioData.file_results || []);
+        setAudioError(null);
+      } catch (audioErr) {
+        setAudioFiles([]);
+        setAudioError(audioErr.message || 'Failed to fetch audio files');
+      }
     } catch (err) {
       setError(err.message || 'Failed to fetch room data');
       console.error('Error fetching room data:', err);
     } finally {
+      setAudioLoading(false);
       setLoading(false);
     }
+  };
+
+  const formatAudioDuration = (startedAtNs, endedAtNs) => {
+    if (!startedAtNs || !endedAtNs) {
+      return null;
+    }
+
+    const durationSeconds = Math.max(0, Number(endedAtNs) - Number(startedAtNs)) / 1e9;
+    if (!Number.isFinite(durationSeconds)) {
+      return null;
+    }
+
+    return formatDuration(durationSeconds);
   };
 
   // Parse full_text to display with proper formatting
   const parseFullText = (fullText) => {
     if (!fullText) return [];
     const lines = fullText.trim().split('\n');
-    
+
     return lines
       .filter(line => line.trim().length > 0)
       .flatMap(line => {
         // Match pattern: [time] username: content
         const match = line.match(/^\[(.*?)\]\s*([^:]+):\s*(.*)$/);
-        
+
         if (match) {
           const items = [
             // First item: header with timestamp and username
@@ -85,7 +111,7 @@ const RoomDetail = () => {
               isHeader: true
             }
           ];
-          
+
           // Second item: content (if exists)
           const content = match[3].trim();
           if (content) {
@@ -94,10 +120,10 @@ const RoomDetail = () => {
               isContent: true
             });
           }
-          
+
           return items;
         }
-        
+
         // If line doesn't match pattern, return as continuation text
         return [{
           content: line,
@@ -111,7 +137,7 @@ const RoomDetail = () => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    
+
     if (hours > 0) {
       return `${hours}h ${minutes}m ${secs}s`;
     } else if (minutes > 0) {
@@ -133,13 +159,13 @@ const RoomDetail = () => {
       <div className="bg-red-50 border border-red-200 rounded-lg p-4">
         <p className="text-red-800">Error: {error}</p>
         <div className="mt-4 space-x-2">
-          <button 
+          <button
             onClick={fetchRoomData}
             className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
           >
             Retry
           </button>
-          <button 
+          <button
             onClick={() => navigate(backToListUrl)}
             className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
           >
@@ -150,11 +176,11 @@ const RoomDetail = () => {
     );
   }
 
-  if (!room) {
+  if (!statistics) {
     return (
       <div className="text-center py-12">
         <p className="text-gray-500">Room not found</p>
-        <button 
+        <button
           onClick={() => navigate(backToListUrl)}
           className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
         >
@@ -175,8 +201,8 @@ const RoomDetail = () => {
           >
             ← Back
           </button>
-          <h2 className="text-3xl font-bold text-gray-900">{room.room_name}</h2>
-          {getStatusBadge(room.status)}
+          <h2 className="text-3xl font-bold text-gray-900">{statistics.room_id}</h2>
+          {getStatusBadge(statistics.status)}
         </div>
         <button
           onClick={fetchRoomData}
@@ -222,33 +248,39 @@ const RoomDetail = () => {
           <nav className="flex -mb-px">
             <button
               onClick={() => setActiveTab('overview')}
-              className={`py-4 px-6 text-sm font-medium ${
-                activeTab === 'overview'
-                  ? 'border-b-2 border-blue-500 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+              className={`py-4 px-6 text-sm font-medium ${activeTab === 'overview'
+                ? 'border-b-2 border-blue-500 text-blue-600'
+                : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
             >
               Overview
             </button>
             <button
               onClick={() => setActiveTab('participants')}
-              className={`py-4 px-6 text-sm font-medium ${
-                activeTab === 'participants'
-                  ? 'border-b-2 border-blue-500 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+              className={`py-4 px-6 text-sm font-medium ${activeTab === 'participants'
+                ? 'border-b-2 border-blue-500 text-blue-600'
+                : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
             >
               Full Transcript
             </button>
             <button
               onClick={() => setActiveTab('summary')}
-              className={`py-4 px-6 text-sm font-medium ${
-                activeTab === 'summary'
-                  ? 'border-b-2 border-blue-500 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+              className={`py-4 px-6 text-sm font-medium ${activeTab === 'summary'
+                ? 'border-b-2 border-blue-500 text-blue-600'
+                : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
             >
               Summary
+            </button>
+            <button
+              onClick={() => setActiveTab('audio')}
+              className={`py-4 px-6 text-sm font-medium ${activeTab === 'audio'
+                ? 'border-b-2 border-blue-500 text-blue-600'
+                : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+            >
+              Audio
             </button>
           </nav>
         </div>
@@ -260,19 +292,19 @@ const RoomDetail = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium text-gray-500">Room Name</div>
-                  <div className="mt-1 text-gray-900">{room.room_name}</div>
+                  <div className="mt-1 text-gray-900">{statistics.room_name}</div>
                 </div>
                 <div>
                   <div className="text-sm font-medium text-gray-500">Status</div>
-                  <div className="mt-1">{getStatusBadge(room.status)}</div>
+                  <div className="mt-1">{getStatusBadge(statistics.status)}</div>
                 </div>
                 <div>
                   <div className="text-sm font-medium text-gray-500">Created At</div>
-                  <div className="mt-1 text-gray-900">{formatDate(room.created_at)}</div>
+                  <div className="mt-1 text-gray-900">{formatDate(statistics.created_at)}</div>
                 </div>
                 <div>
                   <div className="text-sm font-medium text-gray-500">Completed At</div>
-                  <div className="mt-1 text-gray-900">{formatDate(room.completed_at)}</div>
+                  <div className="mt-1 text-gray-900">{formatDate(statistics.completed_at)}</div>
                 </div>
               </div>
             </div>
@@ -299,7 +331,7 @@ const RoomDetail = () => {
                               </span>
                             </div>
                           )}
-                          
+
                           {(item.isContent || item.isContinuation) && (
                             // Content - simple style
                             <div className="px-3 py-1 text-gray-700 leading-relaxed">
@@ -375,6 +407,65 @@ const RoomDetail = () => {
               ) : (
                 <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
                   <p className="text-gray-500">No summary available for this room</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Audio Tab */}
+          {activeTab === 'audio' && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-gray-900">Room Audio</h3>
+              {audioLoading ? (
+                <div className="flex items-center justify-center py-12 text-gray-500">
+                  Loading audio files...
+                </div>
+              ) : audioError ? (
+                <div className="text-center py-12 bg-red-50 rounded-lg border border-red-200">
+                  <p className="text-red-700">{audioError}</p>
+                </div>
+              ) : audioFiles.length > 0 ? (
+                <div className="space-y-4">
+                  {audioFiles.map((audioFile, index) => {
+                    const audioUrl = buildAudioUrl(audioFile.filename);
+                    const durationLabel = formatAudioDuration(audioFile.started_at_ns, audioFile.ended_at_ns);
+
+                    return (
+                      <div key={`${audioFile.filename}-${index}`} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="text-sm text-gray-500">Participant</div>
+                            <div className="font-medium text-gray-900">{audioFile.participant_identity || 'Unknown'}</div>
+                          </div>
+                          <div className="text-sm text-gray-500 break-all md:text-right">
+                            {audioFile.filename}
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <audio controls className="w-full" src={audioUrl}>
+                            Your browser does not support the audio element.
+                          </audio>
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-gray-600">
+                          {durationLabel && <span>Duration: {durationLabel}</span>}
+                          <a
+                            href={audioUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-600 hover:text-blue-800"
+                          >
+                            Open audio file
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
+                  <p className="text-gray-500">No audio files available for this room</p>
                 </div>
               )}
             </div>
