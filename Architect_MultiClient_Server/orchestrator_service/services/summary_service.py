@@ -34,9 +34,10 @@ class SummaryService:
         3. Collect all segments.
         4. Sort by absolute time.
         5. Collect Full Text and Participants.
-        6. Generate Summary via LLM.
-        7. Create Summary Object.
-        8. Save summary to DB.
+        6. Save transcript draft to DB.
+        7. Generate Summary via LLM.
+        8. Update summary in DB.
+        9. Notify clients via SSE.
         """
         # Ensure MongoDB is connected
         if not self.mongodb.connected:
@@ -122,42 +123,60 @@ class SummaryService:
         
         full_text = "\n".join(text_lines)
 
-        # 6. Generate Summary via LLM (uses configured provider)
-        summary_data_result = await self.llm_service.summarize_conversation(conversation_text = full_text, language=self.config.llm.language)
-        action_items = summary_data_result.action_items
-        action_items_dict = {action_item.participant_identity: action_item.participant_actions for action_item in action_items}
-        summary_data = {
-            "summary": summary_data_result.summary,
-            "action_items": action_items_dict
-        }
-        
-        # 7. Create Summary Object
-        summary_model = RoomSummary(
+        draft_summary = RoomSummary(
             room_id=room_id,
             room_name=room.get("room_name", "Unknown"),
             participants=list(unique_participants),
-            summary_data=summary_data,
+            summary_data={},
             full_text=full_text,
-            created_at= datetime.utcnow(),
+            created_at=datetime.utcnow(),
             total_segments=len(all_segments)
         )
-        
-        # 8. Save to DB
-        saved_id = await self.mongodb.save_room_summary(summary_model.model_dump())
-        if saved_id:
+
+        # 6. Save transcript draft so full_text is persisted even if summary generation fails
+        saved_id = await self.mongodb.save_room_summary(draft_summary.model_dump())
+        if not saved_id:
+            logger.error(f"Failed to save transcript draft for room {room_id}")
+            return None
+
+        try:
+            # 7. Generate Summary via LLM (uses configured provider)
+            summary_data_result = await self.llm_service.summarize_conversation(
+                conversation_text=full_text,
+                language=self.config.llm.language
+            )
+            action_items = summary_data_result.action_items
+            action_items_dict = {
+                action_item.participant_identity: action_item.participant_actions
+                for action_item in action_items
+            }
+            summary_data = {
+                "summary": summary_data_result.summary,
+                "action_items": action_items_dict
+            }
+
+            final_summary = draft_summary.model_copy(update={"summary_data": summary_data})
+
+            # 8. Update only summary_data in DB; full_text remains from the draft save
+            updated = await self.mongodb.update_room_summary(room_id, summary_data)
+            if not updated:
+                logger.error(f"Failed to update generated summary for room {room_id}")
+                return {**draft_summary.model_dump(), "_id": saved_id}
+
             logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
-            result = summary_model.model_dump()
+            result = final_summary.model_dump()
             result["_id"] = saved_id
-            
-            #9. Notify clients via SSE if summary generation is successful
-            metadata_channal  = MetadataChannel()
-            await metadata_channal.push_room_summary_done(
+
+            # 9. Notify clients via SSE if summary generation is successful
+            metadata_channel = MetadataChannel()
+            await metadata_channel.push_room_summary_done(
                 room_id=room_id,
                 room_name=room.get("room_name", "Unknown")
             )
             return result
- 
-        return None
+        except Exception as e:
+            logger.error(f"Failed to generate summary for room {room_id}: {e}")
+            return {**draft_summary.model_dump(), "_id": saved_id}
 
 # Singleton
 _summary_service = None

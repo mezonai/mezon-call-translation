@@ -1,12 +1,11 @@
-from typing import Dict
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
-from typing import Optional
 from bson import ObjectId
 from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.services.summary_service import get_summary_service
-from typing import Dict, Optional
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.redis.redis_producer_service import (
@@ -168,6 +167,48 @@ class TranscriptionService:
 
         return None
     
+    async def save_participant(self, room_id: str, participant_identity: str, timestamp: datetime = None) -> bool:
+        """
+        Save participant info to MongoDB
+        
+        Args:
+            room_id: Room ID
+            participant_identity: Participant identity
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not self.mongodb_service.connected:
+                await self.mongodb_service.connect()
+            room_id = ObjectId(room_id)
+            result = await self.mongodb_service.save_participant(
+                room_id=room_id,
+                participant_identity=participant_identity,
+                timestamp=timestamp
+            )
+            return result
+        except Exception as e:
+            logger.exception(f"Failed to save participant: {e}")
+            return False
+
+    async def save_participants_batch(self, room_id: str, participants: List[Dict[str, Any]]) -> Dict[str, int]:
+        """
+        Save batch of participants to MongoDB
+        """
+        try:
+            if not self.mongodb_service.connected:
+                await self.mongodb_service.connect()
+            room_id = ObjectId(room_id)
+            result = await self.mongodb_service.save_batch_participants(
+                room_id=room_id,
+                participants=participants
+            )
+            return result
+        except Exception as e:
+            logger.exception(f"Failed to save batch participants: {e}")
+            return {"success": False, "added_count": 0, "skipped_count": 0}
+
 
     async def save_track_metadata(
         self, 

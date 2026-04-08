@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const AUDIO_BASE_URL = import.meta.env.VITE_AUDIO_BASE_URL;
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -27,7 +28,7 @@ export const refreshAuthTokens = async (refreshToken) => {
     throw new Error('Missing refresh token');
   }
 
-  const response = await apiClient.post('/api/v2/auth/mezon/refresh', {
+  const response = await apiClient.post('/api/v2/auth/refresh', {
     refresh_token: refreshToken
   });
 
@@ -40,7 +41,7 @@ export const logoutSession = async (accessToken, refreshToken) => {
   }
 
   const response = await apiClient.post(
-    '/api/v2/auth/mezon/logout',
+    '/api/v2/auth/logout',
     { refresh_token: refreshToken },
     { headers: { 'Authorization': `Bearer ${accessToken}` } }
   );
@@ -152,28 +153,48 @@ export const getRooms = async (params = {}) => {
   if (from_utc) queryParams.set('from_utc', from_utc);
   if (to_utc) queryParams.set('to_utc', to_utc);
 
-  const response = await apiClient.get(`/api/v2/transcripts/rooms?${queryParams.toString()}`);
+  const response = await apiClient.get(`/api/v2/rooms?${queryParams.toString()}`);
   return response.data;
 };
 
 export const getRoomByName = async (roomName) => {
-  const response = await apiClient.get(`/api/transcripts/rooms/${roomName}`);
+  const response = await apiClient.get(`/api/v2/rooms/${roomName}`);
   return response.data;
 };
 
 export const getRoomById = async (roomId) => {
-  const response = await apiClient.get(`/api/transcripts/rooms/id/${roomId}`);
+  const response = await apiClient.get(`/api/v2/rooms/id/${roomId}`);
   return response.data;
 };
 
 export const getRoomStatistics = async (roomName) => {
-  const response = await apiClient.get(`/api/transcripts/rooms/${roomName}/statistics`);
+  const response = await apiClient.get(`/api/v2/rooms/${roomName}/statistics`);
   return response.data;
 };
 
 export const getRoomStatisticsById = async (roomId) => {
-  const response = await apiClient.get(`/api/transcripts/rooms/id/${roomId}/statistics`);
+  const response = await apiClient.get(`/api/v2/rooms/id/${roomId}/statistics`);
   return response.data;
+};
+
+export const getRoomAudioInfoById = async (roomId) => {
+  const response = await apiClient.get(`/api/v2/rooms/audio_info/${roomId}`);
+  return response.data;
+};
+
+export const buildAudioUrl = (filename) => {
+  if (!filename) {
+    return '';
+  }
+
+  const normalizedBase = AUDIO_BASE_URL.endsWith('/') ? AUDIO_BASE_URL : `${AUDIO_BASE_URL}/`;
+  const normalizedPath = filename
+    .split('/')
+    .filter(Boolean)
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
+
+  return new URL(normalizedPath, normalizedBase).toString();
 };
 
 // Summary APIs
@@ -189,25 +210,7 @@ export const getSummaryByRoom = async (roomName, startTime = null, endTime = nul
 };
 
 export const getSummaryByRoomId = async (roomId) => {
-  const response = await apiClient.get(`/api/summary/room/id/${roomId}`);
-  return response.data;
-};
-
-// Transcript APIs
-export const getFullTranscript = async (trackId) => {
-  const response = await apiClient.get(`/api/transcripts/tracks/${trackId}/transcript`);
-  return response.data;
-};
-
-export const getChunksByTrack = async (trackId, params = {}) => {
-  const { limit = 100, skip = 0, sorted_by_index = true } = params;
-  const queryParams = new URLSearchParams({
-    limit,
-    skip,
-    sorted_by_index
-  });
-
-  const response = await apiClient.get(`/api/transcripts/tracks/${trackId}/chunks?${queryParams}`);
+  const response = await apiClient.get(`/api/v2/summary/room/id/${roomId}`);
   return response.data;
 };
 
