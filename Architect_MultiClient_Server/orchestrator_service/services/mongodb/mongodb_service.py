@@ -156,7 +156,10 @@ class MongoDBService:
         from_utc: datetime = None,
         to_utc: datetime = None,
     ) -> Dict[str, Any]:
-        """Build query dict for list_rooms / count_rooms. Search matches room_name or participant_identity in tracks."""
+        """Build query dict for list_rooms / count_rooms.
+
+        Search matches room_name or participants.participant_identity in rooms.
+        """
         and_parts = []
         if status:
             and_parts.append({"status": status})
@@ -169,23 +172,14 @@ class MongoDBService:
             and_parts.append({"created_at": created_at})
         if search and search.strip():
             search = search.strip()
-            room_ids_from_tracks = []
-            try:
-                room_ids_from_tracks = await self.tracks_collection.distinct(
-                    "room_ref_id",
-                    {"participant_identity": search}
-                )
-            except Exception as e:
-                logger.debug(f"Tracks distinct for search failed: {e}")
-            if room_ids_from_tracks:
-                and_parts.append({
+            and_parts.append(
+                {
                     "$or": [
                         {"room_name": search},
-                        {"_id": {"$in": room_ids_from_tracks}},
+                        {"participants.participant_identity": search},
                     ]
-                })
-            else:
-                and_parts.append({"room_name": search})
+                }
+            )
         if not and_parts:
             return {}
         if len(and_parts) == 1:
