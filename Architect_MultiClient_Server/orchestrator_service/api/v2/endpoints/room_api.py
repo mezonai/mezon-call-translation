@@ -6,10 +6,10 @@ Room API endpoints for querying room data from MongoDB
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 
-from orchestrator_service.auth.authorization import get_auth_context, require_any_permission, AuthContext
+from orchestrator_service.auth.authorization import require_any_permission, AuthContext
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
