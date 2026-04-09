@@ -6,7 +6,7 @@ Provides handlers for different request types and integrates with agent services
 """
 import json
 import time
-import logging
+from src.logger import get_logger
 import uuid
 from typing import Any, Dict
 
@@ -18,7 +18,7 @@ class AgentRequestHandler:
     
     def __init__(self):
         """Initialize the agent request handler."""
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
     
     async def handle_transcript_control(
         self,

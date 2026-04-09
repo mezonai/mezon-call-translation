@@ -13,12 +13,82 @@ Architecture:
 import asyncio
 import httpx
 import json
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, List
+from src.utils.generate_id import generate_id
 from src.logger import get_logger
 from src.config.application_config import get_config
 
 logger = get_logger(__name__)
 config = get_config()
+
+from pydantic import BaseModel, Field, computed_field
+
+
+class FileConfig(BaseModel):
+    filepath: str
+    s3: Dict[str, Any]
+
+class FileResult(BaseModel):
+    filename: str
+    startedAt: str
+    endedAt: str
+    duration: str
+    size: Optional[int] = None
+    location: Optional[str] = None
+
+class FileInfo(BaseModel):
+    filepath: str
+    filename: Optional[str] = None
+    start_at_ns: Optional[int] = None
+    end_at_ns: Optional[int] = None
+    s3: Optional[Dict[str, Any]] = None
+
+    def model_post_init(self, __context):
+        if not self.filename:
+            self.filename = self.filepath
+
+    @computed_field
+    @property
+    def duration_ns(self) -> Optional[int]:
+        if self.start_at_ns and self.end_at_ns:
+            return self.end_at_ns - self.start_at_ns
+        return None
+
+
+class TrackInfo(BaseModel):
+    room_name: str = Field(alias="roomName")
+    track_id: str = Field(alias="trackId")
+    file: Optional[FileConfig] = None
+
+
+class EgressInfo(BaseModel):
+    egress_id: str = Field(alias="egressId")
+    room_id: str = Field(alias="roomId")
+    room_name: str = Field(alias="roomName")
+
+    started_at: str = Field(alias="startedAt")
+    ended_at: Optional[str] = Field(default=None, alias="endedAt")
+    updated_at: Optional[str] = Field(default=None, alias="updatedAt")
+
+    status: Optional[str] = None
+    details: Optional[str] = None
+
+    track: Optional[TrackInfo] = None
+
+    file: Optional[FileResult] = None
+    file_results: Optional[List[FileResult]] = Field(default=None, alias="fileResults")
+
+class EgressWebhook(BaseModel):
+    event: str = "egress_started"
+    egress_info: EgressInfo = Field(alias="egressInfo")
+
+    def to_payload(self, event_id: str) -> Dict[str, Any]:
+        return {
+            "id": event_id,
+            "event": self.event,
+            "egressInfo": self.egress_info.model_dump(by_alias=True, exclude_none=True)
+        }
+
 
 
 class OrchestratorClient:
@@ -612,3 +682,24 @@ class OrchestratorClient:
         
         except Exception as e:
             self.logger.error(f"[SSE] Error in request handler: {e}", exc_info=True)
+
+
+    async def push_webhook(self, webhook: EgressWebhook) -> bool:
+        if not self.config.orchestrator.base_url:
+            return False
+
+        if not self._http_client or self._http_client.is_closed:
+            await self.start()
+
+        payload = webhook.to_payload(event_id=generate_id("EV_", 12))
+
+        try:
+            res = await self._http_client.post(
+                f"{self.config.orchestrator.base_url}/api/webhook/webhook",
+                json=payload
+            )
+            return res.status_code in (200, 201)
+
+        except Exception as e:
+            self.logger.error(f"Webhook error: {e}")
+            return False

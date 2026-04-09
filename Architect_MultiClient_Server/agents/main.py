@@ -86,14 +86,14 @@ async def entrypoint(ctx: agents.JobContext):
     # Subscribe to existing tracks
     subscribe_existing_tracks(ctx, event_handlers)
     
-    # Register with orchestrator and get room_id
-    room_id = await register_with_orchestrator(orchestrator, session_id)
-    
     # Start SSE agent request listener
     await start_agent_request_listener(
         orchestrator, p.identity, session_id,
         control_state, event_handlers, tts_manager, ctx
     )
+
+    # Register with orchestrator and get room_id
+    room_id = await register_with_orchestrator(orchestrator, session_id)
     
     # Setup DataChannel dispatcher for chat messages
     dispatcher = DataChannelDispatcher(orchestrator, room_id, session_id)

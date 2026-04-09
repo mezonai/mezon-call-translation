@@ -7,6 +7,9 @@ import time
 import numpy as np
 from livekit import rtc
 
+from src.config.application_config import get_config
+from src.utils.generate_id import generate_id
+from src.services.orchestrator_client import EgressInfo, EgressWebhook, FileConfig, FileResult, OrchestratorClient, TrackInfo
 from src.config import SAMPLE_RATE, CHANNELS
 from src.core.websocket.stt_client import STTWebSocketClient
 from src.core.transcript_manager import TranscriptManager
@@ -18,7 +21,6 @@ from src.utils.participant_identity import parse_participant_identity
 
 
 logger = get_logger(__name__)
-
 
 class EventHandlers:
     """Handles room events: track subscription, participant disconnect, audio streaming"""
@@ -41,8 +43,12 @@ class EventHandlers:
         self.pending_tracks = {}  # {speaker_id: (track, publication, participant)}
         self.track_index = {}  # {track_id: (speaker_id, track, publication, participant)}
         self.recording_tasks = {}  # {track_id: asyncio.Task}
+        self._egress_sessions = {}  # {track_id: {"egress_id": str, "room_id": str, "room_name": str, "track_id": str, "filepath": str, "start_ns": int}}
+        self.recording_metadata = {}  # {track_id: {"egress_id": str, "started_at": datetime, ...}}
         self.cleanup_lock = asyncio.Lock()
         self.logger = get_logger("event_handlers")
+        self._orchestrator = OrchestratorClient.get_instance()
+        self.config = get_config()
 
     def session_id_from_room(self) -> str:
         """Generate unique session ID from room metadata"""
@@ -63,6 +69,126 @@ class EventHandlers:
         """Check whether a track is currently known by the agent."""
         async with self.cleanup_lock:
             return track_id in self.track_index
+
+    async def _handle_egress_start(self, track_id: str, file_output_path: str):
+        now = time.time_ns()
+        room_id = await self.ctx.room.sid
+        room_name = self.ctx.room.name
+        track_id = track_id
+
+        egress_id = generate_id("EG_", 12)
+
+        self._egress_sessions[track_id] = {
+            "egress_id": egress_id,
+            "room_id": room_id,
+            "room_name": room_name,
+            "track_id": track_id,
+            "filepath": file_output_path,
+            "start_ns": now,
+        }
+
+        file = FileConfig(
+            filepath=file_output_path,
+            s3={
+                "accessKey": "{access_key}",
+                "secret": "{secret}",
+                "region": self.config.minio.region,
+                "endpoint": self.config.minio.endpoint,
+                "bucket": self.config.minio.bucket,
+                "forcePathStyle": self.config.minio.force_path_style,
+            }
+        )
+
+        track_info_obj = TrackInfo(
+            roomName=room_name,
+            trackId=track_id,
+            file=file
+        )
+
+        egress_info_obj = EgressInfo(
+            egressId=egress_id,
+            roomId=room_id,
+            roomName=room_name,
+            startedAt=str(now),
+            updatedAt=str(now),
+            track=track_info_obj,
+            file=None,            
+            fileResults=[]
+        )
+
+        webhook = EgressWebhook(
+            event="egress_started",
+            egressInfo=egress_info_obj
+        )
+
+        await self._orchestrator.push_webhook(webhook)
+
+    async def _handle_egress_end(self, track_id: str):
+        session = self._egress_sessions.get(track_id)
+
+        if not session:
+            # Session might have been finalized by another concurrent cleanup path.
+            self.logger.info(f"Egress session already finalized or missing for track {track_id}")
+            return False
+
+        end_ns = time.time_ns()
+        start_ns = session["start_ns"]
+        duration = end_ns - start_ns
+
+        filepath = session["filepath"]
+
+        location = f"{self.config.minio.endpoint}/{self.config.minio.bucket}/{filepath}"
+
+        file_result = FileResult(
+            filename=filepath,
+            startedAt=str(start_ns),
+            endedAt=str(end_ns),
+            duration=str(duration),
+            size=None,
+            location=location
+        )
+
+        track_info_obj = TrackInfo(
+            roomName=session["room_name"],
+            trackId=session["track_id"],
+            file=FileConfig(
+                filepath=filepath,
+                s3={
+                    "accessKey": "{access_key}",
+                    "secret": "{secret}",
+                    "region": self.config.minio.region,
+                    "endpoint": self.config.minio.endpoint,
+                    "bucket": self.config.minio.bucket,
+                    "forcePathStyle": self.config.minio.force_path_style,
+                }
+            )
+        )
+
+        egress_info_obj = EgressInfo(
+            egressId=session["egress_id"],
+            roomId=session["room_id"],
+            roomName=session["room_name"],
+            startedAt=str(start_ns),
+            endedAt=str(end_ns),
+            updatedAt=str(end_ns),
+            status="EGRESS_COMPLETE",
+            details="End reason: Source closed",
+            track=track_info_obj,
+            file=file_result,
+            fileResults=[file_result]
+        )
+
+        webhook = EgressWebhook(
+            event="egress_ended",
+            egressInfo=egress_info_obj
+        )
+
+        await self._orchestrator.push_webhook(webhook)
+
+        del self._egress_sessions[track_id]
+
+        return True
+
 
     async def start_audio_recording(self, track_id: str, file_output_path: str) -> bool:
         """Start track recording and ensure there is an audio source feeding uploader."""
@@ -89,6 +215,7 @@ class EventHandlers:
                 self._manage_track_recording(track_id, track, publication, participant),
                 name=f"recording-{track_id}",
             )
+            await self._handle_egress_start(track_id, file_output_path)
             self.recording_tasks[track_id] = task
 
         logger.info(f"Started dedicated recording stream task for track={track_id}")
@@ -125,6 +252,7 @@ class EventHandlers:
         finally:
             await self.recording_manager.stop_recording(track_id)
             async with self.cleanup_lock:
+                await self._handle_egress_end(track_id)
                 self.recording_tasks.pop(track_id, None)
             logger.info(f"Recording-only stream ended for track={track_id}")
 
@@ -397,6 +525,7 @@ class EventHandlers:
                 client = None
                 transcription_task = None
                 recording_task = None
+                should_finalize_egress = False
 
                 async with self.cleanup_lock:
                     self.pending_tracks.pop(pid, None)
@@ -405,6 +534,7 @@ class EventHandlers:
                     if track_id:
                         self.track_index.pop(track_id, None)
                         recording_task = self.recording_tasks.pop(track_id, None)
+                        should_finalize_egress = recording_task is None
 
                 if client:
                     await client.disconnect()
@@ -422,6 +552,9 @@ class EventHandlers:
                 ]
                 if wait_tasks:
                     await asyncio.gather(*wait_tasks, return_exceptions=True)
+
+                if track_id and should_finalize_egress:
+                    await self._handle_egress_end(track_id)
             
             asyncio.create_task(cleanup_client())
 
@@ -435,6 +568,7 @@ class EventHandlers:
             clients_to_disconnect = []
             transcription_tasks = []
             recording_tasks = []
+            tracks_to_finalize = []
 
             async with self.cleanup_lock:
                 # Cleanup pending tracks and tasks for this participant
@@ -456,6 +590,8 @@ class EventHandlers:
                         rec_task = self.recording_tasks.pop(track_id, None)
                         if rec_task:
                             recording_tasks.append(rec_task)
+                        else:
+                            tracks_to_finalize.append(track_id)
 
             for key, client in clients_to_disconnect:
                 await client.disconnect()
@@ -470,13 +606,19 @@ class EventHandlers:
             wait_tasks = transcription_tasks + recording_tasks
             if wait_tasks:
                 await asyncio.gather(*wait_tasks, return_exceptions=True)
+
+            for track_id in tracks_to_finalize:
+                await self._handle_egress_end(track_id)
         
         asyncio.create_task(cleanup_participant())
 
     async def safe_disconnect_all(self):
         """Disconnect all clients with timeout protection"""
+        transcription_tasks = []
+        recording_tasks = []
+
         async with self.cleanup_lock:
-            if not self.active_clients and not self.recording_tasks:
+            if not self.active_clients and not self.recording_tasks and not self.transcription_tasks:
                 return
                 
             logger.info(f"Disconnecting {len(self.active_clients)} active clients")
@@ -497,11 +639,28 @@ class EventHandlers:
                 except asyncio.TimeoutError:
                     logger.warning("Some clients took too long to disconnect")
 
-            for task in self.recording_tasks.values():
+            transcription_tasks = list(self.transcription_tasks.values())
+            recording_tasks = list(self.recording_tasks.values())
+
+            for task in transcription_tasks:
+                task.cancel()
+
+            for task in recording_tasks:
                 task.cancel()
 
             self.active_clients.clear()
+            self.transcription_tasks.clear()
             self.recording_tasks.clear()
+
+        wait_tasks = transcription_tasks + recording_tasks
+        if wait_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*wait_tasks, return_exceptions=True),
+                    timeout=10.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Some background tasks did not stop in time")
 
         await self.recording_manager.stop_all_recordings()
         logger.info("All clients disconnected")
