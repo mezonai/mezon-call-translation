@@ -38,10 +38,6 @@ if not API_SECRET:
         "Authentication will fail for all requests!"
     )
 
-logger.info(f"Internal API Authentication: {'ENABLED' if API_SECRET else 'DISABLED'}")
-if API_SECRET:
-    logger.info(f"API Secret configured: {'Yes' if API_SECRET else 'No (WARNING!)'}")
-
 
 def verify_simple_secret(credentials: HTTPAuthorizationCredentials) -> bool:
     """
