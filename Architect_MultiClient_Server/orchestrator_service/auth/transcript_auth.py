@@ -5,8 +5,7 @@ Current implementation: Simple secret key validation
 Future: Can be extended to JWT + HMAC-SHA256 validation
 
 Environment Variables:
-    TRANSCRIPT_API_SECRET: Secret key for API authentication (required)
-    TRANSCRIPT_AUTH_ENABLED: Enable/disable authentication (default: true)
+    INTERNAL_API_SECRET: Secret key for API authentication (required)
 
 Usage:
     from src.auth.transcript_auth import verify_api_key
@@ -30,16 +29,16 @@ security = HTTPBearer(auto_error=False)
 
 # Load configuration from centralized config
 auth_config = get_config().auth
-API_SECRET = auth_config.transcript_api_secret
+API_SECRET = auth_config.internal_api_secret
 
 # Validate configuration on startup
 if not API_SECRET:
     logger.warning(
-        "⚠️  TRANSCRIPT_AUTH_ENABLED is true but TRANSCRIPT_API_SECRET is not set. "
+        "⚠️INTERNAL_API_SECRET is not set. "
         "Authentication will fail for all requests!"
     )
 
-logger.info(f"Transcript API Authentication: {'ENABLED' if API_SECRET else 'DISABLED'}")
+logger.info(f"Internal API Authentication: {'ENABLED' if API_SECRET else 'DISABLED'}")
 if API_SECRET:
     logger.info(f"API Secret configured: {'Yes' if API_SECRET else 'No (WARNING!)'}")
 

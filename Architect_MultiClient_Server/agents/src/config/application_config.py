@@ -311,7 +311,7 @@ class OrchestratorConfig:
         """Create Orchestrator config from environment variables"""
         return cls(
             base_url=os.getenv('ORCHESTRATOR_BASE_URL', 'http://localhost:8002'),
-            api_key=os.getenv('ORCHESTRATOR_API_KEY', ''),
+            api_key=os.getenv('INTERNAL_API_SECRET', ''),
         )
     
     def validate(self) -> bool:
