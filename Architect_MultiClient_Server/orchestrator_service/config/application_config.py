@@ -226,7 +226,7 @@ class AuthConfig:
     jwt_secret: str = ""
     jwt_expiry_days: int = 1
     refresh_token_expiry_days: int = 5
-    transcript_api_secret: str = ""
+    internal_api_secret: str = ""
 
     @classmethod
     def from_env(cls) -> 'AuthConfig':
@@ -235,7 +235,7 @@ class AuthConfig:
             jwt_secret=os.getenv('JWT_SECRET', ''),
             jwt_expiry_days=int(os.getenv('JWT_EXPIRY_DAYS', '1')),
             refresh_token_expiry_days=int(os.getenv('REFRESH_TOKEN_EXPIRY_DAYS', '5')),
-            transcript_api_secret=os.getenv('TRANSCRIPT_API_SECRET', ''),
+            internal_api_secret=os.getenv('INTERNAL_API_SECRET', ''),
         )
 
 

@@ -6,7 +6,7 @@ MongoDB service for storing STT records:
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -156,7 +156,10 @@ class MongoDBService:
         from_utc: datetime = None,
         to_utc: datetime = None,
     ) -> Dict[str, Any]:
-        """Build query dict for list_rooms / count_rooms. Search matches room_name or participant_identity in tracks."""
+        """Build query dict for list_rooms / count_rooms.
+
+        Search matches room_name or participants.participant_identity in rooms.
+        """
         and_parts = []
         if status:
             and_parts.append({"status": status})
@@ -169,23 +172,14 @@ class MongoDBService:
             and_parts.append({"created_at": created_at})
         if search and search.strip():
             search = search.strip()
-            room_ids_from_tracks = []
-            try:
-                room_ids_from_tracks = await self.tracks_collection.distinct(
-                    "room_ref_id",
-                    {"participant_identity": search}
-                )
-            except Exception as e:
-                logger.debug(f"Tracks distinct for search failed: {e}")
-            if room_ids_from_tracks:
-                and_parts.append({
+            and_parts.append(
+                {
                     "$or": [
                         {"room_name": search},
-                        {"_id": {"$in": room_ids_from_tracks}},
+                        {"participants.participant_identity": search},
                     ]
-                })
-            else:
-                and_parts.append({"room_name": search})
+                }
+            )
         if not and_parts:
             return {}
         if len(and_parts) == 1:
@@ -521,6 +515,143 @@ class MongoDBService:
             logger.error(f"Failed to finalize room: {e}")
             return False
 
+    async def save_participant(
+        self,
+        room_id: Any,
+        participant_identity: str,
+        timestamp: datetime = None
+    ) -> bool:
+        """
+        Add a participant to a room, ensuring uniqueness.
+        
+        Args:
+            room_id: The room's _id
+            participant_identity: Unique identifier for the participant
+            timestamp: When the participant joined (default: now)
+            
+        Returns:
+            True if added, False if already exists or error
+        """
+        try:
+            if timestamp is None:
+                timestamp = datetime.utcnow()
+            
+            participant_data = {
+                "participant_identity": participant_identity,
+                "timestamp": timestamp
+            }
+            
+            # Use $addToSet to add only if not exists
+            # But $addToSet compares entire object, so we need custom logic
+            
+            # Check if participant already exists
+            existing = await self.rooms_collection.find_one({
+                "_id": room_id,
+                "participants.participant_identity": participant_identity
+            })
+            
+            if existing:
+                logger.debug(f"Participant {participant_identity} already exists in room {room_id}")
+                return False
+            
+            # Add participant
+            result = await self.rooms_collection.update_one(
+                {"_id": room_id},
+                {"$push": {"participants": participant_data}}
+            )
+            
+            if result.modified_count > 0:
+                logger.info(f"✅ Added participant {participant_identity} to room {room_id}")
+                return True
+            else:
+                logger.warning(f"⚠️  Failed to add participant {participant_identity} to room {room_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error adding participant: {e}")
+            return False
+
+    async def save_batch_participants(
+        self,
+        room_id: Any,
+        participants: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Add multiple participants to a room in batch, ensuring uniqueness.
+        """
+        try:
+            if not participants:
+                return {"success": True, "added_count": 0, "skipped_count": 0}
+            
+            # Get room and existing participants (1 query)
+            room = await self.rooms_collection.find_one(
+                {"_id": room_id},
+                {"participants": 1}
+            )
+            
+            if not room:
+                logger.error(f"❌ Room {room_id} not found")
+                return {"success": False, "added_count": 0, "skipped_count": 0}
+            
+            # Get existing participant identities
+            existing_participants = room.get("participants", [])
+            existing_identities: Set[str] = {
+                p["participant_identity"] 
+                for p in existing_participants
+            }
+            
+            # Filter out duplicates (both in existing and in input batch)
+            participants_to_add = []
+            skipped_count = 0
+            
+            for p in participants:
+                identity = p.get("participant_identity")
+                
+                if not identity:
+                    skipped_count += 1
+                    continue
+                
+                # Skip if already exists in room or already seen in this batch
+                if identity in existing_identities:
+                    skipped_count += 1
+                    continue
+            
+                participants_to_add.append({
+                    "participant_identity": identity,
+                    "timestamp": p.get("timestamp", datetime.utcnow())
+                })
+            
+            # Insert all new participants at once (1 query)
+            if participants_to_add:
+                result = await self.rooms_collection.update_one(
+                    {"_id": room_id},
+                    {"$push": {"participants": {"$each": participants_to_add}}}
+                )
+                
+                added_count = len(participants_to_add) if result.modified_count > 0 else 0
+                
+                logger.info(
+                    f"✅ Batch save to room {room_id}: "
+                    f"Added {added_count}, Skipped {skipped_count}"
+                )
+                
+                return {
+                    "success": True,
+                    "added_count": added_count,
+                    "skipped_count": skipped_count
+                }
+            else:
+                logger.info(f"ℹ️  No new participants to add to room {room_id}")
+                return {
+                    "success": True,
+                    "added_count": 0,
+                    "skipped_count": skipped_count
+                }
+                
+        except Exception as e:
+            logger.error(f"❌ Error in save_batch_participants: {e}")
+            return {"success": False, "added_count": 0, "skipped_count": 0}
+
 
     async def check_event_record_done(
         self,
@@ -708,10 +839,10 @@ class MongoDBService:
                 return {}
 
             created_at_raw: datetime = room.get("created_at")
-            completed_at_raw: datetime = room.get("completed_at")
+            finaled_at_raw: datetime = room.get("finalized_at")
             total_duration_sec: float = 0.0
-            if completed_at_raw and created_at_raw:
-                total_duration_sec = (completed_at_raw - created_at_raw).total_seconds()
+            if finaled_at_raw and created_at_raw:
+                total_duration_sec = (finaled_at_raw - created_at_raw).total_seconds()
             tracks = await self.get_tracks_by_room(room_id)
             total_segments = 0
             completed_tracks = 0
@@ -735,7 +866,7 @@ class MongoDBService:
                 "total_duration_sec": total_duration_sec,
                 "total_segments": total_segments,
                 "created_at": convert_to_iso_8601(created_at_raw),
-                "completed_at": convert_to_iso_8601(completed_at_raw) if completed_at_raw else None
+                "finalized_at": convert_to_iso_8601(finaled_at_raw) if finaled_at_raw else None
             }
         except Exception as e:
             logger.error(f"Failed to get room statistics by ID: {e}")
@@ -802,6 +933,18 @@ class MongoDBService:
         except Exception as e:
             logger.error(f"Failed to save room summary: {e}")
             return None
+
+    async def update_room_summary(self, room_id: str, summary_data: Dict[str, Any]) -> bool:
+        """Update only the summary data for an existing room summary."""
+        try:
+            result = await self.summary_collection.update_one(
+                {"room_id": room_id},
+                {"$set": {"summary_data": summary_data}}
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            logger.error(f"Failed to update room summary: {e}")
+            return False
 
 
     async def get_summary_by_room_name(
@@ -1164,65 +1307,36 @@ class MongoDBService:
         skip: int = 0
     ) -> List[Dict[str, Any]]:
         """
-        List rooms where user participated using optimized aggregation pipeline.
+        List rooms where user participated (using participants array in rooms).
         """
 
         try:
-            # Build match condition cho tracks
-            track_match = {
-                "participant_identity": user_id
+            # Build match condition to filter rooms where user is a participant
+            match = {
+                "participants.participant_identity": user_id
             }
 
             if status:
-                track_match["status"] = status
+                match["status"] = status
 
             if from_utc or to_utc:
-                track_match["created_at"] = {}
+                match["created_at"] = {}
                 if from_utc:
-                    track_match["created_at"]["$gte"] = from_utc
+                    match["created_at"]["$gte"] = from_utc
                 if to_utc:
-                    track_match["created_at"]["$lt"] = to_utc
-
-            # Build match condition cho rooms
-            room_match = {}
-
-            if status:
-                room_match["room.status"] = status
+                    match["created_at"]["$lt"] = to_utc
 
             if search:
-                room_match["$or"] = [
-                    {"room.room_name": {"$regex": search, "$options": "i"}}
-                ]
+                match["room_name"] = {"$regex": search, "$options": "i"}
 
-            # Aggregation pipeline:
             pipeline = [
-                {"$match": track_match},
-                {
-                    "$group": {
-                        "_id": "$room_ref_id"
-                    }
-                },
-                {
-                    "$lookup": {
-                        "from": "rooms",
-                        "localField": "_id",
-                        "foreignField": "_id",
-                        "as": "room"
-                    }
-                },
-                {"$unwind": "$room"},
-
-                *( [{"$match": room_match}] if room_match else [] ),
-
-                {"$sort": {"room.created_at": -1}},
+                {"$match": match},
+                {"$sort": {"created_at": -1}},
                 {"$skip": skip},
-                {"$limit": limit},
-
-                {"$replaceRoot": {"newRoot": "$room"}}
+                {"$limit": limit}
             ]
 
-            # Execute pipeline
-            cursor = self.tracks_collection.aggregate(pipeline)
+            cursor = self.rooms_collection.aggregate(pipeline)
             room_list = [doc async for doc in cursor]
 
             if not room_list:
@@ -1251,53 +1365,27 @@ class MongoDBService:
         to_utc: datetime = None
     ) -> int:
         """
-        Count rooms where user participated.
-
-        Args:
-            user_id: Mezon user ID (participant_identity)
-            status: Filter by room status
-            search: Search by room_name or participant_identity
-            from_utc: Filter by created_at >= from_utc
-            to_utc: Filter by created_at < to_utc
-
-        Returns:
-            Number of rooms where user participated
+        Count rooms where user participated (using participants array in rooms).
         """
+
         try:
-            # Get room_ids where user has tracks
-            # participant_identity = user_id (direct match)
-            track_pipeline = [
-                {"$match": {"participant_identity": user_id}},
-                {"$group": {"_id": "$room_ref_id"}}
-            ]
+            query = {
+                "participants.participant_identity": user_id
+            }
 
-            cursor = self.tracks_collection.aggregate(track_pipeline)
-            user_room_ids = [doc["_id"] async for doc in cursor]
+            if status:
+                query["status"] = status
 
-            if not user_room_ids:
-                return 0
+            if from_utc or to_utc:
+                query["created_at"] = {}
+                if from_utc:
+                    query["created_at"]["$gte"] = from_utc
+                if to_utc:
+                    query["created_at"]["$lt"] = to_utc
 
-            # Convert to ObjectId
-            room_object_ids = []
-            for rid in user_room_ids:
-                try:
-                    room_object_ids.append(ObjectId(rid))
-                except Exception:
-                    pass
+            if search:
+                query["room_name"] = {"$regex": search, "$options": "i"}
 
-            if not room_object_ids:
-                return 0
-
-            # Build query with filters
-            query = await self._build_rooms_list_query(
-                status=status,
-                search=search,
-                from_utc=from_utc,
-                to_utc=to_utc
-            )
-            query["_id"] = {"$in": room_object_ids}
-
-            # Count documents
             count = await self.rooms_collection.count_documents(query)
 
             logger.debug(f"Counted {count} rooms for user_id={user_id}")
@@ -1314,24 +1402,24 @@ class MongoDBService:
     ) -> bool:
         """
         Check if user has access to room.
-        User has access if they have any track in this room.
-        participant_identity = user_id, so direct equality check.
-
-        Args:
-            room_id: Room ID (can be string or ObjectId)
-            user_id: Mezon user ID (participant_identity)
-
-        Returns:
-            True if user has participated in the room, False otherwise
+        User has access if they exist in participants array of the room.
         """
         try:
-            track = await self.tracks_collection.find_one({
-                "room_ref_id": ObjectId(room_id),
-                "participant_identity": user_id
-            })
+            room = await self.rooms_collection.find_one(
+                {
+                    "_id": ObjectId(room_id),
+                    "participants.participant_identity": user_id
+                },
+                {
+                    "_id": 1  # chỉ cần check tồn tại, không cần load full doc
+                }
+            )
 
-            has_access = track is not None
-            logger.debug(f"user_has_room_access: user_id={user_id}, room_id={room_id}, has_access={has_access}")
+            has_access = room is not None
+
+            logger.debug(
+                f"user_has_room_access: user_id={user_id}, room_id={room_id}, has_access={has_access}"
+            )
 
             return has_access
 
