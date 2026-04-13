@@ -10,10 +10,15 @@ Architecture:
 
 
 """
+import hashlib
+import base64
 import asyncio
+import time
 import httpx
 import json
 from typing import Optional, Callable, Dict, Any, List
+
+import jwt
 from src.utils.generate_id import generate_id
 from src.logger import get_logger
 from src.config.application_config import get_config
@@ -693,13 +698,46 @@ class OrchestratorClient:
 
         payload = webhook.to_payload(event_id=generate_id("EV_", 12))
 
+        # Serialize payload
+        body = json.dumps(payload, separators=(",", ":")).encode()
+
+        # Generate signature for webhook verification
+        token = generate_webhook_jwt(
+            self.config.livekit.webhook_api_key,
+            self.config.livekit.webhook_api_secret,
+            body, 
+        )
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": token, 
+        }
+
         try:
             res = await self._http_client.post(
                 f"{self.config.orchestrator.base_url}/api/webhook/webhook",
-                json=payload
+                content=body,
+                headers=headers,
             )
             return res.status_code in (200, 201)
 
         except Exception as e:
             self.logger.error(f"Webhook error: {e}")
             return False
+
+
+def generate_webhook_jwt(api_key: str, api_secret: str, body: bytes) -> str:
+    """
+    Generate JWT for webhook verification.
+    """
+    body_hash = hashlib.sha256(body).digest()
+    sha256_b64 = base64.b64encode(body_hash).decode()
+
+    payload = {
+        "iss": api_key,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 60,
+        "sha256": sha256_b64,
+    }
+
+    return jwt.encode(payload, api_secret, algorithm="HS256")
