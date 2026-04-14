@@ -2,15 +2,15 @@
 SSE Metadata API
 Endpoints for bot to receive agent metadata events via SSE
 """
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional
 from datetime import datetime
 
+from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb_service import MongoDBService
-from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.models.metadata_event_models import MetadataEventType
 
 
@@ -118,7 +118,11 @@ async def sse_metadata_endpoint(appid: str, token: str):
     Returns:
         StreamingResponse with SSE events
     """
-    return await metadata_channel.create_connection(appid, token)
+    account = {"appid": appid, "token": token}
+    if not await authenticate_account(account):
+        return HTTPException(status_code=401, detail="Account authentication failed")
+
+    return await metadata_channel.create_connection(appid)
 
 
 # ==================== Push Endpoints ====================
@@ -210,7 +214,7 @@ async def list_metadata_events(
     limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     sort_order: str = Query("desc", description="Sort order: 'asc' for ascending, 'desc' for descending (default: 'desc')"),
-    auth: Dict[str, Any] = Depends(verify_api_key)
+    
 ):
     """
     Get metadata events with optional filters.
@@ -225,7 +229,7 @@ async def list_metadata_events(
     - **sort_order**: Sort direction for created_at ('asc' = ascending/oldest first, 'desc' = descending/newest first, default: 'desc')
     """
     # Validate event_type
-    if MetadataEventType.is_valid(event_type) is False:
+    if event_type is not None and MetadataEventType.is_valid(event_type) is False:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid event_type. Must be one of: {', '.join(MetadataEventType)}"
@@ -278,7 +282,7 @@ async def list_metadata_events(
 @router.get("/metadata/{event_id}", response_description="Get metadata event by event_id")
 async def get_metadata_event_by_id(
     event_id: str,
-    auth: Dict[str, Any] = Depends(verify_api_key)
+    
 ):
     """
     Get single metadata event by event_id (UUID).

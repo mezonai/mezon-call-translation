@@ -17,6 +17,10 @@ from orchestrator_service.migrations.migration_base import MigrationBase
 
 # Import all migrations here
 from orchestrator_service.migrations.migration_001_create_metadata_events_indexes import CreateMetadataEventsIndexes
+from orchestrator_service.migrations.migration_002_create_refresh_tokens_indexes import CreateRefreshTokensIndexes
+from orchestrator_service.migrations.migration_003_create_token_blacklist_indexes import CreateTokenBlacklistIndexes
+from orchestrator_service.migrations.migration_004_create_flat_permission_model import CreateFlatPermissionModel
+from orchestrator_service.migrations.migration_005_add_participants_to_rooms import AddParticipantsToRooms
 
 logger = get_logger(__name__)
 
@@ -26,7 +30,11 @@ class MigrationRunner:
 
     # Register all migrations here in order
     MIGRATIONS: List[Type[MigrationBase]] = [
-        CreateMetadataEventsIndexes,
+        CreateMetadataEventsIndexes,           # 001
+        CreateRefreshTokensIndexes,            # 002
+        CreateTokenBlacklistIndexes,           # 003
+        CreateFlatPermissionModel,             # 004
+        AddParticipantsToRooms,                # 005
     ]
 
     def __init__(self):

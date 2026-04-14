@@ -4,12 +4,10 @@ Handles SSE connections for chat external events (global, not room-specific)
 """
 from typing import Optional, Dict, Any
 from datetime import datetime
-from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
-from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,7 +36,6 @@ class ChatExternalChannel:
     async def create_connection(
         self,
         appid: str,
-        token: str
     ) -> StreamingResponse:
         """
         Create SSE connection for chat external channel.
@@ -53,11 +50,6 @@ class ChatExternalChannel:
         Raises:
             HTTPException: If authentication fails
         """
-        # Authenticate
-        account = {"appid": appid, "token": token}
-        if not await authenticate_account(account):
-            raise HTTPException(status_code=401, detail="Account authentication failed")
-        
         context_key = self.CONTEXT_KEY
         
         # Close existing connection from same appid

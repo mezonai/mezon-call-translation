@@ -6,19 +6,16 @@ Room API endpoints for querying room data from MongoDB
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Query, Depends
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb_service import MongoDBService
-from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
-    RoomNamePath,
     StatusQuery,
     LimitQuery,
     SkipQuery,
-    validate_date_range
 )
 from bson import ObjectId
 
@@ -85,7 +82,7 @@ async def list_rooms(
 @router.get("/id/{room_id}", response_description="Get room by ID")
 async def get_room_by_id(
     room_id: str,
-    auth: Dict[str, Any] = Depends(verify_api_key)
+    
 ):
     """
     Get room details by room ID.
@@ -123,7 +120,7 @@ async def get_room_by_id(
 @router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
 async def get_room_statistics_by_id(
     room_id: str,
-    auth: Dict[str, Any] = Depends(verify_api_key)
+    
 ):
     """
     Get detailed statistics for a specific room by ID.
@@ -159,3 +156,4 @@ async def get_room_statistics_by_id(
     except Exception as e:
         logger.error(f"Failed to get room statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+

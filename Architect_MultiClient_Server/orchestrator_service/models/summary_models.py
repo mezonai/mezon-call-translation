@@ -11,7 +11,7 @@ class ActionItemResult(BaseModel):
     participant_actions: List[str] = Field(description="List of actions performed by the participant")
 
 class SummaryResult(BaseModel):
-    context: str = Field(description="Meeting context and participant roles")
+    context: str = Field(description="Meeting context and participant permissions")
     key_discussions: str = Field(description="Main discussion details and viewpoints")
     decisions: str = Field(description="Concrete decisions or agreements")
     unresolved_issues: str = Field(description="Open issues and parking lot items")

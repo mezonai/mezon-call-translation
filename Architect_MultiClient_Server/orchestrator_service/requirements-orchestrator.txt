@@ -16,6 +16,12 @@ fastapi>=0.104.0               # FastAPI web framework for REST API
 uvicorn[standard]>=0.24.0      # ASGI server for FastAPI
 pydantic>=2.0.0                # Data validation and settings management
 httpx>=0.25.0                  # HTTP client for external API calls
+requests>=2.31.0               # HTTP client for OAuth2 integration
+
+# ========================================
+# Authentication & Security
+# ========================================
+PyJWT>=2.8.0                   # JWT token generation and validation
 
 # ========================================
 # Database & Storage
