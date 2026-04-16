@@ -913,7 +913,8 @@ class MongoDBService:
             room_id = summary_data.get("room_id")
             if not room_id:
                 return None
-                
+            room_id = ObjectId(room_id)
+            summary_data["room_id"] = room_id 
             result = await self.summary_collection.update_one(
                 {"room_id": room_id},
                 {"$set": summary_data},
@@ -937,6 +938,7 @@ class MongoDBService:
     async def update_room_summary(self, room_id: str, summary_data: Dict[str, Any]) -> bool:
         """Update only the summary data for an existing room summary."""
         try:
+            room_id = ObjectId(room_id)
             result = await self.summary_collection.update_one(
                 {"room_id": room_id},
                 {"$set": {"summary_data": summary_data}}
@@ -981,15 +983,23 @@ class MongoDBService:
 
             room_dict = {str(room["_id"]): room for room in room_list}
             room_ids = list(room_dict.keys())
+            room_object_ids = []
+            for room_id in room_ids:
+                try:
+                    room_object_ids.append(ObjectId(room_id))
+                except Exception:
+                    continue
 
             # 3. get summaries
             summary_list = await self.summary_collection.find(
-                {"room_id": {"$in": room_ids}}
+                {"room_id": {"$in": room_object_ids}}
             ).to_list(None)
 
             # 4. map response
             summary_response_list = []
             for summary in summary_list:
+                if isinstance(summary.get("room_id"), ObjectId):
+                    summary["room_id"] = str(summary["room_id"])
                 summary_response = RoomSummaryResponse.model_construct(**summary)
 
                 room = room_dict.get(str(summary["room_id"]), {})
@@ -1012,11 +1022,16 @@ class MongoDBService:
     async def get_summary_by_room_id(self, room_id: str) -> RoomSummaryResponse:
         """Get summary by room id"""
         try:
-            summary_data: dict = await self.summary_collection.find_one({"room_id": room_id})
+            room_object_id = ObjectId(room_id)
+            summary_data: dict = await self.summary_collection.find_one(
+                {"room_id": room_object_id}
+            )
             response = RoomSummaryResponse()
             if summary_data:
+                if isinstance(summary_data.get("room_id"), ObjectId):
+                    summary_data["room_id"] = str(summary_data["room_id"])
                 response = RoomSummaryResponse.model_construct(**summary_data)
-            room_data: dict = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
+            room_data: dict = await self.rooms_collection.find_one({"_id": room_object_id})
             response.created_at = convert_to_iso_8601(room_data.get("created_at", ""))
             response.completed_at = convert_to_iso_8601(room_data.get("completed_at", ""))
             return response
