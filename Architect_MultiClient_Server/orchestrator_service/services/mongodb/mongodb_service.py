@@ -258,10 +258,10 @@ class MongoDBService:
             logger.error(f"Failed to list tracks: {e}")
             return []
 
-    async def count_tracks_by_room(self, room_id: str, status: str = None) -> int:
+    async def count_tracks_by_room(self, room_id: ObjectId, status: str = None) -> int:
         """Count tracks for a room"""
         try:
-            query = {"room_ref_id": ObjectId(room_id)}
+            query = {"room_ref_id": room_id}
             if status:
                 query["status"] = status
             return await self.tracks_collection.count_documents(query)

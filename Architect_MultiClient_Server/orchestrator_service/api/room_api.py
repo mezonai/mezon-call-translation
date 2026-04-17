@@ -104,11 +104,11 @@ async def get_room_by_id(
         
         # Validate ObjectId format
         try:
-            _room_id = ObjectId(room_id)
+            room_object_id = ObjectId(room_id)
         except Exception:
             raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
         
-        room = await mongodb.get_room_by_id(_room_id)
+        room = await mongodb.get_room_by_id(room_object_id)
         if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
         
@@ -147,11 +147,11 @@ async def get_room_statistics_by_id(
         
         # Validate ObjectId format
         try:
-            room_id = ObjectId(room_id)
+            room_object_id = ObjectId(room_id)
         except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
+            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_object_id}'")
         
-        stats = await mongodb.get_room_statistics_by_id(room_id)
+        stats = await mongodb.get_room_statistics_by_id(room_object_id)
         if not stats:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
 
