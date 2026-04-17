@@ -122,7 +122,6 @@ class MongoDBService:
 
         try:
             room: dict = await self.rooms_collection.find_one({"_id": room_id})
-            room["_id"] = room["_id"]
             room["created_at"] = convert_to_iso_8601(room["created_at"])
             room["completed_at"] = convert_to_iso_8601(room.get("completed_at", None))
             return room

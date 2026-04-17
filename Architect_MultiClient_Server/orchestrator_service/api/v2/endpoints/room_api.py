@@ -193,14 +193,14 @@ async def get_room_statistics_by_id(
 
         # Validate ObjectId format
         try:
-            ObjectId(room_id)
+            _room_id = ObjectId(room_id)
         except Exception:
             raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
 
         # Check access permission for regular users
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await mongodb.user_has_room_access(ObjectId(room_id), auth.user_id)
+            has_access = await mongodb.user_has_room_access(_room_id, auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
                 raise HTTPException(
@@ -208,7 +208,7 @@ async def get_room_statistics_by_id(
                     detail="You don't have access to this room"
                 )
 
-        stats = await mongodb.get_room_statistics_by_id(ObjectId(room_id))
+        stats = await mongodb.get_room_statistics_by_id(_room_id)
         if not stats:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
 

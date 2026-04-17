@@ -211,7 +211,7 @@ async def unregister_room(
         try:
             asyncio.create_task(transcription_service.final_room(
                 request.room_name, 
-                ObjectId(room_id)
+                room_id
             ))
         except Exception as e:
             logger.error(f"Error finalizing room '{request.room_name}': {e}", exc_info=True)

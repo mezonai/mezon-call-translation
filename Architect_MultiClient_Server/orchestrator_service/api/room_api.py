@@ -104,11 +104,11 @@ async def get_room_by_id(
         
         # Validate ObjectId format
         try:
-            ObjectId(room_id)
+            _room_id = ObjectId(room_id)
         except Exception:
             raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
         
-        room = await mongodb.get_room_by_id(ObjectId(room_id))
+        room = await mongodb.get_room_by_id(_room_id)
         if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
         

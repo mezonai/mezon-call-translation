@@ -24,10 +24,9 @@ async def get_summary_by_room_name(
 
     summary_models = []
     for summary in summaries:
-        if isinstance(summary, dict):
-            if summary.get("room_id") is not None:
-                summary["room_id"] = str(summary["room_id"])
-            summary_models.append(RoomSummaryResponse.model_construct(**summary))
+        if summary.get("room_id") is not None:
+            summary["room_id"] = str(summary["room_id"])
+        summary_models.append(RoomSummaryResponse.model_construct(**summary))
 
     return {
         "status": "ok",
@@ -50,10 +49,9 @@ async def get_summary_by_room_id(
 
     summary = await mongodb.get_summary_by_room_id(room_object_id)
 
-    if isinstance(summary, dict):
-        if summary.get("room_id") is not None:
-            summary["room_id"] = str(summary["room_id"])
-        summary = RoomSummaryResponse.model_construct(**summary)
+    if summary.get("room_id") is not None:
+        summary["room_id"] = str(summary["room_id"])
+    summary = RoomSummaryResponse.model_construct(**summary)
 
     return {
         "status": "ok",
