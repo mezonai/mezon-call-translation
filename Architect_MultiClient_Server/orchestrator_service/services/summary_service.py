@@ -3,11 +3,11 @@ Service for generating room summaries
 """
 from datetime import datetime
 from typing import Optional, Dict, Any
+from bson import ObjectId
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.services.llm.factory import create_llm_service
-from orchestrator_service.models.summary_models import RoomSummary
 from orchestrator_service.config.application_config import get_config
 
 from orchestrator_service.utils.logger import get_logger
@@ -24,7 +24,7 @@ class SummaryService:
         self.llm_service = create_llm_service(self.config.llm)
         logger.info(f"SummaryService initialized with LLM provider: {self.config.llm.provider}")
 
-    async def generate_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
+    async def generate_summary(self, room_id: ObjectId) -> Optional[Dict[str, Any]]:
         """
         Generate a summary for the given room_id.
         
@@ -42,7 +42,7 @@ class SummaryService:
         # Ensure MongoDB is connected
         if not self.mongodb.connected:
             await self.mongodb.connect()
-        
+
         # 1. Verify room exists
         logger.info(f"Generating summary for room {repr(room_id)}")
         room = await self.mongodb.get_room_by_id(room_id)
@@ -109,7 +109,7 @@ class SummaryService:
             if participant != "Unknown":
                 unique_participants.add(participant)
             
-            text = seg.get("text", "").strip() # Use text from segment
+            text = seg.get("text", "").strip()
             
             if text:
                 if participant == last_participant:
@@ -123,18 +123,18 @@ class SummaryService:
         
         full_text = "\n".join(text_lines)
 
-        draft_summary = RoomSummary(
-            room_id=room_id,
-            room_name=room.get("room_name", "Unknown"),
-            participants=list(unique_participants),
-            summary_data={},
-            full_text=full_text,
-            created_at=datetime.utcnow(),
-            total_segments=len(all_segments)
-        )
+        draft_summary: Dict[str, Any] = {
+            "room_id": room_id,
+            "room_name": room.get("room_name", "Unknown"),
+            "participants": list(unique_participants),
+            "summary_data": {},
+            "full_text": full_text,
+            "created_at": datetime.utcnow(),
+            "total_segments": len(all_segments),
+        }
 
         # 6. Save transcript draft so full_text is persisted even if summary generation fails
-        saved_id = await self.mongodb.save_room_summary(draft_summary.model_dump())
+        saved_id = await self.mongodb.save_room_summary(draft_summary)
         if not saved_id:
             logger.error(f"Failed to save transcript draft for room {room_id}")
             return None
@@ -155,28 +155,29 @@ class SummaryService:
                 "action_items": action_items_dict
             }
 
-            final_summary = draft_summary.model_copy(update={"summary_data": summary_data})
+            final_summary = dict(draft_summary)
+            final_summary["summary_data"] = summary_data
 
             # 8. Update only summary_data in DB; full_text remains from the draft save
             updated = await self.mongodb.update_room_summary(room_id, summary_data)
             if not updated:
                 logger.error(f"Failed to update generated summary for room {room_id}")
-                return {**draft_summary.model_dump(), "_id": saved_id}
+                return {**draft_summary, "_id": saved_id}
 
             logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
-            result = final_summary.model_dump()
+            result = dict(final_summary)
             result["_id"] = saved_id
 
             # 9. Notify clients via SSE if summary generation is successful
             metadata_channel = MetadataChannel()
             await metadata_channel.push_room_summary_done(
-                room_id=room_id,
+                room_id=str(room_id),
                 room_name=room.get("room_name", "Unknown")
             )
             return result
         except Exception as e:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
-            return {**draft_summary.model_dump(), "_id": saved_id}
+            return {**draft_summary, "_id": saved_id}
 
 # Singleton
 _summary_service = None

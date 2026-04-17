@@ -293,9 +293,9 @@ class RedisSaveTranscriptionService:
                     )
                     
                     # Check and complete room if all tracks are done
-                    if room_ref_id and await self._mongodb_service.check_and_complete_room(str(room_ref_id)):
+                    if room_ref_id and await self._mongodb_service.check_and_complete_room(room_ref_id):
                         service = get_summary_service()
-                        await service.generate_summary(str(room_ref_id))
+                        await service.generate_summary(room_ref_id)
                 else:
                     logger.warning(
                         f"Failed to update status for track {task.track_ref_id}"

@@ -21,6 +21,7 @@ from orchestrator_service.migrations.migration_002_create_refresh_tokens_indexes
 from orchestrator_service.migrations.migration_003_create_token_blacklist_indexes import CreateTokenBlacklistIndexes
 from orchestrator_service.migrations.migration_004_create_flat_permission_model import CreateFlatPermissionModel
 from orchestrator_service.migrations.migration_005_add_participants_to_rooms import AddParticipantsToRooms
+from .migration_006_cleanup_rooms_summary import CleanupRoomsSummary
 
 logger = get_logger(__name__)
 
@@ -35,6 +36,7 @@ class MigrationRunner:
         CreateTokenBlacklistIndexes,           # 003
         CreateFlatPermissionModel,             # 004
         AddParticipantsToRooms,                # 005
+        CleanupRoomsSummary,                   # 006
     ]
 
     def __init__(self):

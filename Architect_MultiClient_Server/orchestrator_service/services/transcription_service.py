@@ -67,7 +67,7 @@ class TranscriptionService:
                     status="wait_process")
                 
                 if track_result and track_result.get("room_ref_id"):
-                    room = await self.mongodb_service.check_event_record_done(str(track_result.get("room_ref_id")))
+                    room = await self.mongodb_service.check_event_record_done(track_result.get("room_ref_id"))
                     if room:
                         await metadata_channel.push_room_record_done(
                         room_id=str(room.get("_id")),
@@ -105,7 +105,7 @@ class TranscriptionService:
             logger.error(f"✗ Redis enqueue failed: {e}")
             return False
 
-    async def final_room(self, room_name: str, room_id: str ) -> bool:
+    async def final_room(self, room_name: str, room_id: ObjectId ) -> bool:
         """
         Mark room as finalized in transcription service
         
@@ -129,7 +129,7 @@ class TranscriptionService:
             
             if await self.mongodb_service.check_event_record_done(room_id):
                 await metadata_channel.push_room_record_done(
-                    room_id=room_id,
+                    room_id=str(room_id),
                     room_name=room_name
                 )
 
@@ -160,19 +160,19 @@ class TranscriptionService:
             return {
                 "success": True,
                 "message": f"Room {room_name} started successfully",
-                "room_id": str(room_id)
+                "room_id": room_id
             }
         except Exception as e:
             logger.exception(f"✗ Unexpected error starting room: {e}")
 
         return None
     
-    async def save_participant(self, room_id: str, participant_identity: str, timestamp: datetime = None) -> bool:
+    async def save_participant(self, room_id: ObjectId, participant_identity: str, timestamp: datetime = None) -> bool:
         """
         Save participant info to MongoDB
         
         Args:
-            room_id: Room ID
+            room_id: Room ObjectId
             participant_identity: Participant identity
             
         Returns:
@@ -181,7 +181,6 @@ class TranscriptionService:
         try:
             if not self.mongodb_service.connected:
                 await self.mongodb_service.connect()
-            room_id = ObjectId(room_id)
             result = await self.mongodb_service.save_participant(
                 room_id=room_id,
                 participant_identity=participant_identity,
@@ -192,14 +191,13 @@ class TranscriptionService:
             logger.exception(f"Failed to save participant: {e}")
             return False
 
-    async def save_participants_batch(self, room_id: str, participants: List[Dict[str, Any]]) -> Dict[str, int]:
+    async def save_participants_batch(self, room_id: ObjectId, participants: List[Dict[str, Any]]) -> Dict[str, int]:
         """
         Save batch of participants to MongoDB
         """
         try:
             if not self.mongodb_service.connected:
                 await self.mongodb_service.connect()
-            room_id = ObjectId(room_id)
             result = await self.mongodb_service.save_batch_participants(
                 room_id=room_id,
                 participants=participants
@@ -235,13 +233,6 @@ class TranscriptionService:
         try:
             if not self.mongodb_service.connected:
                 await self.mongodb_service.connect()
-
-            # Convert room_ref_id string to ObjectId
-            try:
-                room_ref_id = ObjectId(room_ref_id)
-            except Exception as e:
-                    logger.error(f"Invalid room_ref_id '{room_ref_id}': {e}")
-                    return False
     
             # Check if room exists
             room = await self.mongodb_service.get_room_by_id(room_ref_id)

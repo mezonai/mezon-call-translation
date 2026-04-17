@@ -23,6 +23,13 @@ router = APIRouter(prefix="/api/transcripts/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
 
+def _serialize_room(room: dict) -> dict:
+    serialized_room = dict(room)
+    if serialized_room.get("_id") is not None:
+        serialized_room["_id"] = str(serialized_room["_id"])
+    return serialized_room
+
+
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,
@@ -59,6 +66,7 @@ async def list_rooms(
             limit=limit,
             skip=skip,
         )
+        rooms = [_serialize_room(room) for room in rooms]
         total = await mongodb.count_rooms(
             status=status,
             search=search_trimmed,
@@ -96,15 +104,15 @@ async def get_room_by_id(
         
         # Validate ObjectId format
         try:
-            ObjectId(room_id)
+            room_object_id = ObjectId(room_id)
         except Exception:
             raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
         
-        room = await mongodb.get_room_by_id(room_id)
+        room = await mongodb.get_room_by_id(room_object_id)
         if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
         
-        room["_id"] = str(room["_id"])
+        room = _serialize_room(room)
         
         return {
             "status": "ok",
@@ -139,13 +147,16 @@ async def get_room_statistics_by_id(
         
         # Validate ObjectId format
         try:
-            ObjectId(room_id)
+            room_object_id = ObjectId(room_id)
         except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
+            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_object_id}'")
         
-        stats = await mongodb.get_room_statistics_by_id(room_id)
+        stats = await mongodb.get_room_statistics_by_id(room_object_id)
         if not stats:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+
+        if stats.get("room_id") is not None:
+            stats["room_id"] = str(stats["room_id"])
         
         return {
             "status": "ok",

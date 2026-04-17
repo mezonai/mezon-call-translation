@@ -77,13 +77,18 @@ async def register_room(
         logger.error(f"Error starting room in STT: {e}", exc_info=True)
     
     # 2. Register room in registry
+    if stt_room_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to obtain room_id from STT service"
+        )
     if not await registry.register_room(request.room_name, stt_room_id):
         raise HTTPException(
             status_code=409,
             detail=f"Room '{request.room_name}' is already registered"
         )
     
-    # 3. Start recording for existing tracks (best effort)
+    # 3. Start recording for existing tracks
     try:
         livekit_service = get_livekit_service()
         if livekit_service.is_available:
@@ -133,13 +138,13 @@ async def register_room(
         # Continue - room is already registered
     
     metadata_channel = MetadataChannel()
-    asyncio.create_task(metadata_channel.push_room_started(stt_room_id, request.room_name))
+    asyncio.create_task(metadata_channel.push_room_started(str(stt_room_id), request.room_name))
     
     return {
         "status": "ok",
         "message": f"Room '{request.room_name}' registered successfully",
         "room_name": request.room_name,
-        "room_id": stt_room_id,
+        "room_id": str(stt_room_id),
         "tracks_started": tracks_started
     }       
 
