@@ -5,9 +5,6 @@ This migration:
 - Removes the metadata field when it is null
 - Converts room_id from string to ObjectId when possible
 """
-from typing import Any
-
-from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from orchestrator_service.migrations.migration_base import MigrationBase
@@ -19,8 +16,6 @@ logger = get_logger(__name__)
 class CleanupRoomsSummary(MigrationBase):
     """Clean up rooms_summary documents and normalize room_id type."""
 
-    BATCH_SIZE = 200
-
     def __init__(self, db: AsyncIOMotorDatabase):
         super().__init__(db)
 
@@ -31,19 +26,6 @@ class CleanupRoomsSummary(MigrationBase):
     @property
     def description(self) -> str:
         return "Remove null metadata from rooms_summary and convert room_id strings to ObjectId"
-
-    @staticmethod
-    def _to_object_id(value: Any) -> ObjectId | None:
-        if isinstance(value, ObjectId):
-            return value
-
-        if isinstance(value, str):
-            try:
-                return ObjectId(value)
-            except Exception:
-                return None
-
-        return None
 
     async def up(self) -> bool:
         """Apply the cleanup migration."""
@@ -58,33 +40,30 @@ class CleanupRoomsSummary(MigrationBase):
                 f"✅ Removed null metadata from {null_metadata_result.modified_count} rooms_summary documents"
             )
 
-            cursor = summary_collection.find(
-                {"room_id": {"$type": "string"}},
-                {"_id": 1, "room_id": 1},
-            ).batch_size(self.BATCH_SIZE)
+            valid_string_filter = {
+                "room_id": {
+                    "$type": "string",
+                    "$regex": "^[a-fA-F0-9]{24}$",
+                }
+            }
+            invalid_string_filter = {
+                "room_id": {
+                    "$type": "string",
+                    "$not": {"$regex": "^[a-fA-F0-9]{24}$"},
+                }
+            }
 
-            converted_count = 0
-            skipped_count = 0
-
-            async for document in cursor:
-                room_id = document.get("room_id")
-                object_id = self._to_object_id(room_id)
-
-                if object_id is None:
-                    skipped_count += 1
-                    logger.warning(
-                        f"⚠️  Skipping rooms_summary document {document.get('_id')} with invalid room_id: {room_id}"
-                    )
-                    continue
-
-                await summary_collection.update_one(
-                    {"_id": document["_id"]},
-                    {"$set": {"room_id": object_id}},
+            skipped_count = await summary_collection.count_documents(invalid_string_filter)
+            if skipped_count > 0:
+                logger.warning(
+                    f"⚠️  Found {skipped_count} rooms_summary documents with invalid room_id string values"
                 )
-                converted_count += 1
 
-                if converted_count % self.BATCH_SIZE == 0:
-                    logger.info(f"📈 Converted {converted_count} rooms_summary room_id values so far")
+            converted_result = await summary_collection.update_many(
+                valid_string_filter,
+                [{"$set": {"room_id": {"$toObjectId": "$room_id"}}}],
+            )
+            converted_count = converted_result.modified_count
 
             logger.info(f"✅ Converted {converted_count} rooms_summary room_id values to ObjectId")
             if skipped_count > 0:
@@ -101,20 +80,11 @@ class CleanupRoomsSummary(MigrationBase):
         try:
             summary_collection = self.db["rooms_summary"]
 
-            cursor = summary_collection.find(
+            reverted_result = await summary_collection.update_many(
                 {"room_id": {"$type": "objectId"}},
-                {"_id": 1, "room_id": 1},
-            ).batch_size(self.BATCH_SIZE)
-
-            reverted_count = 0
-
-            async for document in cursor:
-                room_id = document.get("room_id")
-                await summary_collection.update_one(
-                    {"_id": document["_id"]},
-                    {"$set": {"room_id": str(room_id)}},
-                )
-                reverted_count += 1
+                [{"$set": {"room_id": {"$toString": "$room_id"}}}],
+            )
+            reverted_count = reverted_result.modified_count
 
             logger.info(f"✅ Reverted {reverted_count} rooms_summary room_id values back to string")
             return True

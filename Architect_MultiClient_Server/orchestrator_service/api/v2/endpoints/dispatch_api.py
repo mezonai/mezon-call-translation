@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional, List
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import AGENT_CONTROL
 from fastapi import APIRouter, HTTPException, Depends
+from bson import ObjectId
 from pydantic import BaseModel, Field
 from orchestrator_service.services.livekit_client import get_livekit_service, LiveKitServiceError
 from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
@@ -92,7 +93,11 @@ async def list_participants(room_id: str, auth: AuthContext = Depends(require_an
     mongodb_service = MongoDBService()
     if not mongodb_service.connected:
         await mongodb_service.connect()
-    room = await mongodb_service.get_room_by_id(room_id)
+    try:
+        room_object_id = ObjectId(room_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
+    room = await mongodb_service.get_room_by_id(room_object_id)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
     try:

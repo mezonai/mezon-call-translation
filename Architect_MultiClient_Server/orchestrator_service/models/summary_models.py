@@ -3,7 +3,7 @@ Pydantic models for room summary
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 
 class ActionItemResult(BaseModel):
@@ -28,12 +28,12 @@ class SummaryActionItemsResult(BaseModel):
 
 class RoomSummary(BaseModel):
     """Model for storing room conversation summary"""
-    room_id: str = Field(description="Room ID", default="")
+    room_id: str = Field(description="Room ID")
     room_name: str = Field(description="Room Name", default="")
     participants: List[str] = Field(description="Participants", default=[])
     summary_data: Dict[str, Any] = Field(description="Summary Data", default={})
     full_text: str = Field(description="Full Text", default="")
-    created_at: datetime = Field(description="Created At", default_factory= datetime.utcnow())
+    created_at: datetime = Field(description="Created At", default_factory=datetime.utcnow)
     total_segments: int = Field(description="Total Segments", default=0)
 
 class RoomSummaryResponse(BaseModel):

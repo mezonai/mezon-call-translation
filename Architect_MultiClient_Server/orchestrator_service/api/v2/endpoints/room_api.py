@@ -25,6 +25,13 @@ router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
 
+def _serialize_room(room: dict) -> dict:
+    serialized_room = dict(room)
+    if serialized_room.get("_id") is not None:
+        serialized_room["_id"] = str(serialized_room["_id"])
+    return serialized_room
+
+
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,
@@ -70,6 +77,7 @@ async def list_rooms(
                 limit=limit,
                 skip=skip,
             )
+            rooms = [_serialize_room(room) for room in rooms]
             total = await mongodb.count_rooms(
                 status=status,
                 search=search_trimmed,
@@ -126,9 +134,15 @@ async def get_room_by_id(
         if not mongodb.connected:
             await mongodb.connect()
 
+        # Validate ObjectId format
+        try:
+            room_object_id = ObjectId(room_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
+
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await mongodb.user_has_room_access(room_id, auth.user_id)
+            has_access = await mongodb.user_has_room_access(room_object_id, auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room {room_id}")
                 raise HTTPException(
@@ -136,19 +150,13 @@ async def get_room_by_id(
                     detail="You don't have access to this room"
                 )
 
-        # Validate ObjectId format
-        try:
-            ObjectId(room_id)
-        except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
-
-        room = await mongodb.get_room_by_id(room_id)
+        room = await mongodb.get_room_by_id(room_object_id)
         if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
 
         # Check access permission for regular users
 
-        room["_id"] = str(room["_id"])
+        room = _serialize_room(room)
 
         return {
             "status": "ok",
@@ -192,7 +200,7 @@ async def get_room_statistics_by_id(
         # Check access permission for regular users
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await mongodb.user_has_room_access(room_id, auth.user_id)
+            has_access = await mongodb.user_has_room_access(ObjectId(room_id), auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
                 raise HTTPException(
@@ -200,9 +208,12 @@ async def get_room_statistics_by_id(
                     detail="You don't have access to this room"
                 )
 
-        stats = await mongodb.get_room_statistics_by_id(room_id)
+        stats = await mongodb.get_room_statistics_by_id(ObjectId(room_id))
         if not stats:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+
+        if stats.get("room_id") is not None:
+            stats["room_id"] = str(stats["room_id"])
         
         return {
             "status": "ok",
@@ -236,7 +247,7 @@ async def get_audio_info(
         # Check access permission for regular users
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await mongodb.user_has_room_access(room_id, auth.user_id)
+            has_access = await mongodb.user_has_room_access(ObjectId(room_id), auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
                 raise HTTPException(
@@ -246,7 +257,7 @@ async def get_audio_info(
             # Fetch tracks from MongoDB and build file_results
         file_results = []
         try:
-            tracks = await mongodb.get_tracks_by_room(room_id)
+            tracks = await mongodb.get_tracks_by_room(ObjectId(room_id))
             if not tracks:
                 raise HTTPException(status_code=404, detail=f"No tracks found for room with ID '{room_id}'")
             for track in tracks:
