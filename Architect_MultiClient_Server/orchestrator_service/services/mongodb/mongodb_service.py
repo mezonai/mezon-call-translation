@@ -15,7 +15,6 @@ from orchestrator_service.config.application_config import get_config
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
-from orchestrator_service.models.summary_models import RoomSummaryResponse
 logger = get_logger(__name__)
 
 @singleton
@@ -117,13 +116,12 @@ class MongoDBService:
 
 
     async def get_room_by_id(
-        self, room_id: str
+        self, room_id: ObjectId
     ) -> Optional[Dict[str, Any]]:
         """Get room by _id"""
 
         try:
-            room: dict = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
-            room["_id"] = str(room["_id"])
+            room: dict = await self.rooms_collection.find_one({"_id": room_id})
             room["created_at"] = convert_to_iso_8601(room["created_at"])
             room["completed_at"] = convert_to_iso_8601(room.get("completed_at", None))
             return room
@@ -141,7 +139,6 @@ class MongoDBService:
             cursor = self.rooms_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
             room_list: list[dict] = await cursor.to_list(length=limit)
             for room in room_list:
-                room["_id"] = str(room["_id"])
                 room["created_at"] = convert_to_iso_8601(room["created_at"])
                 room["completed_at"] = convert_to_iso_8601(room.get("completed_at", None))
             return room_list
@@ -213,10 +210,10 @@ class MongoDBService:
             logger.error(f"Failed to get track by ID: {e}")
             return None
 
-    async def get_tracks_by_room(self, room_id: str, status: str = None) -> List[Dict[str, Any]]:
+    async def get_tracks_by_room(self, room_id: ObjectId, status: str = None) -> List[Dict[str, Any]]:
         """Get all tracks for a room, optionally filtered by status"""
         try:
-            query = {"room_ref_id": ObjectId(room_id)}
+            query = {"room_ref_id": room_id}
             if status:
                 query["status"] = status
             cursor = self.tracks_collection.find(query).sort("created_at", 1)
@@ -261,10 +258,10 @@ class MongoDBService:
             logger.error(f"Failed to list tracks: {e}")
             return []
 
-    async def count_tracks_by_room(self, room_id: str, status: str = None) -> int:
+    async def count_tracks_by_room(self, room_id: ObjectId, status: str = None) -> int:
         """Count tracks for a room"""
         try:
-            query = {"room_ref_id": ObjectId(room_id)}
+            query = {"room_ref_id": room_id}
             if status:
                 query["status"] = status
             return await self.tracks_collection.count_documents(query)
@@ -477,7 +474,7 @@ class MongoDBService:
 
 
 
-    async def final_room_status(self, room_name: str, room_id: str) -> bool:
+    async def final_room_status(self, room_name: str, room_id: ObjectId) -> bool:
         """
         Mark room as finalized.
         Only updates if current status is 'pending' (prevents overwriting 'completed').
@@ -487,8 +484,6 @@ class MongoDBService:
             True if status was updated to final_room, False if already finalized/completed
         """
         try:
-            room_id = ObjectId(room_id)
-            
             # Atomic update: only set final_room if status is currently "pending"
             # This prevents overwriting "completed" status
             updated_room = await self.rooms_collection.find_one_and_update(
@@ -655,7 +650,7 @@ class MongoDBService:
 
     async def check_event_record_done(
         self,
-        room_ref_id: str
+        room_ref_id: ObjectId
     ) -> Optional[dict]:
         """
         Count pending tracks in a room 
@@ -664,7 +659,7 @@ class MongoDBService:
         try:
             # Check room exists AND is in final_room status
             room = await self.rooms_collection.find_one(
-                {"_id": ObjectId(room_ref_id), "status": "final_room"}
+                {"_id": room_ref_id, "status": "final_room"}
             )
             if not room:
                 logger.info(f"No room found for room_ref_id={room_ref_id} with status 'final_room'")
@@ -674,7 +669,7 @@ class MongoDBService:
 
             # Count pending tracks
             count = await self.tracks_collection.count_documents({
-                "room_ref_id": ObjectId(room_ref_id),
+                "room_ref_id": room_ref_id,
                 "status": "pending"
             })
 
@@ -688,7 +683,7 @@ class MongoDBService:
 
     async def check_and_complete_room(
         self,
-        room_ref_id: str
+        room_ref_id: ObjectId
     ) -> bool:
         """
         Check if room should be completed:
@@ -706,8 +701,6 @@ class MongoDBService:
         """
 
         try:
-            room_ref_id = ObjectId(room_ref_id)
-            
             # Count pending and wait_process tracks first (lightweight check)
             incomplete_count = await self.tracks_collection.count_documents({
                 "room_ref_id": room_ref_id,
@@ -830,11 +823,11 @@ class MongoDBService:
     # 📊 ANALYTICS & STATISTICS QUERIES
     # ========================================
 
-    async def get_room_statistics_by_id(self, room_id: str) -> Dict[str, Any]:
+    async def get_room_statistics_by_id(self, room_id: ObjectId) -> Dict[str, Any]:
         """Get detailed statistics for a room by ID"""
         try:
             # Fetch raw room document to preserve datetime types for calculations
-            room = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
+            room = await self.rooms_collection.find_one({"_id": room_id})
             if not room:
                 return {}
 
@@ -907,13 +900,13 @@ class MongoDBService:
     # 📝 ROOM SUMMARY QUERIES
     # ========================================
 
-    async def save_room_summary(self, summary_data: Dict[str, Any]) -> str:
+    async def save_room_summary(self, summary_data: Dict[str, Any]) -> Optional[ObjectId]:
         """Save or update room summary"""
         try:
             room_id = summary_data.get("room_id")
-            if not room_id:
+            if not isinstance(room_id, ObjectId):
+                logger.error("Invalid room_id for save_room_summary: expected ObjectId or valid ObjectId string")
                 return None
-                
             result = await self.summary_collection.update_one(
                 {"room_id": room_id},
                 {"$set": summary_data},
@@ -921,22 +914,25 @@ class MongoDBService:
             )
             
             if result.upserted_id:
-                return str(result.upserted_id)
+                return result.upserted_id
             
             # If updated an existing document, we need to find its ID
             if result.matched_count > 0:
                 doc = await self.summary_collection.find_one({"room_id": room_id}, {"_id": 1})
                 if doc:
-                    return str(doc["_id"])
+                    return doc["_id"]
                     
             return None
         except Exception as e:
             logger.error(f"Failed to save room summary: {e}")
             return None
 
-    async def update_room_summary(self, room_id: str, summary_data: Dict[str, Any]) -> bool:
+    async def update_room_summary(self, room_id: ObjectId, summary_data: Dict[str, Any]) -> bool:
         """Update only the summary data for an existing room summary."""
         try:
+            if not isinstance(room_id, ObjectId):
+                logger.error("Invalid room_id for update_room_summary: expected ObjectId")
+                return False
             result = await self.summary_collection.update_one(
                 {"room_id": room_id},
                 {"$set": {"summary_data": summary_data}}
@@ -953,7 +949,7 @@ class MongoDBService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         user_id: Optional[str] = None
-    ) -> List[RoomSummaryResponse]:
+    ) -> List[Dict[str, Any]]:
         """Get summary by room name + optional user filter"""
 
         try:
@@ -980,24 +976,24 @@ class MongoDBService:
                 return []
 
             room_dict = {str(room["_id"]): room for room in room_list}
-            room_ids = list(room_dict.keys())
+            room_object_ids = [room["_id"] for room in room_list]
 
-            # 3. get summaries
+            # 3. get summaries (post-migration: room_id in DB is always ObjectId)
             summary_list = await self.summary_collection.find(
-                {"room_id": {"$in": room_ids}}
+                {"room_id": {"$in": room_object_ids}}
             ).to_list(None)
 
             # 4. map response
             summary_response_list = []
             for summary in summary_list:
-                summary_response = RoomSummaryResponse.model_construct(**summary)
+                summary_response = dict(summary)
 
                 room = room_dict.get(str(summary["room_id"]), {})
 
-                summary_response.created_at = convert_to_iso_8601(
+                summary_response["created_at"] = convert_to_iso_8601(
                     room.get("created_at")
                 )
-                summary_response.completed_at = convert_to_iso_8601(
+                summary_response["completed_at"] = convert_to_iso_8601(
                     room.get("completed_at")
                 )
 
@@ -1009,20 +1005,25 @@ class MongoDBService:
             logger.error(f"Failed to get summary by room name: {e}")
             return []
 
-    async def get_summary_by_room_id(self, room_id: str) -> RoomSummaryResponse:
-        """Get summary by room id"""
+    async def get_summary_by_room_id(self, room_id: ObjectId) -> Dict[str, Any]:
+        """Get summary by room id."""
         try:
-            summary_data: dict = await self.summary_collection.find_one({"room_id": room_id})
-            response = RoomSummaryResponse()
+            if not isinstance(room_id, ObjectId):
+                logger.error("Invalid room_id for get_summary_by_room_id: expected ObjectId")
+                return {}
+            summary_data: dict = await self.summary_collection.find_one(
+                {"room_id": room_id}
+            )
+            response: Dict[str, Any] = {}
             if summary_data:
-                response = RoomSummaryResponse.model_construct(**summary_data)
-            room_data: dict = await self.rooms_collection.find_one({"_id": ObjectId(room_id)})
-            response.created_at = convert_to_iso_8601(room_data.get("created_at", ""))
-            response.completed_at = convert_to_iso_8601(room_data.get("completed_at", ""))
+                response = dict(summary_data)
+            room_data: dict = await self.rooms_collection.find_one({"_id": room_id})
+            response["created_at"] = convert_to_iso_8601(room_data.get("created_at", ""))
+            response["completed_at"] = convert_to_iso_8601(room_data.get("completed_at", ""))
             return response
         except Exception as e:
             logger.error(f"Failed to get summary by room id: {e}")
-            return []
+            return {}
 
     # ========================================
     # 📅 METADATA EVENTS COLLECTION QUERIES
@@ -1345,7 +1346,6 @@ class MongoDBService:
 
             # Format output
             for room in room_list:
-                room["_id"] = str(room["_id"])
                 room["created_at"] = convert_to_iso_8601(room["created_at"])
                 room["completed_at"] = convert_to_iso_8601(room.get("completed_at"))
 
@@ -1397,7 +1397,7 @@ class MongoDBService:
 
     async def user_has_room_access(
         self,
-        room_id: str,
+        room_id: ObjectId,
         user_id: str
     ) -> bool:
         """
@@ -1407,7 +1407,7 @@ class MongoDBService:
         try:
             room = await self.rooms_collection.find_one(
                 {
-                    "_id": ObjectId(room_id),
+                    "_id": room_id,
                     "participants.participant_identity": user_id
                 },
                 {

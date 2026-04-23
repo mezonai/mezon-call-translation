@@ -5,6 +5,7 @@ Handles SSE connections for room lifecycle and recording events (global, not roo
 from typing import Optional, Dict, Any
 from datetime import datetime
 import uuid
+from bson import ObjectId
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_manager import SSEManager
@@ -306,7 +307,7 @@ class MetadataChannel:
         # Fetch tracks from MongoDB and build file_results
         file_results = []
         try:
-            tracks = await self.mongodb_service.get_tracks_by_room(room_id)
+            tracks = await self.mongodb_service.get_tracks_by_room(ObjectId(room_id))
             
             for track in tracks:
                 audio_info = track.get("audio_info", {})

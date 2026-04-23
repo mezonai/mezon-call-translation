@@ -150,7 +150,6 @@ class ServerConfig:
     
     # Authentication
     authenticate_account_url: str = ""
-    internal_api_key: str = ""
     
     @classmethod
     def from_env(cls) -> 'ServerConfig':
@@ -159,7 +158,6 @@ class ServerConfig:
             host=os.getenv('AGENT_HOST', '0.0.0.0'),
             port=int(os.getenv('AGENT_PORT', '8002')),
             authenticate_account_url=os.getenv('AUTHENTICATE_ACCOUNT_URL', ''),
-            internal_api_key=os.getenv('INTERNAL_API_KEY', 'my-secret-internal-key'),
         )
 
 

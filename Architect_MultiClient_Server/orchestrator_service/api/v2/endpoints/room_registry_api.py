@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
+from bson import ObjectId
 from livekit import api
 
 from orchestrator_service.utils.participant_identity import parse_participant_identity
@@ -63,7 +64,7 @@ async def register_room(
     """
     
     registry = get_room_registry()
-    stt_room_id = None
+    room_id = None
     tracks_started = 0
 
     # 1. Start room in STT service FIRST
@@ -71,7 +72,7 @@ async def register_room(
         stt_response = await transcription_service.start_room(request.room_name)
         if stt_response:
             if stt_response.get("success"):
-                stt_room_id = stt_response.get("room_id")
+                room_id = stt_response.get("room_id")
                 logger.info(f"✅ Room '{request.room_name}' started in STT service")
         else:
             logger.warning(f"⚠️ Failed to start room in STT service")
@@ -79,7 +80,13 @@ async def register_room(
         logger.error(f"Error starting room in STT: {e}", exc_info=True)
     
     # 2. Register room in registry
-    if not await registry.register_room(request.room_name, stt_room_id):
+    if room_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to obtain room_id from STT service"
+        )
+    
+    if not await registry.register_room(request.room_name, room_id):
         raise HTTPException(
             status_code=409,
             detail=f"Room '{request.room_name}' is already registered"
@@ -131,7 +138,7 @@ async def register_room(
 
             # Save all participants at once
             if participants_data:
-                await transcription_service.save_participants_batch(stt_room_id, participants_data)
+                await transcription_service.save_participants_batch(room_id, participants_data)
 
 
             logger.info(f"Started {tracks_started} audio track recordings")
@@ -143,13 +150,13 @@ async def register_room(
         # Continue - room is already registered
     
     metadata_channel = MetadataChannel()
-    asyncio.create_task(metadata_channel.push_room_started(stt_room_id, request.room_name))
+    asyncio.create_task(metadata_channel.push_room_started(str(room_id), request.room_name))
     
     return {
         "status": "ok",
         "message": f"Room '{request.room_name}' registered successfully",
         "room_name": request.room_name,
-        "room_id": stt_room_id,
+        "room_id": str(room_id),
         "tracks_started": tracks_started
     }       
 

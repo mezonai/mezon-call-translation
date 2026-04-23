@@ -6,6 +6,7 @@ Delegates all operations to RoomRegistryRepository.
 """
 from typing import Optional, Dict
 
+from bson import ObjectId
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.redis.room_registry_repository import RoomRegistryRepository
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
@@ -46,13 +47,13 @@ class RoomRegistry:
         """Get repository instance."""
         return self._repository
     
-    async def register_room(self, room_name: str, room_id: str) -> bool:
+    async def register_room(self, room_name: str, room_id: ObjectId) -> bool:
         """
         Register a room in the registry.
         
         Args:
             room_name: Name of the room to register
-            room_id: ID of the room 
+            room_id: ObjectId of the room 
             
         Returns:
             True if registration is successful, False if the room already exists
@@ -60,8 +61,18 @@ class RoomRegistry:
         Raises:
             ConnectionError: If Redis operation fails
         """
+        # Convert ObjectId to string for Redis storage
+        try:
+            room_id_str = str(room_id)
+            if not room_id_str or room_id_str == "None":
+                logger.error(f"Cannot register room '{room_name}': room_id converts to invalid string '{room_id_str}'")
+                return False
+        except Exception as e:
+            logger.error(f"Cannot register room '{room_name}': failed to convert room_id to string: {e}")
+            return False
+        
         repository = self._get_repository()
-        return await repository.register_room(room_name, room_id)
+        return await repository.register_room(room_name, room_id_str)
     
     async def unregister_room(self, room_name: str) -> bool:
         """
@@ -95,7 +106,7 @@ class RoomRegistry:
         repository = self._get_repository()
         return await repository.is_registered(room_name)
     
-    async def get_room_id(self, room_name: str) -> Optional[str]:
+    async def get_room_id(self, room_name: str) -> Optional[ObjectId]:
         """
         Get the room_id of a room.
         
@@ -103,13 +114,28 @@ class RoomRegistry:
             room_name: Name of the room
             
         Returns:
-            room_id string or None if the room does not exist
+            ObjectId or None if the room does not exist
         
         Raises:
             ConnectionError: If Redis operation fails
         """
         repository = self._get_repository()
-        return await repository.get_room_id(room_name)
+        room_id_str = await repository.get_room_id(room_name)
+        
+        if not room_id_str:
+            logger.debug(f"Room '{room_name}' not registered")
+            return None
+        
+        # Validate the string format before converting
+        if room_id_str == "None" or room_id_str == "null":
+            logger.error(f"Room '{room_name}' has invalid room_id in Redis: '{room_id_str}'")
+            return None
+        
+        try:
+            return ObjectId(room_id_str)
+        except Exception as e:
+            logger.error(f"Failed to convert room_id for '{room_name}' from Redis value '{room_id_str}': {e}")
+            return None
     
     async def list_rooms(self) -> Dict[str, str]:
         """
