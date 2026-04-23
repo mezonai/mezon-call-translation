@@ -69,7 +69,13 @@ async def get_summary_by_room_id(
 )
 async def retry_summary(room_id: str):
     try:
-        summary_data = await get_summary_service().retry_summary_from_full_text(room_id)
+        room_object_id = ObjectId(room_id)
+    except Exception:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid room_id format: '{room_id}'"
+        )
+    try:
+        summary_data = await get_summary_service().retry_summary_from_full_text(room_object_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
