@@ -186,7 +186,7 @@ class SummaryService:
             return {**draft_summary, "_id": saved_id}
 
     async def retry_summary_from_full_text(
-        self, room_id: str
+        self, room_id: ObjectId
     ) -> Optional[Dict[str, Any]]:
         """
         Hotfix: re-run LLM summarization using the full_text already stored in rooms_summary.
