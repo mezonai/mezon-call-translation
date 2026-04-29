@@ -269,10 +269,6 @@ class LiveKitConfig:
     # Agent configuration
     agent_name: str = "vosk-agent"
     
-    # Webhook configuration (can use separate credentials)
-    webhook_api_key: str = ""
-    webhook_api_secret: str = ""
-    
     # Recording
     recordings_dir: str = "/recordings"
     
@@ -284,8 +280,6 @@ class LiveKitConfig:
             http_url=os.getenv('LIVEKIT_HTTP_URL', ''),
             api_key=os.getenv('LIVEKIT_API_KEY', ''),
             api_secret=os.getenv('LIVEKIT_API_SECRET', ''),
-            webhook_api_key=os.getenv('LIVEKIT_WEBHOOK_API_KEY', ''),
-            webhook_api_secret=os.getenv('LIVEKIT_WEBHOOK_API_SECRET', ''),
             agent_name=os.getenv('LIVEKIT_AGENT_NAME', 'vosk-agent'),
         )
     

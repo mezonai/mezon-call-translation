@@ -696,26 +696,19 @@ class OrchestratorClient:
         if not self._http_client or self._http_client.is_closed:
             await self.start()
 
-        payload = webhook.to_payload(event_id=generate_id("EV_", 12))
+        payload = webhook.to_payload(event_id=generate_id("EV_FALLBACK_", 12))
 
         # Serialize payload
         body = json.dumps(payload, separators=(",", ":")).encode()
 
         # Generate signature for webhook verification
-        token = generate_webhook_jwt(
-            self.config.livekit.webhook_api_key,
-            self.config.livekit.webhook_api_secret,
-            body, 
-        )
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": token, 
-        }
-
+        headers = {}
+        if self.config.orchestrator.api_key:
+            headers["Authorization"] = f"Bearer {self.config.orchestrator.api_key}"
+        
         try:
             res = await self._http_client.post(
-                f"{self.config.orchestrator.base_url}/api/webhook/webhook",
+                f"{self.config.orchestrator.base_url}/api/webhook/internal",
                 content=body,
                 headers=headers,
             )
@@ -724,20 +717,3 @@ class OrchestratorClient:
         except Exception as e:
             self.logger.error(f"Webhook error: {e}")
             return False
-
-
-def generate_webhook_jwt(api_key: str, api_secret: str, body: bytes) -> str:
-    """
-    Generate JWT for webhook verification.
-    """
-    body_hash = hashlib.sha256(body).digest()
-    sha256_b64 = base64.b64encode(body_hash).decode()
-
-    payload = {
-        "iss": api_key,
-        "iat": int(time.time()),
-        "exp": int(time.time()) + 60,
-        "sha256": sha256_b64,
-    }
-
-    return jwt.encode(payload, api_secret, algorithm="HS256")

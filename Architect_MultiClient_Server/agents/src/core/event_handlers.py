@@ -76,7 +76,7 @@ class EventHandlers:
         room_name = self.ctx.room.name
         track_id = track_id
 
-        egress_id = generate_id("EG_", 12)
+        egress_id = generate_id("FALLBACK_", 12)
 
         self._egress_sessions[track_id] = {
             "egress_id": egress_id,
