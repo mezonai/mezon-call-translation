@@ -22,6 +22,9 @@ class AgentRequestType(str, Enum):
     
     SEND_CHAT_MESSAGE = "send_chat_message"
     """Send chat message to room participants"""
+
+    START_AUDIO_RECORDING = "start_audio_recording"
+    """Start recording for a specific track and upload chunks to MinIO"""
     
     @classmethod
     def values(cls) -> list[str]:
