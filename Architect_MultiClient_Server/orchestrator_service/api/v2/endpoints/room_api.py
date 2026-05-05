@@ -35,12 +35,20 @@ def _serialize_room(room: dict) -> dict:
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,
-    search: Optional[str] = Query(default=None, max_length=VC.MAX_SEARCH_QUERY_LENGTH, description="Search by room name or participant identity"),
-    from_utc: Optional[datetime] = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
-    to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
+    search: Optional[str] = Query(
+        default=None,
+        max_length=VC.MAX_SEARCH_QUERY_LENGTH,
+        description="Search by room name or participant identity",
+    ),
+    from_utc: Optional[datetime] = Query(
+        default=None, description="Start of time range (UTC, ISO 8601)"
+    ),
+    to_utc: Optional[datetime] = Query(
+        default=None, description="End of time range (UTC, ISO 8601)"
+    ),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
-    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
 ):
     """
     List rooms based on user permissions:
@@ -95,6 +103,7 @@ async def list_rooms(
                 limit=limit,
                 skip=skip,
             )
+            rooms = [_serialize_room(room) for room in rooms]
             total = await mongodb.count_rooms_by_user(
                 user_id=auth.user_id,
                 status=status,
@@ -108,7 +117,7 @@ async def list_rooms(
             "total": total,
             "limit": limit,
             "skip": skip,
-            "rooms": rooms
+            "rooms": rooms,
         }
     except HTTPException:
         raise
@@ -120,7 +129,7 @@ async def list_rooms(
 @router.get("/id/{room_id}", response_description="Get room by ID")
 async def get_room_by_id(
     room_id: str,
-    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
 ):
     """
     Get room details by room ID.
@@ -138,30 +147,32 @@ async def get_room_by_id(
         try:
             room_object_id = ObjectId(room_id)
         except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
+            raise HTTPException(
+                status_code=400, detail=f"Invalid room_id format: '{room_id}'"
+            )
 
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await mongodb.user_has_room_access(room_object_id, auth.user_id)
+            has_access = await mongodb.user_has_room_access(
+                room_object_id, auth.user_id
+            )
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room {room_id}")
                 raise HTTPException(
-                    status_code=403,
-                    detail="You don't have access to this room"
+                    status_code=403, detail="You don't have access to this room"
                 )
 
         room = await mongodb.get_room_by_id(room_object_id)
         if not room:
-            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Room with ID '{room_id}' not found"
+            )
 
         # Check access permission for regular users
 
         room = _serialize_room(room)
 
-        return {
-            "status": "ok",
-            "room": room
-        }
+        return {"status": "ok", "room": room}
     except HTTPException:
         raise
     except Exception as e:
@@ -169,10 +180,12 @@ async def get_room_by_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
+@router.get(
+    "/id/{room_id}/statistics", response_description="Get room statistics by ID"
+)
 async def get_room_statistics_by_id(
     room_id: str,
-    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
 ):
     """
     Get detailed statistics for a specific room by ID.
@@ -195,30 +208,34 @@ async def get_room_statistics_by_id(
         try:
             room_object_id = ObjectId(room_id)
         except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
+            raise HTTPException(
+                status_code=400, detail=f"Invalid room_id format: '{room_id}'"
+            )
 
         # Check access permission for regular users
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await mongodb.user_has_room_access(room_object_id, auth.user_id)
+            has_access = await mongodb.user_has_room_access(
+                room_object_id, auth.user_id
+            )
             if not has_access:
-                logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
+                logger.warning(
+                    f"User {auth.user_id} denied access to room statistics for {room_id}"
+                )
                 raise HTTPException(
-                    status_code=403,
-                    detail="You don't have access to this room"
+                    status_code=403, detail="You don't have access to this room"
                 )
 
         stats = await mongodb.get_room_statistics_by_id(room_object_id)
         if not stats:
-            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Room with ID '{room_id}' not found"
+            )
 
         if stats.get("room_id") is not None:
             stats["room_id"] = str(stats["room_id"])
-        
-        return {
-            "status": "ok",
-            "statistics": stats
-        }
+
+        return {"status": "ok", "statistics": stats}
     except HTTPException:
         raise
     except Exception as e:
@@ -226,16 +243,18 @@ async def get_room_statistics_by_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/audio_info/{room_id}", response_description="Get all audio info for a room")
+@router.get(
+    "/audio_info/{room_id}", response_description="Get all audio info for a room"
+)
 async def get_audio_info(
     room_id: str,
-    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN))
-)-> dict[str, Any]:
-    """ 
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
+) -> dict[str, Any]:
+    """
     Get all audio info for a specific room by ID.
-    
+
     - **room_id**: The ObjectId of the room
-    
+
     Returns:
     - List of audio files associated with the room
     """
@@ -246,45 +265,52 @@ async def get_audio_info(
         try:
             room_object_id = ObjectId(room_id)
         except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
+            raise HTTPException(
+                status_code=400, detail=f"Invalid room_id format: '{room_id}'"
+            )
 
         # Check access permission for regular users
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await mongodb.user_has_room_access(room_object_id, auth.user_id)
+            has_access = await mongodb.user_has_room_access(
+                room_object_id, auth.user_id
+            )
             if not has_access:
-                logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
+                logger.warning(
+                    f"User {auth.user_id} denied access to room statistics for {room_id}"
+                )
                 raise HTTPException(
-                    status_code=403,
-                    detail="You don't have access to this room"
+                    status_code=403, detail="You don't have access to this room"
                 )
             # Fetch tracks from MongoDB and build file_results
         file_results = []
         try:
             tracks = await mongodb.get_tracks_by_room(room_object_id)
             if not tracks:
-                raise HTTPException(status_code=404, detail=f"No tracks found for room with ID '{room_id}'")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No tracks found for room with ID '{room_id}'",
+                )
             for track in tracks:
                 audio_info = track.get("audio_info", {})
                 started_at_ns = audio_info.get("started_at_ns")
                 ended_at_ns = audio_info.get("ended_at_ns")
-                
+
                 file_result = {
                     "participant_identity": track.get("participant_identity", ""),
                     "filename": audio_info.get("filename", ""),
                     "started_at_ns": started_at_ns,
-                    "ended_at_ns": ended_at_ns
+                    "ended_at_ns": ended_at_ns,
                 }
                 file_results.append(file_result)
-            return {
-                "status": "ok",
-                "file_results": file_results
-            }
+            return {"status": "ok", "file_results": file_results}
         except Exception as e:
-            logger.error(f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}")
+            logger.error(
+                f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}"
+            )
             return {
                 "status": "error",
-                "message": f"Failed to fetch audio info for room {room_id}: {str(e)}"
+                "message": f"Failed to fetch audio info for room {room_id}: {str(e)}",
             }
     except HTTPException:
         raise
