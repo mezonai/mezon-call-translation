@@ -60,39 +60,28 @@ class SummaryService:
             logger.warning(f"No tracks found for room {room_id}")
             return None
 
+        # 3. Collect all segments with absolute timestamps in one pass
         all_segments = []
 
-        # 3. Collect all segments
         for track in tracks:
             try:
-                track_id = str(track["_id"])
                 participant = track.get("participant_identity", "Unknown")
-
-                # Fetch chunks
-                chunks = await self.mongodb.get_chunks_by_track(
-                    track_id, sorted_by_index=True
-                )
-
-                audio_info = track.get("audio_info", {})
-                start_ns_str = audio_info.get("started_at_ns", "0")
-                try:
-                    track_start_ns = int(start_ns_str)
-                except (ValueError, TypeError):
-                    track_start_ns = 0
+                track_start_ns = int(track.get("audio_info", {}).get("started_at_ns", 0) or 0)
+                chunks = await self.mongodb.get_chunks_by_track(str(track["_id"]), sorted_by_index=True)
 
                 for chunk in chunks:
-                    segments = chunk.get("segments", [])
-                    for seg in segments:
-                        # Append participant info for context
-                        seg["participant"] = participant
+                    for seg in chunk.get("segments", []):
+                        text = seg.get("text", "").strip()
+                        if not text:
+                            continue
 
-                        # Calculate absolute timestamp
-                        # segment.start is in seconds
-                        seg_start_sec = seg.get("start", 0.0) or 0.0
-                        total_ns = track_start_ns + int(seg_start_sec * 1_000_000_000)
-                        seg["absolute_start_ns"] = total_ns
+                        seg_start_ns = track_start_ns + int((seg.get("start") or 0.0) * 1_000_000_000)
 
-                        all_segments.append(seg)
+                        all_segments.append({
+                            "timestamp": seg_start_ns,
+                            "participant_id": participant,
+                            "text": text,
+                        })
             except Exception as e:
                 logger.error(f"Error processing track {track.get('_id')}: {e}")
                 continue
@@ -101,35 +90,38 @@ class SummaryService:
             logger.warning(f"No transcript segments found for room {room_id}")
             return None
 
-        # 4. Sort by absolute time
-        all_segments.sort(key=lambda x: x.get("absolute_start_ns", 0))
+        all_segments.sort(key=lambda x: x["timestamp"])
 
-        # 5. Collect Full Text and Participants
-        text_lines = []
-        unique_participants = set()
+        # 4. Collect Full Text and Participants
+        unique_participants = {seg["participant_id"] for seg in all_segments} 
 
-        last_participant = None
+        turns = []
+        current_turn = None
 
         for seg in all_segments:
-            participant = seg.get("participant", "Unknown")
-            if participant != "Unknown":
-                unique_participants.add(participant)
+            participant = seg["participant_id"]
+            text = seg["text"]
 
-            text = seg.get("text", "").strip()
+            if current_turn and current_turn["participant_id"] == participant:
+                current_turn["content"] += f"\n{text}"
+            else:
+                if current_turn:
+                    turns.append(current_turn)
+                dt = datetime.fromtimestamp(seg["timestamp"] / 1_000_000_000)
+                current_turn = {
+                    "timestamp": dt.strftime("%H:%M:%S"),
+                    "participant_id": participant,
+                    "content": text,
+                }
 
-            if text:
-                if participant == last_participant:
-                    text_lines.append(text)
-                else:
-                    dt = datetime.fromtimestamp(
-                        seg["absolute_start_ns"] / 1_000_000_000
-                    )
-                    time_str = dt.strftime("%H:%M:%S")
-                    text_lines.append(f"[{time_str}] {participant}: {text}")
+        if current_turn:
+            turns.append(current_turn)
 
-                last_participant = participant
-
-        full_text = "\n".join(text_lines)
+        # full_text is used for LLM summarization and also saved in DB to allow retrying LLM if summary generation fails. It can be a long string, but we keep it as is for now since it's needed for the summary generation step. In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
+        full_text = "\n".join(
+            f"[{t['timestamp']}] {t['participant_id']}: {t['content']}"
+            for t in turns
+        )
 
         draft_summary: Dict[str, Any] = {
             "room_id": room_id,
@@ -137,6 +129,7 @@ class SummaryService:
             "participants": list(unique_participants),
             "summary_data": {},
             "full_text": full_text,
+            "messages": turns,
             "created_at": datetime.utcnow(),
             "total_segments": len(all_segments),
         }
