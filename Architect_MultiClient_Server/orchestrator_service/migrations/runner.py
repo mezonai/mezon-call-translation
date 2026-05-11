@@ -22,6 +22,7 @@ from orchestrator_service.migrations.migration_003_create_token_blacklist_indexe
 from orchestrator_service.migrations.migration_004_create_flat_permission_model import CreateFlatPermissionModel
 from orchestrator_service.migrations.migration_005_add_participants_to_rooms import AddParticipantsToRooms
 from .migration_006_cleanup_rooms_summary import CleanupRoomsSummary
+from orchestrator_service.migrations.migration_007_replace_minio_localhost_urls import ReplaceMinioLocalhostURLs
 
 logger = get_logger(__name__)
 
@@ -37,6 +38,7 @@ class MigrationRunner:
         CreateFlatPermissionModel,             # 004
         AddParticipantsToRooms,                # 005
         CleanupRoomsSummary,                   # 006
+        ReplaceMinioLocalhostURLs,             # 007
     ]
 
     def __init__(self):
