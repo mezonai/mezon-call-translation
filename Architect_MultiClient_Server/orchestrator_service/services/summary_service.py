@@ -128,6 +128,7 @@ class SummaryService:
             "room_name": room.get("room_name", "Unknown"),
             "participants": list(unique_participants),
             "summary_data": {},
+            "full_text": full_text,
             "messages": turns,
             "created_at": datetime.utcnow(),
             "total_segments": len(all_segments),

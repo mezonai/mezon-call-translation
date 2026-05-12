@@ -128,19 +128,18 @@ class ParseFullTextToMessages(MigrationBase):
                     messages = self._parse_full_text(full_text)
                     
                     if messages:
-                        # Update document with parsed messages and remove full_text
+                        # Update document with parsed messages
                         result = await summary_collection.update_one(
                             {"_id": room_id},
                             {
-                                "$set": {"messages": messages},
-                                "$unset": {"full_text": ""}
+                                "$set": {"messages": messages}
                             }
                         )
                         
                         if result.modified_count > 0:
                             logger.debug(
                                 f"✅ Updated room {room_name} ({room_id}) "
-                                f"with {len(messages)} messages, removed full_text"
+                                f"with {len(messages)} messages"
                             )
                             updated_count += 1
                         else:
@@ -149,7 +148,6 @@ class ParseFullTextToMessages(MigrationBase):
                     else:
                         logger.warning(
                             f"⚠️  No messages parsed for room {room_name} ({room_id}) "
-                            f"(full_text might be empty or in unexpected format)"
                         )
                         failed_count += 1
                     
