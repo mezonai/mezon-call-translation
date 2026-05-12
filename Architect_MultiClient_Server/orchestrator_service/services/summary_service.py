@@ -28,6 +28,31 @@ class SummaryService:
             f"SummaryService initialized with LLM provider: {self.config.llm.provider}"
         )
 
+    def _messages_to_full_text(self, messages: list) -> str:
+        """
+        Convert messages array back to full_text format for LLM processing.
+        
+        Args:
+            messages: List of message objects with timestamp, participant_id, and content
+            
+        Returns:
+            Full text string in format [HH:MM:SS] participant_id: content
+        """
+        if not messages:
+            return ""
+        
+        lines = []
+        for msg in messages:
+            timestamp = msg.get("timestamp", "")
+            participant_id = msg.get("participant_id", "")
+            content = msg.get("content", "")
+            
+            # Format: [HH:MM:SS] participant_id: content
+            message_text = f"[{timestamp}] {participant_id}: {content}"
+            lines.append(message_text)
+        
+        return "\n".join(lines)
+
     async def generate_summary(self, room_id: ObjectId) -> Optional[Dict[str, Any]]:
         """
         Generate a summary for the given room_id.
@@ -117,7 +142,7 @@ class SummaryService:
         if current_turn:
             turns.append(current_turn)
 
-        # full_text is used for LLM summarization and also saved in DB to allow retrying LLM if summary generation fails. It can be a long string, but we keep it as is for now since it's needed for the summary generation step. In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
+        # Currently stored fields: room_id, room_name, participants, messages, summary_data
         full_text = "\n".join(
             f"[{t['timestamp']}] {t['participant_id']}: {t['content']}"
             for t in turns
@@ -128,13 +153,12 @@ class SummaryService:
             "room_name": room.get("room_name", "Unknown"),
             "participants": list(unique_participants),
             "summary_data": {},
-            "full_text": full_text,
             "messages": turns,
             "created_at": datetime.utcnow(),
             "total_segments": len(all_segments),
         }
 
-        # 6. Save transcript draft so full_text is persisted even if summary generation fails
+        # 6. Save transcript draft with messages 
         saved_id = await self.mongodb.save_room_summary(draft_summary)
         if not saved_id:
             logger.error(f"Failed to save transcript draft for room {room_id}")
@@ -158,7 +182,7 @@ class SummaryService:
             final_summary = dict(draft_summary)
             final_summary["summary_data"] = summary_data
 
-            # 8. Update only summary_data in DB; full_text remains from the draft save
+            # 8. Update summary_data in DB
             updated = await self.mongodb.update_room_summary(room_id, summary_data)
             if not updated:
                 logger.error(f"Failed to update generated summary for room {room_id}")
@@ -182,14 +206,14 @@ class SummaryService:
         self, room_id: ObjectId
     ) -> Optional[Dict[str, Any]]:
         """
-        Hotfix: re-run LLM summarization using the full_text already stored in rooms_summary.
+        Re-run LLM summarization using the messages array already stored in rooms_summary.
         Used when LLM service fails in the first run and summary_data is missing.
 
         Returns:
             summary_data dict if successful, None if failed.
 
         Raises:
-            ValueError: If document not found or full_text is empty.
+            ValueError: If document not found or messages array is empty.
         """
         if not self.mongodb.connected:
             await self.mongodb.connect()
@@ -200,11 +224,14 @@ class SummaryService:
         if not summary_doc:
             raise ValueError(f"Not found summary_doc for room_id: {room_id}")
 
-        full_text: str = summary_doc.get("full_text", "").strip()
-        if not full_text:
-            raise ValueError(f"full_text is empty for room_id: {room_id}")
+        messages: list = summary_doc.get("messages", [])
+        if not messages:
+            raise ValueError(f"messages array is empty for room_id: {room_id}")
 
-        logger.info(f"Retrying LLM for room {room_id} ({len(full_text)} chars)")
+        # Convert messages array to full_text format for LLM
+        full_text = self._messages_to_full_text(messages)
+        
+        logger.info(f"Retrying LLM for room {room_id} ({len(full_text)} chars, {len(messages)} messages)")
 
         try:
             result = await self.llm_service.summarize_conversation(
