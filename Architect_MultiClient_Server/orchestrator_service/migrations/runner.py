@@ -23,6 +23,7 @@ from orchestrator_service.migrations.migration_004_create_flat_permission_model 
 from orchestrator_service.migrations.migration_005_add_participants_to_rooms import AddParticipantsToRooms
 from .migration_006_cleanup_rooms_summary import CleanupRoomsSummary
 from orchestrator_service.migrations.migration_007_replace_minio_localhost_urls import ReplaceMinioLocalhostURLs
+from orchestrator_service.migrations.migration_008_parse_full_text_to_messages import ParseFullTextToMessages
 
 logger = get_logger(__name__)
 
@@ -39,6 +40,7 @@ class MigrationRunner:
         AddParticipantsToRooms,                # 005
         CleanupRoomsSummary,                   # 006
         ReplaceMinioLocalhostURLs,             # 007
+        ParseFullTextToMessages,               # 008
     ]
 
     def __init__(self):
