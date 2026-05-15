@@ -8,13 +8,14 @@ import uuid
 from typing import Optional, Dict, Any
 from fastapi.responses import StreamingResponse
 
+from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-
+@singleton
 class AgentRequestChannel:
     """
     Agent Request Channel for orchestrator-to-agent communication.

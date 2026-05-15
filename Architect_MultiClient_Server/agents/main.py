@@ -3,6 +3,8 @@ LiveKit Agent entrypoint - Starts Vosk transcription agent + TTS
 """
 import asyncio
 from dotenv import load_dotenv
+
+from src.services.audio_recording_manager import AudioRecordingManager
 load_dotenv()
 
 from livekit import agents, api
@@ -51,7 +53,8 @@ async def entrypoint(ctx: agents.JobContext):
     session_id = ctx.room.name
     transcript_manager = TranscriptManager(ctx)
     control_state = AgentControlState(transcription_enabled=False)
-    event_handlers = EventHandlers(ctx, transcript_manager, control_state=control_state)
+    recording_manager = AudioRecordingManager()
+    event_handlers = EventHandlers(ctx, transcript_manager, control_state=control_state, recording_manager=recording_manager)
     
     # Register event handlers
     ctx.room.on("track_subscribed", event_handlers.on_track_subscribed)
@@ -83,14 +86,14 @@ async def entrypoint(ctx: agents.JobContext):
     # Subscribe to existing tracks
     subscribe_existing_tracks(ctx, event_handlers)
     
-    # Register with orchestrator and get room_id
-    room_id = await register_with_orchestrator(orchestrator, session_id)
-    
     # Start SSE agent request listener
     await start_agent_request_listener(
         orchestrator, p.identity, session_id,
         control_state, event_handlers, tts_manager, ctx
     )
+
+    # Register with orchestrator and get room_id
+    room_id = await register_with_orchestrator(orchestrator, session_id)
     
     # Setup DataChannel dispatcher for chat messages
     dispatcher = DataChannelDispatcher(orchestrator, room_id, session_id)

@@ -3,12 +3,15 @@ from typing import Optional, Dict
 
 from livekit import api
 
+from orchestrator_service.models.agent_request_type import AgentRequestType
+from orchestrator_service.api.sse.channels.agent_request_channel import AgentRequestChannel
+from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.utils.filepath import Filepath
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.redis.egress_repository import EgressRepository, EgressRepository
+from orchestrator_service.services.redis.egress_repository import EgressRepository
 
 logger = get_logger(__name__)
 
@@ -19,7 +22,7 @@ class EgressService:
     def __init__(self):
         self._s3_upload: Optional[api.S3Upload] = None
         self._repo: Optional[EgressRepository] = None
-
+        self.config = get_config()
     def _get_client(self) -> api.LiveKitAPI:
         """Get LiveKit client from centralized service"""
         return get_livekit_service().get_client()
@@ -32,16 +35,19 @@ class EgressService:
     
     def _get_s3_upload(self) -> api.S3Upload:
         if self._s3_upload is None:
-            config = get_config()
             self._s3_upload = api.S3Upload(
-                access_key=config.minio.access_key,
-                secret=config.minio.secret,
-                bucket=config.minio.bucket,
-                region=config.minio.region,
-                endpoint=config.minio.endpoint,
+                access_key=self.config.minio.access_key,
+                secret=self.config.minio.secret,
+                bucket=self.config.minio.bucket,
+                region=self.config.minio.region,
+                endpoint=self.config.minio.endpoint,
                 force_path_style=True,
             )
         return self._s3_upload
+
+    def _get_agent_request_channel(self) -> AgentRequestChannel:
+        """Get singleton agent request channel with shared SSE manager."""
+        return AgentRequestChannel(SSEManager())
     
     async def start_recording(
         self,
@@ -67,7 +73,6 @@ class EgressService:
         
         try:
             lk = self._get_client()
-            config = get_config()
             
             # Get room_id from registry
             registry = get_room_registry()
@@ -79,21 +84,42 @@ class EgressService:
 
             filepath = Filepath.build(identity, source, track_type, room_id)
             s3_upload = self._get_s3_upload()
-            
-            file_out = api.DirectFileOutput(filepath=filepath, s3=s3_upload)
-            req = api.TrackEgressRequest(
-                room_name=room_name,
-                track_id=track_sid,
-                file=file_out,
-            )
-            
-            result = await lk.egress.start_track_egress(req)
-            await repo.add(room_name, track_sid, result.egress_id)
-            
-            logger.info(f"✓ Started egress {result.egress_id}")
-            logger.info(f"  MinIO: s3://{config.minio.bucket}/{filepath}")
-            
-            return result.egress_id
+            try:
+                file_out = api.DirectFileOutput(filepath=filepath, s3=s3_upload)
+                req = api.TrackEgressRequest(
+                    room_name=room_name,
+                    track_id=track_sid,
+                    file=file_out,
+                )
+                
+                result = await lk.egress.start_track_egress(req)
+                await repo.add(room_name, track_sid, result.egress_id)
+                
+                logger.info(f"✓ Started egress {result.egress_id}")
+                logger.info(f"  MinIO: s3://{self.config.minio.bucket}/{filepath}")
+                
+                return result.egress_id
+            except Exception as e:
+                logger.error(f"Failed to build egress request: {e}")
+
+                start_recording_payload = {
+                    "track_id": track_sid,
+                    "file_output_path": filepath
+                }
+
+                agent_request_channel = self._get_agent_request_channel()
+                result = await agent_request_channel.send_request(
+                    request_type=AgentRequestType.START_AUDIO_RECORDING,
+                    payload=start_recording_payload,
+                    room_name=room_name,
+                    agent_id=self.config.livekit.agent_name
+                )
+                logger.info(
+                    f"Fallback START_AUDIO_RECORDING dispatched for track={track_sid}, "
+                    f"request_id={result.get('request_id')}"
+                )
+                return result.get("request_id")
+
             
         except Exception as e:
             logger.error(f"✗ Failed to start egress: {e}")
