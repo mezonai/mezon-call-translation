@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
     StatusQuery,
@@ -55,10 +55,10 @@ async def list_rooms(
     if search_trimmed == "":
         search_trimmed = None
     try:
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-        rooms = await mongodb.list_rooms(
+        pg_repo = PgTranscriptRepository()
+        if not pg_repo.connected:
+            await pg_repo.connect()
+        rooms = await pg_repo.list_rooms(
             status=status,
             search=search_trimmed,
             from_utc=from_utc,
@@ -67,7 +67,7 @@ async def list_rooms(
             skip=skip,
         )
         rooms = [_serialize_room(room) for room in rooms]
-        total = await mongodb.count_rooms(
+        total = await pg_repo.count_rooms(
             status=status,
             search=search_trimmed,
             from_utc=from_utc,
@@ -98,9 +98,9 @@ async def get_room_by_id(
     - **room_id**: The ObjectId of the room to retrieve
     """
     try:
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
+        pg_repo = PgTranscriptRepository()
+        if not pg_repo.connected:
+            await pg_repo.connect()
         
         # Validate ObjectId format
         try:
@@ -108,7 +108,7 @@ async def get_room_by_id(
         except Exception:
             raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
         
-        room = await mongodb.get_room_by_id(room_object_id)
+        room = await pg_repo.get_room_by_id(room_object_id)
         if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
         
@@ -141,9 +141,9 @@ async def get_room_statistics_by_id(
     - Total transcript segments
     """
     try:
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
+        pg_repo = PgTranscriptRepository()
+        if not pg_repo.connected:
+            await pg_repo.connect()
         
         # Validate ObjectId format
         try:
@@ -151,7 +151,7 @@ async def get_room_statistics_by_id(
         except Exception:
             raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_object_id}'")
         
-        stats = await mongodb.get_room_statistics_by_id(room_object_id)
+        stats = await pg_repo.get_room_statistics_by_id(room_object_id)
         if not stats:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
 

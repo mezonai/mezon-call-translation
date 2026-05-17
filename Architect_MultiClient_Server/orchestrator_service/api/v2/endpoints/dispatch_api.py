@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from bson import ObjectId
 from pydantic import BaseModel, Field
 from orchestrator_service.services.livekit_client import get_livekit_service, LiveKitServiceError
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 
 router = APIRouter()
 
@@ -90,14 +90,14 @@ async def api_cancel_dispatch(body: DispatchRequestModel, auth: AuthContext = De
 @router.get("/rooms/participant/{room_id}", response_model=ParticipantListResponseModel)
 async def list_participants(room_id: str, auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL))) -> ParticipantListResponseModel:
     """List participants in a room."""
-    mongodb_service = MongoDBService()
-    if not mongodb_service.connected:
-        await mongodb_service.connect()
+    pg_repo = PgTranscriptRepository()
+    if not pg_repo.connected:
+        await pg_repo.connect()
     try:
         room_object_id = ObjectId(room_id)
     except Exception:
         raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
-    room = await mongodb_service.get_room_by_id(room_object_id)
+    room = await pg_repo.get_room_by_id(room_object_id)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
     try:

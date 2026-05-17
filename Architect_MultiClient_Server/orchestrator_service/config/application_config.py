@@ -61,7 +61,7 @@ class LiveKitConfig:
 
 
 # ============================================================================
-# MongoDB Configuration
+# MongoDB Configuration (kept for reference / migration)
 # ============================================================================
 
 @dataclass
@@ -83,6 +83,52 @@ class MongoDBConfig:
             password=os.getenv('MONGODB_PASSWORD', 'rootpassword'),
             database=os.getenv('MONGODB_DATABASE', 'mezon_transcripts'),
             collection=os.getenv('MONGODB_COLLECTION', 'transcripts'),
+        )
+
+
+# ============================================================================
+# PostgreSQL Configuration (primary database)
+# ============================================================================
+
+@dataclass
+class PostgreSQLConfig:
+    """PostgreSQL database configuration (primary persistence layer)"""
+    host: str = "localhost"
+    port: int = 5432
+    username: str = "postgres"
+    password: str = "postgres"
+    database: str = "mezon_transcripts"
+    # Connection pool sizing
+    pool_size: int = 10
+    max_overflow: int = 20
+
+    @classmethod
+    def from_env(cls) -> 'PostgreSQLConfig':
+        """Create PostgreSQL config from environment variables"""
+        return cls(
+            host=os.getenv('POSTGRES_HOST', 'localhost'),
+            port=int(os.getenv('POSTGRES_PORT', '5432')),
+            username=os.getenv('POSTGRES_USER', 'postgres'),
+            password=os.getenv('POSTGRES_PASSWORD', 'postgres'),
+            database=os.getenv('POSTGRES_DATABASE', 'mezon_transcripts'),
+            pool_size=int(os.getenv('POSTGRES_POOL_SIZE', '10')),
+            max_overflow=int(os.getenv('POSTGRES_MAX_OVERFLOW', '20')),
+        )
+
+    @property
+    def async_url(self) -> str:
+        """SQLAlchemy async connection URL (asyncpg driver)"""
+        return (
+            f"postgresql+asyncpg://{self.username}:{self.password}"
+            f"@{self.host}:{self.port}/{self.database}"
+        )
+
+    @property
+    def sync_url(self) -> str:
+        """SQLAlchemy sync connection URL (psycopg2, for Alembic)"""
+        return (
+            f"postgresql+psycopg2://{self.username}:{self.password}"
+            f"@{self.host}:{self.port}/{self.database}"
         )
 
 
@@ -356,6 +402,7 @@ class Config:
         self.livekit = LiveKitConfig.from_env()
         self.stt_service = STTServiceConfig.from_env()
         self.mongodb = MongoDBConfig.from_env()
+        self.postgresql = PostgreSQLConfig.from_env()
         self.server = ServerConfig.from_env()
         self.logger = LoggerConfig.from_env()
         self.auth = AuthConfig.from_env()

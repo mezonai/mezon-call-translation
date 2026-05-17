@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime
 from typing import Optional
 from bson import ObjectId
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.models.summary_models import RoomSummaryResponse
 from orchestrator_service.services.summary_service import get_summary_service
 
@@ -27,8 +27,8 @@ async def get_summary_by_room_name(
     """
     Get summary by room name.
     """
-    mongodb = MongoDBService()
-    summaries = await mongodb.get_summary_by_room_name(room_name, start_time, end_time)
+    pg_repo = PgTranscriptRepository()
+    summaries = await pg_repo.get_summary_by_room_name(room_name, start_time, end_time)
 
     summary_models = []
     for summary in summaries:
@@ -46,7 +46,7 @@ async def get_summary_by_room_id(
     """
     Get summary by room id.
     """
-    mongodb = MongoDBService()
+    pg_repo = PgTranscriptRepository()
     try:
         room_object_id = ObjectId(room_id)
     except Exception:
@@ -54,7 +54,7 @@ async def get_summary_by_room_id(
             status_code=400, detail=f"Invalid room_id format: '{room_id}'"
         )
 
-    summary = await mongodb.get_summary_by_room_id(room_object_id)
+    summary = await pg_repo.get_summary_by_room_id(room_object_id)
 
     if summary.get("room_id") is not None:
         summary["room_id"] = str(summary["room_id"])

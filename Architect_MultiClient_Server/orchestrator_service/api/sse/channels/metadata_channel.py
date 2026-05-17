@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.models.metadata_event_models import MetadataEventType
@@ -36,7 +36,7 @@ class MetadataChannel:
         Initialize metadata channel with singleton dependencies.
         """
         self.manager = SSEManager()
-        self.mongodb_service = MongoDBService()
+        self.pg_repo = PgTranscriptRepository()
     
     async def create_connection(
         self,
@@ -150,7 +150,7 @@ class MetadataChannel:
                 "created_at": datetime.utcnow(),
                 "timestamp": event_data["timestamp"]
             }
-            event_db_id = await self.mongodb_service.save_metadata_event(doc)
+            event_db_id = await self.pg_repo.save_metadata_event(doc)
             if event_db_id:
                 logger.info(f"[Metadata Channel] Saved event to DB: {event_db_id}")
             return event_db_id
@@ -307,7 +307,7 @@ class MetadataChannel:
         # Fetch tracks from MongoDB and build file_results
         file_results = []
         try:
-            tracks = await self.mongodb_service.get_tracks_by_room(ObjectId(room_id))
+            tracks = await self.pg_repo.get_tracks_by_room(ObjectId(room_id))
             
             for track in tracks:
                 audio_info = track.get("audio_info", {})

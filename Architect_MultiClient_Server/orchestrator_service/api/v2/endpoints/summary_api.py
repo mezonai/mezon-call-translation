@@ -7,7 +7,7 @@ from typing import Optional
 from bson import ObjectId
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.models.summary_models import RoomSummaryResponse
 from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
@@ -24,15 +24,15 @@ async def get_summary_by_room_name(
     """
     Get summary by room name.
     """
-    mongodb = MongoDBService()
-    if not mongodb.connected:
-        await mongodb.connect()
+    pg_repo = PgTranscriptRepository()
+    if not pg_repo.connected:
+        await pg_repo.connect()
 
     if auth.can_view_all_rooms:
-        summaries = await mongodb.get_summary_by_room_name(room_name, start_time, end_time)
+        summaries = await pg_repo.get_summary_by_room_name(room_name, start_time, end_time)
 
     else:
-        summaries = await mongodb.get_summary_by_room_name(room_name, start_time, end_time, auth.user_id)
+        summaries = await pg_repo.get_summary_by_room_name(room_name, start_time, end_time, auth.user_id)
 
     summary_models = []
     for summary in summaries:
@@ -54,9 +54,9 @@ async def get_summary_by_room_id(
     """
     Get summary by room id.
     """
-    mongodb = MongoDBService()
-    if not mongodb.connected:
-        await mongodb.connect()
+    pg_repo = PgTranscriptRepository()
+    if not pg_repo.connected:
+        await pg_repo.connect()
 
     try:
         room_object_id = ObjectId(room_id)
@@ -64,7 +64,7 @@ async def get_summary_by_room_id(
         raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
 
     if not auth.can_view_all_rooms:
-        has_access = await mongodb.user_has_room_access(room_object_id, auth.user_id)
+        has_access = await pg_repo.user_has_room_access(room_object_id, auth.user_id)
         if not has_access:
             logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
             raise HTTPException(
@@ -72,7 +72,7 @@ async def get_summary_by_room_id(
                 detail="You don't have access to this room"
             )
 
-    summary = await mongodb.get_summary_by_room_id(room_object_id)
+    summary = await pg_repo.get_summary_by_room_id(room_object_id)
 
     if summary.get("room_id") is not None:
         summary["room_id"] = str(summary["room_id"])

@@ -11,7 +11,7 @@ from orchestrator_service.auth.authorization import AuthContext, require_any_per
 from orchestrator_service.constants.permissions import METADATA_EVENTS_VIEW_ALL
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.metadata_event_models import MetadataEventType
 
@@ -243,12 +243,12 @@ async def list_metadata_events(
         raise HTTPException(status_code=400, detail="sort_order must be 'asc' (ascending) or 'desc' (descending)")
 
     try:
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
+        pg_repo = PgTranscriptRepository()
+        if not pg_repo.connected:
+            await pg_repo.connect()
 
         # Get events and count
-        events = await mongodb.get_metadata_events(
+        events = await pg_repo.get_metadata_events(
             event_type=event_type,
             room_id=room_id,
             from_utc=from_utc,
@@ -258,7 +258,7 @@ async def list_metadata_events(
             sort_order=sort_order
         )
 
-        total = await mongodb.count_metadata_events(
+        total = await pg_repo.count_metadata_events(
             event_type=event_type,
             room_id=room_id,
             from_utc=from_utc,
@@ -289,11 +289,11 @@ async def get_metadata_event_by_id(
     - **event_id**: Event UUID
     """
     try:
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
+        pg_repo = PgTranscriptRepository()
+        if not pg_repo.connected:
+            await pg_repo.connect()
 
-        event = await mongodb.get_metadata_event_by_event_id(event_id)
+        event = await pg_repo.get_metadata_event_by_event_id(event_id)
 
         if not event:
             raise HTTPException(status_code=404, detail=f"Event not found: {event_id}")

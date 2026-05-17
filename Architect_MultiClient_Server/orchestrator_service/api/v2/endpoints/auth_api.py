@@ -23,10 +23,9 @@ from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.jwt_utils import generate_jwt_token, get_token_expiry, get_token_jti
 from orchestrator_service.auth.jwt_auth import verify_jwt
 from orchestrator_service.auth.verify_account import authenticate_account
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
-from orchestrator_service.services.mongodb.refresh_token_service import RefreshTokenService
-from orchestrator_service.services.mongodb.token_blacklist_service import TokenBlacklistService
-from orchestrator_service.services.mongodb.user_permission_service import UserPermissionService
+from orchestrator_service.services.postgresql.pg_refresh_token_repository import PgRefreshTokenRepository
+from orchestrator_service.services.postgresql.pg_token_blacklist_repository import PgTokenBlacklistRepository
+from orchestrator_service.services.postgresql.pg_user_permission_repository import PgUserPermissionRepository
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.permissions import (
     DEFAULT_USER_PERMISSIONS,
@@ -193,12 +192,9 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
             )
 
         # Connect to MongoDB
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-
+        
         # Create or update user with default permissions
-        user_permission_service = UserPermissionService(mongodb.db)
+        user_permission_service = PgUserPermissionRepository()
 
         # Check if user already exists
         existing_user = await user_permission_service.get_user_info(user_data["user_id"])
@@ -233,7 +229,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
         if not access_token_jti:
             raise HTTPException(status_code=500, detail="Failed to generate token ID")
 
-        refresh_token_service = RefreshTokenService(mongodb.db)
+        refresh_token_service = PgRefreshTokenRepository()
         refresh_token = await refresh_token_service.create_refresh_token(
             user_id=user_data["user_id"],
             access_token_jti=access_token_jti,
@@ -286,10 +282,7 @@ async def get_current_user(user: Dict[str, Any] = Depends(verify_jwt)):
         Authorization: Bearer <jwt_token>
     """
     logger.debug(f"Returning user info for user_id={user.get('user_id')}")
-    mongodb = MongoDBService()
-    if not mongodb.connected:
-        await mongodb.connect()
-    user_permission_service = UserPermissionService(mongodb.db)
+    user_permission_service = PgUserPermissionRepository()
     user_info = await user_permission_service.get_user_info(user.get("user_id"))
 
     return {
@@ -362,12 +355,9 @@ async def refresh_access_token(request: RefreshTokenRequest):
     """
     try:
         # Connect to MongoDB
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-
+        
         # Validate refresh token
-        refresh_token_service = RefreshTokenService(mongodb.db)
+        refresh_token_service = PgRefreshTokenRepository()
         token_doc = await refresh_token_service.validate_refresh_token(request.refresh_token)
 
         if not token_doc:
@@ -386,7 +376,7 @@ async def refresh_access_token(request: RefreshTokenRequest):
 
         # Blacklist the old access token (if not already expired/blacklisted)
         old_jti = token_doc["access_token_jti"]
-        blacklist_service = TokenBlacklistService(mongodb.db)
+        blacklist_service = PgTokenBlacklistRepository()
 
         # We need to get the expiry of the old token - for now,assume it's expired
         # In production, you might want to store this or calculate
@@ -461,10 +451,7 @@ async def logout(
     """
     try:
         # Connect to MongoDB
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-
+        
         # Get JTI from current access token
         jti = user.get("jti")
         user_id = user.get("user_id")
@@ -473,7 +460,7 @@ async def logout(
             raise HTTPException(status_code=400, detail="Invalid token format")
 
         # Blacklist the access token
-        blacklist_service = TokenBlacklistService(mongodb.db)
+        blacklist_service = PgTokenBlacklistRepository()
         token_expiry = datetime.fromtimestamp(user.get("exp"), tz=timezone.utc)
 
         await blacklist_service.blacklist_token(
@@ -484,7 +471,7 @@ async def logout(
         )
 
         # Revoke the refresh token
-        refresh_token_service = RefreshTokenService(mongodb.db)
+        refresh_token_service = PgRefreshTokenRepository()
         await refresh_token_service.revoke_refresh_token(request.refresh_token)
 
         logger.info(f"User logged out: user_id={user_id}, jti={jti}")
@@ -553,12 +540,9 @@ async def bot_login(request: BotLoginRequest):
         }
 
         # Connect to MongoDB
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-
+        
         # Create or update bot user with default bot permissions
-        user_permission_service = UserPermissionService(mongodb.db)
+        user_permission_service = PgUserPermissionRepository()
 
         # Check if bot user already exists
         existing_bot = await user_permission_service.get_user_info(str(user_id))
@@ -592,7 +576,7 @@ async def bot_login(request: BotLoginRequest):
             raise HTTPException(status_code=500, detail="Failed to generate token ID")
 
         # Create refresh token (MongoDB already connected above)
-        refresh_token_service = RefreshTokenService(mongodb.db)
+        refresh_token_service = PgRefreshTokenRepository()
         refresh_token = await refresh_token_service.create_refresh_token(
             user_id=str(user_id),
             access_token_jti=access_token_jti,
