@@ -152,7 +152,7 @@ class MetadataEvent(Base):
     event_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     room_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    event_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
     timestamp: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
