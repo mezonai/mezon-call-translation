@@ -177,7 +177,7 @@ class PgTranscriptRepository:
             return None
 
     async def create_room_session(
-        self, room_name: str, status: str = "started"
+        self, room_name: str, status: str = "pending"
     ) -> Optional[str]:
         session_factory = get_session_factory()
         uid = str(uuid.uuid4())
@@ -187,7 +187,7 @@ class PgTranscriptRepository:
                 await session.execute(
                     text("""
                     INSERT INTO rooms (id, room_name, status, participants, created_at)
-                    VALUES (:id, :name, :status, '[]'::jsonb, :now)
+                    VALUES (:id, :name, :status, CAST('[]' AS jsonb), :now)
                 """),
                     {"id": uid, "name": room_name, "status": status, "now": now},
                 )
@@ -205,8 +205,8 @@ class PgTranscriptRepository:
             async with session_factory() as session:
                 result = await session.execute(
                     text("""
-                    UPDATE rooms SET status = 'completed', finalized_at = :now
-                    WHERE id = :id
+                    UPDATE rooms SET status = 'final_room', finalized_at = :now
+                    WHERE id = :id AND status = 'pending'
                     RETURNING id
                 """),
                     {"id": uid, "now": now},
@@ -228,8 +228,8 @@ class PgTranscriptRepository:
                 await session.execute(
                     text("""
                     UPDATE rooms 
-                    SET participants = participants || :p::jsonb
-                    WHERE id = :id AND NOT (participants @> :check::jsonb)
+                    SET participants = participants || CAST(:p AS jsonb)
+                    WHERE id = :id AND NOT (participants @> CAST(:check AS jsonb))
                 """),
                     {
                         "id": uid,
@@ -348,22 +348,30 @@ class PgTranscriptRepository:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
+                room_res = await session.execute(
+                    text(
+                        "SELECT * FROM rooms WHERE id = :rid AND status = 'final_room'"
+                    ),
+                    {"rid": uid},
+                )
+                row = room_res.fetchone()
+                if not row:
+                    logger.info(
+                        f"No room found for room_ref_id={room_ref_id} with status 'final_room'"
+                    )
+                    return None
+
                 res = await session.execute(
                     text(
-                        "SELECT COUNT(*) FROM tracks WHERE room_ref_id = :rid AND status != 'wait_process'"
+                        "SELECT COUNT(*) FROM tracks WHERE room_ref_id = :rid AND status = 'pending'"
                     ),
                     {"rid": uid},
                 )
                 pending = res.scalar() or 0
                 if pending == 0:
-                    room_res = await session.execute(
-                        text("SELECT * FROM rooms WHERE id = :rid"), {"rid": uid}
-                    )
-                    row = room_res.fetchone()
-                    if row:
-                        r = dict(row._mapping)
-                        r["_id"] = _from_uuid(r["id"])
-                        return r
+                    r = dict(row._mapping)
+                    r["_id"] = _from_uuid(r["id"])
+                    return r
                 return None
         except Exception as e:
             logger.error(f"Failed check event record done: {e}")
@@ -376,21 +384,23 @@ class PgTranscriptRepository:
             async with session_factory() as session:
                 res = await session.execute(
                     text(
-                        "SELECT COUNT(*) FROM tracks WHERE room_ref_id = :rid AND status != 'completed'"
+                        "SELECT COUNT(*) FROM tracks WHERE room_ref_id = :rid AND status IN ('pending', 'wait_process')"
                     ),
                     {"rid": uid},
                 )
                 pending = res.scalar() or 0
-                if pending == 0:
-                    await session.execute(
-                        text(
-                            "UPDATE rooms SET status = 'completed', completed_at = :now WHERE id = :rid"
-                        ),
-                        {"rid": uid, "now": datetime.now(timezone.utc)},
-                    )
-                    await session.commit()
-                    return True
-                return False
+                if pending > 0:
+                    logger.debug(f"Room still has {pending} incomplete tracks")
+                    return False
+
+                result = await session.execute(
+                    text(
+                        "UPDATE rooms SET status = 'completed', completed_at = :now WHERE id = :rid AND status = 'final_room'"
+                    ),
+                    {"rid": uid, "now": datetime.now(timezone.utc)},
+                )
+                await session.commit()
+                return result.rowcount > 0
         except Exception as e:
             logger.error(f"Failed check and complete room: {e}")
             return False
@@ -485,7 +495,7 @@ class PgTranscriptRepository:
                 await session.execute(
                     text("""
                     INSERT INTO rooms_summary (id, room_id, room_name, participants, summary_data, full_text, messages, total_segments, created_at)
-                    VALUES (:id, :rid, :rname, :parts::jsonb, :sum::jsonb, :ft, :msgs::jsonb, :ts, :now)
+                    VALUES (:id, :rid, :rname, CAST(:parts AS jsonb), CAST(:sum AS jsonb), :ft, CAST(:msgs AS jsonb), :ts, :now)
                 """),
                     {
                         "id": uid,
@@ -514,7 +524,7 @@ class PgTranscriptRepository:
             async with session_factory() as session:
                 res = await session.execute(
                     text(
-                        "UPDATE rooms_summary SET summary_data = :sum::jsonb WHERE room_id = :rid RETURNING id"
+                        "UPDATE rooms_summary SET summary_data = CAST(:sum AS jsonb) WHERE room_id = :rid RETURNING id"
                     ),
                     {"sum": json.dumps(summary_data), "rid": uid},
                 )
@@ -559,7 +569,7 @@ class PgTranscriptRepository:
                 await session.execute(
                     text("""
                     INSERT INTO metadata_events (id, event_id, event_type, room_id, room_name, metadata, timestamp, created_at)
-                    VALUES (:id, :eid, :etype, :rid, :rname, :meta::jsonb, :ts, :now)
+                    VALUES (:id, :eid, :etype, :rid, :rname, CAST(:meta AS jsonb), :ts, :now)
                     ON CONFLICT (event_id) DO NOTHING
                 """),
                     {
@@ -657,7 +667,7 @@ class PgTranscriptRepository:
                         await session.execute(
                             text("""
                             INSERT INTO transcript_chunks (id, track_ref_id, chunk_index, start_time, end_time, item_count, segments)
-                            VALUES (:id, :tid, :idx, :st, :et, :cnt, :seg::jsonb)
+                            VALUES (:id, :tid, :idx, :st, :et, :cnt, CAST(:seg AS jsonb))
                         """),
                             doc,
                         )
@@ -809,7 +819,7 @@ class PgTranscriptRepository:
                     r_query += " AND created_at <= :et"
                     r_params["et"] = end_time
                 if user_id:
-                    r_query += " AND participants @> :uid::jsonb"
+                    r_query += " AND participants @> CAST(:uid AS jsonb)"
                     r_params["uid"] = json.dumps([user_id])
 
                 r_query += " ORDER BY created_at ASC"
@@ -894,7 +904,7 @@ class PgTranscriptRepository:
                     await session.execute(
                         text("""
                         INSERT INTO tracks (id, track_id, room_ref_id, participant_identity, status, audio_info, error, created_at, updated_at)
-                        VALUES (:id, :tid, :rid, :pid, :status, :audio::jsonb, :error, :now, :now)
+                        VALUES (:id, :tid, :rid, :pid, :status, CAST(:audio AS jsonb), :error, :now, :now)
                     """),
                         {
                             "id": egress_id,

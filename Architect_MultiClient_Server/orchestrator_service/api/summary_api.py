@@ -5,8 +5,9 @@ Internal API endpoints for room summary
 from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime
 from typing import Optional
-from bson import ObjectId
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.postgresql.pg_transcript_repository import (
+    PgTranscriptRepository,
+)
 from orchestrator_service.models.summary_models import RoomSummaryResponse
 from orchestrator_service.services.summary_service import get_summary_service
 
@@ -47,14 +48,8 @@ async def get_summary_by_room_id(
     Get summary by room id.
     """
     pg_repo = PgTranscriptRepository()
-    try:
-        room_object_id = ObjectId(room_id)
-    except Exception:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid room_id format: '{room_id}'"
-        )
 
-    summary = await pg_repo.get_summary_by_room_id(room_object_id)
+    summary = await pg_repo.get_summary_by_room_id(room_id)
 
     if summary.get("room_id") is not None:
         summary["room_id"] = str(summary["room_id"])
@@ -69,13 +64,7 @@ async def get_summary_by_room_id(
 )
 async def retry_summary(room_id: str):
     try:
-        room_object_id = ObjectId(room_id)
-    except Exception:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid room_id format: '{room_id}'"
-        )
-    try:
-        summary_data = await get_summary_service().retry_summary_from_full_text(room_object_id)
+        summary_data = await get_summary_service().retry_summary_from_full_text(room_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

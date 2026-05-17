@@ -12,7 +12,9 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from orchestrator_service.auth.authorization import require_any_permission, AuthContext
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.postgresql.pg_transcript_repository import (
+    PgTranscriptRepository,
+)
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
     StatusQuery,
@@ -143,26 +145,16 @@ async def get_room_by_id(
         if not pg_repo.connected:
             await pg_repo.connect()
 
-        # Validate ObjectId format
-        try:
-            room_object_id = ObjectId(room_id)
-        except Exception:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid room_id format: '{room_id}'"
-            )
-
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await pg_repo.user_has_room_access(
-                room_object_id, auth.user_id
-            )
+            has_access = await pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room {room_id}")
                 raise HTTPException(
                     status_code=403, detail="You don't have access to this room"
                 )
 
-        room = await pg_repo.get_room_by_id(room_object_id)
+        room = await pg_repo.get_room_by_id(room_id)
         if not room:
             raise HTTPException(
                 status_code=404, detail=f"Room with ID '{room_id}' not found"
@@ -204,20 +196,10 @@ async def get_room_statistics_by_id(
         if not pg_repo.connected:
             await pg_repo.connect()
 
-        # Validate ObjectId format
-        try:
-            room_object_id = ObjectId(room_id)
-        except Exception:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid room_id format: '{room_id}'"
-            )
-
         # Check access permission for regular users
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await pg_repo.user_has_room_access(
-                room_object_id, auth.user_id
-            )
+            has_access = await pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
                 logger.warning(
                     f"User {auth.user_id} denied access to room statistics for {room_id}"
@@ -226,7 +208,7 @@ async def get_room_statistics_by_id(
                     status_code=403, detail="You don't have access to this room"
                 )
 
-        stats = await pg_repo.get_room_statistics_by_id(room_object_id)
+        stats = await pg_repo.get_room_statistics_by_id(room_id)
         if not stats:
             raise HTTPException(
                 status_code=404, detail=f"Room with ID '{room_id}' not found"
@@ -262,19 +244,11 @@ async def get_audio_info(
         pg_repo = PgTranscriptRepository()
         if not pg_repo.connected:
             await pg_repo.connect()
-        try:
-            room_object_id = ObjectId(room_id)
-        except Exception:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid room_id format: '{room_id}'"
-            )
 
         # Check access permission for regular users
         if not auth.can_view_all_rooms:
             # User must have participated in this room
-            has_access = await pg_repo.user_has_room_access(
-                room_object_id, auth.user_id
-            )
+            has_access = await pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
                 logger.warning(
                     f"User {auth.user_id} denied access to room statistics for {room_id}"
@@ -285,7 +259,7 @@ async def get_audio_info(
             # Fetch tracks from MongoDB and build file_results
         file_results = []
         try:
-            tracks = await pg_repo.get_tracks_by_room(room_object_id)
+            tracks = await pg_repo.get_tracks_by_room(room_id)
             if not tracks:
                 raise HTTPException(
                     status_code=404,
