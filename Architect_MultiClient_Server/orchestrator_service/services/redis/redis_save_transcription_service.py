@@ -14,7 +14,7 @@ from orchestrator_service.services.redis.redis_stream_service import (
     RedisStreamService,
     create_stream_service,
 )
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.services.summary_service import get_summary_service
@@ -62,7 +62,7 @@ class RedisSaveTranscriptionService:
     
     def __init__(self):
         self._redis_service: Optional[RedisStreamService[SaveTranscriptionTask]] = None
-        self._mongodb_service: Optional[MongoDBService] = None
+        self._pg_repo: Optional[PgTranscriptRepository] = None
         self._consumer_task: Optional[asyncio.Task] = None
         self._orphan_recovery_task: Optional[asyncio.Task] = None
         self._running = False
@@ -79,7 +79,7 @@ class RedisSaveTranscriptionService:
     
     
     async def connect(self) -> None:
-        """Connect to Redis and MongoDB."""
+        """Connect to Redis and PostgreSQL."""
         if self._redis_service is not None:
             return
         
@@ -88,17 +88,18 @@ class RedisSaveTranscriptionService:
         await self._redis_service.connect()
         logger.info("✅ RedisSaveTranscriptionService connected to Redis")
         
-        # Connect to MongoDB
-        self._mongodb_service = MongoDBService()
-        await self._mongodb_service.connect()
-        logger.info("✅ RedisSaveTranscriptionService connected to MongoDB")
+        # Connect to PostgreSQL
+        self._pg_repo = PgTranscriptRepository()
+        if not self._pg_repo.connected:
+            await self._pg_repo.connect()
+        logger.info("✅ RedisSaveTranscriptionService connected to PostgreSQL")
     
     async def start(self) -> None:
         """
         Start the consumer loop and background tasks.
         
         This will:
-        1. Connect to Redis and MongoDB
+        1. Connect to Redis and PostgreSQL
         2. Start background tasks (heartbeat, recovery)
         3. Start consumer loop to process save tasks
         """
@@ -160,9 +161,9 @@ class RedisSaveTranscriptionService:
             await self._redis_service.stop_background_tasks()
             await self._redis_service.disconnect()
         
-        # Disconnect MongoDB
-        if self._mongodb_service:
-            await self._mongodb_service.disconnect()
+        # Disconnect PostgreSQL
+        if self._pg_repo:
+            await self._pg_repo.disconnect()
         
         logger.info("✅ RedisSaveTranscriptionService stopped")
     
@@ -242,12 +243,12 @@ class RedisSaveTranscriptionService:
                     f"updating track status to 'failed'"
                 )
                 
-                success = await self._mongodb_service.update_track_status(
+                success_res = await self._pg_repo.update_track_status(
                     track_ref_id=task.track_ref_id,
                     status="failed"
                 )
                 
-                if success:
+                if success_res and success_res.get("success"):
                     logger.info(
                         f"\n{'='*60}\n"
                         f"❌ TRANSCRIPTION FAILED\n"
@@ -273,14 +274,15 @@ class RedisSaveTranscriptionService:
                     f"updating status to 'completed'"
                 )
                 
-                success = await self._mongodb_service.update_track_status(
+                success_res = await self._pg_repo.update_track_status(
                     track_ref_id=task.track_ref_id,
                     status="completed"
                 )
                 
-                if success:
+                if success_res and success_res.get("success"):
+                    track_data = success_res.get("track", {})
                     # Get room_ref_id from updated track
-                    room_ref_id = success.get("room_ref_id")
+                    room_ref_id = track_data.get("room_ref_id")
                     
                     # Log final summary
                     logger.info(
@@ -293,7 +295,7 @@ class RedisSaveTranscriptionService:
                     )
                     
                     # Check and complete room if all tracks are done
-                    if room_ref_id and await self._mongodb_service.check_and_complete_room(room_ref_id):
+                    if room_ref_id and await self._pg_repo.check_and_complete_room(room_ref_id):
                         service = get_summary_service()
                         await service.generate_summary(room_ref_id)
                 else:
@@ -308,8 +310,8 @@ class RedisSaveTranscriptionService:
             
             # Handle normal pending batch with segments
             if task.segments and len(task.segments) > 0:
-                # Save segments to MongoDB
-                await self._mongodb_service.append_transcript_chunk(
+                # Save segments to PostgreSQL
+                await self._pg_repo.append_transcript_chunk(
                     track_ref_id=task.track_ref_id,
                     new_segments=task.segments
                 )

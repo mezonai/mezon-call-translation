@@ -6,10 +6,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
-from orchestrator_service.services.mongodb.user_permission_service import (
-    UserPermissionService,
-)
 from orchestrator_service.services.postgresql.database import get_engine, dispose_engine
 from orchestrator_service.config.application_config import get_config
 from contextlib import asynccontextmanager
@@ -92,14 +88,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Failed to initialize PostgreSQL engine: {e}")
         raise
 
-    # Initialize MongoDB (Kept for migration/reference)
-    mongodb = MongoDBService()
-    ok = await mongodb.connect()
-    if not ok:
-        raise RuntimeError("❌ MongoDB connection failed on startup")
-    logger.info("✅ MongoDB connected on startup")
 
-    user_permission_service = UserPermissionService(mongodb.db)
 
     # Connect Redis Connection Pool (shared by all repositories)
     try:
@@ -160,16 +149,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error closing Redis connection pool: {e}")
 
-    # Step 5: Disconnect MongoDB LAST
-    logger.info("Step 5/6: 🛑 FastAPI shutdown")
+    # Step 5: 🛑 FastAPI shutdown
+    logger.info("Step 5/5: 🛑 FastAPI shutdown")
 
     # Dispose PostgreSQL engine
     await dispose_engine()
-
-    if mongodb and mongodb.connected:
-        await mongodb.disconnect()
-        logger.info("MongoDB disconnected")
-        # Disconnect Redis Connection Pool
 
     logger.info("🎉 All services cleanup completed successfully")
 
