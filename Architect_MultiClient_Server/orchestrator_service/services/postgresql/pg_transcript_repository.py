@@ -7,7 +7,6 @@ import json
 from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any
 import uuid
-from orchestrator_service.constants.uuid_constants import MEZON_NAMESPACE
 
 from sqlalchemy import text
 from orchestrator_service.services.postgresql.database import get_session_factory
@@ -160,7 +159,7 @@ class PgTranscriptRepository:
     ) -> Optional[str]:
         session_factory = get_session_factory()
         now = datetime.now(timezone.utc)
-        uid = str(uuid.uuid5(MEZON_NAMESPACE, f"{room_name}_{now.isoformat()}"))
+        uid = str(uuid.uuid4())
         try:
             async with session_factory() as session:
                 await session.execute(
