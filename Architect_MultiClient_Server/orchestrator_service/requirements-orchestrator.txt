@@ -26,8 +26,13 @@ PyJWT>=2.8.0                   # JWT token generation and validation
 # ========================================
 # Database & Storage
 # ========================================
-motor>=3.3.0                   # Async MongoDB driver
-pymongo>=4.5.0                 # MongoDB Python driver (sync operations)
+motor>=3.3.0                   # Async MongoDB driver (kept for reference)
+pymongo>=4.5.0                 # MongoDB Python driver (sync operations, kept for reference)
+
+# PostgreSQL (primary database)
+asyncpg>=0.29.0                # Async PostgreSQL driver
+sqlalchemy>=2.0.0              # ORM + async core (used with asyncpg)
+alembic>=1.13.0                # Database migration tool
 
 # ========================================
 # AI & LLM Services

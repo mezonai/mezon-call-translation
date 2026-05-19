@@ -17,8 +17,7 @@ import jwt
 
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.jwt_utils import verify_jwt_token
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
-from orchestrator_service.services.mongodb.token_blacklist_service import TokenBlacklistService
+from orchestrator_service.services.postgresql.pg_token_blacklist_repository import PgTokenBlacklistRepository
 
 logger = get_logger(__name__)
 
@@ -79,12 +78,8 @@ async def verify_jwt(
             )
 
         # Check if token is blacklisted
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-
-        blacklist_service = TokenBlacklistService(mongodb.db)
-        is_blacklisted = await blacklist_service.is_blacklisted(jti)
+        blacklist_repo = PgTokenBlacklistRepository()
+        is_blacklisted = await blacklist_repo.is_blacklisted(jti)
 
         if is_blacklisted:
             logger.warning(f"Blacklisted token used: jti={jti}, user_id={payload.get('user_id')}")

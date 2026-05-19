@@ -11,9 +11,8 @@ Features:
 
 from typing import Dict, Any, Set, Optional
 from fastapi import Depends, HTTPException
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
 from orchestrator_service.auth.jwt_auth import verify_jwt
-from orchestrator_service.services.mongodb.user_permission_service import UserPermissionService
+from orchestrator_service.services.postgresql.pg_user_permission_repository import PgUserPermissionRepository
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL
 
 from orchestrator_service.utils.logger import get_logger
@@ -126,16 +125,12 @@ async def get_auth_context(
 
     # Try to load permissions from database
     permissions: Set[str] = set()
-    mongodb = MongoDBService()
-    if not mongodb.connected:
-        await mongodb.connect()
+    permission_repo = PgUserPermissionRepository()
 
-    permission_service = UserPermissionService(mongodb)
-
-    if permission_service and user_id:
+    if user_id:
         try:
             # Load flat permissions from users collection
-            permissions = await permission_service.get_user_permissions(user_id)
+            permissions = await permission_repo.get_user_permissions(user_id)
             if permissions:
                 logger.debug(f"Loaded {len(permissions)} permissions from DB for user_id={user_id}")
             else:
