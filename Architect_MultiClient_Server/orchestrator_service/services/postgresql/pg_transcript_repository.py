@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any
 import uuid
-from orchestrator_service.constants import MEZON_NAMESPACE
+from orchestrator_service.constants.uuid_constants import MEZON_NAMESPACE
 
 from sqlalchemy import text
 from orchestrator_service.services.postgresql.database import get_session_factory
