@@ -7,7 +7,6 @@ Delegates all operations to RoomRegistryRepository.
 
 from typing import Optional, Dict
 
-from bson import ObjectId
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.redis.room_registry_repository import (
     RoomRegistryRepository,
@@ -64,7 +63,6 @@ class RoomRegistry:
         Raises:
             ConnectionError: If Redis operation fails
         """
-        # Convert ObjectId to string for Redis storage
         try:
             room_id_str = str(room_id)
             if not room_id_str or room_id_str == "None":

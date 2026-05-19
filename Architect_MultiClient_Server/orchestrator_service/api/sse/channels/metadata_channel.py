@@ -6,7 +6,6 @@ Handles SSE connections for room lifecycle and recording events (global, not roo
 from typing import Optional, Dict, Any
 from datetime import datetime
 import uuid
-from bson import ObjectId
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_manager import SSEManager

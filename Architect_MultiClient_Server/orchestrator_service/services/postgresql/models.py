@@ -18,10 +18,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-def _new_uuid() -> str:
-    return str(uuid.uuid4())
-
-
 class Base(DeclarativeBase):
     pass
 
@@ -39,7 +35,7 @@ class Room(Base):
 
     __tablename__ = "rooms"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
     mongo_id: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True
     )  # migration mapping
@@ -81,8 +77,8 @@ class Track(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)  # egress_id
     track_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    room_ref_id: Mapped[Optional[str]] = mapped_column(
-        Text, nullable=True
+    room_ref_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        nullable=True
     )  # UUID of rooms.id
     participant_identity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -115,7 +111,7 @@ class TranscriptChunk(Base):
 
     __tablename__ = "transcript_chunks"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     track_ref_id: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True
     )  # egress_id
@@ -143,9 +139,9 @@ class RoomSummary(Base):
 
     __tablename__ = "rooms_summary"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
-    room_id: Mapped[Optional[str]] = mapped_column(
-        Text, nullable=True
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    room_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        nullable=True
     )  # UUID of rooms.id
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     participants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
@@ -174,12 +170,12 @@ class MetadataEvent(Base):
 
     __tablename__ = "metadata_events"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     event_id: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True
     )  # UUID string from app
     event_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    room_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    room_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     event_metadata: Mapped[Optional[dict]] = mapped_column(
         "metadata", JSONB, nullable=True
@@ -235,7 +231,7 @@ class RefreshToken(Base):
 
     __tablename__ = "refresh_tokens"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     refresh_token_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     access_token_jti: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -265,7 +261,7 @@ class TokenBlacklist(Base):
 
     __tablename__ = "token_blacklist"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     jti: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

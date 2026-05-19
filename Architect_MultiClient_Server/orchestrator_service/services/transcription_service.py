@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
-from bson import ObjectId
 from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.utils.logger import get_logger
@@ -114,7 +113,7 @@ class TranscriptionService:
             logger.error(f"✗ Redis enqueue failed: {e}")
             return False
 
-    async def final_room(self, room_name: str, room_id: ObjectId) -> bool:
+    async def final_room(self, room_name: str, room_id: str) -> bool:
         """
         Mark room as finalized in transcription service
 
@@ -173,13 +172,12 @@ class TranscriptionService:
         return None
 
     async def save_participant(
-        self, room_id: ObjectId, participant_identity: str, timestamp: datetime = None
+        self, room_id: str, participant_identity: str, timestamp: datetime = None
     ) -> bool:
         """
         Save participant info to MongoDB
 
         Args:
-            room_id: Room ObjectId
             participant_identity: Participant identity
 
         Returns:
@@ -199,7 +197,7 @@ class TranscriptionService:
             return False
 
     async def save_participants_batch(
-        self, room_id: ObjectId, participants: List[Dict[str, Any]]
+        self, room_id: str, participants: List[Dict[str, Any]]
     ) -> Dict[str, int]:
         """
         Save batch of participants to MongoDB
@@ -219,7 +217,7 @@ class TranscriptionService:
         self,
         egress_id: str,
         track_id: str,
-        room_ref_id: ObjectId,
+        room_ref_id: str,
         participant_identity: str,
         status: str = "pending",
     ) -> bool:

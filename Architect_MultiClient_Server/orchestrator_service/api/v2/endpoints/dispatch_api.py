@@ -4,7 +4,6 @@ from typing import Dict, Any, Optional, List
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import AGENT_CONTROL
 from fastapi import APIRouter, HTTPException, Depends
-from bson import ObjectId
 from pydantic import BaseModel, Field
 from orchestrator_service.services.livekit_client import (
     get_livekit_service,
