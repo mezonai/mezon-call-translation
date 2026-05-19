@@ -386,7 +386,7 @@ class PgTranscriptRepository:
     async def user_has_room_access(self, room_id: str, user_id: str) -> bool:
         return True  # Handled in user permission repo, skip complex check for now
 
-    async def get_room_statistics_by_id(self, room_id: str) -> Optional[dict]:
+    async def get_room_statistics_by_id(self, room_id: str) -> Dict[str, Any]:
         uid = room_id
         session_factory = get_session_factory()
         try:
@@ -396,10 +396,10 @@ class PgTranscriptRepository:
                 )
                 room_row = room_res.fetchone()
                 if not room_row:
-                    return None
+                    return {}
                 room = dict(room_row._mapping)
-                created_at_raw = convert_to_iso_8601(room.get("created_at"))
-                finaled_at_raw = convert_to_iso_8601(room.get("finalized_at"))
+                created_at_raw: datetime = room.get("created_at")
+                finaled_at_raw: datetime = room.get("finalized_at")
                 total_duration_sec: float = 0.0
                 if finaled_at_raw and created_at_raw:
                     total_duration_sec = (finaled_at_raw - created_at_raw).total_seconds()
@@ -435,7 +435,7 @@ class PgTranscriptRepository:
                 }
         except Exception as e:
             logger.error(f"Failed to get room stats: {e}")
-            return None
+            return {}
 
     async def list_rooms_by_user(
         self,
