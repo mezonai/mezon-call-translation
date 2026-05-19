@@ -43,9 +43,9 @@ class Room(Base):
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     participants: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=list)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    finalized_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    finalized_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
 
     __table_args__ = (
         Index("ix_rooms_room_name", "room_name"),
@@ -75,8 +75,8 @@ class Track(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     audio_info: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
 
     __table_args__ = (
         Index("ix_tracks_room_ref_id", "room_ref_id"),
@@ -129,7 +129,7 @@ class RoomSummary(Base):
     full_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     messages: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     total_segments: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
 
     __table_args__ = (
         Index("ix_rooms_summary_room_id", "room_id"),
@@ -154,7 +154,7 @@ class MetadataEvent(Base):
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     event_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
     timestamp: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
 
     __table_args__ = (
         Index("ix_events_event_type", "event_type"),
@@ -179,8 +179,8 @@ class User(Base):
     display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     permissions: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
 
     __table_args__ = (
         Index("ix_users_username", "username"),
@@ -200,8 +200,8 @@ class RefreshToken(Base):
     user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     refresh_token_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     access_token_jti: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     device_info: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -225,8 +225,8 @@ class TokenBlacklist(Base):
     jti: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    blacklisted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    blacklisted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
