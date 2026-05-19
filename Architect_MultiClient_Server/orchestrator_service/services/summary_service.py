@@ -4,10 +4,8 @@ Service for generating room summaries
 
 from datetime import datetime
 from typing import Optional, Dict, Any
-from bson import ObjectId
-
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.config.application_config import get_config
 
@@ -20,7 +18,7 @@ class SummaryService:
     """Service to handle room summarization logic"""
 
     def __init__(self):
-        self.mongodb = MongoDBService()
+        self.pg_repo = PgTranscriptRepository()
         self.config = get_config()
         # Create LLM service based on configured provider
         self.llm_service = create_llm_service(self.config.llm)
@@ -28,7 +26,7 @@ class SummaryService:
             f"SummaryService initialized with LLM provider: {self.config.llm.provider}"
         )
 
-    async def generate_summary(self, room_id: ObjectId) -> Optional[Dict[str, Any]]:
+    async def generate_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
         """
         Generate a summary for the given room_id.
 
@@ -43,19 +41,19 @@ class SummaryService:
         8. Update summary in DB.
         9. Notify clients via SSE.
         """
-        # Ensure MongoDB is connected
-        if not self.mongodb.connected:
-            await self.mongodb.connect()
+        if not self.pg_repo.connected:
+            await self.pg_repo.connect()
 
         # 1. Verify room exists
-        logger.info(f"Generating summary for room {repr(room_id)}")
-        room = await self.mongodb.get_room_by_id(room_id)
-        if not room:
-            logger.warning(f"Room not found: {room_id}")
+        room_doc = await self.pg_repo.get_room_by_id(room_id)
+        if not room_doc:
+            logger.error(f"Generate Summary: Room not found for id: {room_id}")
             return None
 
-        # 2. Get all tracks
-        tracks = await self.mongodb.get_tracks_by_room(room_id)
+        # 2. Get All Tracks
+        tracks = await self.pg_repo.get_tracks_by_room(
+            room_id, status="completed"
+        )
         if not tracks:
             logger.warning(f"No tracks found for room {room_id}")
             return None
@@ -66,8 +64,12 @@ class SummaryService:
         for track in tracks:
             try:
                 participant = track.get("participant_identity", "Unknown")
-                track_start_ns = int(track.get("audio_info", {}).get("started_at_ns", 0) or 0)
-                chunks = await self.mongodb.get_chunks_by_track(str(track["_id"]), sorted_by_index=True)
+                track_start_ns = int(
+                    track.get("audio_info", {}).get("started_at_ns", 0) or 0
+                )
+                chunks = await self.pg_repo.get_chunks_by_track(
+                    str(track["_id"]), sorted_by_index=True
+                )
 
                 for chunk in chunks:
                     for seg in chunk.get("segments", []):
@@ -75,13 +77,17 @@ class SummaryService:
                         if not text:
                             continue
 
-                        seg_start_ns = track_start_ns + int((seg.get("start") or 0.0) * 1_000_000_000)
+                        seg_start_ns = track_start_ns + int(
+                            (seg.get("start") or 0.0) * 1_000_000_000
+                        )
 
-                        all_segments.append({
-                            "timestamp": seg_start_ns,
-                            "participant_id": participant,
-                            "text": text,
-                        })
+                        all_segments.append(
+                            {
+                                "timestamp": seg_start_ns,
+                                "participant_id": participant,
+                                "text": text,
+                            }
+                        )
             except Exception as e:
                 logger.error(f"Error processing track {track.get('_id')}: {e}")
                 continue
@@ -93,7 +99,7 @@ class SummaryService:
         all_segments.sort(key=lambda x: x["timestamp"])
 
         # 4. Collect Full Text and Participants
-        unique_participants = {seg["participant_id"] for seg in all_segments} 
+        unique_participants = {seg["participant_id"] for seg in all_segments}
 
         turns = []
         current_turn = None
@@ -119,13 +125,12 @@ class SummaryService:
 
         # full_text is used for LLM summarization and also saved in DB to allow retrying LLM if summary generation fails. It can be a long string, but we keep it as is for now since it's needed for the summary generation step. In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
         full_text = "\n".join(
-            f"[{t['timestamp']}] {t['participant_id']}: {t['content']}"
-            for t in turns
+            f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in turns
         )
 
         draft_summary: Dict[str, Any] = {
             "room_id": room_id,
-            "room_name": room.get("room_name", "Unknown"),
+            "room_name": room_doc.get("room_name", "Unknown"),
             "participants": list(unique_participants),
             "summary_data": {},
             "full_text": full_text,
@@ -134,10 +139,14 @@ class SummaryService:
             "total_segments": len(all_segments),
         }
 
-        # 6. Save transcript draft so full_text is persisted even if summary generation fails
-        saved_id = await self.mongodb.save_room_summary(draft_summary)
-        if not saved_id:
-            logger.error(f"Failed to save transcript draft for room {room_id}")
+        # 5. Save Summary to PostgreSQL
+        try:
+            saved_id = await self.pg_repo.save_room_summary(draft_summary)
+            if not saved_id:
+                logger.error(f"Failed to save summary for room: {room_id}")
+                return None
+        except Exception as e:
+            logger.error(f"Failed to save summary to DB: {e}")
             return None
 
         try:
@@ -159,7 +168,9 @@ class SummaryService:
             final_summary["summary_data"] = summary_data
 
             # 8. Update only summary_data in DB; full_text remains from the draft save
-            updated = await self.mongodb.update_room_summary(room_id, summary_data)
+            updated = await self.pg_repo.update_room_summary(
+                room_id, summary_data
+            )
             if not updated:
                 logger.error(f"Failed to update generated summary for room {room_id}")
                 return {**draft_summary, "_id": saved_id}
@@ -171,7 +182,7 @@ class SummaryService:
             # 9. Notify clients via SSE if summary generation is successful
             metadata_channel = MetadataChannel()
             await metadata_channel.push_room_summary_done(
-                room_id=str(room_id), room_name=room.get("room_name", "Unknown")
+                room_id=str(room_id), room_name=room_doc.get("room_name", "Unknown")
             )
             return result
         except Exception as e:
@@ -179,7 +190,7 @@ class SummaryService:
             return {**draft_summary, "_id": saved_id}
 
     async def retry_summary_from_full_text(
-        self, room_id: ObjectId
+        self, room_id: str
     ) -> Optional[Dict[str, Any]]:
         """
         Hotfix: re-run LLM summarization using the full_text already stored in rooms_summary.
@@ -191,12 +202,10 @@ class SummaryService:
         Raises:
             ValueError: If document not found or full_text is empty.
         """
-        if not self.mongodb.connected:
-            await self.mongodb.connect()
+        if not self.pg_repo.connected:
+            await self.pg_repo.connect()
 
-        summary_doc = await self.mongodb.summary_collection.find_one(
-            {"room_id": room_id}
-        )
+        summary_doc = await self.pg_repo.get_summary_by_room_id(room_id)
         if not summary_doc:
             raise ValueError(f"Not found summary_doc for room_id: {room_id}")
 
@@ -220,7 +229,7 @@ class SummaryService:
                 },
             }
 
-            updated = await self.mongodb.update_room_summary(room_id, summary_data)
+            updated = await self.pg_repo.update_room_summary(room_id, summary_data)
             logger.info(f"Updated summary for room {room_id}")
             if not updated:
                 logger.error(f"Failed to update summary for room {room_id}")

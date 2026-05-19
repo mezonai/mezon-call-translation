@@ -8,7 +8,6 @@ Manages blacklisted JWT access tokens in MongoDB with the following features:
 
 Collections:
     token_blacklist:
-        - _id: ObjectId
         - jti: JWT ID (unique identifier from token)
         - user_id: User ID who owned the token
         - token_hash: SHA256 hash of the token (optional, for extra security)

@@ -8,7 +8,6 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
-from bson import ObjectId
 from livekit import api
 
 from orchestrator_service.utils.participant_identity import parse_participant_identity

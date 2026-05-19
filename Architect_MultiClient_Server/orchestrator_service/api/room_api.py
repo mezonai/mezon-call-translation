@@ -10,14 +10,15 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.mongodb.mongodb_service import MongoDBService
+from orchestrator_service.services.postgresql.pg_transcript_repository import (
+    PgTranscriptRepository,
+)
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
     StatusQuery,
     LimitQuery,
     SkipQuery,
 )
-from bson import ObjectId
 
 router = APIRouter(prefix="/api/transcripts/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
@@ -33,9 +34,17 @@ def _serialize_room(room: dict) -> dict:
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,
-    search: Optional[str] = Query(default=None, max_length=VC.MAX_SEARCH_QUERY_LENGTH, description="Search by room name or participant identity"),
-    from_utc: Optional[datetime] = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
-    to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
+    search: Optional[str] = Query(
+        default=None,
+        max_length=VC.MAX_SEARCH_QUERY_LENGTH,
+        description="Search by room name or participant identity",
+    ),
+    from_utc: Optional[datetime] = Query(
+        default=None, description="Start of time range (UTC, ISO 8601)"
+    ),
+    to_utc: Optional[datetime] = Query(
+        default=None, description="End of time range (UTC, ISO 8601)"
+    ),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
 ):
@@ -55,10 +64,10 @@ async def list_rooms(
     if search_trimmed == "":
         search_trimmed = None
     try:
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-        rooms = await mongodb.list_rooms(
+        pg_repo = PgTranscriptRepository()
+        if not pg_repo.connected:
+            await pg_repo.connect()
+        rooms = await pg_repo.list_rooms(
             status=status,
             search=search_trimmed,
             from_utc=from_utc,
@@ -67,7 +76,7 @@ async def list_rooms(
             skip=skip,
         )
         rooms = [_serialize_room(room) for room in rooms]
-        total = await mongodb.count_rooms(
+        total = await pg_repo.count_rooms(
             status=status,
             search=search_trimmed,
             from_utc=from_utc,
@@ -78,7 +87,7 @@ async def list_rooms(
             "total": total,
             "limit": limit,
             "skip": skip,
-            "rooms": rooms
+            "rooms": rooms,
         }
     except HTTPException:
         raise
@@ -90,34 +99,24 @@ async def list_rooms(
 @router.get("/id/{room_id}", response_description="Get room by ID")
 async def get_room_by_id(
     room_id: str,
-    
 ):
     """
     Get room details by room ID.
-    
-    - **room_id**: The ObjectId of the room to retrieve
     """
     try:
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-        
-        # Validate ObjectId format
-        try:
-            room_object_id = ObjectId(room_id)
-        except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_id}'")
-        
-        room = await mongodb.get_room_by_id(room_object_id)
+        pg_repo = PgTranscriptRepository()
+        if not pg_repo.connected:
+            await pg_repo.connect()
+
+        room = await pg_repo.get_room_by_id(room_id)
         if not room:
-            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Room with ID '{room_id}' not found"
+            )
+
         room = _serialize_room(room)
-        
-        return {
-            "status": "ok",
-            "room": room
-        }
+
+        return {"status": "ok", "room": room}
     except HTTPException:
         raise
     except Exception as e:
@@ -125,46 +124,34 @@ async def get_room_by_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
+@router.get(
+    "/id/{room_id}/statistics", response_description="Get room statistics by ID"
+)
 async def get_room_statistics_by_id(
     room_id: str,
-    
 ):
     """
     Get detailed statistics for a specific room by ID.
-    
-    - **room_id**: The ObjectId of the room
-    
+
     Returns:
     - Total tracks, completed/remaining tracks
     - Total duration in seconds
     - Total transcript segments
     """
     try:
-        mongodb = MongoDBService()
-        if not mongodb.connected:
-            await mongodb.connect()
-        
-        # Validate ObjectId format
-        try:
-            room_object_id = ObjectId(room_id)
-        except Exception:
-            raise HTTPException(status_code=400, detail=f"Invalid room_id format: '{room_object_id}'")
-        
-        stats = await mongodb.get_room_statistics_by_id(room_object_id)
-        if not stats:
-            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+        pg_repo = PgTranscriptRepository()
+        if not pg_repo.connected:
+            await pg_repo.connect()
 
-        if stats.get("room_id") is not None:
-            stats["room_id"] = str(stats["room_id"])
-        
-        return {
-            "status": "ok",
-            "statistics": stats
-        }
+        stats = await pg_repo.get_room_statistics_by_id(room_id)
+        if not stats:
+            raise HTTPException(
+                status_code=404, detail=f"Room with ID '{room_id}' not found"
+            )
+
+        return {"status": "ok", "statistics": stats}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get room statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
