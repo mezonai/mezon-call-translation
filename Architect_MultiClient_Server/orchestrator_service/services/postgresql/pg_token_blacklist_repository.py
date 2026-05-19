@@ -42,7 +42,7 @@ class PgTokenBlacklistRepository:
                         INSERT INTO token_blacklist
                             (id, jti, user_id, token_hash, blacklisted_at, expires_at, reason)
                         VALUES
-                            (gen_random_uuid()::text, :jti, :user_id, :token_hash,
+                            (gen_random_uuid(), :jti, :user_id, :token_hash,
                              :blacklisted_at, :expires_at, :reason)
                         ON CONFLICT (jti) DO NOTHING
                     """),

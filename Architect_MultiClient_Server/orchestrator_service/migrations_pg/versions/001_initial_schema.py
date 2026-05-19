@@ -21,7 +21,7 @@ def upgrade() -> None:
     # rooms
     op.create_table(
         "rooms",
-        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("mongo_id", sa.Text(), nullable=True),
         sa.Column("room_name", sa.Text(), nullable=True),
         sa.Column("status", sa.Text(), nullable=True),
@@ -43,7 +43,7 @@ def upgrade() -> None:
         "tracks",
         sa.Column("id", sa.Text(), nullable=False),
         sa.Column("track_id", sa.Text(), nullable=True),
-        sa.Column("room_ref_id", sa.Text(), nullable=True),
+        sa.Column("room_ref_id", sa.UUID(as_uuid=True), nullable=True),
         sa.Column("participant_identity", sa.Text(), nullable=True),
         sa.Column("status", sa.Text(), nullable=True),
         sa.Column("chunk_count", sa.Integer(), nullable=False, server_default="0"),
@@ -66,7 +66,7 @@ def upgrade() -> None:
     # transcript_chunks
     op.create_table(
         "transcript_chunks",
-        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("track_ref_id", sa.Text(), nullable=True),
         sa.Column("chunk_index", sa.Integer(), nullable=True),
         sa.Column("start_time", sa.Float(), nullable=True),
@@ -88,8 +88,8 @@ def upgrade() -> None:
     # rooms_summary
     op.create_table(
         "rooms_summary",
-        sa.Column("id", sa.Text(), nullable=False),
-        sa.Column("room_id", sa.Text(), nullable=True),
+        sa.Column("id", sa.UUID(as_uuid=True), nullable=False),
+        sa.Column("room_id", sa.UUID(as_uuid=True), nullable=True),
         sa.Column("room_name", sa.Text(), nullable=True),
         sa.Column(
             "participants", postgresql.JSONB(astext_type=sa.Text()), nullable=True
@@ -113,10 +113,10 @@ def upgrade() -> None:
     # metadata_events
     op.create_table(
         "metadata_events",
-        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("event_id", sa.Text(), nullable=True),
         sa.Column("event_type", sa.Text(), nullable=True),
-        sa.Column("room_id", sa.Text(), nullable=True),
+        sa.Column("room_id", sa.UUID(as_uuid=True), nullable=True),
         sa.Column("room_name", sa.Text(), nullable=True),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("timestamp", sa.Text(), nullable=True),
@@ -151,7 +151,7 @@ def upgrade() -> None:
     # refresh_tokens
     op.create_table(
         "refresh_tokens",
-        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("user_id", sa.Text(), nullable=True),
         sa.Column("refresh_token_hash", sa.Text(), nullable=True),
         sa.Column("access_token_jti", sa.Text(), nullable=True),
@@ -174,7 +174,7 @@ def upgrade() -> None:
     # token_blacklist
     op.create_table(
         "token_blacklist",
-        sa.Column("id", sa.Text(), nullable=False),
+        sa.Column("id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("jti", sa.Text(), nullable=True),
         sa.Column("user_id", sa.Text(), nullable=True),
         sa.Column("token_hash", sa.Text(), nullable=True),

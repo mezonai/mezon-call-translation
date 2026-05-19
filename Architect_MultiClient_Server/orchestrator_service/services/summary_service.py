@@ -4,8 +4,6 @@ Service for generating room summaries
 
 from datetime import datetime
 from typing import Optional, Dict, Any
-from bson import ObjectId
-
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.llm.factory import create_llm_service
@@ -28,7 +26,7 @@ class SummaryService:
             f"SummaryService initialized with LLM provider: {self.config.llm.provider}"
         )
 
-    async def generate_summary(self, room_id: ObjectId) -> Optional[Dict[str, Any]]:
+    async def generate_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
         """
         Generate a summary for the given room_id.
 
@@ -192,7 +190,7 @@ class SummaryService:
             return {**draft_summary, "_id": saved_id}
 
     async def retry_summary_from_full_text(
-        self, room_id: ObjectId
+        self, room_id: str
     ) -> Optional[Dict[str, Any]]:
         """
         Hotfix: re-run LLM summarization using the full_text already stored in rooms_summary.

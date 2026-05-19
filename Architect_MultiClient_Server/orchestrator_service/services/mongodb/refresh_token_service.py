@@ -9,7 +9,6 @@ Manages refresh tokens in MongoDB with the following features:
 
 Collections:
     refresh_tokens:
-        - _id: ObjectId
         - user_id: User ID from Mezon
         - refresh_token_hash: SHA256 hash of refresh token
         - access_token_jti: JTI of current access token

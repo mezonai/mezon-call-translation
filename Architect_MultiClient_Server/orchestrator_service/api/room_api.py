@@ -19,7 +19,6 @@ from orchestrator_service.utils.transcript_validators import (
     LimitQuery,
     SkipQuery,
 )
-from bson import ObjectId
 
 router = APIRouter(prefix="/api/transcripts/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
@@ -103,8 +102,6 @@ async def get_room_by_id(
 ):
     """
     Get room details by room ID.
-
-    - **room_id**: The ObjectId of the room to retrieve
     """
     try:
         pg_repo = PgTranscriptRepository()
@@ -135,8 +132,6 @@ async def get_room_statistics_by_id(
 ):
     """
     Get detailed statistics for a specific room by ID.
-
-    - **room_id**: The ObjectId of the room
 
     Returns:
     - Total tracks, completed/remaining tracks

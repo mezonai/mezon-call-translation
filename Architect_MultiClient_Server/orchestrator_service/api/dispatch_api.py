@@ -1,6 +1,5 @@
 from google.protobuf.json_format import MessageToDict
 from typing import Dict, Any, Optional, List
-from bson import ObjectId
 
 from fastapi import APIRouter, HTTPException
 import httpx

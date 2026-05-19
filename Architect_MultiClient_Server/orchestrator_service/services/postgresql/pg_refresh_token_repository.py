@@ -96,6 +96,7 @@ class PgRefreshTokenRepository:
             if row:
                 doc = dict(row._mapping)
                 # Expose _id for interface compatibility
+                doc["id"] = str(doc["id"])
                 doc["_id"] = doc["id"]
                 logger.debug(f"Refresh token validated for user_id={doc['user_id']}")
                 return doc

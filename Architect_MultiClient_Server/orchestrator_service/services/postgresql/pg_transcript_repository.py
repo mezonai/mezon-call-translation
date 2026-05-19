@@ -9,33 +9,11 @@ from typing import Optional, Dict, List, Any
 import uuid
 
 from sqlalchemy import text
-from bson import ObjectId
-
 from orchestrator_service.services.postgresql.database import get_session_factory
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
-
-
-def _to_uuid(obj_id) -> str:
-    """Convert ObjectId or string to UUID string for PostgreSQL."""
-    if not obj_id:
-        return None
-    s = str(obj_id)
-    if len(s) == 24:
-        return str(uuid.UUID(s + "00000000"))
-    return s
-
-
-def _from_uuid(uuid_str: str) -> str:
-    """Convert UUID string back to ObjectId-like string if needed."""
-    if not uuid_str:
-        return None
-    s = uuid_str.replace("-", "")
-    if s.endswith("00000000"):
-        return s[:24]
-    return uuid_str
 
 
 class PgTranscriptRepository:
@@ -99,7 +77,7 @@ class PgTranscriptRepository:
                 rooms = []
                 for row in rows:
                     r = dict(row._mapping)
-                    r["_id"] = _from_uuid(r["id"])
+                    r["_id"] = str(r["id"])
                     rooms.append(r)
                 return rooms
         except Exception as e:
@@ -138,8 +116,8 @@ class PgTranscriptRepository:
             logger.error(f"Failed to count rooms: {e}")
             return 0
 
-    async def get_room_by_id(self, room_id) -> Optional[Dict[str, Any]]:
-        uid = _to_uuid(room_id)
+    async def get_room_by_id(self, room_id: str) -> Optional[Dict[str, Any]]:
+        uid = room_id
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -149,7 +127,7 @@ class PgTranscriptRepository:
                 row = result.fetchone()
                 if row:
                     r = dict(row._mapping)
-                    r["_id"] = _from_uuid(r["id"])
+                    r["_id"] = str(r["id"])
                     return r
                 return None
         except Exception as e:
@@ -169,7 +147,7 @@ class PgTranscriptRepository:
                 row = result.fetchone()
                 if row:
                     r = dict(row._mapping)
-                    r["_id"] = _from_uuid(r["id"])
+                    r["_id"] = str(r["id"])
                     return r
                 return None
         except Exception as e:
@@ -180,8 +158,8 @@ class PgTranscriptRepository:
         self, room_name: str, status: str = "pending"
     ) -> Optional[str]:
         session_factory = get_session_factory()
-        uid = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
+        uid = str(uuid.uuid4())
         try:
             async with session_factory() as session:
                 await session.execute(
@@ -192,13 +170,13 @@ class PgTranscriptRepository:
                     {"id": uid, "name": room_name, "status": status, "now": now},
                 )
                 await session.commit()
-            return _from_uuid(uid)
+            return str(uid)
         except Exception as e:
             logger.error(f"Failed to create room: {e}")
             return None
 
-    async def final_room_status(self, room_name: str, room_id) -> bool:
-        uid = _to_uuid(room_id)
+    async def final_room_status(self, room_name: str, room_id: str) -> bool:
+        uid = room_id
         session_factory = get_session_factory()
         now = datetime.now(timezone.utc)
         try:
@@ -218,9 +196,9 @@ class PgTranscriptRepository:
             return False
 
     async def save_participant(
-        self, room_id, participant_identity: str, timestamp: Optional[datetime] = None
+        self, room_id: str, participant_identity: str, timestamp: Optional[datetime] = None
     ) -> bool:
-        uid = _to_uuid(room_id)
+        uid = room_id
         session_factory = get_session_factory()
         ts = timestamp or datetime.now(timezone.utc)
         try:
@@ -253,7 +231,7 @@ class PgTranscriptRepository:
             return False
 
     async def save_batch_participants(
-        self, room_id, participants: List[Dict[str, Any]]
+        self, room_id: str, participants: List[Dict[str, Any]]
     ) -> Dict[str, int]:
         added = 0
         for p in participants:
@@ -272,9 +250,9 @@ class PgTranscriptRepository:
     # ------------------------------------------------------------------
 
     async def get_tracks_by_room(
-        self, room_id, status: Optional[str] = None
+        self, room_id: str, status: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        uid = _to_uuid(room_id)
+        uid = room_id
         session_factory = get_session_factory()
         query = "SELECT * FROM tracks WHERE room_ref_id = :rid"
         params = {"rid": uid}
@@ -289,7 +267,7 @@ class PgTranscriptRepository:
                 for row in rows:
                     t = dict(row._mapping)
                     t["_id"] = t["id"]
-                    t["room_ref_id"] = _from_uuid(t["room_ref_id"])
+                    t["room_ref_id"] = str(t["room_ref_id"])
                     tracks.append(t)
                 return tracks
         except Exception as e:
@@ -308,7 +286,7 @@ class PgTranscriptRepository:
                     t = dict(row._mapping)
                     t["_id"] = t["id"]
                     if t.get("room_ref_id"):
-                        t["room_ref_id"] = _from_uuid(t["room_ref_id"])
+                        t["room_ref_id"] = str(t["room_ref_id"])
                     return t
                 return None
         except Exception as e:
@@ -343,8 +321,8 @@ class PgTranscriptRepository:
             logger.error(f"Failed to update track status: {e}")
             return {"success": False, "error": str(e)}
 
-    async def check_event_record_done(self, room_ref_id) -> Optional[dict]:
-        uid = _to_uuid(room_ref_id)
+    async def check_event_record_done(self, room_ref_id: str) -> Optional[dict]:
+        uid = room_ref_id
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -370,15 +348,15 @@ class PgTranscriptRepository:
                 pending = res.scalar() or 0
                 if pending == 0:
                     r = dict(row._mapping)
-                    r["_id"] = _from_uuid(r["id"])
+                    r["_id"] = str(r["id"])
                     return r
                 return None
         except Exception as e:
             logger.error(f"Failed check event record done: {e}")
             return None
 
-    async def check_and_complete_room(self, room_ref_id) -> bool:
-        uid = _to_uuid(room_ref_id)
+    async def check_and_complete_room(self, room_ref_id: str) -> bool:
+        uid = room_ref_id
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -405,11 +383,11 @@ class PgTranscriptRepository:
             logger.error(f"Failed check and complete room: {e}")
             return False
 
-    async def user_has_room_access(self, room_id, user_id: str) -> bool:
+    async def user_has_room_access(self, room_id: str, user_id: str) -> bool:
         return True  # Handled in user permission repo, skip complex check for now
 
-    async def get_room_statistics_by_id(self, room_id) -> Optional[dict]:
-        uid = _to_uuid(room_id)
+    async def get_room_statistics_by_id(self, room_id: str) -> Optional[dict]:
+        uid = room_id
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -437,7 +415,7 @@ class PgTranscriptRepository:
                 segments = sum_row[0] if sum_row and sum_row[0] else 0
 
                 return {
-                    "room_id": _from_uuid(uid),
+                    "room_id": str(uid),
                     "total_tracks": total,
                     "completed_tracks": completed,
                     "remaining_tracks": total - completed,
@@ -488,8 +466,8 @@ class PgTranscriptRepository:
 
     async def save_room_summary(self, summary_data: Dict[str, Any]) -> Optional[str]:
         session_factory = get_session_factory()
-        uid = str(uuid.uuid4())
-        room_uid = _to_uuid(summary_data.get("room_id"))
+        room_uid = summary_data.get("room_id")
+        uid = room_uid
         try:
             async with session_factory() as session:
                 await session.execute(
@@ -512,13 +490,13 @@ class PgTranscriptRepository:
                     },
                 )
                 await session.commit()
-                return _from_uuid(uid)
+                return str(uid)
         except Exception as e:
             logger.error(f"Failed to save summary: {e}")
             return None
 
-    async def update_room_summary(self, room_id, summary_data: Dict[str, Any]) -> bool:
-        uid = _to_uuid(room_id)
+    async def update_room_summary(self, room_id: str, summary_data: Dict[str, Any]) -> bool:
+        uid = room_id
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -534,8 +512,8 @@ class PgTranscriptRepository:
             logger.error(f"Failed to update summary: {e}")
             return False
 
-    async def get_summary_by_room_id(self, room_id) -> Optional[Dict]:
-        uid = _to_uuid(room_id)
+    async def get_summary_by_room_id(self, room_id: str) -> Optional[Dict]:
+        uid = room_id
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -548,8 +526,8 @@ class PgTranscriptRepository:
                 row = res.fetchone()
                 if row:
                     s = dict(row._mapping)
-                    s["_id"] = _from_uuid(s["id"])
-                    s["room_id"] = _from_uuid(s["room_id"])
+                    s["_id"] = str(s["id"])
+                    s["room_id"] = str(s["room_id"])
                     return s
                 return None
         except Exception as e:
@@ -563,7 +541,7 @@ class PgTranscriptRepository:
     async def save_metadata_event(self, event_data: Dict[str, Any]) -> Optional[str]:
         session_factory = get_session_factory()
         uid = str(uuid.uuid4())
-        room_uid = _to_uuid(event_data.get("room_id"))
+        room_uid = event_data.get("room_id")
         try:
             async with session_factory() as session:
                 await session.execute(
@@ -584,7 +562,7 @@ class PgTranscriptRepository:
                     },
                 )
                 await session.commit()
-                return _from_uuid(uid)
+                return str(uid)
         except Exception as e:
             logger.error(f"Failed to save event: {e}")
             return None
@@ -600,8 +578,8 @@ class PgTranscriptRepository:
                 row = res.fetchone()
                 if row:
                     e = dict(row._mapping)
-                    e["_id"] = _from_uuid(e["id"])
-                    e["room_id"] = _from_uuid(e["room_id"])
+                    e["_id"] = str(e["id"])
+                    e["room_id"] = str(e["room_id"])
                     return e
                 return None
         except Exception as e:
@@ -698,7 +676,7 @@ class PgTranscriptRepository:
 
         if room_id:
             query += " AND room_id = :rid"
-            params["rid"] = _to_uuid(room_id)
+            params["rid"] = room_id
         if event_type:
             query += " AND event_type = :etype"
             params["etype"] = event_type
@@ -767,7 +745,7 @@ class PgTranscriptRepository:
 
         if room_id:
             query += " AND room_id = :rid"
-            params["rid"] = _to_uuid(room_id)
+            params["rid"] = room_id
         if event_type:
             query += " AND event_type = :etype"
             params["etype"] = event_type
@@ -788,9 +766,9 @@ class PgTranscriptRepository:
                 events = []
                 for row in rows:
                     e = dict(row._mapping)
-                    e["_id"] = _from_uuid(e["id"])
+                    e["_id"] = str(e["id"])
                     if e.get("room_id"):
-                        e["room_id"] = _from_uuid(e["room_id"])
+                        e["room_id"] = str(e["room_id"])
                     if isinstance(e.get("created_at"), datetime):
                         e["created_at"] = e["created_at"].isoformat() + "Z"
                     events.append(e)
@@ -841,8 +819,8 @@ class PgTranscriptRepository:
 
                 for summary in summary_list:
                     summary_response = dict(summary)
-                    summary_response["_id"] = _from_uuid(summary["id"])
-                    summary_response["room_id"] = _from_uuid(summary["room_id"])
+                    summary_response["_id"] = str(summary["id"])
+                    summary_response["room_id"] = str(summary["room_id"])
 
                     room = room_dict.get(str(summary["room_id"]), {})
                     summary_response["created_at"] = convert_to_iso_8601(
@@ -863,7 +841,7 @@ class PgTranscriptRepository:
         *,
         egress_id: str = None,
         track_id: Optional[str] = None,
-        room_ref_id: Optional[ObjectId] = None,
+        room_ref_id: Optional[str] = None,
         participant_identity: Optional[str] = None,
         audio_info: Optional[Dict[str, Any]] = None,
         status: str = "pending",
@@ -874,7 +852,7 @@ class PgTranscriptRepository:
             return None
 
         session_factory = get_session_factory()
-        room_uid = _to_uuid(room_ref_id) if room_ref_id else None
+        room_uid = room_ref_id if room_ref_id else None
         now = datetime.now(timezone.utc)
         audio_json = json.dumps(audio_info) if audio_info else None
 
@@ -927,7 +905,7 @@ class PgTranscriptRepository:
                     d = dict(row._mapping)
                     d["_id"] = d["id"]
                     if d.get("room_ref_id"):
-                        d["room_ref_id"] = _from_uuid(d["room_ref_id"])
+                        d["room_ref_id"] = str(d["room_ref_id"])
                     logger.info(f"📝 Track metadata saved: _id(egress)={egress_id}")
                     return d
                 return None
@@ -1009,10 +987,10 @@ class PgTranscriptRepository:
             logger.error(f"Failed to count participant tracks: {e}")
             return 0
 
-    async def count_tracks_by_room(self, room_id: ObjectId, status: str = None) -> int:
+    async def count_tracks_by_room(self, room_id: str, status: str = None) -> int:
         session_factory = get_session_factory()
         query = "SELECT COUNT(*) FROM tracks WHERE room_ref_id = :rid"
-        params = {"rid": _to_uuid(room_id)}
+        params = {"rid": room_id}
         if status:
             query += " AND status = :st"
             params["st"] = status
@@ -1121,7 +1099,7 @@ class PgTranscriptRepository:
                     t = dict(row._mapping)
                     t["_id"] = t["id"]
                     t["room_ref_id"] = (
-                        _from_uuid(t["room_ref_id"]) if t.get("room_ref_id") else None
+                        str(t["room_ref_id"]) if t.get("room_ref_id") else None
                     )
                     tracks.append(t)
                 return tracks
@@ -1158,7 +1136,7 @@ class PgTranscriptRepository:
                     t = dict(row._mapping)
                     t["_id"] = t["id"]
                     t["room_ref_id"] = (
-                        _from_uuid(t["room_ref_id"]) if t.get("room_ref_id") else None
+                        str(t["room_ref_id"]) if t.get("room_ref_id") else None
                     )
                     tracks.append(t)
                 return tracks
@@ -1196,7 +1174,7 @@ class PgTranscriptRepository:
                     t = dict(row._mapping)
                     t["_id"] = t["id"]
                     t["room_ref_id"] = (
-                        _from_uuid(t["room_ref_id"]) if t.get("room_ref_id") else None
+                        str(t["room_ref_id"]) if t.get("room_ref_id") else None
                     )
                     tracks.append(t)
                 return tracks
@@ -1222,7 +1200,7 @@ class PgTranscriptRepository:
                     t = dict(row._mapping)
                     t["_id"] = t["id"]
                     t["room_ref_id"] = (
-                        _from_uuid(t["room_ref_id"]) if t.get("room_ref_id") else None
+                        str(t["room_ref_id"]) if t.get("room_ref_id") else None
                     )
                     tracks.append(t)
                 return tracks

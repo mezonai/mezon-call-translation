@@ -5,7 +5,6 @@ Internal API endpoints for room summary
 from fastapi import APIRouter, HTTPException, Query, Depends
 from datetime import datetime
 from typing import Optional
-from bson import ObjectId
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
