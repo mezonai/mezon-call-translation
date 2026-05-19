@@ -36,16 +36,27 @@ class Room(Base):
     participants stored as JSONB array:
         [{"participant_identity": "...", "timestamp": "<iso8601>"}]
     """
+
     __tablename__ = "rooms"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
-    mongo_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)   # migration mapping
+    mongo_id: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # migration mapping
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    participants: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=list)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    finalized_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    participants: Mapped[Optional[dict]] = mapped_column(
+        JSONB, nullable=True, default=list
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finalized_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_rooms_room_name", "room_name"),
@@ -65,18 +76,25 @@ class Track(Base):
     audio_info stored as JSONB:
         {filename, duration_sec, started_at_ns, ended_at_ns, location, source}
     """
+
     __tablename__ = "tracks"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True)            # egress_id
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # egress_id
     track_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    room_ref_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # UUID of rooms.id
+    room_ref_id: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # UUID of rooms.id
     participant_identity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     audio_info: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_tracks_room_ref_id", "room_ref_id"),
@@ -94,10 +112,13 @@ class TranscriptChunk(Base):
     Corresponds to MongoDB 'transcript_chunks' collection.
     segments stored as JSONB array of segment objects.
     """
+
     __tablename__ = "transcript_chunks"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
-    track_ref_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # egress_id
+    track_ref_id: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # egress_id
     chunk_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     start_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     end_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -119,17 +140,22 @@ class RoomSummary(Base):
     summary_data and messages stored as JSONB.
     participants stored as JSONB array of identity strings.
     """
+
     __tablename__ = "rooms_summary"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
-    room_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)    # UUID of rooms.id
+    room_id: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # UUID of rooms.id
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     participants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     summary_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     full_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     messages: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     total_segments: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_rooms_summary_room_id", "room_id"),
@@ -145,16 +171,23 @@ class MetadataEvent(Base):
     Corresponds to MongoDB 'metadata_events' collection.
     metadata stored as JSONB.
     """
+
     __tablename__ = "metadata_events"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
-    event_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)   # UUID string from app
+    event_id: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # UUID string from app
     event_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     room_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    event_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
+    event_metadata: Mapped[Optional[dict]] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
     timestamp: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_events_event_type", "event_type"),
@@ -172,19 +205,24 @@ class User(Base):
     Corresponds to MongoDB 'users' collection.
     permissions stored as JSONB array of strings.
     """
+
     __tablename__ = "users"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True)   # user_id from Mezon
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # user_id from Mezon
     username: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    permissions: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-
-    __table_args__ = (
-        Index("ix_users_username", "username"),
+    permissions: Mapped[Optional[list]] = mapped_column(
+        JSONB, nullable=True, default=list
     )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (Index("ix_users_username", "username"),)
 
 
 # ---------------------------------------------------------------------------
@@ -194,14 +232,19 @@ class RefreshToken(Base):
     """
     Corresponds to MongoDB 'refresh_tokens' collection.
     """
+
     __tablename__ = "refresh_tokens"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
     user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     refresh_token_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     access_token_jti: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     device_info: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -219,14 +262,19 @@ class TokenBlacklist(Base):
     """
     Corresponds to MongoDB 'token_blacklist' collection.
     """
+
     __tablename__ = "token_blacklist"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=_new_uuid)
     jti: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    blacklisted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    blacklisted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (

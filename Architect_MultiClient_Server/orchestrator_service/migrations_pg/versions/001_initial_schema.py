@@ -28,9 +28,9 @@ def upgrade() -> None:
         sa.Column(
             "participants", postgresql.JSONB(astext_type=sa.Text()), nullable=True
         ),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("finalized_at", sa.DateTime(), nullable=True),
-        sa.Column("completed_at", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("finalized_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_rooms_room_name", "rooms", ["room_name"], unique=False)
@@ -49,8 +49,8 @@ def upgrade() -> None:
         sa.Column("chunk_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("audio_info", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_tracks_room_ref_id", "tracks", ["room_ref_id"], unique=False)
@@ -100,7 +100,7 @@ def upgrade() -> None:
         sa.Column("full_text", sa.Text(), nullable=True),
         sa.Column("messages", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("total_segments", sa.Integer(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -120,7 +120,7 @@ def upgrade() -> None:
         sa.Column("room_name", sa.Text(), nullable=True),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("timestamp", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -142,8 +142,8 @@ def upgrade() -> None:
         sa.Column(
             "permissions", postgresql.JSONB(astext_type=sa.Text()), nullable=True
         ),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_users_username", "users", ["username"], unique=False)
@@ -155,8 +155,8 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Text(), nullable=True),
         sa.Column("refresh_token_hash", sa.Text(), nullable=True),
         sa.Column("access_token_jti", sa.Text(), nullable=True),
-        sa.Column("expires_at", sa.DateTime(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("device_info", sa.Text(), nullable=True),
         sa.Column("is_revoked", sa.Boolean(), nullable=False, server_default="false"),
         sa.PrimaryKeyConstraint("id"),
@@ -178,8 +178,8 @@ def upgrade() -> None:
         sa.Column("jti", sa.Text(), nullable=True),
         sa.Column("user_id", sa.Text(), nullable=True),
         sa.Column("token_hash", sa.Text(), nullable=True),
-        sa.Column("blacklisted_at", sa.DateTime(), nullable=True),
-        sa.Column("expires_at", sa.DateTime(), nullable=True),
+        sa.Column("blacklisted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("reason", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
