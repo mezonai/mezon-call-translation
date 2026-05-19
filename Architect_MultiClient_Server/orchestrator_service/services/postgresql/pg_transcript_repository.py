@@ -394,8 +394,15 @@ class PgTranscriptRepository:
                 room_res = await session.execute(
                     text("SELECT * FROM rooms WHERE id = :rid"), {"rid": uid}
                 )
-                if not room_res.fetchone():
+                room_row = room_res.fetchone()
+                if not room_row:
                     return None
+                room = dict(room_row._mapping)
+                created_at_raw = convert_to_iso_8601(room.get("created_at"))
+                finaled_at_raw = convert_to_iso_8601(room.get("finalized_at"))
+                total_duration_sec: float = 0.0
+                if finaled_at_raw and created_at_raw:
+                    total_duration_sec = (finaled_at_raw - created_at_raw).total_seconds()
 
                 track_res = await session.execute(
                     text("SELECT status FROM tracks WHERE room_ref_id = :rid"),
@@ -416,10 +423,15 @@ class PgTranscriptRepository:
 
                 return {
                     "room_id": str(uid),
+                    "room_name": room.get("room_name"),
+                    "status": room.get("status"),
                     "total_tracks": total,
                     "completed_tracks": completed,
                     "remaining_tracks": total - completed,
                     "total_segments": segments,
+                    "created_at": convert_to_iso_8601(created_at_raw),
+                    "finalized_at": convert_to_iso_8601(finaled_at_raw) if finaled_at_raw else None,
+                    "total_duration_sec": total_duration_sec,
                 }
         except Exception as e:
             logger.error(f"Failed to get room stats: {e}")
@@ -517,6 +529,13 @@ class PgTranscriptRepository:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
+                room_res = await session.execute(
+                    text("SELECT * FROM rooms WHERE id = :id"), {"id": uid}
+                )
+                room_row = room_res.fetchone()
+                if not room_row:
+                    return {}
+                room = dict(room_row._mapping)
                 res = await session.execute(
                     text(
                         "SELECT * FROM rooms_summary WHERE room_id = :rid ORDER BY created_at DESC LIMIT 1"
@@ -528,6 +547,8 @@ class PgTranscriptRepository:
                     s = dict(row._mapping)
                     s["_id"] = str(s["id"])
                     s["room_id"] = str(s["room_id"])
+                    s["created_at"] = convert_to_iso_8601(room.get("created_at"))
+                    s["completed_at"] = convert_to_iso_8601(room.get("completed_at"))
                     return s
                 return {}
         except Exception as e:
