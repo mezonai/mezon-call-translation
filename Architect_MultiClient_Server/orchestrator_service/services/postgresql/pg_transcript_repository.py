@@ -512,7 +512,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to update summary: {e}")
             return False
 
-    async def get_summary_by_room_id(self, room_id: str) -> Optional[Dict]:
+    async def get_summary_by_room_id(self, room_id: str) -> Dict[str, Any]:
         uid = room_id
         session_factory = get_session_factory()
         try:
@@ -529,10 +529,10 @@ class PgTranscriptRepository:
                     s["_id"] = str(s["id"])
                     s["room_id"] = str(s["room_id"])
                     return s
-                return None
+                return {}
         except Exception as e:
             logger.error(f"Failed to get summary by id: {e}")
-            return None
+            return {}
 
     # ------------------------------------------------------------------
     # METADATA EVENTS
