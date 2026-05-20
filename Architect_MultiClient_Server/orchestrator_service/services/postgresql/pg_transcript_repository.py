@@ -571,6 +571,8 @@ class PgTranscriptRepository:
                     speech_durations = []
                     # Process speakers (active participants in rooms_summary)
                     for user_id in speaking_participants:
+                        if user_id.startswith("EG_"):
+                            continue
                         duration = duration_map.get(user_id, 0.0)
                         speech_durations.append({
                             "participant_identity": user_id,
@@ -582,7 +584,7 @@ class PgTranscriptRepository:
                     speaking_set = set(speaking_participants)
                     for p in room_participants:
                         user_id = p.get("participant_identity")
-                        if user_id and user_id not in speaking_set:
+                        if user_id and user_id not in speaking_set and not user_id.startswith("EG_"):
                             speech_durations.append({
                                 "participant_identity": user_id,
                                 "duration": 0.0
