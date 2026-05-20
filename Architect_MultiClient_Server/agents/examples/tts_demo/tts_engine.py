@@ -1,150 +1,221 @@
-"""
-TTS Engine Module - Handles Silero TTS model loading and synthesis
-"""
 import os
-import urllib.request
+import asyncio
+import time
+import hashlib
+import re
+from enum import Enum
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 import numpy as np
-import torch
+from pathlib import Path
+from kokoro import KPipeline
+
+from ..logger import get_logger
+from ..config.app_config import TTSConfig
+
+logger = get_logger(__name__)
+
+
+class KokoroVoice(str, Enum):
+    AF_HEART = "af_heart"
+    AF_BELLA = "af_bella"
+    AF_SARAH = "af_sarah"
+    AM_ADAM = "am_adam"
+    AM_MICHAEL = "am_michael"
+    BF_EMMA = "bf_emma"
+    BF_ISABELLA = "bf_isabella"
+    BM_GEORGE = "bm_george"
+    BM_LEWIS = "bm_lewis"
+
+
 
 
 class TTSEngine:
-    """Silero TTS Engine for text-to-speech synthesis"""
-    
-    def __init__(
-        self,
-        model_dir: str = "models",
-        model_name: str = "silero_v3_en.pt",
-        speaker: str = "en_0",
-        sample_rate: int = 48000
-    ):
-        """
-        Initialize TTS Engine
-        
-        Args:
-            model_dir: Directory to store model files
-            model_name: Name of the model file
-            speaker: Voice speaker ID
-            sample_rate: Audio sample rate in Hz
-        """
-        self.model_dir = model_dir
-        self.model_name = model_name
-        self.model_path = os.path.join(model_dir, model_name)
-        self.speaker = speaker
+    def __init__(self, sample_rate: int = 24000, model_path: str = "models/kokoro_models", config: TTSConfig = None):
         self.sample_rate = sample_rate
-        
-        self.model: Optional[torch.nn.Module] = None
-        self.device = torch.device('cpu')
-        self._is_loaded = False
-    
-    @property
-    def is_loaded(self) -> bool:
-        """Check if model is loaded"""
-        return self._is_loaded and self.model is not None
-    
+        self.model_dir = Path(model_path)
+        self.pipeline = None
+        self.lang_code = 'a'
+
+        self.cache = {}
+        self.cache_size = 0
+        if config is None:
+            config = TTSConfig()
+        self.max_cache_size = config.max_cache_size
+
+        logger.info(f"TTSEngine initialized (sample_rate={sample_rate}Hz, model=Kokoro-82M, max_cache_size={self.max_cache_size})")
+
     async def load(self) -> bool:
-        """
-        Load the TTS model from local cache or download if needed
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        if self._is_loaded:
-            print("✅ Model already loaded")
-            return True
-        
         try:
-            print(f"🔽 Loading Silero TTS model from {self.model_path}...")
-            
-            # Create model directory if needed
-            os.makedirs(self.model_dir, exist_ok=True)
-            
-            # Download model if not exists
-            if not os.path.exists(self.model_path):
-                await self._download_model()
-            
-            # Load model
-            print("🧠 Loading model into memory...")
-            self.model = torch.package.PackageImporter(self.model_path).load_pickle(
-                "tts_models", "model"
-            )
-            self.model.to(self.device)
-            
-            self._is_loaded = True
-            print(f"✅ Model loaded successfully on {self.device}")
+            logger.info("Loading Kokoro TTS model...")
+
+            if not self.model_dir.exists():
+                logger.warning(f"Model directory not found: {self.model_dir}")
+                return False
+
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor() as pool:
+                self.pipeline = await loop.run_in_executor(pool, self._load_model_sync)
+
+            if self.pipeline is None:
+                return False
+
+            logger.info("✅ Kokoro TTS model loaded successfully")
             return True
-            
+
         except Exception as e:
-            print(f"❌ Failed to load TTS model: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Failed to load TTS model: {e}", exc_info=True)
             return False
-    
-    async def _download_model(self) -> None:
-        """Download model from Silero repository"""
-        print("⬇️ Downloading Silero TTS model (v3_en)...")
-        url = "https://models.silero.ai/models/tts/en/v3_en.pt"
-        
+
+    def _load_model_sync(self):
         try:
-            urllib.request.urlretrieve(url, self.model_path)
-            print(f"✅ Downloaded to {self.model_path}")
+            os.environ['HF_HOME'] = str(self.model_dir.parent)
+            pipeline = KPipeline(lang_code=self.lang_code, repo_id='hexgrad/Kokoro-82M')
+            return pipeline
         except Exception as e:
-            raise RuntimeError(f"Failed to download model: {e}") from e
-    
-    def synthesize(self, text: str) -> np.ndarray:
-        """
-        Synthesize text to audio
-        
-        Args:
-            text: Text to synthesize
-            
-        Returns:
-            Audio data as numpy array (float32, range [-1.0, 1.0])
-            
-        Raises:
-            RuntimeError: If model is not loaded
-        """
-        if not self.is_loaded:
-            raise RuntimeError("Model not loaded. Call load() first.")
-        
-        if not text or not text.strip():
-            raise ValueError("Text cannot be empty")
-        
+            logger.error(f"Error in _load_model_sync: {e}", exc_info=True)
+            return None
+
+    # =========================
+    # CACHE UTILS
+    # =========================
+
+    def _normalize_text(self, text: str) -> str:
+        text = text.lower().strip()
+        text = re.sub(r'\s+', ' ', text)
+        return text
+
+    def _make_cache_key(self, text: str, voice: str, speed: float) -> str:
+        normalized = self._normalize_text(text)
+        raw = f"{normalized}|{voice}|{speed}"
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def _get_from_cache(self, key: str):
+        item = self.cache.get(key)
+        if item:
+            item["last_access"] = time.time()
+            logger.info("TTS cache HIT")
+            return item["audio"]
+        return None
+
+    def _add_to_cache(self, key: str, audio: np.ndarray):
+        size = audio.nbytes
+
+        if size > self.max_cache_size:
+            return
+
+        while self.cache_size + size > self.max_cache_size:
+            self._evict_lru()
+
+        self.cache[key] = {
+            "audio": audio,
+            "size": size,
+            "last_access": time.time()
+        }
+        self.cache_size += size
+
+        logger.debug(f"Cache add: size={size/1024:.2f}KB total={self.cache_size/1024/1024:.2f}MB")
+
+    def _evict_lru(self):
+        if not self.cache:
+            return
+
+        oldest_key = min(self.cache, key=lambda k: self.cache[k]["last_access"])
+
+        evicted_size = self.cache[oldest_key]["size"]
+        del self.cache[oldest_key]
+        self.cache_size -= evicted_size
+
+        logger.debug(f"Evicted cache: {evicted_size/1024:.2f}KB")
+
+    # =========================
+    # MAIN SYNTHESIS
+    # =========================
+
+    def synthesize(
+        self,
+        text: str,
+        voice: KokoroVoice = KokoroVoice.AF_HEART,
+        speed: float = 1.0
+    ) -> np.ndarray:
+
+        if self.pipeline is None:
+            raise RuntimeError("TTS model not loaded. Call load() first.")
+
         try:
-            # Generate audio tensor
-            audio_tensor = self.model.apply_tts(
-                text=text,
-                speaker=self.speaker,
-                sample_rate=self.sample_rate
+            selected_voice = voice.value if isinstance(voice, KokoroVoice) else voice
+
+            # CACHE CHECK
+            cache_key = self._make_cache_key(text, selected_voice, speed)
+            cached = self._get_from_cache(cache_key)
+            if cached is not None:
+                return cached
+
+            logger.info(f"Synthesizing: '{text[:50]}...' (voice={selected_voice}, speed={speed}x)")
+
+            generator = self.pipeline(
+                text,
+                voice=selected_voice,
+                speed=speed,
+                split_pattern=r'\n+'
             )
-            
-            # Convert to numpy float32 [-1.0, 1.0]
-            audio_np = audio_tensor.cpu().numpy().astype(np.float32)
-            
+
+            all_audio = []
+            for _, _, audio in generator:
+                all_audio.append(audio)
+
+            if not all_audio:
+                return np.array([], dtype=np.float32)
+
+            audio_np = np.concatenate(all_audio)
+
+            # OPTIMIZE MEMORY
+            audio_np = audio_np.astype(np.float16)
+
             duration = len(audio_np) / self.sample_rate
-            print(f"   🎵 Generated {duration:.2f}s audio ({len(audio_np)} samples)")
-            
+            logger.info(f"Synthesized {duration:.2f}s audio")
+
+            # SAVE CACHE
+            self._add_to_cache(cache_key, audio_np)
+
             return audio_np
-            
+
         except Exception as e:
-            raise RuntimeError(f"Synthesis failed: {e}") from e
-    
-    def get_audio_duration(self, audio_data: np.ndarray) -> float:
-        """
-        Calculate audio duration in seconds
+            logger.error(f"Synthesis failed: {e}", exc_info=True)
+            raise
+    def clear_cache(self):
+        self.cache.clear()
+        self.cache_size = 0
+        logger.info("TTS cache cleared")
         
-        Args:
-            audio_data: Audio samples
-            
-        Returns:
-            Duration in seconds
-        """
-        return len(audio_data) / self.sample_rate
-    
-    def cleanup(self) -> None:
-        """Cleanup resources"""
-        if self.model is not None:
-            del self.model
-            self.model = None
-        self._is_loaded = False
-        print("🧹 TTS Engine cleaned up")
+    def cleanup(self):
+        try:
+            # cleanup model
+            if self.pipeline is not None:
+                del self.pipeline
+                self.pipeline = None
+
+            #cleanup cache
+            self.clear_cache()
+
+            logger.info("TTS engine resources released (model + cache)")
+
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}", exc_info=True)
+
+    def __del__(self):
+        self.cleanup()
+
+
+tts_engine: Optional[TTSEngine] = None
+
+
+@lru_cache(maxsize=1)
+def get_tts_engine() -> TTSEngine:
+    global tts_engine
+    if tts_engine is None:
+        model_path = os.getenv('TTS_MODEL_PATH', 'models/kokoro_models')
+        config = TTSConfig()
+        tts_engine = TTSEngine(model_path=model_path, config=config)
+    return tts_engine
