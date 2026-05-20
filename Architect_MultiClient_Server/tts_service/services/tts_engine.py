@@ -38,14 +38,13 @@ class TTSEngine:
         self.pipeline = None
         self.lang_code = 'a'
 
-        # LFU Cache: max 10 items, automatically evicts least-frequently-used items
-        self.cache = LFUCache(maxsize=10)
-        
         if config is None:
             config = TTSConfig()
-        self.max_cache_size = config.max_cache_size
+        
+        # LFU Cache: automatically evicts least-frequently-used items when reaching maxsize
+        self.cache = LFUCache(maxsize=config.lfu_cache_maxsize)
 
-        logger.info(f"TTSEngine initialized (sample_rate={sample_rate}Hz, model=Kokoro-82M, LFU cache with maxsize=10)")
+        logger.info(f"TTSEngine initialized (sample_rate={sample_rate}Hz, model=Kokoro-82M, LFU cache with maxsize={config.lfu_cache_maxsize})")
 
     async def load(self) -> bool:
         try:
@@ -177,7 +176,16 @@ tts_engine: Optional[TTSEngine] = None
 def get_tts_engine() -> TTSEngine:
     global tts_engine
     if tts_engine is None:
-        model_path = os.getenv('TTS_MODEL_PATH', 'models/kokoro_models')
+        # Resolve model path from environment or calculate from this file's directory
+        if 'TTS_MODEL_PATH' in os.environ:
+            model_path = os.getenv('TTS_MODEL_PATH')
+        else:
+            # Calculate path relative to this file
+            # File: Architect_MultiClient_Server/tts_service/services/tts_engine.py
+            # Models: mezon-call-translation/models/kokoro_models
+            current_file = Path(__file__)
+            model_path = (current_file.parent.parent.parent.parent / "models" / "kokoro_models").as_posix()
+        
         config = TTSConfig()
         tts_engine = TTSEngine(model_path=model_path, config=config)
     return tts_engine
