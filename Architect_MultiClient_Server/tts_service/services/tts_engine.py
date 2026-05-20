@@ -132,9 +132,6 @@ class TTSEngine:
 
             audio_np = np.concatenate(all_audio)
 
-            # OPTIMIZE MEMORY
-            audio_np = audio_np.astype(np.float16)
-
             duration = len(audio_np) / self.sample_rate
             logger.info(f"Synthesized {duration:.2f}s audio")
 
@@ -174,18 +171,9 @@ tts_engine: Optional[TTSEngine] = None
 
 @lru_cache(maxsize=1)
 def get_tts_engine() -> TTSEngine:
+    """Get the TTS engine singleton instance"""
     global tts_engine
     if tts_engine is None:
-        # Resolve model path from environment or calculate from this file's directory
-        if 'TTS_MODEL_PATH' in os.environ:
-            model_path = os.getenv('TTS_MODEL_PATH')
-        else:
-            # Calculate path relative to this file
-            # File: Architect_MultiClient_Server/tts_service/services/tts_engine.py
-            # Models: mezon-call-translation/models/kokoro_models
-            current_file = Path(__file__)
-            model_path = (current_file.parent.parent.parent.parent / "models" / "kokoro_models").as_posix()
-        
         config = TTSConfig()
-        tts_engine = TTSEngine(model_path=model_path, config=config)
+        tts_engine = TTSEngine(model_path=config.model_path)
     return tts_engine
