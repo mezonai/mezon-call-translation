@@ -549,6 +549,48 @@ class PgTranscriptRepository:
                     s["room_id"] = str(s["room_id"])
                     s["created_at"] = convert_to_iso_8601(room.get("created_at"))
                     s["completed_at"] = convert_to_iso_8601(room.get("completed_at"))
+
+                    # Calculate speech durations for each member
+                    speaking_participants = s.get("participants") or []
+                    duration_map = {}
+                    duration_res = await session.execute(
+                        text("""
+                            SELECT t.participant_identity, COALESCE(SUM(tc.end_time - tc.start_time), 0.0) as duration
+                            FROM tracks t
+                            JOIN transcript_chunks tc ON t.id = tc.track_ref_id
+                            WHERE t.room_ref_id = :room_id
+                            GROUP BY t.participant_identity
+                        """),
+                        {"room_id": uid}
+                    )
+                    duration_rows = duration_res.fetchall()
+                    for d_row in duration_rows:
+                        if d_row[0]:
+                            duration_map[d_row[0]] = float(d_row[1])
+
+                    speech_durations = []
+                    # Process speakers (active participants in rooms_summary)
+                    for user_id in speaking_participants:
+                        if user_id.startswith("EG_"):
+                            continue
+                        duration = duration_map.get(user_id, 0.0)
+                        speech_durations.append({
+                            "participant_identity": user_id,
+                            "duration": round(duration, 2)
+                        })
+
+                    # Process non-speakers (those in room but not in speaking_participants)
+                    room_participants = room.get("participants") or []
+                    speaking_set = set(speaking_participants)
+                    for p in room_participants:
+                        user_id = p.get("participant_identity")
+                        if user_id and user_id not in speaking_set and not user_id.startswith("EG_"):
+                            speech_durations.append({
+                                "participant_identity": user_id,
+                                "duration": 0.0
+                            })
+
+                    s["speech_durations"] = speech_durations
                     return s
                 return {}
         except Exception as e:
