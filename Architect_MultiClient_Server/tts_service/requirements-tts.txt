@@ -32,3 +32,4 @@ kokoro>=0.9.4                  # Kokoro TTS model (82M parameter model)
 # Configuration & Environment
 # ========================================
 python-dotenv>=1.0.0           # Load environment variables from .env
+cachetools>=7.1.3
