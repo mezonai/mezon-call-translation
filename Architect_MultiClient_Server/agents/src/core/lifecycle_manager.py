@@ -142,6 +142,12 @@ def create_cleanup_callback(
         """Cleanup when agent shuts down"""
         logger.info("🧹 Agent shutdown: cleaning resources...")
         
+        # Unregister room and push session_ended event
+        try:
+            await orchestrator.unregister_room(session_id)
+        except Exception as e:
+            logger.error(f"unregister or session_ended event failed: {e}")
+        
         # Stop SSE agent request listener
         try:
             logger.info("Stopping SSE agent request listener...")
@@ -155,12 +161,6 @@ def create_cleanup_callback(
             orchestrator.clear_all_handlers()
         except Exception as e:
             logger.error(f"Failed to clear request handlers: {e}")
-        
-        # Unregister room and push session_ended event
-        try:
-            await orchestrator.unregister_room(session_id)
-        except Exception as e:
-            logger.error(f"unregister or session_ended event failed: {e}")
         
         # Clean up event handlers and transcript manager
         await event_handlers.safe_disconnect_all()

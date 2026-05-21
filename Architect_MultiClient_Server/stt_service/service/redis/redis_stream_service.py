@@ -29,15 +29,16 @@ from typing import (
     TypeVar,
 )
 
-import redis.asyncio as redis
-from redis.asyncio import ConnectionPool, Redis
+from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
 from stt_service.config.app_config import get_config
+from stt_service.service.redis.connection_pool import get_connection_manager
 from stt_service.models.stream_base import (
     StreamTaskProtocol,
     StreamTaskStatus,
 )
+from stt_service.utils.decode import decode_value
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,6 @@ class RedisStreamService(Generic[T]):
         """
         self._task_class: Type[T] = task_class
         self._config = get_config().redis
-        self._pool: Optional[ConnectionPool] = None
         self._redis: Optional[Redis] = None
         self._consumer_id: str = self._generate_consumer_id()
         self._running = False
@@ -184,23 +184,15 @@ class RedisStreamService(Generic[T]):
             return
         
         try:
-            # Create connection pool
-            self._pool = ConnectionPool(
-                host=self._config.host,
-                port=self._config.port,
-                password=self._config.password or None,
-                db=self._config.db,
-                max_connections=self._config.max_connections,
-                socket_timeout=self._config.socket_timeout,
-                socket_connect_timeout=self._config.socket_connect_timeout,
-                decode_responses=False,  # We handle decoding manually for stream data
-            )
-            
-            self._redis = Redis(connection_pool=self._pool)
-            
-            # Test connection
+            manager = get_connection_manager()
+            if not manager.is_connected:
+                await manager.connect()
+            self._redis = Redis(connection_pool=manager.get_pool())
             await self._redis.ping()
-            logger.info(f"✅ Connected to Redis at {self._config.host}:{self._config.port}")
+            logger.info(
+                f"✅ Redis stream service using shared pool at "
+                f"{self._config.host}:{self._config.port}"
+            )
             
             # Create consumer group (idempotent)
             await self._ensure_consumer_group()
@@ -211,7 +203,6 @@ class RedisStreamService(Generic[T]):
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
             self._redis = None
-            self._pool = None
             raise ConnectionError(f"Redis connection failed: {e}")
     
     async def _ensure_consumer_group(self) -> None:
@@ -263,12 +254,8 @@ class RedisStreamService(Generic[T]):
             await self._unregister_worker()
             await self._redis.close()
             self._redis = None
-        
-        if self._pool:
-            await self._pool.disconnect()
-            self._pool = None
-        
-        logger.info("Redis connection closed")
+
+        logger.info("Redis stream client released (shared pool kept open)")
     
     async def release_my_pending_tasks(self) -> int:
         """
@@ -299,10 +286,8 @@ class RedisStreamService(Generic[T]):
             
             released_count = 0
             for entry in result:
-                message_id = entry["message_id"]
-                if isinstance(message_id, bytes):
-                    message_id = message_id.decode()
-                
+                message_id = decode_value(entry["message_id"])
+
                 # Re-add the task to stream (effectively release it)
                 # We do this by setting the idle time in PEL very high so it can be auto-claimed
                 # Or we can delete from PEL without ACK using XCLAIM to a dummy consumer
@@ -381,7 +366,7 @@ class RedisStreamService(Generic[T]):
             tasks: List[T] = []
             for stream_name, messages in result:
                 for message_id, data in messages:
-                    message_id_str = message_id.decode() if isinstance(message_id, bytes) else message_id
+                    message_id_str = decode_value(message_id)
                     # Use injected task_class to parse the message
                     task = self._task_class.from_stream_message(message_id_str, data)
                     tasks.append(task)
@@ -497,7 +482,7 @@ class RedisStreamService(Generic[T]):
                     approximate=True
                 )
                 
-                new_message_id_str = new_message_id.decode() if isinstance(new_message_id, bytes) else str(new_message_id)
+                new_message_id_str = decode_value(new_message_id)
                 
                 # Update task metadata hash to track retry
                 await self._redis.hset(
@@ -593,21 +578,14 @@ class RedisStreamService(Generic[T]):
             if consumers:
                 for consumer_data in consumers:
                     if isinstance(consumer_data, (list, tuple)) and len(consumer_data) >= 2:
-                        name = consumer_data[0].decode() if isinstance(consumer_data[0], bytes) else str(consumer_data[0])
+                        name = decode_value(consumer_data[0])
                         count = int(consumer_data[1]) if consumer_data[1] else 0
                         consumer_info[name] = count
-            
-            def decode_id(id_val):
-                if id_val is None:
-                    return None
-                if isinstance(id_val, bytes):
-                    return id_val.decode()
-                return str(id_val)
-            
+
             return {
                 "pending_count": pending_count if isinstance(pending_count, int) else 0,
-                "min_message_id": decode_id(min_id),
-                "max_message_id": decode_id(max_id),
+                "min_message_id": decode_value(min_id),
+                "max_message_id": decode_value(max_id),
                 "consumers": consumer_info,
             }
             
@@ -645,13 +623,8 @@ class RedisStreamService(Generic[T]):
             
             pending_tasks = []
             for entry in result:
-                message_id = entry["message_id"]
-                if isinstance(message_id, bytes):
-                    message_id = message_id.decode()
-                
-                consumer = entry["consumer"]
-                if isinstance(consumer, bytes):
-                    consumer = consumer.decode()
+                message_id = decode_value(entry["message_id"])
+                consumer = decode_value(entry["consumer"])
                 
                 idle_time_ms = entry["time_since_delivered"]
                 delivery_count = entry["times_delivered"]
@@ -725,7 +698,7 @@ class RedisStreamService(Generic[T]):
                     # Message was deleted
                     continue
                     
-                message_id_str = message_id.decode() if isinstance(message_id, bytes) else message_id
+                message_id_str = decode_value(message_id)
                 # Use injected task_class to parse the message
                 task = self._task_class.from_stream_message(message_id_str, data)
                 tasks.append(task)
@@ -835,11 +808,11 @@ class RedisStreamService(Generic[T]):
             timeout = self._config.worker_timeout_sec
             
             for consumer_id, data in workers_data.items():
-                consumer_id_str = consumer_id.decode() if isinstance(consumer_id, bytes) else consumer_id
+                consumer_id_str = decode_value(consumer_id)
                 try:
                     info = json.loads(data)
                     last_heartbeat = float(info.get("last_heartbeat", 0))
-                    
+
                     # Only include workers with recent heartbeat
                     if now - last_heartbeat < timeout:
                         workers.append(WorkerInfo(
@@ -872,11 +845,11 @@ class RedisStreamService(Generic[T]):
             removed = 0
             
             for consumer_id, data in workers_data.items():
-                consumer_id_str = consumer_id.decode() if isinstance(consumer_id, bytes) else consumer_id
+                consumer_id_str = decode_value(consumer_id)
                 try:
                     info = json.loads(data)
                     last_heartbeat = float(info.get("last_heartbeat", 0))
-                    
+
                     if now - last_heartbeat > timeout:
                         await self._redis.hdel(self._workers_key, consumer_id_str)
                         removed += 1

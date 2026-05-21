@@ -5,18 +5,19 @@ This service allows producing tasks directly to Redis Stream using XADD.
 Supports any task type implementing ProducerTaskProtocol.
 """
 
-import redis.asyncio as redis
-from redis.asyncio import ConnectionPool, Redis
-from typing import ClassVar, Dict, Any, Generic, Optional, Type, TypeVar, List
+import logging
+from redis.asyncio import Redis
+from typing import ClassVar, Dict, Any, Generic, Optional, Type, TypeVar
 
-from orchestrator_service.utils.logger import get_logger
 from stt_service.config import get_config
+from stt_service.service.redis.connection_pool import get_connection_manager
 from stt_service.models.stream_base import (
     ProducerTaskProtocol,
     StreamTaskStatus,
 )
+from stt_service.utils.decode import decode_value, decode_mapping
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # Type variable bound to ProducerTaskProtocol
 T = TypeVar('T', bound=ProducerTaskProtocol)
@@ -49,7 +50,6 @@ class RedisProducerService(Generic[T]):
         """
         self._task_class = task_class
         self._config = get_config().redis
-        self._pool: Optional[ConnectionPool] = None
         self._redis: Optional[Redis] = None
         
         # Keys - use provided value or fall back to config
@@ -101,43 +101,26 @@ class RedisProducerService(Generic[T]):
             return
         
         try:
-            # Create connection pool
-            self._pool = ConnectionPool(
-                host=self._config.host,
-                port=self._config.port,
-                password=self._config.password or None,
-                db=self._config.db,
-                max_connections=self._config.max_connections,
-                socket_timeout=self._config.socket_timeout,
-                socket_connect_timeout=self._config.socket_connect_timeout,
-                decode_responses=False,  # Handle decoding manually
-            )
-            
-            self._redis = Redis(connection_pool=self._pool)
-            
-            # Test connection
+            manager = get_connection_manager()
+            if not manager.is_connected:
+                await manager.connect()
+            self._redis = Redis(connection_pool=manager.get_pool())
             await self._redis.ping()
             logger.info(
-                f"✅ Connected to Redis at {self._config.host}:{self._config.port}"
+                f"✅ Redis producer using shared pool at {self._config.host}:{self._config.port}"
             )
-            
+
         except Exception as e:
             logger.error(f"✗ Failed to connect to Redis: {e}")
             self._redis = None
-            self._pool = None
             raise ConnectionError(f"Redis connection failed: {e}")
     
     async def close(self) -> None:
-        """Close Redis connection and cleanup resources."""
+        """Release client to the shared pool (does not tear down the pool)."""
         if self._redis:
             await self._redis.close()
             self._redis = None
-        
-        if self._pool:
-            await self._pool.disconnect()
-            self._pool = None
-        
-        logger.info("Redis connection closed")
+        logger.debug("Redis producer client released to shared pool")
     
     async def enqueue(self, task: T) -> str:
         """
@@ -168,7 +151,7 @@ class RedisProducerService(Generic[T]):
                 approximate=True
             )
             
-            message_id_str = message_id.decode() if isinstance(message_id, bytes) else str(message_id)
+            message_id_str = decode_value(message_id)
             
             # Store task metadata for quick lookup
             await self._redis.hset(
@@ -210,10 +193,7 @@ class RedisProducerService(Generic[T]):
             
             # Get stats
             stats_data = await self._redis.hgetall(self._stats_key)
-            stats = {
-                k.decode(): v.decode()
-                for k, v in stats_data.items()
-            } if stats_data else {}
+            stats = decode_mapping(stats_data) if stats_data else {}
             
             # Count active workers
             workers_key = f"{self._stream_key}:workers"
