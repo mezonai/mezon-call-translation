@@ -10,6 +10,7 @@ from typing import Dict, Optional, Any
 import time
 from redis.asyncio import Redis
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.decode import decode_value, decode_mapping
 from .connection_pool import get_redis_connection
 
 logger = get_logger(__name__)
@@ -44,7 +45,7 @@ class BaseHashRepository(ABC):
         """Initialize repository.""" 
         self._redis: Optional[Redis] = None
         logger.debug(f"{self.__class__.__name__} initialized")
-    
+
     async def _get_redis(self) -> Redis:
         """
         Get Redis client, connect if needed.
@@ -111,7 +112,7 @@ class BaseHashRepository(ABC):
         
         try:
             value = await redis.hget(hash_key, key)
-            return value
+            return decode_value(value)
             
         except Exception as e:
             logger.error(
@@ -152,7 +153,7 @@ class BaseHashRepository(ABC):
                 
                 logger.info(
                     f"[{self.__class__.__name__}] Deleted '{key}' "
-                    f"(value: {value})"
+                    f"(value: {decode_value(value)})"
                 )
                 return True
             else:
@@ -197,7 +198,7 @@ class BaseHashRepository(ABC):
         
         try:
             data = await redis.hgetall(hash_key)
-            return dict(data) if data else {}
+            return decode_mapping(data) if data else {}
             
         except Exception as e:
             logger.error(
@@ -262,14 +263,15 @@ class BaseHashRepository(ABC):
         
         try:
             stats_data = await redis.hgetall(stats_key)
+            stats = decode_mapping(stats_data) if stats_data else {}
             item_count = await self.count(hash_key)
             
             return {
                 "total_items": item_count,
-                self.STAT_TOTAL_SET: int(stats_data.get(self.STAT_TOTAL_SET, 0)),
-                self.STAT_TOTAL_DELETED: int(stats_data.get(self.STAT_TOTAL_DELETED, 0)),
-                self.STAT_LAST_SET_AT: stats_data.get(self.STAT_LAST_SET_AT),
-                self.STAT_LAST_DELETED_AT: stats_data.get(self.STAT_LAST_DELETED_AT),
+                self.STAT_TOTAL_SET: int(stats.get(self.STAT_TOTAL_SET, 0)),
+                self.STAT_TOTAL_DELETED: int(stats.get(self.STAT_TOTAL_DELETED, 0)),
+                self.STAT_LAST_SET_AT: stats.get(self.STAT_LAST_SET_AT),
+                self.STAT_LAST_DELETED_AT: stats.get(self.STAT_LAST_DELETED_AT),
             }
             
         except Exception as e:
