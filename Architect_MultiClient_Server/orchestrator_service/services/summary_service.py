@@ -62,15 +62,22 @@ class SummaryService:
         all_segments = []
         participant_durations = {}
 
+        track_ids = [str(track["_id"]) for track in tracks]
+        all_chunks = await self.pg_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
+        
+        chunks_by_track = {tid: [] for tid in track_ids}
+        for chunk in all_chunks:
+            tid = str(chunk.get("track_ref_id"))
+            if tid in chunks_by_track:
+                chunks_by_track[tid].append(chunk)
+
         for track in tracks:
             try:
                 participant = track.get("participant_identity", "Unknown")
                 track_start_ns = int(
                     track.get("audio_info", {}).get("started_at_ns", 0) or 0
                 )
-                chunks = await self.pg_repo.get_chunks_by_track(
-                    str(track["_id"]), sorted_by_index=True
-                )
+                chunks = chunks_by_track[str(track["_id"])]
 
                 # Calculate duration for this track/participant using start_time and end_time of chunks 
                 track_duration = sum(

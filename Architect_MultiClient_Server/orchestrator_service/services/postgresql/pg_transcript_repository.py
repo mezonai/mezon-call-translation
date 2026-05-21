@@ -787,6 +787,38 @@ class PgTranscriptRepository:
             logger.error(f"Failed to get chunks by track: {e}")
             return []
 
+    async def get_chunks_by_track_ids(
+        self,
+        track_ids: List[str],
+        sorted_by_index: bool = True,
+    ) -> List[Dict[str, Any]]:
+        if not track_ids:
+            return []
+
+        session_factory = get_session_factory()
+        
+        # Safely construct IN clause with parameters
+        placeholders = ", ".join([f":tid_{i}" for i in range(len(track_ids))])
+        query = f"SELECT * FROM transcript_chunks WHERE track_ref_id::text IN ({placeholders})"
+        params = {f"tid_{i}": tid for i, tid in enumerate(track_ids)}
+
+        if sorted_by_index:
+            query += " ORDER BY chunk_index ASC"
+
+        try:
+            async with session_factory() as session:
+                result = await session.execute(text(query), params)
+                rows = result.fetchall()
+                chunks = []
+                for row in rows:
+                    c = dict(row._mapping)
+                    c["_id"] = c["id"]
+                    chunks.append(c)
+                return chunks
+        except Exception as e:
+            logger.error(f"Failed to get chunks by track ids: {e}")
+            return []
+
     async def get_metadata_events(
         self,
         event_type: Optional[str] = None,
