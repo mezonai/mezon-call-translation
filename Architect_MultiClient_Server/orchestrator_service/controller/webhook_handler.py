@@ -40,7 +40,7 @@ class WebhookHandler:
         """
         event_type = event.get("event", "unknown")
         logger.info(f"📥 Received: {event_type}")
-        if event_type not in {"egress_ended", "egress_started", "egress_updated"}:
+        if event_type not in {"egress_ended", "egress_started", "egress_updated", "participant_connection_aborted"}:
             logger.info(f"  (skipping detailed processing for event type)")
             # Get room name - different events have different structures
             room_name = event.get("room", {}).get("name", "")
@@ -60,6 +60,7 @@ class WebhookHandler:
             "egress_started": self._handle_egress_started,
             "egress_ended": self._handle_egress_ended,
             "egress_updated": self._handle_egress_updated,
+            "participant_connection_aborted": self._handle_participant_connection_aborted,
         }
 
         handler = handlers.get(event_type)
@@ -225,6 +226,11 @@ class WebhookHandler:
         asyncio.create_task(self.transcription_service.enqueue(egress_info.dict()))
 
         return WebhookResponse(received=True, action="egress_ending_logged")
+
+    async def _handle_participant_connection_aborted(self, event: Dict) -> WebhookResponse:
+        """Handle when a participant connection is aborted"""
+        logger.info(f"Participant connection aborted: {json.dumps(event)}")
+        return WebhookResponse(received=True, action="participant_connection_aborted_logged")
 
     def _build_egress_info(self, egress: Dict, file_data: Dict) -> EgressInfo:
         """Build EgressInfo object from event data (simplified)"""
