@@ -94,11 +94,11 @@ class NotificationHandler(logging.Handler):
             await self._producer.send(
                 title=title,
                 message={
-                    "t": f"🚨 {record.levelname} - {record.name}{message}",
+                    "t": f"{title}{message}",
                     "mk": [
                         {
                         "type": "pre",
-                        "s": len(title),
+                        "s": len(title) + 1,
                         "e": len(title) + len(message) + 1
                         }
                     ]
