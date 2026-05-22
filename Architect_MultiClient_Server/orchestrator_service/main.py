@@ -34,6 +34,7 @@ from orchestrator_service.api.summary_api import client_router as summary_client
 from orchestrator_service.services.redis.redis_save_transcription_service import (
     RedisSaveTranscriptionService,
 )
+from orchestrator_service.services.notification_worker import NotificationWorker
 
 from orchestrator_service.api.v2.router import (
     api_router as api_router_v2,
@@ -104,6 +105,11 @@ async def lifespan(app: FastAPI):
         save_transcription_service = RedisSaveTranscriptionService()
         await save_transcription_service.start()
         logger.info("✅ Save Transcription consumer service started")
+        
+        # Initialize Notification worker
+        notification_worker = NotificationWorker()
+        await notification_worker.start()
+        logger.info("✅ Notification worker started")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Redis services: {e}")
         raise
@@ -115,46 +121,56 @@ async def lifespan(app: FastAPI):
     # We just need to cleanup resources after generators are cancelled
     logger.info("🛑 FastAPI shutting down, cleaning up resources...")
 
-    # Step 0: Stop save transcription service
+    # Step 0: Stop notification worker
     try:
-        logger.info("Step 0/6: Stopping Save Transcription service...")
+        logger.info("Step 0/7: Stopping Notification worker...")
+        notification_worker = NotificationWorker()
+        await notification_worker.stop()
+        logger.info("✅ Notification worker stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Notification worker: {e}")
+
+    # Step 1: Stop save transcription service
+    try:
+        logger.info("Step 1/7: Stopping Save Transcription service...")
         save_transcription_service = RedisSaveTranscriptionService()
         await save_transcription_service.stop()
         logger.info("✅ Save Transcription service stopped")
     except Exception as e:
         logger.error(f"Error stopping Save Transcription service: {e}")
 
-    # Step 1: Cleanup SSE manager (clear data structures)
+    # Step 2: Cleanup SSE manager (clear data structures)
     # SSE connections were already notified by signal handler
-    logger.info("Step 1/6: Cleaning up SSE manager...")
+    logger.info("Step 2/7: Cleaning up SSE manager...")
     await sse_manager.cleanup()
     logger.info("✅ SSE manager cleanup completed")
 
-    # Step 2: Cleanup egress service
-    logger.info("Step 2/6: Cleaning up egress service...")
+    # Step 3: Cleanup egress service
+    logger.info("Step 3/7: Cleaning up egress service...")
     await egress_service.cleanup()
     logger.info("✅ Egress service cleanup completed")
 
-    # Step 3: Cleanup LiveKit service
-    logger.info("Step 3/6: Cleaning up LiveKit service...")
+    # Step 4: Cleanup LiveKit service
+    logger.info("Step 4/7: Cleaning up LiveKit service...")
     await cleanup_livekit_service()
     logger.info("✅ LiveKit service cleanup completed")
 
-    # Step 4: Disconnect Redis Connection Pool
+    # Step 5: Disconnect Redis Connection Pool
     try:
-        logger.info("Step 4/6: Disconnecting Redis connection pool...")
+        logger.info("Step 5/7: Disconnecting Redis connection pool...")
         redis_manager = get_connection_manager()
         await redis_manager.disconnect()
         logger.info("✅ Redis connection pool closed")
     except Exception as e:
         logger.error(f"Error closing Redis connection pool: {e}")
 
-    # Step 5: 🛑 FastAPI shutdown
-    logger.info("Step 5/5: 🛑 FastAPI shutdown")
+    # Step 6: 🛑 FastAPI shutdown
+    logger.info("Step 6/7: 🛑 FastAPI shutdown")
 
     # Dispose PostgreSQL engine
     await dispose_engine()
 
+    logger.info("Step 7/7: ✅ Cleanup complete")
     logger.info("🎉 All services cleanup completed successfully")
 
 

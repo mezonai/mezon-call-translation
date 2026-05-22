@@ -2,10 +2,10 @@
 Participant identity utilities
 """
 import json
-import logging
+from orchestrator_service.utils.logger import get_logger
 import re
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def parse_participant_identity(participant_identity: str) -> str:

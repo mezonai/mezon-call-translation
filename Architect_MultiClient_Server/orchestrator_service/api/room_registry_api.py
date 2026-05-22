@@ -87,6 +87,7 @@ async def register_room(
             status_code=400, detail=f"Failed to obtain room_id from STT service"
         )
     if not await registry.register_room(request.room_name, stt_room_id):
+        logger.error(f"Room '{request.room_name}' is already registered")
         raise HTTPException(
             status_code=409, detail=f"Room '{request.room_name}' is already registered"
         )

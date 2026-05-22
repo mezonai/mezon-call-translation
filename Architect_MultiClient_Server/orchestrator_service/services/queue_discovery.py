@@ -5,13 +5,13 @@ Scans Redis to find existing streams and provides queue information.
 No manual registration required - automatically discovers queues.
 """
 
-import logging
+from orchestrator_service.utils.logger import get_logger
 from typing import Dict, List, Optional
 
 from orchestrator_service.services.redis.connection_pool import get_redis_connection
 from orchestrator_service.utils.decode import decode_value, decode_mapping
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class QueueDiscovery:
