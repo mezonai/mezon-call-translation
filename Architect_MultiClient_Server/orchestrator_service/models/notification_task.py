@@ -75,7 +75,7 @@ class NotificationTask(BaseProducerTask):
         
         task = cls(
             # BaseProducerTask fields
-            priority=int(decoded.get("priority", "5")),
+            priority=parse_priority(decoded.get("priority", TaskPriority.NORMAL)),
             retry_count=int(decoded.get("retry_count", "0")),
             task_id=decoded.get("task_id", ""),
             created_at=float(decoded.get("created_at", "0")),
