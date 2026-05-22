@@ -3,7 +3,7 @@ Notification Task Model for Mezon Channel Notifications
 
 Task model for enqueueing notifications to be sent to Mezon channels via webhooks.
 """
-
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict
 
@@ -16,20 +16,6 @@ class NotificationTask(BaseProducerTask):
     Task for sending notifications to Mezon channels via webhooks.
     
     Inherits from BaseProducerTask (has priority, retry_count, task_id, created_at).
-    
-    Message is a dict to support different formats:
-    {
-        "text": "Simple text message",
-        "embeds": [
-            {
-                "title": "Embed Title",
-                "description": "Embed Description",
-                "color": "#FF0000"
-            }
-        ],
-        "mentions": [{"user_id": "...", "s": 0, "e": 5}],
-        "markdown": [{"type": "pre", "s": 0, "e": 10}]
-    }
     """
     
     # Required fields
@@ -47,8 +33,6 @@ class NotificationTask(BaseProducerTask):
         All values are strings as required by Redis.
         Message dict is serialized to JSON string.
         """
-        import json
-        
         # Get base fields from parent
         data = super().to_dict()
         
@@ -91,7 +75,7 @@ class NotificationTask(BaseProducerTask):
         
         task = cls(
             # BaseProducerTask fields
-            priority=parse_priority(decoded.get("priority", TaskPriority.NORMAL)),
+            priority=int(decoded.get("priority", "5")),
             retry_count=int(decoded.get("retry_count", "0")),
             task_id=decoded.get("task_id", ""),
             created_at=float(decoded.get("created_at", "0")),

@@ -156,27 +156,6 @@ class NotificationWorker:
             logger.error(f"❌ Error sending webhook: {e}", exc_info=True)
             return False
     
-    def _build_mezon_webhook_payload(self, task: NotificationTask) -> dict:
-        """
-        Build Mezon webhook payload from notification task.
-        
-        Uses the message dict directly as the message payload,
-        wrapped in the standard Mezon webhook format.
-        
-        Args:
-            task: NotificationTask with title and message dict
-            
-        Returns:
-            Dictionary payload for Mezon webhook
-        """
-        # Use message dict as-is, wrapped in Mezon webhook format
-        payload = {
-            "type": "hook",
-            "message": task.message
-        }
-        
-        return payload
-    
     async def start(self) -> None:
         """
         Start the notification worker.
