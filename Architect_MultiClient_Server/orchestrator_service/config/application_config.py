@@ -368,7 +368,7 @@ class NotificationConfig:
             enabled=os.getenv('NOTIFICATION_ENABLED', 'true').lower() == 'true',
             stream_key=os.getenv('NOTIFICATION_STREAM_KEY', 'notifications'),
             group_name=os.getenv('NOTIFICATION_GROUP_NAME', 'notification-workers'),
-            webhook_endpoint=os.getenv('NOTIFICATION_WEBHOOK_ENDPOINT', 'https://webhook.mezon.ai/webhooks'),
+            webhook_endpoint=os.getenv('NOTIFICATION_WEBHOOK_ENDPOINT', 'https://your_web_hook/webhooks'),
             max_retries=int(os.getenv('NOTIFICATION_MAX_RETRIES', '3')),
             retry_delay_sec=int(os.getenv('NOTIFICATION_RETRY_DELAY_SEC', '5')),
             channel_id=os.getenv('NOTIFICATION_CHANNEL_ID', ''),
