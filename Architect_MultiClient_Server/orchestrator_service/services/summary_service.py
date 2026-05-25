@@ -60,6 +60,16 @@ class SummaryService:
 
         # 3. Collect all segments with absolute timestamps in one pass
         all_segments = []
+        participant_durations = {}
+
+        track_ids = [str(track["_id"]) for track in tracks]
+        all_chunks = await self.pg_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
+        
+        chunks_by_track = {tid: [] for tid in track_ids}
+        for chunk in all_chunks:
+            tid = str(chunk.get("track_ref_id"))
+            if tid in chunks_by_track:
+                chunks_by_track[tid].append(chunk)
 
         for track in tracks:
             try:
@@ -67,9 +77,17 @@ class SummaryService:
                 track_start_ns = int(
                     track.get("audio_info", {}).get("started_at_ns", 0) or 0
                 )
-                chunks = await self.pg_repo.get_chunks_by_track(
-                    str(track["_id"]), sorted_by_index=True
+                chunks = chunks_by_track[str(track["_id"])]
+
+                # Calculate duration for this track/participant using start_time and end_time of chunks 
+                track_duration = sum(
+                    (c.get("end_time") or 0.0) - (c.get("start_time") or 0.0)
+                    for c in chunks
                 )
+                if participant != "Unknown":
+                    participant_durations[participant] = (
+                        participant_durations.get(participant, 0.0) + track_duration
+                    )
 
                 for chunk in chunks:
                     for seg in chunk.get("segments", []):
@@ -122,6 +140,18 @@ class SummaryService:
 
         if current_turn:
             turns.append(current_turn)
+
+        # Update room participants list in-place with their calculated speech durations and save 
+        room_participants = room_doc.get("participants") or []
+        for p in room_participants:
+            user_id = p.get("participant_identity")
+            if user_id:
+                p["duration"] = round(participant_durations.get(user_id, 0.0), 2)
+
+        try:
+            await self.pg_repo.update_room_participants(room_id, room_participants)
+        except Exception as e:
+            logger.error(f"Failed to save speech durations to database: {e}")
 
         # full_text is used for LLM summarization and also saved in DB to allow retrying LLM if summary generation fails. It can be a long string, but we keep it as is for now since it's needed for the summary generation step. In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
         full_text = "\n".join(

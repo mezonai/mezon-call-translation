@@ -245,6 +245,30 @@ class PgTranscriptRepository:
             "skipped_count": len(participants) - added,
         }
 
+    async def update_room_participants(
+        self, room_id: str, participants: List[Dict[str, Any]]
+    ) -> bool:
+        uid = room_id
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                await session.execute(
+                    text("""
+                    UPDATE rooms 
+                    SET participants = CAST(:p AS jsonb)
+                    WHERE id = :id
+                """),
+                    {
+                        "id": uid,
+                        "p": json.dumps(participants),
+                    },
+                )
+                await session.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update room participants: {e}")
+            return False
+
     # ------------------------------------------------------------------
     # TRACKS
     # ------------------------------------------------------------------
@@ -550,44 +574,15 @@ class PgTranscriptRepository:
                     s["created_at"] = convert_to_iso_8601(room.get("created_at"))
                     s["completed_at"] = convert_to_iso_8601(room.get("completed_at"))
 
-                    # Calculate speech durations for each member
-                    speaking_participants = s.get("participants") or []
-                    duration_map = {}
-                    duration_res = await session.execute(
-                        text("""
-                            SELECT t.participant_identity, COALESCE(SUM(tc.end_time - tc.start_time), 0.0) as duration
-                            FROM tracks t
-                            JOIN transcript_chunks tc ON t.id = tc.track_ref_id
-                            WHERE t.room_ref_id = :room_id
-                            GROUP BY t.participant_identity
-                        """),
-                        {"room_id": uid}
-                    )
-                    duration_rows = duration_res.fetchall()
-                    for d_row in duration_rows:
-                        if d_row[0]:
-                            duration_map[d_row[0]] = float(d_row[1])
-
+                    # Read speech durations directly from the rooms table participants column
                     speech_durations = []
-                    # Process speakers (active participants in rooms_summary)
-                    for user_id in speaking_participants:
-                        if user_id.startswith("EG_"):
-                            continue
-                        duration = duration_map.get(user_id, 0.0)
-                        speech_durations.append({
-                            "participant_identity": user_id,
-                            "duration": round(duration, 2)
-                        })
-
-                    # Process non-speakers (those in room but not in speaking_participants)
                     room_participants = room.get("participants") or []
-                    speaking_set = set(speaking_participants)
                     for p in room_participants:
                         user_id = p.get("participant_identity")
-                        if user_id and user_id not in speaking_set and not user_id.startswith("EG_"):
+                        if user_id and not user_id.startswith("EG_"):
                             speech_durations.append({
                                 "participant_identity": user_id,
-                                "duration": 0.0
+                                "duration": p.get("duration", 0.0)
                             })
 
                     s["speech_durations"] = speech_durations
@@ -790,6 +785,38 @@ class PgTranscriptRepository:
                 return chunks
         except Exception as e:
             logger.error(f"Failed to get chunks by track: {e}")
+            return []
+
+    async def get_chunks_by_track_ids(
+        self,
+        track_ids: List[str],
+        sorted_by_index: bool = True,
+    ) -> List[Dict[str, Any]]:
+        if not track_ids:
+            return []
+
+        session_factory = get_session_factory()
+        
+        # Safely construct IN clause with parameters
+        placeholders = ", ".join([f":tid_{i}" for i in range(len(track_ids))])
+        query = f"SELECT * FROM transcript_chunks WHERE track_ref_id IN ({placeholders})"
+        params = {f"tid_{i}": tid for i, tid in enumerate(track_ids)}
+
+        if sorted_by_index:
+            query += " ORDER BY chunk_index ASC"
+
+        try:
+            async with session_factory() as session:
+                result = await session.execute(text(query), params)
+                rows = result.fetchall()
+                chunks = []
+                for row in rows:
+                    c = dict(row._mapping)
+                    c["_id"] = c["id"]
+                    chunks.append(c)
+                return chunks
+        except Exception as e:
+            logger.error(f"Failed to get chunks by track ids: {e}")
             return []
 
     async def get_metadata_events(
