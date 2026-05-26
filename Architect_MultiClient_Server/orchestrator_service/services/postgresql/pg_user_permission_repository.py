@@ -107,10 +107,10 @@ class PgUserPermissionRepository:
                         text("""
                             INSERT INTO users
                                 (id, username, display_name, avatar_url, permissions,
-                                 created_at, updated_at)
+                                created_at, updated_at)
                             VALUES
                                 (:id, :username, :display_name, :avatar_url,
-                                 :permissions::jsonb, :now, :now)
+                                CAST(:permissions AS jsonb), :now, :now)
                         """),
                         {
                             "id": user_id,
