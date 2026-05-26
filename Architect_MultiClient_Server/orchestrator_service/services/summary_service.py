@@ -220,7 +220,7 @@ class SummaryService:
             return {**draft_summary, "_id": saved_id}
 
     async def retry_summary_from_full_text(
-        self, room_id: str
+        self, room_id: str, retry_type: str = "all"
     ) -> Optional[Dict[str, Any]]:
         """
         Hotfix: re-run LLM summarization using the full_text already stored in rooms_summary.
@@ -243,21 +243,67 @@ class SummaryService:
         if not full_text:
             raise ValueError(f"full_text is empty for room_id: {room_id}")
 
-        logger.info(f"Retrying LLM for room {room_id} ({len(full_text)} chars)")
+        # Extract existing summary_data to preserve fields that aren't being retried
+        existing_summary_data = summary_doc.get("summary_data") or {}
+        existing_summary = existing_summary_data.get("summary", "")
+        existing_action_items = existing_summary_data.get("action_items", {})
+
+        logger.info(f"Retrying LLM with type '{retry_type}' for room {room_id} ({len(full_text)} chars)")
 
         try:
-            result = await self.llm_service.summarize_conversation(
-                conversation_text=full_text,
-                language=self.config.llm.language,
-            )
+            if retry_type == "summary":
+                result = await self.llm_service.summarize_summary(
+                    conversation_text=full_text,
+                    language=self.config.llm.language,
+                )
 
-            summary_data = {
-                "summary": result.summary,
-                "action_items": {
-                    item.participant_identity: item.participant_actions
-                    for item in result.action_items
-                },
-            }
+                # Format summary with only non-empty fields
+                summary_parts = [
+                    f"Context\n{result.context}",
+                    f"Key Discussions\n{result.key_discussions}",
+                ]
+
+                if result.decisions and result.decisions.strip():
+                    summary_parts.append(f"Decisions\n{result.decisions}")
+
+                if result.unresolved_issues and result.unresolved_issues.strip():
+                    summary_parts.append(f"Unresolved Issues\n{result.unresolved_issues}")
+
+                if result.next_focus and result.next_focus.strip():
+                    summary_parts.append(f"Next Focus\n{result.next_focus}")
+
+                summary_data = {
+                    "summary": "\n\n".join(summary_parts),
+                    "action_items": existing_action_items,
+                }
+
+            elif retry_type == "action_items":
+                result = await self.llm_service.summarize_action_items(
+                    conversation_text=full_text,
+                    language=self.config.llm.language,
+                )
+
+                summary_data = {
+                    "summary": existing_summary,
+                    "action_items": {
+                        item.participant_identity: item.participant_actions
+                        for item in result.action_items
+                    },
+                }
+
+            else:  # "all"
+                result = await self.llm_service.summarize_conversation(
+                    conversation_text=full_text,
+                    language=self.config.llm.language,
+                )
+
+                summary_data = {
+                    "summary": result.summary,
+                    "action_items": {
+                        item.participant_identity: item.participant_actions
+                        for item in result.action_items
+                    },
+                }
 
             updated = await self.pg_repo.update_room_summary(room_id, summary_data)
             logger.info(f"Updated summary for room {room_id}")
@@ -276,7 +322,7 @@ class SummaryService:
             )
             return summary_data
         except Exception as e:
-            logger.error(f"Failed to retry summary for room {room_id}: {e}")
+            logger.error(f"Failed to retry summary for room {room_id} with type '{retry_type}': {e}")
             return None
 
 

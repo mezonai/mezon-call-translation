@@ -62,9 +62,20 @@ async def get_summary_by_room_id(
     "/retry/{room_id}",
     response_description="Re-run LLM summary using existing full_text",
 )
-async def retry_summary(room_id: str):
+async def retry_summary(
+    room_id: str,
+    type: str = Query("all", description="Type of retry: 'summary', 'action_items', or 'all'"),
+):
+    if type not in ["summary", "action_items", "all"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid retry type. Must be 'summary', 'action_items', or 'all'",
+        )
+
     try:
-        summary_data = await get_summary_service().retry_summary_from_full_text(room_id)
+        summary_data = await get_summary_service().retry_summary_from_full_text(
+            room_id, retry_type=type
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -74,5 +85,6 @@ async def retry_summary(room_id: str):
     return {
         "status": "ok",
         "room_id": room_id,
+        "type": type,
         "summary_data": summary_data,
     }

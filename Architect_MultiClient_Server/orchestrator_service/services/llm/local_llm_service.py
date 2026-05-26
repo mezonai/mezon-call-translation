@@ -1,6 +1,7 @@
 """
 Local LLM service (OpenAI-compatible API)
 """
+import asyncio
 import json
 import logging
 import re
@@ -173,30 +174,45 @@ class LocalLLMService(BaseLLMService):
 
         Returns:
             SummaryActionItemsResult with summary and action items
-
-        Raises:
-            Exception: If one of the requests fails
         """
-        summary_result = await self.summarize_summary(conversation_text, language)
-        action_items_result = await self.summarize_action_items(conversation_text, language)
-        logger.info("Successfully generated summary and action items using Local LLM (2 requests)")
+        summary_task = self.summarize_summary(conversation_text, language)
+        action_items_task = self.summarize_action_items(conversation_text, language)
 
-        # Build summary with only non-empty fields
-        summary_parts = [
-            f"Context\n{summary_result.context}",
-            f"Key Discussions\n{summary_result.key_discussions}",
-        ]
+        results = await asyncio.gather(summary_task, action_items_task, return_exceptions=True)
+        summary_res, action_items_res = results
 
-        if summary_result.decisions and summary_result.decisions.strip():
-            summary_parts.append(f"Decisions\n{summary_result.decisions}")
+        # Process summary result
+        if isinstance(summary_res, Exception):
+            logger.error(f"Failed to generate summary using Local LLM: {summary_res}")
+            summary = f"An error occurred during summary generation: {summary_res}"
+        else:
+            summary_parts = [
+                f"Context\n{summary_res.context}",
+                f"Key Discussions\n{summary_res.key_discussions}",
+            ]
 
-        if summary_result.unresolved_issues and summary_result.unresolved_issues.strip():
-            summary_parts.append(f"Unresolved Issues\n{summary_result.unresolved_issues}")
+            if summary_res.decisions and summary_res.decisions.strip():
+                summary_parts.append(f"Decisions\n{summary_res.decisions}")
 
-        if summary_result.next_focus and summary_result.next_focus.strip():
-            summary_parts.append(f"Next Focus\n{summary_result.next_focus}")
+            if summary_res.unresolved_issues and summary_res.unresolved_issues.strip():
+                summary_parts.append(f"Unresolved Issues\n{summary_res.unresolved_issues}")
+
+            if summary_res.next_focus and summary_res.next_focus.strip():
+                summary_parts.append(f"Next Focus\n{summary_res.next_focus}")
+
+            summary = "\n\n".join(summary_parts)
+
+        # Process action items result
+        if isinstance(action_items_res, Exception):
+            logger.error(f"Failed to generate action items using Local LLM: {action_items_res}")
+            action_items = []
+        else:
+            action_items = action_items_res.action_items
+
+        if not isinstance(summary_res, Exception) and not isinstance(action_items_res, Exception):
+            logger.info("Successfully generated summary and action items using Local LLM (2 requests)")
 
         return SummaryActionItemsResult(
-            summary="\n\n".join(summary_parts),
-            action_items=action_items_result.action_items,
+            summary=summary,
+            action_items=action_items,
         )
