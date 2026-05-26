@@ -184,7 +184,7 @@ class LocalLLMService(BaseLLMService):
         # Process summary result
         if isinstance(summary_res, Exception):
             logger.error(f"Failed to generate summary using Local LLM: {summary_res}")
-            summary = f"An error occurred during summary generation: {summary_res}"
+            summary = f""
         else:
             summary_parts = [
                 f"Context\n{summary_res.context}",
@@ -209,10 +209,12 @@ class LocalLLMService(BaseLLMService):
         else:
             action_items = action_items_res.action_items
 
-        if not isinstance(summary_res, Exception) and not isinstance(action_items_res, Exception):
+        is_success = not isinstance(summary_res, Exception) and not isinstance(action_items_res, Exception)
+        if is_success:
             logger.info("Successfully generated summary and action items using Local LLM (2 requests)")
 
         return SummaryActionItemsResult(
             summary=summary,
             action_items=action_items,
+            is_success=is_success,
         )

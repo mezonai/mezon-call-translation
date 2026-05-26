@@ -8,6 +8,7 @@ from orchestrator_service.api.sse.channels.metadata_channel import MetadataChann
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.summary_models import RetryType
 
 from orchestrator_service.utils.logger import get_logger
 
@@ -210,17 +211,18 @@ class SummaryService:
             result["_id"] = saved_id
 
             # 9. Notify clients via SSE if summary generation is successful
-            metadata_channel = MetadataChannel()
-            await metadata_channel.push_room_summary_done(
-                room_id=str(room_id), room_name=room_doc.get("room_name", "Unknown")
-            )
+            if summary_data_result.is_success:
+                metadata_channel = MetadataChannel()
+                await metadata_channel.push_room_summary_done(
+                    room_id=str(room_id), room_name=room_doc.get("room_name", "Unknown")
+                )
             return result
         except Exception as e:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
             return {**draft_summary, "_id": saved_id}
 
     async def retry_summary_from_full_text(
-        self, room_id: str, retry_type: str = "all"
+        self, room_id: str, retry_type: RetryType = RetryType.ALL
     ) -> Optional[Dict[str, Any]]:
         """
         Hotfix: re-run LLM summarization using the full_text already stored in rooms_summary.
@@ -248,10 +250,11 @@ class SummaryService:
         existing_summary = existing_summary_data.get("summary", "")
         existing_action_items = existing_summary_data.get("action_items", {})
 
-        logger.info(f"Retrying LLM with type '{retry_type}' for room {room_id} ({len(full_text)} chars)")
+        logger.info(f"Retrying LLM with type '{retry_type.value}' for room {room_id} ({len(full_text)} chars)")
 
+        is_success = False
         try:
-            if retry_type == "summary":
+            if retry_type == RetryType.SUMMARY:
                 result = await self.llm_service.summarize_summary(
                     conversation_text=full_text,
                     language=self.config.llm.language,
@@ -277,7 +280,9 @@ class SummaryService:
                     "action_items": existing_action_items,
                 }
 
-            elif retry_type == "action_items":
+                is_success = True
+
+            elif retry_type == RetryType.ACTION_ITEMS:
                 result = await self.llm_service.summarize_action_items(
                     conversation_text=full_text,
                     language=self.config.llm.language,
@@ -291,11 +296,14 @@ class SummaryService:
                     },
                 }
 
-            else:  # "all"
+                is_success = True
+
+            else:  # RetryType.ALL
                 result = await self.llm_service.summarize_conversation(
                     conversation_text=full_text,
                     language=self.config.llm.language,
                 )
+                is_success = result.is_success
 
                 summary_data = {
                     "summary": result.summary,
@@ -312,17 +320,18 @@ class SummaryService:
                 return None
 
             # Notify clients via SSE if summary generation is successful
-            metadata_channel = MetadataChannel()
-            await metadata_channel.push_room_summary_done(
-                room_id=room_id, room_name=summary_doc.get("room_name", "Unknown")
-            )
+            if is_success:
+                metadata_channel = MetadataChannel()
+                await metadata_channel.push_room_summary_done(
+                    room_id=room_id, room_name=summary_doc.get("room_name", "Unknown")
+                )
 
             logger.info(
-                f"Successfully updated summary for room {room_id} and notified clients"
+                f"Successfully updated summary for room {room_id} and notified clients (success={is_success})"
             )
             return summary_data
         except Exception as e:
-            logger.error(f"Failed to retry summary for room {room_id} with type '{retry_type}': {e}")
+            logger.error(f"Failed to retry summary for room {room_id} with type '{retry_type.value}': {e}")
             return None
 
 

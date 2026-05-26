@@ -8,7 +8,7 @@ from typing import Optional
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
 )
-from orchestrator_service.models.summary_models import RoomSummaryResponse
+from orchestrator_service.models.summary_models import RoomSummaryResponse, RetryType
 from orchestrator_service.services.summary_service import get_summary_service
 
 client_router = APIRouter(prefix="/api/summary", tags=["Summary"])
@@ -64,14 +64,8 @@ async def get_summary_by_room_id(
 )
 async def retry_summary(
     room_id: str,
-    type: str = Query("all", description="Type of retry: 'summary', 'action_items', or 'all'"),
+    type: RetryType = Query(RetryType.ALL, description="Type of retry: 'summary', 'action_items', or 'all'"),
 ):
-    if type not in ["summary", "action_items", "all"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid retry type. Must be 'summary', 'action_items', or 'all'",
-        )
-
     try:
         summary_data = await get_summary_service().retry_summary_from_full_text(
             room_id, retry_type=type
@@ -85,6 +79,6 @@ async def retry_summary(
     return {
         "status": "ok",
         "room_id": room_id,
-        "type": type,
+        "type": type.value,
         "summary_data": summary_data,
     }
