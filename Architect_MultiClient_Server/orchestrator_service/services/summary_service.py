@@ -224,14 +224,14 @@ class SummaryService:
         self, room_id: str, retry_type: RetryType = RetryType.ALL
     ) -> Optional[Dict[str, Any]]:
         """
-        Hotfix: re-run LLM summarization using the full_text already stored in rooms_summary.
+        Hotfix: re-run LLM summarization by rebuilding full_text from messages stored in rooms_summary.
         Used when LLM service fails in the first run and summary_data is missing.
 
         Returns:
             summary_data dict if successful, None if failed.
 
         Raises:
-            ValueError: If document not found or full_text is empty.
+            ValueError: If document not found or messages is empty.
         """
         if not self.pg_repo.connected:
             await self.pg_repo.connect()
@@ -240,9 +240,13 @@ class SummaryService:
         if not summary_doc:
             raise ValueError(f"Not found summary_doc for room_id: {room_id}")
 
-        full_text: str = summary_doc.get("full_text", "").strip()
-        if not full_text:
-            raise ValueError(f"full_text is empty for room_id: {room_id}")
+        messages = summary_doc.get("messages", [])
+        if not messages:
+            raise ValueError(f"messages is empty for room_id: {room_id}")
+
+        full_text = "\n".join(
+            f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in messages
+        )
 
         # Extract existing summary_data to preserve fields that aren't being retried
         existing_summary_data = summary_doc.get("summary_data") or {}
