@@ -508,8 +508,8 @@ class PgTranscriptRepository:
             async with session_factory() as session:
                 await session.execute(
                     text("""
-                    INSERT INTO rooms_summary (id, room_id, room_name, participants, summary_data, full_text, messages, total_segments, created_at)
-                    VALUES (:id, :rid, :rname, CAST(:parts AS jsonb), CAST(:sum AS jsonb), :ft, CAST(:msgs AS jsonb), :ts, :now)
+                    INSERT INTO rooms_summary (id, room_id, room_name, participants, summary_data, messages, total_segments, created_at)
+                    VALUES (:id, :rid, :rname, CAST(:parts AS jsonb), CAST(:sum AS jsonb), CAST(:msgs AS jsonb), :ts, :now)
                 """),
                     {
                         "id": uid,
@@ -517,7 +517,6 @@ class PgTranscriptRepository:
                         "rname": summary_data.get("room_name"),
                         "parts": json.dumps(summary_data.get("participants", [])),
                         "sum": json.dumps(summary_data.get("summary_data", {})),
-                        "ft": summary_data.get("full_text"),
                         "msgs": json.dumps(summary_data.get("messages", [])),
                         "ts": summary_data.get("total_segments", 0),
                         "now": summary_data.get(

@@ -146,7 +146,6 @@ class RoomSummary(Base):
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     participants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     summary_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    full_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     messages: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     total_segments: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(
