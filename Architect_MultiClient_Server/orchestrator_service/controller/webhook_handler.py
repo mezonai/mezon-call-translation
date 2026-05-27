@@ -229,7 +229,8 @@ class WebhookHandler:
 
     async def _handle_participant_connection_aborted(self, event: Dict) -> WebhookResponse:
         """Handle when a participant connection is aborted"""
-        logger.info(f"Participant connection aborted: {json.dumps(event)}")
+        logger.error(f"Participant connection aborted: {json.dumps(event)}")
+        
         return WebhookResponse(received=True, action="participant_connection_aborted_logged")
 
     def _build_egress_info(self, egress: Dict, file_data: Dict) -> EgressInfo:

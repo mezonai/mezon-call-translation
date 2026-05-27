@@ -59,6 +59,44 @@ class QueueListResponse(BaseModel):
     count: int
 
 
+class DLQTaskResponse(BaseModel):
+    """Response model for DLQ task information."""
+    message_id: str = Field(..., description="Redis stream message ID")
+    task_id: str = Field(..., description="Task identifier")
+    filename: Optional[str] = Field(None, description="Task filename (if applicable)")
+    created_at: float = Field(..., description="Timestamp when task was created")
+    dead_letter_at: float = Field(..., description="Timestamp when task was moved to DLQ")
+    final_error: str = Field(..., description="Error message that caused task to fail")
+    retry_count: int = Field(..., description="Number of retries attempted")
+    status: str = Field(default="dead_letter", description="Task status")
+
+
+class DLQListResponse(BaseModel):
+    """Response model for DLQ task list."""
+    queue_name: str = Field(..., description="Queue identifier")
+    dlq_stream_key: str = Field(..., description="Redis DLQ stream key")
+    tasks: List[DLQTaskResponse]
+    count: int = Field(..., description="Number of tasks in DLQ")
+
+
+class DLQRetryResponse(BaseModel):
+    """Response model for DLQ retry operation."""
+    queue_name: str
+    retried_tasks: List[str] = Field(..., description="List of task IDs that were retried")
+    success_count: int
+    failed_count: int
+    total: int
+
+
+class DLQRetryAllResponse(BaseModel):
+    """Response model for bulk DLQ retry operation."""
+    queue_name: str
+    success_count: int = Field(..., description="Number of successfully retried tasks")
+    failed_count: int = Field(..., description="Number of tasks that failed to retry")
+    total: int = Field(..., description="Total tasks processed")
+    message: str = Field(..., description="Summary message")
+
+
 # ========================================
 # Generic Queue Endpoints
 # ========================================
@@ -126,60 +164,6 @@ async def get_queue_stats_by_name(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get queue stats: {str(e)}"
-        )
-
-
-@router.get("/{queue_name}/task/{task_id}", response_model=TaskStatusResponse)
-async def get_task_status_by_queue(
-    queue_name: str = Path(..., description="Queue identifier"),
-    task_id: str = Path(..., description="Task ID")
-):
-    """
-    Get status of a specific task in a queue.
-    
-    Args:
-        queue_name: Queue identifier
-        task_id: The task ID returned when queuing
-        
-    Returns:
-        Task status and result if completed
-    
-    Raises:
-        HTTPException: If queue or task is not found
-    """
-    try:
-        queue_service = get_queue_service_by_name(queue_name)
-        task_data = await queue_service.get_task(task_id)
-        
-        if not task_data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found in queue '{queue_name}'"
-            )
-        
-        return TaskStatusResponse(
-            task_id=task_data.get("task_id", task_id),
-            status=task_data.get("status", "unknown"),
-            filename=task_data.get("filename", ""),
-            created_at=float(task_data.get("created_at", 0)),
-            started_processing_at=float(task_data.get("processing_started_at", 0)) or None,
-            completed_at=float(task_data.get("completed_at", 0)) or None,
-            result=task_data.get("result"),
-            error=task_data.get("final_error") or task_data.get("last_error"),
-        )
-    
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting task {task_id} from queue '{queue_name}': {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get task status: {str(e)}"
         )
 
 
@@ -266,4 +250,98 @@ async def get_all_queues_overview():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get queue overview: {str(e)}"
+        )
+
+
+# ========================================
+# Dead Letter Queue (DLQ) Endpoints
+# ========================================
+
+@router.get("/{queue_name}/dlq", response_model=DLQListResponse)
+async def get_dlq_tasks(
+    queue_name: str = Path(..., description="Queue identifier"),
+    limit: int = 100
+):
+    """
+    Get list of tasks in Dead Letter Queue.
+    
+    Retrieves all tasks that have exceeded max_retries (default: 3)
+    and failed permanently. Includes error information and timestamps.
+    
+    Args:
+        queue_name: Queue identifier (transcription, tts, etc.)
+        limit: Maximum number of DLQ tasks to return (default: 100)
+    
+    Returns:
+        List of DLQ tasks with error details
+    
+    Raises:
+        HTTPException: If queue not found or database error
+    """
+    try:
+        queue_service = get_queue_service_by_name(queue_name)
+        dlq_tasks = await queue_service.get_dlq_tasks(limit=limit)
+        
+        return DLQListResponse(
+            queue_name=queue_name,
+            dlq_stream_key=f"{queue_service.stream_key}:dlq",
+            tasks=[DLQTaskResponse(**task) for task in dlq_tasks],
+            count=len(dlq_tasks),
+        )
+    
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Error getting DLQ tasks for queue '{queue_name}': {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get DLQ tasks: {str(e)}"
+        )
+
+
+@router.post("/{queue_name}/dlq/retry", response_model=DLQRetryAllResponse)
+async def retry_dlq_tasks(
+    queue_name: str = Path(..., description="Queue identifier"),
+    task_id: str = Path(..., description="Task ID to retry a single task "),
+):
+    """
+    Retry tasks from Dead Letter Queue.
+
+    """
+    try:
+        queue_service = get_queue_service_by_name(queue_name)
+        
+        # Retry single task
+        success = await queue_service.retry_dlq_task(task_id)
+        
+        if success:
+            return DLQRetryAllResponse(
+                queue_name=queue_name,
+                success_count=1,
+                failed_count=0,
+                total=1,
+                message=f"Successfully retried task {task_id}",
+            )
+        else:
+            return DLQRetryAllResponse(
+                queue_name=queue_name,
+                success_count=0,
+                failed_count=1,
+                total=1,
+                message=f"Failed to retry task {task_id} (not found or error)",
+            )
+    
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Error retrying DLQ tasks for queue '{queue_name}': {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retry DLQ tasks: {str(e)}"
         )
