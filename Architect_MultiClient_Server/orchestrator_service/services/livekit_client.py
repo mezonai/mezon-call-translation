@@ -226,6 +226,76 @@ class LiveKitClientService:
                 raise
             raise LiveKitServiceError(f"Failed to list participants: {e}")
 
+    async def get_participant_detail(self, room_name: str, identity: str) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed information for a specific participant in a room.
+        
+        Args:
+            room_name: Name of the room
+            identity: Identity of the participant to get details for
+            
+        Returns:
+            Dict with complete participant details from ParticipantInfo
+        """
+        client = self.get_client()
+        try:
+            response = await client.room.list_participants(
+                api.ListParticipantsRequest(room=room_name)
+            )
+            
+            # Find the specific participant
+            for p in response.participants:
+                if p.identity == identity:
+                    return {
+                        "sid": p.sid,
+                        "identity": p.identity,
+                        "state": api.ParticipantInfo.State.Name(p.state),
+                        "name": p.name,
+                        "metadata": safe_json_loads_object(p.metadata),
+                        "joined_at": p.joined_at,
+                        "joined_at_ms": p.joined_at_ms,
+                        "version": p.version,
+                        "region": p.region,
+                        "is_publisher": p.is_publisher,
+                        "kind": api.ParticipantInfo.Kind.Name(p.kind) if p.kind else None,
+                        "attributes": dict(p.attributes) if p.attributes else {},
+                        "disconnect_reason": p.disconnect_reason if p.disconnect_reason else None,
+                        "found": True,
+                        "tracks": [
+                            {
+                                "sid": track.sid,
+                                "type": track.type,
+                                "name": track.name,
+                                "muted": track.muted,
+                                "width": track.width,
+                                "height": track.height,
+                                "source": track.source,
+                                "mime_type": track.mime_type,
+                            }
+                            for track in p.tracks
+                        ] if p.tracks else [],
+                        "permission": {
+                            "can_subscribe": p.permission.can_subscribe if p.permission else False,
+                            "can_publish": p.permission.can_publish if p.permission else False,
+                            "can_publish_data": p.permission.can_publish_data if p.permission else False,
+                            "hidden": p.permission.hidden if p.permission else False,
+                            "recorder": p.permission.recorder if p.permission else False,
+                        } if p.permission else None,
+                    }
+            
+            # Participant not found
+            return {
+                "identity": identity,
+                "found": False,
+                "message": f"Participant '{identity}' not found in room '{room_name}'"
+            }
+        except Exception as e:
+            if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
+                raise LiveKitServiceError(f"Failed to get participant detail: {e}")
+            if isinstance(e, LiveKitServiceError):
+                raise
+            raise LiveKitServiceError(f"Failed to get participant detail: {e}")
+
     async def cleanup(self):
         """Cleanup LiveKit client connection"""
         if self._client:
