@@ -8,6 +8,7 @@ Supports multiple queue types through generic type parameter.
 import logging
 from typing import Dict, Any, Optional, List, Type, TypeVar, Generic, ClassVar
 
+from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
 from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
@@ -373,9 +374,7 @@ def get_queue_service_by_name(queue_name: str) -> QueueService:
     # Only need to map for known types, new types can be added here
     _task_class_map = {
         "transcription": TranscriptionTask,
-        # Add more as needed:
-        # "tts": TTSTask,
-        # "agent": AgentTask,
+        "save_transcription": SaveTranscriptionTask,
     }
     
     # Check if queue name is registered
