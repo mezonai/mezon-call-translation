@@ -64,7 +64,7 @@ const RoomDetail = () => {
       try {
         const audioData = await getRoomAudioInfoById(roomId);
         setAudioFiles(audioData.file_results || []);
-        setAudioError(null);
+      setAudioError(null);
       } catch (audioErr) {
         setAudioFiles([]);
         setAudioError(audioErr.message || 'Failed to fetch audio files');
@@ -91,46 +91,7 @@ const RoomDetail = () => {
     return formatDuration(durationSeconds);
   };
 
-  // Parse full_text to display with proper formatting
-  const parseFullText = (fullText) => {
-    if (!fullText) return [];
-    const lines = fullText.trim().split('\n');
 
-    return lines
-      .filter(line => line.trim().length > 0)
-      .flatMap(line => {
-        // Match pattern: [time] username: content
-        const match = line.match(/^\[(.*?)\]\s*([^:]+):\s*(.*)$/);
-
-        if (match) {
-          const items = [
-            // First item: header with timestamp and username
-            {
-              timestamp: match[1],
-              username: match[2].trim(),
-              isHeader: true
-            }
-          ];
-
-          // Second item: content (if exists)
-          const content = match[3].trim();
-          if (content) {
-            items.push({
-              content: content,
-              isContent: true
-            });
-          }
-
-          return items;
-        }
-
-        // If line doesn't match pattern, return as continuation text
-        return [{
-          content: line,
-          isContinuation: true
-        }];
-      });
-  };
 
   const formatDuration = (seconds) => {
     if (!seconds) return '0s';
@@ -314,30 +275,26 @@ const RoomDetail = () => {
           {activeTab === 'participants' && (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-gray-900">Full Transcript</h3>
-              {summary && summary.full_text ? (
+              {summary && summary.messages && summary.messages.length > 0 ? (
                 <div className="border border-gray-200 rounded-lg p-6">
                   <div className="bg-gray-50 rounded p-4 max-h-[600px] overflow-y-auto">
                     <div className="space-y-1">
-                      {parseFullText(summary.full_text).map((item, idx) => (
+                      {summary.messages.map((item, idx) => (
                         <div key={idx}>
-                          {item.isHeader && (
-                            // Header with timestamp and username
-                            <div className="flex items-center gap-3 px-3 py-2 bg-blue-50 border-l-4 border-blue-500 mt-3">
-                              <span className="px-2 py-0.5 bg-blue-600 text-white rounded text-xs font-semibold font-mono">
-                                {item.timestamp}
-                              </span>
-                              <span className="font-bold text-gray-900 text-sm">
-                                {item.username}
-                              </span>
-                            </div>
-                          )}
+                          {/* Header with timestamp and participant_id */}
+                          <div className="flex items-center gap-3 px-3 py-2 bg-blue-50 border-l-4 border-blue-500 mt-3">
+                            <span className="px-2 py-0.5 bg-blue-600 text-white rounded text-xs font-semibold font-mono">
+                              {item.timestamp}
+                            </span>
+                            <span className="font-bold text-gray-900 text-sm">
+                              {item.participant_id}
+                            </span>
+                          </div>
 
-                          {(item.isContent || item.isContinuation) && (
-                            // Content - simple style
-                            <div className="px-3 py-1 text-gray-700 leading-relaxed">
-                              {item.content}
-                            </div>
-                          )}
+                          {/* Content - simple style */}
+                          <div className="px-3 py-1 text-gray-700 leading-relaxed whitespace-pre-wrap">
+                            {item.content}
+                          </div>
                         </div>
                       ))}
                     </div>
