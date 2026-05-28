@@ -154,7 +154,7 @@ class SummaryService:
         except Exception as e:
             logger.error(f"Failed to save speech durations to database: {e}")
 
-        # full_text is used for LLM summarization and also saved in DB to allow retrying LLM if summary generation fails. It can be a long string, but we keep it as is for now since it's needed for the summary generation step. In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
+        # full_text is used for LLM summarization. It can be a long string, but we keep it as is for now since it's needed for the summary generation step. In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
         full_text = "\n".join(
             f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in turns
         )
@@ -164,7 +164,6 @@ class SummaryService:
             "room_name": room_doc.get("room_name", "Unknown"),
             "participants": list(unique_participants),
             "summary_data": {},
-            "full_text": full_text,
             "messages": turns,
             "created_at": datetime.utcnow(),
             "total_segments": len(all_segments),
@@ -225,14 +224,14 @@ class SummaryService:
         self, room_id: str, retry_type: RetryType = RetryType.ALL
     ) -> Optional[Dict[str, Any]]:
         """
-        Hotfix: re-run LLM summarization using the full_text already stored in rooms_summary.
+        Hotfix: re-run LLM summarization by rebuilding full_text from messages stored in rooms_summary.
         Used when LLM service fails in the first run and summary_data is missing.
 
         Returns:
             summary_data dict if successful, None if failed.
 
         Raises:
-            ValueError: If document not found or full_text is empty.
+            ValueError: If document not found or messages is empty.
         """
         if not self.pg_repo.connected:
             await self.pg_repo.connect()
@@ -241,9 +240,13 @@ class SummaryService:
         if not summary_doc:
             raise ValueError(f"Not found summary_doc for room_id: {room_id}")
 
-        full_text: str = summary_doc.get("full_text", "").strip()
-        if not full_text:
-            raise ValueError(f"full_text is empty for room_id: {room_id}")
+        messages = summary_doc.get("messages", [])
+        if not messages:
+            raise ValueError(f"messages is empty for room_id: {room_id}")
+
+        full_text = "\n".join(
+            f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in messages
+        )
 
         # Extract existing summary_data to preserve fields that aren't being retried
         existing_summary_data = summary_doc.get("summary_data") or {}
