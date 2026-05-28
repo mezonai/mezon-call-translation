@@ -31,11 +31,11 @@ def downgrade() -> None:
     # Rebuild full_text in Python to avoid asyncpg issues with JSONB ->> operator.
     # Format: "[{timestamp}] {participant_id}: {content}" joined by newline.
     bind = op.get_bind()
-    rows = bind.execute(
+    result = bind.execute(
         sa.text("SELECT id, messages FROM rooms_summary WHERE messages IS NOT NULL")
-    ).fetchall()
+    )
 
-    for row in rows:
+    for row in result:
         try:
             messages = row[1]
             # asyncpg may return JSONB as dict/list directly, or as a string
