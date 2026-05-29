@@ -190,8 +190,6 @@ async def exchange_code_for_token(request: ExchangeCodeRequest):
                 status_code=500,
                 detail="Failed to retrieve user ID from Mezon"
             )
-
-        # Connect to MongoDB
         
         # Create or update user with default permissions
         user_permission_service = PgUserPermissionRepository()
@@ -354,8 +352,6 @@ async def refresh_access_token(request: RefreshTokenRequest):
         HTTPException: 401 if refresh token is invalid or expired
     """
     try:
-        # Connect to MongoDB
-        
         # Validate refresh token
         refresh_token_service = PgRefreshTokenRepository()
         token_doc = await refresh_token_service.validate_refresh_token(request.refresh_token)
@@ -450,8 +446,6 @@ async def logout(
         Authorization: Bearer <access_token>
     """
     try:
-        # Connect to MongoDB
-        
         # Get JTI from current access token
         jti = user.get("jti")
         user_id = user.get("user_id")
@@ -538,8 +532,6 @@ async def bot_login(request: BotLoginRequest):
         user_data = {
             "user_id": str(user_id)
         }
-
-        # Connect to MongoDB
         
         # Create or update bot user with default bot permissions
         user_permission_service = PgUserPermissionRepository()
