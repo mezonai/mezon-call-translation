@@ -12,6 +12,8 @@ from sqlalchemy import text
 from orchestrator_service.services.postgresql.database import get_session_factory
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
+from orchestrator_service.services.postgresql.models import OutboxUseCase, OutboxStatus
+from orchestrator_service.models.summary_models import RetryType
 
 logger = get_logger(__name__)
 
@@ -1301,7 +1303,7 @@ class PgTranscriptRepository:
     # GENERIC OUTBOX TASKS
     # ------------------------------------------------------------------
 
-    async def add_to_outbox(
+    async def add_retry_summarization_task_to_outbox(
         self,
         room_id: str,
         retry_type: str,
@@ -1317,15 +1319,20 @@ class PgTranscriptRepository:
                 # Check for existing pending task for same room_id and retry_type
                 check_query = """
                     SELECT id FROM outbox_tasks 
-                    WHERE use_case = 'retry_summarization' 
+                    WHERE use_case = :use_case
                       AND configs->>'room_id' = :room_id 
-                      AND configs->>'retry_type' = :retry_type
-                      AND status = 'pending'
+                      AND retry_type = :retry_type
+                      AND status = :status
                     LIMIT 1
                 """
                 res = await session.execute(
                     text(check_query),
-                    {"room_id": room_id, "retry_type": retry_type}
+                    {
+                        "use_case": OutboxUseCase.RETRY_SUMMARIZATION.value,
+                        "room_id": room_id, 
+                        "retry_type": retry_type,
+                        "status": OutboxStatus.PENDING.value
+                    }
                 )
                 existing = res.fetchone()
 
@@ -1351,14 +1358,17 @@ class PgTranscriptRepository:
                     task_id = str(uuid.uuid4())
                     insert_query = """
                         INSERT INTO outbox_tasks 
-                            (id, use_case, status, configs, last_error, created_at, updated_at)
+                            (id, use_case, status, retry_type, configs, last_error, created_at, updated_at)
                         VALUES
-                            (:id, 'retry_summarization', 'pending', :configs::jsonb, :error_msg, :now, :now)
+                            (:id, :use_case, :status, :retry_type, :configs::jsonb, :error_msg, :now, :now)
                     """
                     await session.execute(
                         text(insert_query),
                         {
                             "id": task_id,
+                            "use_case": OutboxUseCase.RETRY_SUMMARIZATION.value,
+                            "status": OutboxStatus.PENDING.value,
+                            "retry_type": retry_type,
                             "configs": configs_json,
                             "error_msg": error_msg,
                             "now": now,
@@ -1371,11 +1381,12 @@ class PgTranscriptRepository:
             return False
 
     async def fetch_pending_outbox_tasks(self, limit: int = 5) -> List[Dict[str, Any]]:
+        from orchestrator_service.services.postgresql.models import OutboxStatus
         session_factory = get_session_factory()
 
         query = """
             SELECT * FROM outbox_tasks 
-            WHERE status = 'pending'
+            WHERE status = :status
             ORDER BY created_at ASC 
             LIMIT :limit 
             FOR UPDATE SKIP LOCKED
@@ -1384,7 +1395,7 @@ class PgTranscriptRepository:
             async with session_factory() as session:
                 res = await session.execute(
                     text(query),
-                    {"limit": limit}
+                    {"limit": limit, "status": OutboxStatus.PENDING.value}
                 )
                 rows = res.fetchall()
                 tasks = []
@@ -1406,6 +1417,7 @@ class PgTranscriptRepository:
         session_factory = get_session_factory()
         now = datetime.now(timezone.utc)
 
+        # Status is passed as a string/enum value from worker
         query = "UPDATE outbox_tasks SET status = :status, updated_at = :now"
         params = {"id": task_id, "status": status, "now": now}
 

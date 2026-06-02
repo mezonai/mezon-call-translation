@@ -83,7 +83,6 @@ class GeminiLLMService(BaseLLMService):
                 action_items=action_items_result.action_items,
                 summary_success=True,
                 action_items_success=True,
-                is_success=True,
             )
         except Exception as e:
             logger.error(f"Gemini summarization error: {e}")
@@ -92,5 +91,4 @@ class GeminiLLMService(BaseLLMService):
                 action_items=[],
                 summary_success=False,
                 action_items_success=False,
-                is_success=False,
             )

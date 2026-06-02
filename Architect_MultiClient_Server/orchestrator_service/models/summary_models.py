@@ -34,7 +34,6 @@ class SummaryActionItemsResult(BaseModel):
     action_items: List[ActionItemResult] = Field(description="List of action items for all participants")
     summary_success: bool = Field(description="Whether summary task succeeded", default=True)
     action_items_success: bool = Field(description="Whether action items task succeeded", default=True)
-    is_success: bool = Field(description="Whether both summary and action items succeeded", default=True)
 
 class RoomSummary(BaseModel):
     """Model for storing room conversation summary"""

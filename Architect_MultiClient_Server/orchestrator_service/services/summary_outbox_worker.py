@@ -11,6 +11,7 @@ from orchestrator_service.models.summary_models import RetryType
 from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.services.postgresql.models import OutboxStatus, OutboxUseCase
 
 logger = get_logger(__name__)
 
@@ -133,13 +134,15 @@ class SummaryOutboxWorker:
             task_id = task["id"]
             use_case = task["use_case"]
             configs = task["configs"]
+            # Fallback to configs for retry_type if missing in top-level for backward compatibility
+            configs["retry_type"] = task.get("retry_type") or configs.get("retry_type")
 
             handler = OutboxHandlerRegistry.get_handler(use_case)
             if not handler:
                 logger.error(f"No handler registered for outbox use_case: {use_case}")
                 await self.pg_repo.update_outbox_task_status(
                     task_id=task_id,
-                    status="failed",
+                    status=OutboxStatus.FAILED.value,
                     error_msg=f"No handler registered for use_case: {use_case}"
                 )
                 continue
@@ -148,7 +151,7 @@ class SummaryOutboxWorker:
                 # Mark as processing
                 await self.pg_repo.update_outbox_task_status(
                     task_id=task_id,
-                    status="processing"
+                    status=OutboxStatus.PROCESSING.value
                 )
 
                 # Execute handler
@@ -157,7 +160,7 @@ class SummaryOutboxWorker:
                 # Mark as completed on success
                 await self.pg_repo.update_outbox_task_status(
                     task_id=task_id,
-                    status="completed"
+                    status=OutboxStatus.COMPLETED.value
                 )
                 logger.info(f"✅ Outbox task {task_id} completed successfully")
 
@@ -165,7 +168,7 @@ class SummaryOutboxWorker:
                 # Task fails completely and is marked as failed on the first attempt
                 await self.pg_repo.update_outbox_task_status(
                     task_id=task_id,
-                    status="failed",
+                    status=OutboxStatus.FAILED.value,
                     error_msg=str(e)
                 )
                 logger.error(f"❌ Outbox task {task_id} failed and marked as 'failed': {e}", exc_info=True)

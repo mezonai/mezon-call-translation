@@ -210,7 +210,7 @@ class SummaryService:
             result["_id"] = saved_id
 
             # 9. Notify clients via SSE if summary generation is successful
-            if summary_data_result.is_success:
+            if summary_data_result.summary_success and summary_data_result.action_items_success:
                 metadata_channel = MetadataChannel()
                 await metadata_channel.push_room_summary_done(
                     room_id=str(room_id), room_name=room_doc.get("room_name", "Unknown")
@@ -219,14 +219,14 @@ class SummaryService:
                 # Add partial failure(s) to outbox
                 if not summary_data_result.summary_success:
                     logger.warning(f"Summary task failed for room {room_id}. Creating outbox task.")
-                    await self.pg_repo.add_to_outbox(
+                    await self.pg_repo.add_retry_summarization_task_to_outbox(
                         room_id=str(room_id),
                         retry_type="summary",
                         error_msg="LLM summary task failed in initial run."
                     )
                 if not summary_data_result.action_items_success:
                     logger.warning(f"Action items task failed for room {room_id}. Creating outbox task.")
-                    await self.pg_repo.add_to_outbox(
+                    await self.pg_repo.add_retry_summarization_task_to_outbox(
                         room_id=str(room_id),
                         retry_type="action_items",
                         error_msg="LLM action items task failed in initial run."
@@ -236,7 +236,7 @@ class SummaryService:
         except Exception as e:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
             logger.warning(f"Creating all_summarization outbox task for room {room_id} due to complete failure.")
-            await self.pg_repo.add_to_outbox(
+            await self.pg_repo.add_retry_summarization_task_to_outbox(
                 room_id=str(room_id),
                 retry_type="all",
                 error_msg=str(e)
@@ -329,7 +329,7 @@ class SummaryService:
                     conversation_text=full_text,
                     language=self.config.llm.language,
                 )
-                is_success = result.is_success
+                is_success = result.summary_success and result.action_items_success
 
                 summary_data = {
                     "summary": result.summary,
