@@ -87,7 +87,6 @@ class PgOutboxRepository:
                             "id": task_id,
                             "use_case": OutboxUseCase.RETRY_SUMMARIZATION.value,
                             "status": OutboxStatus.PENDING.value,
-                            "retry_type": retry_type,
                             "configs": configs_json,
                             "error_msg": error_msg,
                             "now": now,
