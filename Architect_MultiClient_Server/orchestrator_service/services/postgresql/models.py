@@ -276,3 +276,31 @@ class TokenBlacklist(Base):
         Index("ix_blacklist_jti", "jti", unique=True),
         Index("ix_blacklist_expires_at", "expires_at"),
     )
+
+
+# ---------------------------------------------------------------------------
+# outbox_tasks
+# ---------------------------------------------------------------------------
+class OutboxTask(Base):
+    """
+    Generic Outbox table to store and manage asynchronous retry tasks.
+    """
+
+    __tablename__ = "outbox_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    use_case: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    configs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    __table_args__ = (
+        Index("ix_outbox_tasks_status_created_at", "status", "created_at"),
+        Index("ix_outbox_tasks_use_case", "use_case"),
+    )

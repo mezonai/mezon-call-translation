@@ -215,9 +215,32 @@ class SummaryService:
                 await metadata_channel.push_room_summary_done(
                     room_id=str(room_id), room_name=room_doc.get("room_name", "Unknown")
                 )
+            else:
+                # Add partial failure(s) to outbox
+                if not summary_data_result.summary_success:
+                    logger.warning(f"Summary task failed for room {room_id}. Creating outbox task.")
+                    await self.pg_repo.add_to_outbox(
+                        room_id=str(room_id),
+                        retry_type="summary",
+                        error_msg="LLM summary task failed in initial run."
+                    )
+                if not summary_data_result.action_items_success:
+                    logger.warning(f"Action items task failed for room {room_id}. Creating outbox task.")
+                    await self.pg_repo.add_to_outbox(
+                        room_id=str(room_id),
+                        retry_type="action_items",
+                        error_msg="LLM action items task failed in initial run."
+                    )
+
             return result
         except Exception as e:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
+            logger.warning(f"Creating all_summarization outbox task for room {room_id} due to complete failure.")
+            await self.pg_repo.add_to_outbox(
+                room_id=str(room_id),
+                retry_type="all",
+                error_msg=str(e)
+            )
             return {**draft_summary, "_id": saved_id}
 
     async def retry_summary_from_full_text(
