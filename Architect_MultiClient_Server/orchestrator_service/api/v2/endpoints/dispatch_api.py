@@ -1,16 +1,12 @@
-from google.protobuf.json_format import MessageToDict
 from typing import Dict, Any, Optional, List
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import AGENT_CONTROL
+from orchestrator_service.services.room_service import RoomService, get_room_service
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from orchestrator_service.services.livekit_client import (
-    get_livekit_service,
     LiveKitServiceError,
-)
-from orchestrator_service.services.postgresql.pg_transcript_repository import (
-    PgTranscriptRepository,
 )
 
 router = APIRouter()
@@ -65,17 +61,14 @@ class ParticipantListResponseModel(BaseModel):
 async def api_create_dispatch(
     body: DispatchRequestModel,
     auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL)),
+    room_service: RoomService = Depends(get_room_service)
 ) -> DispatchActionResponseModel:
     """Create a dispatch for the specified room."""
-    livekit_service = get_livekit_service()
-
     try:
-        result = await livekit_service.ensure_dispatch(body.room_name)
-        if result.get("dispatch") is not None:
-            result["dispatch"] = MessageToDict(
-                result["dispatch"], preserving_proto_field_name=True
-            )
+        result = await room_service.create_dispatch(body.room_name)
         return DispatchActionResponseModel(**result)
+    except HTTPException:
+        raise
     except LiveKitServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -84,39 +77,34 @@ async def api_create_dispatch(
 async def api_cancel_dispatch(
     body: DispatchRequestModel,
     auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL)),
+    room_service: RoomService = Depends(get_room_service)
 ) -> DispatchActionResponseModel:
     """Cancel a dispatch for the specified room."""
-    livekit_service = get_livekit_service()
     try:
-        result = await livekit_service.cancel_dispatch(body.room_name)
-        if result.get("dispatch") is not None:
-            result["dispatch"] = MessageToDict(
-                result["dispatch"], preserving_proto_field_name=True
-            )
+        result = await room_service.cancel_dispatch(body.room_name)
         return DispatchActionResponseModel(**result)
+    except HTTPException:
+        raise
     except LiveKitServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/rooms/participant/{room_id}", response_model=ParticipantListResponseModel)
 async def list_participants(
-    room_id: str, auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL))
+    room_id: str, 
+    auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL)),
+    room_service: RoomService = Depends(get_room_service)
 ) -> ParticipantListResponseModel:
     """List participants in a room."""
-    pg_repo = PgTranscriptRepository()
-    if not pg_repo.connected:
-        await pg_repo.connect()
-    room = await pg_repo.get_room_by_id(room_id)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
     try:
-        livekit_service = get_livekit_service()
-        participants = await livekit_service.list_participants(room.get("room_name"))
+        participants_data = await room_service.list_participants(room_id)
         return ParticipantListResponseModel(
             status="ok",
             participants=[
-                ParticipantModel(**participant) for participant in participants
-            ],
+                ParticipantModel(**participant) for participant in participants_data
+            ]
         )
+    except HTTPException:
+        raise
     except LiveKitServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))

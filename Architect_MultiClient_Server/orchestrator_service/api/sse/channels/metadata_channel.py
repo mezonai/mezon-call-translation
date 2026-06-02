@@ -128,7 +128,7 @@ class MetadataChannel:
         try:
             # Prepare document with event_id as _id and created_at for TTL
             doc = {
-                "_id": event_data["event_id"],  # Use event_id as document _id
+                "event_id": event_data["event_id"],  # Use event_id as document _id
                 "event_type": event_data["event_type"],
                 "room_id": event_data["room"]["room_id"],
                 "room_name": event_data["room"]["room_name"],

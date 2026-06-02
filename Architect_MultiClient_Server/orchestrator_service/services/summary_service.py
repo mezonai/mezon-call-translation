@@ -3,12 +3,14 @@ Service for generating room summaries
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
+from fastapi import HTTPException
+from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.models.summary_models import RetryType
+from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
 
 from orchestrator_service.utils.logger import get_logger
 
@@ -337,6 +339,57 @@ class SummaryService:
             logger.error(f"Failed to retry summary for room {room_id} with type '{retry_type.value}': {e}")
             return None
 
+    async def get_summary_by_room_name(
+        self,
+        room_name: str,
+        start_time: Optional[datetime],
+        end_time: Optional[datetime],
+        auth: AuthContext
+    ) -> Tuple[List[RoomSummaryResponse], int]:
+        if not self.pg_repo.connected:
+            await self.pg_repo.connect()
+        
+        if auth.can_view_all_rooms:
+            summaries = await self.pg_repo.get_summary_by_room_name(
+                room_name, start_time, end_time
+            )
+        else:
+            summaries = await self.pg_repo.get_summary_by_room_name(
+                room_name, start_time, end_time, auth.user_id
+            )
+
+        summary_models = []
+        for summary in summaries:
+            if summary.get("room_id") is not None:
+                summary["room_id"] = str(summary["room_id"])
+            summary_models.append(RoomSummaryResponse.model_construct(**summary))
+
+        return summary_models, len(summary_models)
+
+    async def get_summary_by_room_id(
+        self,
+        room_id: str,
+        auth: AuthContext
+    ) -> RoomSummaryResponse:
+        if not self.pg_repo.connected:
+            await self.pg_repo.connect()
+
+        if not auth.can_view_all_rooms:
+            has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
+            if not has_access:
+                logger.warning(
+                    f"User {auth.user_id} denied access to room statistics for {room_id}"
+                )
+                raise HTTPException(
+                    status_code=403, detail="You don't have access to this room"
+                )
+        
+        summary = await self.pg_repo.get_summary_by_room_id(room_id)
+        
+        if summary.get("room_id") is not None:
+            summary["room_id"] = str(summary["room_id"])
+
+        return RoomSummaryResponse.model_construct(**summary)
 
 # Singleton
 _summary_service = None

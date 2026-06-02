@@ -12,9 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from orchestrator_service.auth.authorization import require_any_permission, AuthContext
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.postgresql.pg_transcript_repository import (
-    PgTranscriptRepository,
-)
+from orchestrator_service.services.room_service import RoomService, get_room_service
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.utils.transcript_validators import (
     StatusQuery,
@@ -24,7 +22,6 @@ from orchestrator_service.utils.transcript_validators import (
 
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
-
 
 def _serialize_room(room: dict) -> dict:
     serialized_room = dict(room)
@@ -50,6 +47,7 @@ async def list_rooms(
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
+    room_service: RoomService = Depends(get_room_service),
 ):
     """
     List rooms based on user permissions:
@@ -71,47 +69,15 @@ async def list_rooms(
         search_trimmed = None
 
     try:
-        pg_repo = PgTranscriptRepository()
-        if not pg_repo.connected:
-            await pg_repo.connect()
-
-        # Check which permission user has
-        if auth.can_view_all_rooms:
-            # Admin/Bot - see all rooms
-            rooms = await pg_repo.list_rooms(
-                status=status,
-                search=search_trimmed,
-                from_utc=from_utc,
-                to_utc=to_utc,
-                limit=limit,
-                skip=skip,
-            )
-            rooms = [_serialize_room(room) for room in rooms]
-            total = await pg_repo.count_rooms(
-                status=status,
-                search=search_trimmed,
-                from_utc=from_utc,
-                to_utc=to_utc,
-            )
-        else:
-            # Regular user - filter by participation
-            rooms = await pg_repo.list_rooms_by_user(
-                user_id=auth.user_id,
-                status=status,
-                search=search_trimmed,
-                from_utc=from_utc,
-                to_utc=to_utc,
-                limit=limit,
-                skip=skip,
-            )
-            rooms = [_serialize_room(room) for room in rooms]
-            total = await pg_repo.count_rooms_by_user(
-                user_id=auth.user_id,
-                status=status,
-                search=search_trimmed,
-                from_utc=from_utc,
-                to_utc=to_utc,
-            )
+        rooms, total = await room_service.list_rooms(
+            auth=auth,
+            status=status,
+            search=search_trimmed,
+            from_utc=from_utc,
+            to_utc=to_utc,
+            limit=limit,
+            skip=skip,
+        )
 
         return {
             "status": "ok",
@@ -131,6 +97,7 @@ async def list_rooms(
 async def get_room_by_id(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
+    room_service: RoomService = Depends(get_room_service)
 ):
     """
     Get room details by room ID.
@@ -138,29 +105,7 @@ async def get_room_by_id(
     - User: Can only access participated rooms
     """
     try:
-        pg_repo = PgTranscriptRepository()
-        if not pg_repo.connected:
-            await pg_repo.connect()
-
-        if not auth.can_view_all_rooms:
-            # User must have participated in this room
-            has_access = await pg_repo.user_has_room_access(room_id, auth.user_id)
-            if not has_access:
-                logger.warning(f"User {auth.user_id} denied access to room {room_id}")
-                raise HTTPException(
-                    status_code=403, detail="You don't have access to this room"
-                )
-
-        room = await pg_repo.get_room_by_id(room_id)
-        if not room:
-            raise HTTPException(
-                status_code=404, detail=f"Room with ID '{room_id}' not found"
-            )
-
-        # Check access permission for regular users
-
-        room = _serialize_room(room)
-
+        room = await room_service.get_room_by_id(room_id, auth)
         return {"status": "ok", "room": room}
     except HTTPException:
         raise
@@ -175,6 +120,7 @@ async def get_room_by_id(
 async def get_room_statistics_by_id(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
+    room_service: RoomService = Depends(get_room_service)
 ):
     """
     Get detailed statistics for a specific room by ID.
@@ -187,31 +133,7 @@ async def get_room_statistics_by_id(
     - Total transcript segments
     """
     try:
-        pg_repo = PgTranscriptRepository()
-        if not pg_repo.connected:
-            await pg_repo.connect()
-
-        # Check access permission for regular users
-        if not auth.can_view_all_rooms:
-            # User must have participated in this room
-            has_access = await pg_repo.user_has_room_access(room_id, auth.user_id)
-            if not has_access:
-                logger.warning(
-                    f"User {auth.user_id} denied access to room statistics for {room_id}"
-                )
-                raise HTTPException(
-                    status_code=403, detail="You don't have access to this room"
-                )
-
-        stats = await pg_repo.get_room_statistics_by_id(room_id)
-        if not stats:
-            raise HTTPException(
-                status_code=404, detail=f"Room with ID '{room_id}' not found"
-            )
-
-        if stats.get("room_id") is not None:
-            stats["room_id"] = str(stats["room_id"])
-
+        stats = await room_service.get_room_statistics(room_id, auth)
         return {"status": "ok", "statistics": stats}
     except HTTPException:
         raise
@@ -226,6 +148,7 @@ async def get_room_statistics_by_id(
 async def get_audio_info(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
+    room_service: RoomService = Depends(get_room_service)
 ) -> dict[str, Any]:
     """
     Get all audio info for a specific room by ID.
@@ -234,53 +157,15 @@ async def get_audio_info(
     - List of audio files associated with the room
     """
     try:
-        pg_repo = PgTranscriptRepository()
-        if not pg_repo.connected:
-            await pg_repo.connect()
-
-        # Check access permission for regular users
-        if not auth.can_view_all_rooms:
-            # User must have participated in this room
-            has_access = await pg_repo.user_has_room_access(room_id, auth.user_id)
-            if not has_access:
-                logger.warning(
-                    f"User {auth.user_id} denied access to room statistics for {room_id}"
-                )
-                raise HTTPException(
-                    status_code=403, detail="You don't have access to this room"
-                )
-            # Fetch tracks from MongoDB and build file_results
-        file_results = []
-        try:
-            tracks = await pg_repo.get_tracks_by_room(room_id)
-            if not tracks:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No tracks found for room with ID '{room_id}'",
-                )
-            for track in tracks:
-                audio_info = track.get("audio_info", {})
-                started_at_ns = audio_info.get("started_at_ns")
-                ended_at_ns = audio_info.get("ended_at_ns")
-
-                file_result = {
-                    "participant_identity": track.get("participant_identity", ""),
-                    "filename": audio_info.get("filename", ""),
-                    "started_at_ns": started_at_ns,
-                    "ended_at_ns": ended_at_ns,
-                }
-                file_results.append(file_result)
-            return {"status": "ok", "file_results": file_results}
-        except Exception as e:
-            logger.error(
-                f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}"
-            )
-            return {
-                "status": "error",
-                "message": f"Failed to fetch audio info for room {room_id}: {str(e)}",
-            }
+        file_results = await room_service.get_audio_info(room_id, auth)
+        return {"status": "ok", "file_results": file_results}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get audio info: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(
+            f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}"
+        )
+        return {
+            "status": "error",
+            "message": f"Failed to fetch audio info for room {room_id}: {str(e)}",
+        }
