@@ -302,7 +302,6 @@ class OutboxTask(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     use_case: Mapped[OutboxUseCase] = mapped_column(SQLEnum(OutboxUseCase), nullable=False)
     status: Mapped[OutboxStatus] = mapped_column(SQLEnum(OutboxStatus), nullable=False, default=OutboxStatus.PENDING)
-    retry_type: Mapped[Optional[RetryType]] = mapped_column(SQLEnum(RetryType), nullable=True)
     configs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

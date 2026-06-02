@@ -2,11 +2,14 @@
 Summary Outbox Worker Service - Processes and retries failed summarization tasks.
 """
 
+import os
+from typing import List
+
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, Any, Callable, Awaitable, Optional
 
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository
 from orchestrator_service.models.summary_models import RetryType
 from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.utils.logger import get_logger
@@ -64,12 +67,20 @@ class SummaryOutboxWorker:
     """Background worker that polls and processes pending outbox tasks at scheduled hours."""
 
     def __init__(self):
-        self.pg_repo = PgTranscriptRepository()
+        self.outbox_repo = PgOutboxRepository()
         self._running = False
         self._worker_task: Optional[asyncio.Task] = None
         self._check_interval_sec = 30  # Interval to check for targeted time
         self._delay_between_items = 30  # 30-second delay between processing items
         self._last_run_hour = -1  # Prevent duplicate runs in the same hour
+
+        self._batch_limit = int(os.getenv("OUTBOX_BATCH_LIMIT", "5"))
+        hours_str = os.getenv("OUTBOX_RETRY_SUMMARIZATION_TARGET_HOURS", "19,20,21")
+        
+        try:
+            self._target_hours: List[int] = [int(h.strip()) for h in hours_str.split(",") if h.strip()]
+        except ValueError:
+            self._target_hours = [19, 20, 21]
         logger.info("SummaryOutboxWorker initialized")
 
     async def start(self) -> None:
@@ -107,7 +118,7 @@ class SummaryOutboxWorker:
                 try:
                     now = datetime.now()
                     # Trigger the job strictly at 19:00, 20:00, and 21:00
-                    if now.hour in [19, 20, 21] and now.minute == 0 and now.hour != self._last_run_hour:
+                    if now.hour in self._target_hours and now.hour != self._last_run_hour:
                         self._last_run_hour = now.hour
                         logger.info(f"Target hour reached ({now.hour}:00). Starting Outbox processing...")
                         await self._process_batch()
@@ -123,7 +134,7 @@ class SummaryOutboxWorker:
 
     async def _process_batch(self) -> None:
         """Fetch and process up to 5 pending tasks sorted by oldest first."""
-        tasks = await self.pg_repo.fetch_pending_outbox_tasks(limit=5, use_case=OutboxUseCase.RETRY_SUMMARIZATION.value)
+        tasks = await self.outbox_repo.fetch_pending_outbox_tasks(limit=self._batch_limit, use_case=OutboxUseCase.RETRY_SUMMARIZATION.value)
         if not tasks:
             logger.info("No pending outbox tasks found to process.")
             return
@@ -140,7 +151,7 @@ class SummaryOutboxWorker:
             handler = OutboxHandlerRegistry.get_handler(use_case)
             if not handler:
                 logger.error(f"No handler registered for outbox use_case: {use_case}")
-                await self.pg_repo.update_outbox_task_status(
+                await self.outbox_repo.update_outbox_task_status(
                     task_id=task_id,
                     status=OutboxStatus.FAILED.value,
                     error_msg=f"No handler registered for use_case: {use_case}"
@@ -149,7 +160,7 @@ class SummaryOutboxWorker:
 
             try:
                 # Mark as processing
-                await self.pg_repo.update_outbox_task_status(
+                await self.outbox_repo.update_outbox_task_status(
                     task_id=task_id,
                     status=OutboxStatus.PROCESSING.value
                 )
@@ -158,7 +169,7 @@ class SummaryOutboxWorker:
                 await handler(configs)
 
                 # Mark as completed on success
-                await self.pg_repo.update_outbox_task_status(
+                await self.outbox_repo.update_outbox_task_status(
                     task_id=task_id,
                     status=OutboxStatus.COMPLETED.value
                 )
@@ -166,7 +177,7 @@ class SummaryOutboxWorker:
 
             except Exception as e:
                 # Task fails completely and is marked as failed on the first attempt
-                await self.pg_repo.update_outbox_task_status(
+                await self.outbox_repo.update_outbox_task_status(
                     task_id=task_id,
                     status=OutboxStatus.FAILED.value,
                     error_msg=str(e)

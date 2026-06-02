@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository
 from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.summary_models import RetryType
@@ -20,6 +21,7 @@ class SummaryService:
 
     def __init__(self):
         self.pg_repo = PgTranscriptRepository()
+        self.outbox_repo = PgOutboxRepository()
         self.config = get_config()
         # Create LLM service based on configured provider
         self.llm_service = create_llm_service(self.config.llm)
@@ -216,31 +218,29 @@ class SummaryService:
                     room_id=str(room_id), room_name=room_doc.get("room_name", "Unknown")
                 )
             else:
-                # Add partial failure(s) to outbox
-                if not summary_data_result.summary_success:
-                    logger.warning(f"Summary task failed for room {room_id}. Creating outbox task.")
-                    await self.pg_repo.add_retry_summarization_task_to_outbox(
-                        room_id=str(room_id),
-                        retry_type="summary",
-                        error_msg="LLM summary task failed in initial run."
+                retry_type = None
+                error_msg = ""
+
+                if not summary_data_result.summary_success and not summary_data_result.action_items_success:
+                    retry_type, error_msg = "all", "All summarization task failed in initial run."
+                elif not summary_data_result.summary_success:
+                    retry_type, error_msg = "summary", "LLM summary task failed in initial run."
+                elif not summary_data_result.action_items_success:
+                    retry_type, error_msg = "action_items", "LLM action items task failed in initial run."
+
+                if retry_type:
+                    logger.warning(
+                        f"{retry_type.replace('_', ' ').capitalize()} task failed for room {room_id}. Creating outbox task."
                     )
-                if not summary_data_result.action_items_success:
-                    logger.warning(f"Action items task failed for room {room_id}. Creating outbox task.")
-                    await self.pg_repo.add_retry_summarization_task_to_outbox(
+                    await self.outbox_repo.add_retry_summarization_task_to_outbox(
                         room_id=str(room_id),
-                        retry_type="action_items",
-                        error_msg="LLM action items task failed in initial run."
+                        retry_type=retry_type,
+                        error_msg=error_msg
                     )
 
             return result
         except Exception as e:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
-            logger.warning(f"Creating all_summarization outbox task for room {room_id} due to complete failure.")
-            await self.pg_repo.add_retry_summarization_task_to_outbox(
-                room_id=str(room_id),
-                retry_type="all",
-                error_msg=str(e)
-            )
             return {**draft_summary, "_id": saved_id}
 
     async def retry_summary_from_full_text(
