@@ -1380,22 +1380,31 @@ class PgTranscriptRepository:
             logger.error(f"Failed to add task to outbox: {e}")
             return False
 
-    async def fetch_pending_outbox_tasks(self, limit: int = 5) -> List[Dict[str, Any]]:
-        from orchestrator_service.services.postgresql.models import OutboxStatus
+    async def fetch_pending_outbox_tasks(self, limit: int = 5, use_case: Optional[str] = None) -> List[Dict[str, Any]]:
+        from orchestrator_service.services.postgresql.models import OutboxStatus, OutboxUseCase
         session_factory = get_session_factory()
 
         query = """
             SELECT * FROM outbox_tasks 
             WHERE status = :status
+        """
+        params = {"limit": limit, "status": OutboxStatus.PENDING.value}
+
+        if use_case:
+            query += " AND use_case = :use_case"
+            params["use_case"] = use_case
+
+        query += """
             ORDER BY created_at ASC 
             LIMIT :limit 
             FOR UPDATE SKIP LOCKED
         """
+
         try:
             async with session_factory() as session:
                 res = await session.execute(
                     text(query),
-                    {"limit": limit, "status": OutboxStatus.PENDING.value}
+                    params
                 )
                 rows = res.fetchall()
                 tasks = []

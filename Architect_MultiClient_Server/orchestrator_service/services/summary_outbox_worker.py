@@ -123,7 +123,7 @@ class SummaryOutboxWorker:
 
     async def _process_batch(self) -> None:
         """Fetch and process up to 5 pending tasks sorted by oldest first."""
-        tasks = await self.pg_repo.fetch_pending_outbox_tasks(limit=5)
+        tasks = await self.pg_repo.fetch_pending_outbox_tasks(limit=5, use_case=OutboxUseCase.RETRY_SUMMARIZATION.value)
         if not tasks:
             logger.info("No pending outbox tasks found to process.")
             return
