@@ -27,7 +27,7 @@ class Base(DeclarativeBase):
 # ---------------------------------------------------------------------------
 class Room(Base):
     """
-    Corresponds to MongoDB 'rooms' collection.
+    Corresponds to PostgreSQL 'rooms' table.
     mongo_id stores the original ObjectId string for post-migration reference.
     participants stored as JSONB array:
         [{"participant_identity": "...", "timestamp": "<iso8601>"}]
@@ -67,7 +67,7 @@ class Room(Base):
 # ---------------------------------------------------------------------------
 class Track(Base):
     """
-    Corresponds to MongoDB 'tracks' collection.
+    Corresponds to PostgreSQL 'tracks' table.
     PK = egress_id (same as MongoDB '_id').
     audio_info stored as JSONB:
         {filename, duration_sec, started_at_ns, ended_at_ns, location, source}
@@ -105,7 +105,7 @@ class Track(Base):
 # ---------------------------------------------------------------------------
 class TranscriptChunk(Base):
     """
-    Corresponds to MongoDB 'transcript_chunks' collection.
+    Corresponds to PostgreSQL 'transcript_chunks' table.
     segments stored as JSONB array of segment objects.
     """
 
@@ -132,7 +132,7 @@ class TranscriptChunk(Base):
 # ---------------------------------------------------------------------------
 class RoomSummary(Base):
     """
-    Corresponds to MongoDB 'rooms_summary' collection.
+    Corresponds to PostgreSQL 'rooms_summary' table.
     summary_data and messages stored as JSONB.
     participants stored as JSONB array of identity strings.
     """
@@ -163,7 +163,7 @@ class RoomSummary(Base):
 # ---------------------------------------------------------------------------
 class MetadataEvent(Base):
     """
-    Corresponds to MongoDB 'metadata_events' collection.
+    Corresponds to PostgreSQL 'metadata_events' table.
     metadata stored as JSONB.
     """
 
@@ -197,7 +197,7 @@ class MetadataEvent(Base):
 # ---------------------------------------------------------------------------
 class User(Base):
     """
-    Corresponds to MongoDB 'users' collection.
+    Corresponds to PostgreSQL 'users' table.
     permissions stored as JSONB array of strings.
     """
 
@@ -225,7 +225,7 @@ class User(Base):
 # ---------------------------------------------------------------------------
 class RefreshToken(Base):
     """
-    Corresponds to MongoDB 'refresh_tokens' collection.
+    Corresponds to PostgreSQL 'refresh_tokens' table.
     """
 
     __tablename__ = "refresh_tokens"
@@ -255,7 +255,7 @@ class RefreshToken(Base):
 # ---------------------------------------------------------------------------
 class TokenBlacklist(Base):
     """
-    Corresponds to MongoDB 'token_blacklist' collection.
+    Corresponds to PostgreSQL 'token_blacklist' table.
     """
 
     __tablename__ = "token_blacklist"

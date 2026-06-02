@@ -175,7 +175,7 @@ class TranscriptionService:
         self, room_id: str, participant_identity: str, timestamp: datetime = None
     ) -> bool:
         """
-        Save participant info to MongoDB
+        Save participant info to PostgreSQL
 
         Args:
             participant_identity: Participant identity
@@ -200,7 +200,7 @@ class TranscriptionService:
         self, room_id: str, participants: List[Dict[str, Any]]
     ) -> Dict[str, int]:
         """
-        Save batch of participants to MongoDB
+        Save batch of participants to PostgreSQL
         """
         try:
             if not self.pg_repo.connected:

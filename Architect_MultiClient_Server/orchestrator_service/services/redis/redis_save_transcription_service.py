@@ -2,7 +2,7 @@
 Redis-based Save Transcription Queue Service
 
 Consumer service that receives SaveTranscriptionTask batches from Redis
-and saves them progressively to MongoDB.
+and saves them progressively to PostgreSQL.
 """
 
 import asyncio
@@ -50,7 +50,7 @@ class RedisSaveTranscriptionService:
     
     Workflow:
     1. Receive SaveTranscriptionTask batches from Redis
-    2. Save segments to MongoDB progressively
+    2. Save segments to PostgreSQL progressively
     3. If is_final=True, update track status to "completed"
     4. ACK task on success, retry on failure
     
