@@ -59,33 +59,6 @@ class LiveKitConfig:
             return False
         return True
 
-
-# ============================================================================
-# MongoDB Configuration (kept for reference / migration)
-# ============================================================================
-
-@dataclass
-class MongoDBConfig:
-    host: str = "localhost"  # hoặc "mongodb" nếu chạy trong Docker
-    port: int = 27017
-    username: str = "root"
-    password: str = "rootpassword"
-    database: str = "mezon_transcripts"
-    collection: str = "transcripts"
-    
-    @classmethod
-    def from_env(cls) -> 'MongoDBConfig':
-        """Create MongoDB config from environment variables"""
-        return cls(
-            host=os.getenv('MONGODB_HOST', 'localhost'),
-            port=int(os.getenv('MONGODB_PORT', '27017')),
-            username=os.getenv('MONGODB_USERNAME', 'root'),
-            password=os.getenv('MONGODB_PASSWORD', 'rootpassword'),
-            database=os.getenv('MONGODB_DATABASE', 'mezon_transcripts'),
-            collection=os.getenv('MONGODB_COLLECTION', 'transcripts'),
-        )
-
-
 # ============================================================================
 # PostgreSQL Configuration (primary database)
 # ============================================================================
@@ -432,7 +405,6 @@ class Config:
         # Load all configuration sections
         self.livekit = LiveKitConfig.from_env()
         self.stt_service = STTServiceConfig.from_env()
-        self.mongodb = MongoDBConfig.from_env()
         self.postgresql = PostgreSQLConfig.from_env()
         self.server = ServerConfig.from_env()
         self.logger = LoggerConfig.from_env()
