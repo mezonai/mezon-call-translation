@@ -286,6 +286,26 @@ class LLMConfig:
 
 
 # ============================================================================
+# Gemma Fallback Configuration
+# ============================================================================
+
+@dataclass
+class GemmaFallbackConfig:
+    """Gemma 4 fallback config in case primary LLM fail."""
+    enabled: bool = False
+    api_key: str = ""
+    model: str = "gemma-4-31b-it"
+
+    @classmethod
+    def from_env(cls) -> 'GemmaFallbackConfig':
+        return cls(
+            enabled=os.getenv('GEMMA_FALLBACK_ENABLED', 'false').lower() == 'true',
+            api_key=os.getenv('GEMMA_FALLBACK_API_KEY', ''),
+            model=os.getenv('GEMMA_FALLBACK_MODEL', 'gemma-4-31b-it'),
+        )
+
+
+# ============================================================================
 # Redis Configuration (Task Queue)
 # ============================================================================
 
@@ -411,6 +431,7 @@ class Config:
         self.auth = AuthConfig.from_env()
         self.minio = MinIOConfig.from_env()
         self.llm = LLMConfig.from_env()
+        self.gemma_fallback = GemmaFallbackConfig.from_env()
         self.redis = RedisConfig.from_env()
         self.notification = NotificationConfig.from_env()
         self.oauth2 = OAuth2Config.from_env()

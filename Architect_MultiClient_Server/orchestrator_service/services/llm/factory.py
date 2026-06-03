@@ -16,6 +16,7 @@ def create_llm_service(config: LLMConfig) -> BaseLLMService:
 
     Supported providers:
     - 'gemini': Google Gemini API
+    - 'gemma': Google Gemma models (via Generative AI SDK)
     - 'local': Local OpenAI-compatible LLM
     Args:
         config: LLMConfig with provider type and credentials
@@ -30,12 +31,12 @@ def create_llm_service(config: LLMConfig) -> BaseLLMService:
 
     logger.info(f"Creating LLM service for provider: {provider}, model: {config.model}")
 
-    if provider == 'gemini':
+    if provider in ('gemini', 'gemma'):
         return GeminiLLMService(config)
     elif provider == 'local':
         return LocalLLMService(config)
     else:
         raise ValueError(
             f"Unknown LLM provider: {provider}. "
-            f"Supported providers: gemini, local"
+            f"Supported providers: gemini, gemma, local"
         )

@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import httpx
 from pydantic import ValidationError
 from tenacity import (
@@ -16,7 +16,9 @@ from tenacity import (
     before_sleep_log,
 )
 
+from orchestrator_service.config.application_config import get_config, LLMConfig
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
+from orchestrator_service.services.llm.gemini_llm_service import GeminiLLMService
 from orchestrator_service.services.llm.prompt import build_prompt_action_items, build_prompt_summary
 from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.utils.logger import get_logger
@@ -109,6 +111,21 @@ class LocalLLMService(BaseLLMService):
             raise ValueError("base_url is required for LocalLLMService")
         logger.info(f"Initialized Local LLM service: {config.base_url}, model: {config.model}")
 
+        self._fallback_service: Optional[GeminiLLMService] = None
+        fb = get_config().gemma_fallback
+        if fb.enabled and fb.api_key:
+            fallback_config = LLMConfig(
+                provider='gemma',
+                api_key=fb.api_key,
+                model=fb.model,
+                language=config.language,
+            )
+            try:
+                self._fallback_service = GeminiLLMService(fallback_config)
+                logger.info(f"Gemma fallback service initialized: model={fb.model}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Gemma fallback service: {e}")
+
     def _build_headers(self) -> Dict[str, str]:
         """
         Build HTTP headers for API requests.
@@ -168,55 +185,94 @@ class LocalLLMService(BaseLLMService):
     async def summarize_conversation(self, conversation_text: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """
         Summarize conversation by running 2 focused local LLM requests.
+        If either sub-task fails, retries with Gemma fallback (if configured).
+        If fallback also fails, returns with success=False for the failed parts.
 
         Args:
             conversation_text: Formatted conversation transcript
+            language: Output language
 
         Returns:
             SummaryActionItemsResult with summary and action items
         """
-        summary_task = self.summarize_summary(conversation_text, language)
-        action_items_task = self.summarize_action_items(conversation_text, language)
-
-        results = await asyncio.gather(summary_task, action_items_task, return_exceptions=True)
+        # Phase 1: primary local LLM
+        results = await asyncio.gather(
+            self.summarize_summary(conversation_text, language),
+            self.summarize_action_items(conversation_text, language),
+            return_exceptions=True,
+        )
         summary_res, action_items_res = results
 
-        # Process summary result
-        if isinstance(summary_res, Exception):
-            logger.error(f"Failed to generate summary using Local LLM: {summary_res}")
-            summary = f""
+        summary_failed = isinstance(summary_res, Exception)
+        action_items_failed = isinstance(action_items_res, Exception)
+
+        if summary_failed:
+            logger.error(f"Local LLM summary failed: {summary_res}")
+        if action_items_failed:
+            logger.error(f"Local LLM action_items failed: {action_items_res}")
+
+        # Phase 2: Gemma fallback — only retry the failed sub-tasks
+        if (summary_failed or action_items_failed) and self._fallback_service is not None:
+            logger.warning(
+                f"Attempting Gemma fallback (summary_failed={summary_failed}, "
+                f"action_items_failed={action_items_failed})"
+            )
+            fallback_coros = []
+            if summary_failed:
+                fallback_coros.append(
+                    self._fallback_service.summarize_summary(conversation_text, language)
+                )
+            if action_items_failed:
+                fallback_coros.append(
+                    self._fallback_service.summarize_action_items(conversation_text, language)
+                )
+
+            fb_results = await asyncio.gather(*fallback_coros, return_exceptions=True)
+            fb_idx = 0
+
+            if summary_failed:
+                fb_res = fb_results[fb_idx]
+                fb_idx += 1
+                if isinstance(fb_res, Exception):
+                    logger.error(f"Gemma fallback summary also failed: {fb_res}")
+                else:
+                    summary_res = fb_res
+                    summary_failed = False
+                    logger.info("Gemma fallback summary succeeded.")
+
+            if action_items_failed:
+                fb_res = fb_results[fb_idx]
+                if isinstance(fb_res, Exception):
+                    logger.error(f"Gemma fallback action_items also failed: {fb_res}")
+                else:
+                    action_items_res = fb_res
+                    action_items_failed = False
+                    logger.info("Gemma fallback action_items succeeded.")
+
+        # Phase 3: build final result
+        if summary_failed:
+            summary = ""
         else:
             summary_parts = [
                 f"Context\n{summary_res.context}",
                 f"Key Discussions\n{summary_res.key_discussions}",
             ]
-
             if summary_res.decisions and summary_res.decisions.strip():
                 summary_parts.append(f"Decisions\n{summary_res.decisions}")
-
             if summary_res.unresolved_issues and summary_res.unresolved_issues.strip():
                 summary_parts.append(f"Unresolved Issues\n{summary_res.unresolved_issues}")
-
             if summary_res.next_focus and summary_res.next_focus.strip():
                 summary_parts.append(f"Next Focus\n{summary_res.next_focus}")
-
             summary = "\n\n".join(summary_parts)
 
-        # Process action items result
-        if isinstance(action_items_res, Exception):
-            logger.error(f"Failed to generate action items using Local LLM: {action_items_res}")
-            action_items = []
-        else:
-            action_items = action_items_res.action_items
+        action_items = [] if action_items_failed else action_items_res.action_items
 
-        summary_success = not isinstance(summary_res, Exception)
-        action_items_success = not isinstance(action_items_res, Exception)
-        if summary_success and action_items_success:
+        if not summary_failed and not action_items_failed:
             logger.info("Successfully generated summary and action items using Local LLM (2 requests)")
 
         return SummaryActionItemsResult(
             summary=summary,
             action_items=action_items,
-            summary_success=summary_success,
-            action_items_success=action_items_success,
+            summary_success=not summary_failed,
+            action_items_success=not action_items_failed,
         )
