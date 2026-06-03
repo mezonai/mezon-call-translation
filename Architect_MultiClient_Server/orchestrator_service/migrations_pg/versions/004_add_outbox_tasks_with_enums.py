@@ -18,11 +18,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    use_case_enum = postgresql.ENUM('retry_summarization', name='outboxusecase')
-    use_case_enum.create(op.get_bind(), checkfirst=True)
-    
-    status_enum = postgresql.ENUM('pending', 'processing', 'completed', 'failed', name='outboxstatus')
-    status_enum.create(op.get_bind(), checkfirst=True)
+    # Create enum types idempotently (checkfirst=True skips if already exists)
+    postgresql.ENUM('retry_summarization', name='outboxusecase').create(op.get_bind(), checkfirst=True)
+    postgresql.ENUM('pending', 'processing', 'completed', 'failed', name='outboxstatus').create(op.get_bind(), checkfirst=True)
+
+    # create_type=False prevents create_table from trying to CREATE TYPE again
+    use_case_enum = postgresql.ENUM('retry_summarization', name='outboxusecase', create_type=False)
+    status_enum = postgresql.ENUM('pending', 'processing', 'completed', 'failed', name='outboxstatus', create_type=False)
 
     op.create_table(
         'outbox_tasks',
