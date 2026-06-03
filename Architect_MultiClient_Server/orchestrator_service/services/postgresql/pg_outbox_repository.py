@@ -76,10 +76,10 @@ class PgOutboxRepository:
                     # Insert new outbox task
                     task_id = str(uuid.uuid4())
                     insert_query = """
-                        INSERT INTO outbox_tasks 
-                            (id, use_case, status, retry_type, configs, last_error, created_at, updated_at)
+                        INSERT INTO outbox_tasks
+                            (id, use_case, status, configs, last_error, created_at, updated_at)
                         VALUES
-                            (:id, :use_case, :status, :retry_type, :configs::jsonb, :error_msg, :now, :now)
+                            (:id, :use_case, :status, :configs::jsonb, :error_msg, :now, :now)
                     """
                     await session.execute(
                         text(insert_query),

@@ -6,7 +6,7 @@ import os
 from typing import List
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Callable, Awaitable, Optional
 
 from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository
@@ -116,7 +116,7 @@ class SummaryOutboxWorker:
         try:
             while self._running:
                 try:
-                    now = datetime.now()
+                    now = datetime.now(timezone.utc)
                     # Trigger the job strictly at 19:00, 20:00, and 21:00
                     if now.hour in self._target_hours and now.hour != self._last_run_hour:
                         self._last_run_hour = now.hour
@@ -145,8 +145,6 @@ class SummaryOutboxWorker:
             task_id = task["id"]
             use_case = task["use_case"]
             configs = task["configs"]
-            # Fallback to configs for retry_type if missing in top-level for backward compatibility
-            configs["retry_type"] = task.get("retry_type") or configs.get("retry_type")
 
             handler = OutboxHandlerRegistry.get_handler(use_case)
             if not handler:
