@@ -1,5 +1,5 @@
 """
-Room API endpoints for querying room data from MongoDB
+Room API endpoints for querying room data from PostgreSQL
 - List rooms with filters and pagination
 - Get room details by name
 - Get room statistics
