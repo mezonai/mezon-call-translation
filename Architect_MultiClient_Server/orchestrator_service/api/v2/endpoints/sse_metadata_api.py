@@ -169,7 +169,7 @@ async def push_session_ended_api(req: SessionEndedRequest, auth: Dict[str, Any] 
 async def push_session_record_done_api(req: SessionRecordDoneRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push session_record_done event to all connected bots via SSE.
-    File results are automatically fetched from MongoDB based on room_id.
+    File results are automatically fetched from PostgreSQL based on room_id.
     
     Args:
         req: Session record done event data

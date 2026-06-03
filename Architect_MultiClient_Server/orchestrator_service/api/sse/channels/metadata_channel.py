@@ -116,7 +116,7 @@ class MetadataChannel:
 
     async def _save_event_to_db(self, event_data: Dict[str, Any]) -> Optional[str]:
         """
-        Save metadata event to MongoDB with TTL.
+        Save metadata event to PostgreSQL with TTL.
         Events will be automatically deleted after 3 days.
 
         Args:
@@ -183,7 +183,7 @@ class MetadataChannel:
             f"(room_id={room_id}, room_name={room_name})"
         )
 
-        # Save event to MongoDB with TTL
+        # Save event to PostgreSQL with TTL
         await self._save_event_to_db(event_data)
 
         return {
@@ -246,7 +246,7 @@ class MetadataChannel:
             f"(room_id={room_id}, room_name={room_name}, duration={duration_seconds}s)"
         )
 
-        # Save event to MongoDB with TTL
+        # Save event to PostgreSQL with TTL
         await self._save_event_to_db(event_data)
 
         return {
@@ -268,7 +268,7 @@ class MetadataChannel:
     ) -> Dict[str, Any]:
         """
         Push room_record_done event to all connected bots.
-        Automatically fetches tracks from MongoDB and builds file_results.
+        Automatically fetches tracks from PostgreSQL and builds file_results.
 
         Args:
             room_id: Room identifier
@@ -287,7 +287,7 @@ class MetadataChannel:
                 f"[Metadata Channel] No active bot connections, room_record_done event may be lost"
             )
 
-        # Fetch tracks from MongoDB and build file_results
+        # Fetch tracks from PostgreSQL and build file_results
         file_results = []
         try:
             tracks = await self.pg_repo.get_tracks_by_room(room_id)
@@ -336,7 +336,7 @@ class MetadataChannel:
             f"(room_id={room_id}, room_name={room_name}, files={len(file_results)})"
         )
 
-        # Save event to MongoDB with TTL
+        # Save event to PostgreSQL with TTL
         await self._save_event_to_db(event_data)
 
         return {
@@ -398,7 +398,7 @@ class MetadataChannel:
             f"(room_id={room_id}, room_name={room_name})"
         )
 
-        # Save event to MongoDB with TTL
+        # Save event to PostgreSQL with TTL
         await self._save_event_to_db(event_data)
 
         return {

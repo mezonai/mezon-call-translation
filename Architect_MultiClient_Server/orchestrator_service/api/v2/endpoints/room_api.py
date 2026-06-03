@@ -1,5 +1,5 @@
 """
-Room API endpoints for querying room data from MongoDB
+Room API endpoints for querying room data from PostgreSQL
 - List rooms with filters and pagination
 - Get room details by name
 - Get room statistics
@@ -259,6 +259,7 @@ async def get_audio_info(
                     detail="You don't have access to this room",
                 )
 
+
         # Fetch tracks
         tracks = await pg_repo.get_tracks_by_room(room_id)
         
@@ -267,6 +268,7 @@ async def get_audio_info(
                 "status": "ok",
                 "file_results": [],
             }
+
 
         file_results = []
 
