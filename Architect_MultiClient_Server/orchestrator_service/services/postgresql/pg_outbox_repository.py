@@ -37,11 +37,11 @@ class PgOutboxRepository:
             async with session_factory() as session:
                 # Check for existing pending task for same room_id and retry_type
                 check_query = """
-                    SELECT id FROM outbox_tasks 
-                    WHERE use_case = :use_case
-                      AND configs->>'room_id' = :room_id 
+                    SELECT id FROM outbox_tasks
+                    WHERE use_case = CAST(:use_case AS outboxusecase)
+                      AND configs->>'room_id' = :room_id
                       AND configs->>'retry_type' = :retry_type
-                      AND status = :status
+                      AND status = CAST(:status AS outboxstatus)
                     LIMIT 1
                 """
                 res = await session.execute(
@@ -79,7 +79,7 @@ class PgOutboxRepository:
                         INSERT INTO outbox_tasks
                             (id, use_case, status, configs, last_error, created_at, updated_at)
                         VALUES
-                            (:id, :use_case, :status, :configs::jsonb, :error_msg, :now, :now)
+                            (:id, CAST(:use_case AS outboxusecase), CAST(:status AS outboxstatus), CAST(:configs AS jsonb), :error_msg, :now, :now)
                     """
                     await session.execute(
                         text(insert_query),
@@ -95,20 +95,20 @@ class PgOutboxRepository:
                 await session.commit()
                 return True
         except Exception as e:
-            logger.error(f"Failed to add task to outbox: {e}")
+            logger.error(f"Failed to add task to outbox: {e}", exc_info=True)
             return False
 
     async def fetch_pending_outbox_tasks(self, limit: int = 5, use_case: Optional[str] = None) -> List[Dict[str, Any]]:
         session_factory = get_session_factory()
 
         query = """
-            SELECT * FROM outbox_tasks 
-            WHERE status = :status
+            SELECT * FROM outbox_tasks
+            WHERE status = CAST(:status AS outboxstatus)
         """
         params = {"limit": limit, "status": OutboxStatus.PENDING.value}
 
         if use_case:
-            query += " AND use_case = :use_case"
+            query += " AND use_case = CAST(:use_case AS outboxusecase)"
             params["use_case"] = use_case
 
         query += """
@@ -143,7 +143,7 @@ class PgOutboxRepository:
         session_factory = get_session_factory()
         now = datetime.now(timezone.utc)
 
-        query = "UPDATE outbox_tasks SET status = :status, updated_at = :now"
+        query = "UPDATE outbox_tasks SET status = CAST(:status AS outboxstatus), updated_at = :now"
         params = {"id": task_id, "status": status, "now": now}
 
         if error_msg is not None:
