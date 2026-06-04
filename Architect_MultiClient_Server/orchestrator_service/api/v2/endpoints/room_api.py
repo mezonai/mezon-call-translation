@@ -273,7 +273,7 @@ async def get_audio_info(
         file_results = []
 
         for track in tracks:
-            audio_info = track.get("audio_info", {})
+            audio_info = track.get("audio_info") or {}
 
             file_results.append(
                 {
