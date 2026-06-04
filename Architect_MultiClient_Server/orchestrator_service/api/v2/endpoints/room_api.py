@@ -225,7 +225,9 @@ async def get_room_statistics_by_id(
 )
 async def get_audio_info(
     room_id: str,
-    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
+    auth: AuthContext = Depends(
+        require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)
+    ),
 ) -> dict[str, Any]:
     """
     Get all audio info for a specific room by ID.
@@ -233,54 +235,72 @@ async def get_audio_info(
     Returns:
     - List of audio files associated with the room
     """
+
     try:
         pg_repo = PgTranscriptRepository()
+
         if not pg_repo.connected:
             await pg_repo.connect()
 
         # Check access permission for regular users
         if not auth.can_view_all_rooms:
-            # User must have participated in this room
-            has_access = await pg_repo.user_has_room_access(room_id, auth.user_id)
+            has_access = await pg_repo.user_has_room_access(
+                room_id,
+                auth.user_id,
+            )
+
             if not has_access:
                 logger.warning(
-                    f"User {auth.user_id} denied access to room statistics for {room_id}"
+                    f"User {auth.user_id} denied access to room {room_id}"
                 )
-                raise HTTPException(
-                    status_code=403, detail="You don't have access to this room"
-                )
-        
-        file_results = []
-        try:
-            tracks = await pg_repo.get_tracks_by_room(room_id)
-            if not tracks:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No tracks found for room with ID '{room_id}'",
-                )
-            for track in tracks:
-                audio_info = track.get("audio_info") or {}
-                started_at_ns = audio_info.get("started_at_ns")
-                ended_at_ns = audio_info.get("ended_at_ns")
 
-                file_result = {
-                    "participant_identity": track.get("participant_identity", ""),
-                    "filename": audio_info.get("filename", ""),
-                    "started_at_ns": started_at_ns,
-                    "ended_at_ns": ended_at_ns,
-                }
-                file_results.append(file_result)
-            return {"status": "ok", "file_results": file_results}
-        except Exception as e:
-            logger.error(
-                f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}"
-            )
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have access to this room",
+                )
+
+
+        # Fetch tracks
+        tracks = await pg_repo.get_tracks_by_room(room_id)
+        
+        if not tracks:
             return {
-                "status": "error",
-                "message": f"Failed to fetch audio info for room {room_id}: {str(e)}",
+                "status": "ok",
+                "file_results": [],
             }
+
+
+        file_results = []
+
+        for track in tracks:
+            audio_info = track.get("audio_info", {})
+
+            file_results.append(
+                {
+                    "participant_identity": track.get(
+                        "participant_identity",
+                        "",
+                    ),
+                    "filename": audio_info.get("filename", ""),
+                    "started_at_ns": audio_info.get("started_at_ns"),
+                    "ended_at_ns": audio_info.get("ended_at_ns"),
+                }
+            )
+
+        return {
+            "status": "ok",
+            "file_results": file_results,
+        }
+
     except HTTPException:
         raise
+
     except Exception as e:
-        logger.error(f"Failed to get audio info: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(
+            f"Failed to get audio info for room {room_id}: {e}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch audio info",
+        )

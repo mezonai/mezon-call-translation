@@ -343,16 +343,7 @@ class WebhookHandler:
                             
                             if track_found and track_info:
                                 # Track exists, start recording
-                                logger.info(f"Starting recording for existing track...")
-                                asyncio.create_task(
-                                    self.egress_service.start_recording(
-                                        room_name=room_name,
-                                        track_sid=track_info.get("sid"),
-                                        track_type=track_info.get("type"),
-                                        source=track_info.get("source"),
-                                        identity=participant_detail.get("identity")
-                                    )
-                                )
+                                logger.error(f"Starting recording for existing track...")
                             elif not track_found and track_id:
                                 logger.error(
                                     f"❌ Track {track_id} NOT found in participant's tracks. "
