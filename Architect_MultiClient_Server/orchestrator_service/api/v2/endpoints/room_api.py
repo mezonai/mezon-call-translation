@@ -156,6 +156,7 @@ async def get_audio_info(
     Returns:
     - List of audio files associated with the room
     """
+
     try:
         file_results = await room_service.get_audio_info(room_id, auth)
         return {"status": "ok", "file_results": file_results}
