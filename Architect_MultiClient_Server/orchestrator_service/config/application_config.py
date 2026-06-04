@@ -224,12 +224,18 @@ class MinIOConfig:
 class LoggerConfig:
     """Logger configuration"""
     level: str = "INFO"
-    
+    # Rotation
+    rotation_max_mb: int = 500
+    # Notification level 
+    notification_level: str = "ERROR"
+
     @classmethod
     def from_env(cls) -> 'LoggerConfig':
         """Create Logger config from environment variables"""
         return cls(
             level=os.getenv('LOG_LEVEL', 'INFO').upper(),
+            rotation_max_mb=int(os.getenv('LOG_ROTATION_MAX_MB', '500')),
+            notification_level=os.getenv('LOG_NOTIFICATION_LEVEL', 'ERROR').upper(),
         )
 
 
