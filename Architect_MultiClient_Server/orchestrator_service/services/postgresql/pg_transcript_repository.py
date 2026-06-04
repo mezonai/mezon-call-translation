@@ -276,6 +276,11 @@ class PgTranscriptRepository:
     async def get_tracks_by_room(
         self, room_id: str, status: Optional[str] = None
     ) -> List[Dict[str, Any]]:
+        try:
+            uuid.UUID(room_id)
+        except (ValueError, AttributeError):
+            logger.warning(f"get_tracks_by_room: invalid UUID format '{room_id}', returning empty")
+            return []
         uid = room_id
         session_factory = get_session_factory()
         query = "SELECT * FROM tracks WHERE room_ref_id = :rid"
