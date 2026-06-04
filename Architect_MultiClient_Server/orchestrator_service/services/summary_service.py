@@ -11,6 +11,7 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import Pg
 from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
+from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 from orchestrator_service.utils.logger import get_logger
 
@@ -65,7 +66,7 @@ class SummaryService:
         all_segments = []
         participant_durations = {}
 
-        track_ids = [str(track["_id"]) for track in tracks]
+        track_ids = [str(track["id"]) for track in tracks]
         all_chunks = await self.pg_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
         
         chunks_by_track = {tid: [] for tid in track_ids}
@@ -80,7 +81,7 @@ class SummaryService:
                 track_start_ns = int(
                     track.get("audio_info", {}).get("started_at_ns", 0) or 0
                 )
-                chunks = chunks_by_track[str(track["_id"])]
+                chunks = chunks_by_track[str(track["id"])]
 
                 # Calculate duration for this track/participant using start_time and end_time of chunks 
                 track_duration = sum(
@@ -110,7 +111,7 @@ class SummaryService:
                             }
                         )
             except Exception as e:
-                logger.error(f"Error processing track {track.get('_id')}: {e}")
+                logger.error(f"Error processing track {track.get('id')}: {e}")
                 continue
 
         if not all_segments:
@@ -205,11 +206,11 @@ class SummaryService:
             )
             if not updated:
                 logger.error(f"Failed to update generated summary for room {room_id}")
-                return {**draft_summary, "_id": saved_id}
+                return {**draft_summary, "id": saved_id}
 
             logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
             result = dict(final_summary)
-            result["_id"] = saved_id
+            result["id"] = saved_id
 
             # 9. Notify clients via SSE if summary generation is successful
             if summary_data_result.is_success:
@@ -220,7 +221,7 @@ class SummaryService:
             return result
         except Exception as e:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
-            return {**draft_summary, "_id": saved_id}
+            return {**draft_summary, "id": saved_id}
 
     async def retry_summary_from_full_text(
         self, room_id: str, retry_type: RetryType = RetryType.ALL
@@ -362,6 +363,10 @@ class SummaryService:
         for summary in summaries:
             if summary.get("room_id") is not None:
                 summary["room_id"] = str(summary["room_id"])
+            if summary.get("created_at") is not None:
+                summary["created_at"] = convert_to_iso_8601(summary["created_at"])
+            if summary.get("completed_at") is not None:
+                summary["completed_at"] = convert_to_iso_8601(summary["completed_at"])
             summary_models.append(RoomSummaryResponse.model_construct(**summary))
 
         return summary_models, len(summary_models)
@@ -388,6 +393,10 @@ class SummaryService:
         
         if summary.get("room_id") is not None:
             summary["room_id"] = str(summary["room_id"])
+        if summary.get("created_at") is not None:
+            summary["created_at"] = convert_to_iso_8601(summary["created_at"])
+        if summary.get("completed_at") is not None:
+            summary["completed_at"] = convert_to_iso_8601(summary["completed_at"])
 
         return RoomSummaryResponse.model_construct(**summary)
 

@@ -69,194 +69,45 @@ class PgUserPermissionRepository:
         import json
 
         session_factory = get_session_factory()
+
+        insert_params = {
+            "id": user_id,
+            "username": username,
+            "display_name": display_name,
+            "avatar_url": avatar_url,
+            "permissions": json.dumps(permissions if permissions is not None else []),
+            "now": now,
+        }
+
+        update_clauses = ["username = EXCLUDED.username", "updated_at = EXCLUDED.updated_at"]
+
+        if display_name is not None:
+            update_clauses.append("display_name = EXCLUDED.display_name")
+
+        if avatar_url is not None:
+            update_clauses.append("avatar_url = EXCLUDED.avatar_url")
+
+        if permissions is not None:
+            update_clauses.append("permissions = EXCLUDED.permissions")
+
+        update_sql = ", ".join(update_clauses)
+
+        query = f"""
+            INSERT INTO users (id, username, display_name, avatar_url, permissions, created_at, updated_at)
+            VALUES (:id, :username, :display_name, :avatar_url, CAST(:permissions AS jsonb), :now, :now)
+            ON CONFLICT (id) DO UPDATE 
+            SET {update_sql}
+        """
         try:
             async with session_factory() as session:
-                # Check if user exists
-                result = await session.execute(
-                    text("SELECT id FROM users WHERE id = :id"),
-                    {"id": user_id},
-                )
-                exists = result.fetchone() is not None
-
-                if exists:
-                    # Build dynamic SET clause
-                    updates = {"username": username, "updated_at": now}
-                    if display_name is not None:
-                        updates["display_name"] = display_name
-                    if avatar_url is not None:
-                        updates["avatar_url"] = avatar_url
-                    if permissions is not None:
-                        updates["permissions"] = json.dumps(permissions)
-
-                    set_parts = ", ".join(
-                        f"{k} = :{k}" for k in updates if k != "permissions"
-                    )
-                    params = {k: v for k, v in updates.items() if k != "permissions"}
-                    params["id"] = user_id
-                    if permissions is not None:
-                        set_parts += ", permissions = :permissions::jsonb"
-                        params["permissions"] = json.dumps(permissions)
-
-                    await session.execute(
-                        text(f"UPDATE users SET {set_parts} WHERE id = :id"),
-                        params,
-                    )
-                else:
-                    perms_json = json.dumps(permissions if permissions is not None else [])
-                    await session.execute(
-                        text("""
-                            INSERT INTO users
-                                (id, username, display_name, avatar_url, permissions,
-                                created_at, updated_at)
-                            VALUES
-                                (:id, :username, :display_name, :avatar_url,
-                                CAST(:permissions AS jsonb), :now, :now)
-                        """),
-                        {
-                            "id": user_id,
-                            "username": username,
-                            "display_name": display_name,
-                            "avatar_url": avatar_url,
-                            "permissions": perms_json,
-                            "now": now,
-                        },
-                    )
-
+                await session.execute(text(query), insert_params)
                 await session.commit()
+                
             logger.info(f"Created/updated user user_id={user_id}, username={username}")
             self._cache.pop(user_id, None)
             return True
         except Exception as e:
             logger.error(f"Failed to create/update user: {e}")
-            return False
-
-    async def grant_permission(self, user_id: str, permission: str) -> bool:
-        """Add a single permission to user (idempotent)."""
-        import json
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                await session.execute(
-                    text("""
-                        UPDATE users
-                        SET permissions = (
-                            CASE
-                                WHEN permissions @> :perm::jsonb THEN permissions
-                                ELSE permissions || :perm::jsonb
-                            END
-                        ),
-                        updated_at = :now
-                        WHERE id = :id
-                    """),
-                    {
-                        "perm": json.dumps([permission]),
-                        "now": datetime.now(timezone.utc),
-                        "id": user_id,
-                    },
-                )
-                await session.commit()
-            self._cache.pop(user_id, None)
-            logger.info(f"Granted permission '{permission}' to user_id={user_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to grant permission: {e}")
-            return False
-
-    async def revoke_permission(self, user_id: str, permission: str) -> bool:
-        """Remove a single permission from user."""
-        import json
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                # Remove element matching the permission string from JSONB array
-                await session.execute(
-                    text("""
-                        UPDATE users
-                        SET permissions = (
-                            SELECT jsonb_agg(elem)
-                            FROM jsonb_array_elements(permissions) AS elem
-                            WHERE elem::text != :perm_quoted
-                        ),
-                        updated_at = :now
-                        WHERE id = :id
-                    """),
-                    {
-                        "perm_quoted": json.dumps(permission),
-                        "now": datetime.now(timezone.utc),
-                        "id": user_id,
-                    },
-                )
-                await session.commit()
-            self._cache.pop(user_id, None)
-            logger.info(f"Revoked permission '{permission}' from user_id={user_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to revoke permission: {e}")
-            return False
-
-    async def grant_permissions_bulk(self, user_id: str, permissions: List[str]) -> bool:
-        """Add multiple permissions (idempotent, no duplicates)."""
-        import json
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                await session.execute(
-                    text("""
-                        UPDATE users
-                        SET permissions = (
-                            SELECT jsonb_agg(DISTINCT elem)
-                            FROM (
-                                SELECT jsonb_array_elements(permissions) AS elem
-                                UNION ALL
-                                SELECT jsonb_array_elements(:new_perms::jsonb) AS elem
-                            ) combined
-                        ),
-                        updated_at = :now
-                        WHERE id = :id
-                    """),
-                    {
-                        "new_perms": json.dumps(permissions),
-                        "now": datetime.now(timezone.utc),
-                        "id": user_id,
-                    },
-                )
-                await session.commit()
-            self._cache.pop(user_id, None)
-            logger.info(f"Granted {len(permissions)} permissions to user_id={user_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to grant permissions in bulk: {e}")
-            return False
-
-    async def set_permissions(self, user_id: str, permissions: List[str]) -> bool:
-        """Replace all permissions for a user."""
-        import json
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        UPDATE users
-                        SET permissions = :perms::jsonb,
-                            updated_at  = :now
-                        WHERE id = :id
-                        RETURNING id
-                    """),
-                    {
-                        "perms": json.dumps(permissions),
-                        "now": datetime.now(timezone.utc),
-                        "id": user_id,
-                    },
-                )
-                row = result.fetchone()
-                await session.commit()
-            if row:
-                self._cache.pop(user_id, None)
-                logger.info(f"Set {len(permissions)} permissions for user_id={user_id}")
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Failed to set permissions: {e}")
             return False
 
     async def get_user_info(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -276,67 +127,8 @@ class PgUserPermissionRepository:
             if row:
                 doc = dict(row._mapping)
                 doc["user_id"] = doc["id"]   # backward compat
-                doc["_id"] = doc["id"]
                 return doc
             return None
         except Exception as e:
             logger.error(f"Failed to get user info: {e}")
             return None
-
-    async def delete_user(self, user_id: str) -> bool:
-        """Delete a user and clear their cache."""
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                result = await session.execute(
-                    text("DELETE FROM users WHERE id = :id RETURNING id"),
-                    {"id": user_id},
-                )
-                row = result.fetchone()
-                await session.commit()
-            if row:
-                self._cache.pop(user_id, None)
-                logger.info(f"Deleted user user_id={user_id}")
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Failed to delete user: {e}")
-            return False
-
-    async def list_users_with_permission(self, permission: str) -> List[Dict[str, Any]]:
-        """List all users who have a specific permission."""
-        import json
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        SELECT id, username, display_name, avatar_url,
-                               permissions, created_at, updated_at
-                        FROM users
-                        WHERE permissions @> :perm::jsonb
-                        LIMIT 1000
-                    """),
-                    {"perm": json.dumps([permission])},
-                )
-                rows = result.fetchall()
-            users = []
-            for row in rows:
-                doc = dict(row._mapping)
-                doc["user_id"] = doc["id"]
-                doc["_id"] = doc["id"]
-                users.append(doc)
-            logger.debug(f"Found {len(users)} users with permission '{permission}'")
-            return users
-        except Exception as e:
-            logger.error(f"Failed to list users with permission: {e}")
-            return []
-
-    async def clear_cache(self, user_id: Optional[str] = None):
-        """Clear in-memory permission cache."""
-        if user_id:
-            self._cache.pop(user_id, None)
-            logger.debug(f"Cleared cache for user_id={user_id}")
-        else:
-            self._cache.clear()
-            logger.debug("Cleared all user permission cache")

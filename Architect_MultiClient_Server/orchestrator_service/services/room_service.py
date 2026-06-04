@@ -7,6 +7,7 @@ from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
 
@@ -20,8 +21,8 @@ class RoomService:
 
     def _serialize_room(self, room: dict) -> dict:
         serialized_room = dict(room)
-        if serialized_room.get("_id") is not None:
-            serialized_room["_id"] = str(serialized_room["_id"])
+        if serialized_room.get("id") is not None:
+            serialized_room["id"] = str(serialized_room["id"])
         return serialized_room
 
     async def list_rooms(
@@ -93,6 +94,10 @@ class RoomService:
 
         if stats.get("room_id") is not None:
             stats["room_id"] = str(stats["room_id"])
+        if stats.get("created_at") is not None:
+            stats["created_at"] = convert_to_iso_8601(stats["created_at"])
+        if stats.get("finalized_at") is not None:
+            stats["finalized_at"] = convert_to_iso_8601(stats["finalized_at"])
 
         return stats
 

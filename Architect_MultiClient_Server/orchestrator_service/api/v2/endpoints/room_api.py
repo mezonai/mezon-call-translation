@@ -25,8 +25,8 @@ logger = get_logger(__name__)
 
 def _serialize_room(room: dict) -> dict:
     serialized_room = dict(room)
-    if serialized_room.get("_id") is not None:
-        serialized_room["_id"] = str(serialized_room["_id"])
+    if serialized_room.get("id") is not None:
+        serialized_room["id"] = str(serialized_room["id"])
     return serialized_room
 
 

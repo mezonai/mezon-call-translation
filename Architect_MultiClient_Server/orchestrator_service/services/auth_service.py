@@ -247,7 +247,7 @@ class AuthService:
 
         # Rotate refresh token with new access token JTI and expiry
         new_refresh_token = await self.refresh_token_repo.rotate_refresh_token(
-            token_doc["_id"],
+            token_doc["id"],
             new_jti
         )
 
