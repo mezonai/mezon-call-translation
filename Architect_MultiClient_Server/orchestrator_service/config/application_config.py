@@ -226,6 +226,7 @@ class LoggerConfig:
     level: str = "INFO"
     # Rotation
     rotation_max_mb: int = 500
+    backup_count: int = 30
     # Notification level 
     notification_level: str = "ERROR"
 
@@ -235,6 +236,7 @@ class LoggerConfig:
         return cls(
             level=os.getenv('LOG_LEVEL', 'INFO').upper(),
             rotation_max_mb=int(os.getenv('LOG_ROTATION_MAX_MB', '500')),
+            backup_count=int(os.getenv('LOG_BACKUP_COUNT', '5')),
             notification_level=os.getenv('LOG_NOTIFICATION_LEVEL', 'ERROR').upper(),
         )
 

@@ -421,12 +421,16 @@ class RecordingUploadConfig:
 class LoggerConfig:
     """Logger configuration"""
     level: str = "INFO"
+    rotation_max_mb: int = 500
+    backup_count: int = 30
     
     @classmethod
     def from_env(cls) -> 'LoggerConfig':
         """Create Logger config from environment variables"""
         return cls(
             level=os.getenv('LOG_LEVEL', 'INFO').upper(),
+            rotation_max_mb=int(os.getenv('LOG_ROTATION_MAX_MB', '500')),
+            backup_count=int(os.getenv('LOG_BACKUP_COUNT', '5')),
         )
 
 

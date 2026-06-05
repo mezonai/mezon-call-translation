@@ -196,7 +196,8 @@ class ConfigManager:
         config.logging.date_format = os.getenv("LOG_DATE_FORMAT", config.logging.date_format)
         config.logging.app_log_file = os.getenv("LOG_APP_FILE", config.logging.app_log_file)
         config.logging.metrics_log_file = os.getenv("LOG_METRICS_FILE", config.logging.metrics_log_file)
-        config.logging.max_file_size = int(os.getenv("LOG_MAX_FILE_SIZE", config.logging.max_file_size))
+        max_file_size_mb = int(os.getenv("LOG_MAX_FILE_SIZE_MB", 10))
+        config.logging.max_file_size = max_file_size_mb * 1024 * 1024
         config.logging.backup_count = int(os.getenv("LOG_BACKUP_COUNT", config.logging.backup_count))
         
         # MinIO configuration
