@@ -340,11 +340,10 @@ class PgTranscriptRepository:
         self, room_id: str, status: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         try:
-            uuid.UUID(room_id)
+            uid = str(uuid.UUID(str(room_id)))
         except (ValueError, AttributeError):
             logger.warning(f"get_tracks_by_room: invalid UUID format repr={repr(room_id)}, returning empty")
             return []
-        uid = room_id
         session_factory = get_session_factory()
         query = "SELECT * FROM tracks WHERE room_ref_id = :rid"
         params = {"rid": uid}
