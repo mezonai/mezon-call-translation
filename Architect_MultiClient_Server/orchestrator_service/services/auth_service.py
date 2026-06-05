@@ -43,132 +43,140 @@ class AuthService:
         logger.info(f"  - Redirect URI: {self.oauth2_config.redirect_uri}")
 
     async def exchange_code_for_token(self, code: str, state: str) -> Dict[str, Any]:
-        # Exchange authorization code for access token
-        # Mezon uses client_secret_post method (credentials in body, not Basic Auth)
-        token_data = {
-            'grant_type': 'authorization_code',
-            'code': code,
-            'state': state,
-            'client_id': self.oauth2_config.client_id.strip() if self.oauth2_config.client_id else '',
-            'client_secret': self.oauth2_config.client_secret.strip() if self.oauth2_config.client_secret else '',
-            'redirect_uri': self.oauth2_config.redirect_uri.strip() if self.oauth2_config.redirect_uri else '',
-        }
+        try:
+            # Exchange authorization code for access token
+            # Mezon uses client_secret_post method (credentials in body, not Basic Auth)
+            token_data = {
+                'grant_type': 'authorization_code',
+                'code': code,
+                'state': state,
+                'client_id': self.oauth2_config.client_id.strip() if self.oauth2_config.client_id else '',
+                'client_secret': self.oauth2_config.client_secret.strip() if self.oauth2_config.client_secret else '',
+                'redirect_uri': self.oauth2_config.redirect_uri.strip() if self.oauth2_config.redirect_uri else '',
+            }
 
-        logger.debug("Sending token exchange request to Mezon (client_secret_post)")
-        logger.debug(f"Request data keys: {list(token_data.keys())}")
+            logger.debug("Sending token exchange request to Mezon (client_secret_post)")
+            logger.debug(f"Request data keys: {list(token_data.keys())}")
 
-        token_response = requests.post(
-            self.oauth2_config.token_url,
-            data=token_data, # Form-encoded data with credentials in body
-            headers={'Content-Type': 'application/x-www-form-urlencoded'},
-            timeout=10  # 10 second timeout
-        )
-
-        if token_response.status_code != 200:
-            logger.error(f"Token exchange failed: {token_response.status_code} - {token_response.text}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to exchange code for token: {token_response.text}"
+            token_response = requests.post(
+                self.oauth2_config.token_url,
+                data=token_data, # Form-encoded data with credentials in body
+                headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                timeout=10  # 10 second timeout
             )
 
-        token_json = token_response.json()
-        access_token = token_json.get('access_token')
+            if token_response.status_code != 200:
+                logger.error(f"Token exchange failed: {token_response.status_code} - {token_response.text}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to exchange code for token: {token_response.text}"
+                )
 
-        if not access_token:
-            logger.error(f"No access_token in response: {token_json}")
-            raise HTTPException(
-                status_code=500,
-                detail="Mezon did not return an access token"
+            token_json = token_response.json()
+            access_token = token_json.get('access_token')
+
+            if not access_token:
+                logger.error(f"No access_token in response: {token_json}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Mezon did not return an access token"
+                )
+
+            logger.info("Successfully obtained access token from Mezon")
+
+            # Get user information from Mezon
+            logger.debug("Fetching user info from Mezon")
+
+            userinfo_response = requests.get(
+                self.oauth2_config.userinfo_url,
+                headers={'Authorization': f'Bearer {access_token}'},
+                timeout=10
             )
 
-        logger.info("Successfully obtained access token from Mezon")
+            if userinfo_response.status_code != 200:
+                logger.error(f"Failed to get user info: {userinfo_response.status_code} - {userinfo_response.text}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to get user information: {userinfo_response.text}"
+                )
 
-        # Get user information from Mezon
-        logger.debug("Fetching user info from Mezon")
+            user_info = userinfo_response.json()
 
-        userinfo_response = requests.get(
-            self.oauth2_config.userinfo_url,
-            headers={'Authorization': f'Bearer {access_token}'},
-            timeout=10
-        )
+            logger.info(f"Retrieved user info for user: {user_info.get('username', 'unknown')}")
 
-        if userinfo_response.status_code != 200:
-            logger.error(f"Failed to get user info: {userinfo_response.status_code} - {userinfo_response.text}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to get user information: {userinfo_response.text}"
-            )
+            # Extract user data (field names may vary based on Mezon API)
+            user_id = user_info.get('user_id')
 
-        user_info = userinfo_response.json()
+            # Validate that we got a user_id
+            if not user_id:
+                logger.error(f"No user ID found in Mezon response: {user_info}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to retrieve user ID from Mezon"
+                )
 
-        logger.info(f"Retrieved user info for user: {user_info.get('username', 'unknown')}")
+            # Check if user already exists
+            existing_user = await self.user_repo.get_user_info(user_id)
+            
+            if not existing_user:
+                # First login - create user with default permissions
+                logger.info(f"First login for user_id={user_id}, assigning default user permissions")
+                await self.user_repo.create_or_update_user(
+                    user_id=user_id,
+                    username=user_info.get("username", ""),
+                    display_name=user_info.get("display_name", ""),
+                    permissions=DEFAULT_USER_PERMISSIONS,
+                    avatar_url=user_info.get("avatar", "")
+                )
+                logger.info(f"Assigned {len(DEFAULT_USER_PERMISSIONS)} default permissions to new user")
+            else:
+                # Existing user - just update basic info (keep existing permissions)
+                await self.user_repo.create_or_update_user(
+                    user_id=user_id,
+                    username=user_info.get("username", ""),
+                    display_name=user_info.get("display_name", ""),
+                    permissions=None,   # Don't update permissions for existing users
+                    avatar_url=user_info.get("avatar", "")
+                )
+                logger.debug(f"Updated user info for user_id={user_id}")
 
-        # Extract user data (field names may vary based on Mezon API)
-        user_id = user_info.get('user_id')
+            user_data = {"user_id": user_id}
 
-        # Validate that we got a user_id
-        if not user_id:
-            logger.error(f"No user ID found in Mezon response: {user_info}")
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to retrieve user ID from Mezon"
-            )
+            # Generate JWT access token
+            access_token = generate_jwt_token(user_data)
 
-        # Check if user already exists
-        existing_user = await self.user_repo.get_user_info(user_id)
-        
-        if not existing_user:
-            # First login - create user with default permissions
-            logger.info(f"First login for user_id={user_id}, assigning default user permissions")
-            await self.user_repo.create_or_update_user(
+            # Get JTI from access token for refresh token linking
+            access_token_jti = get_token_jti(access_token)
+
+            if not access_token_jti:
+                raise HTTPException(status_code=500, detail="Failed to generate token ID")
+
+            refresh_token = await self.refresh_token_repo.create_refresh_token(
                 user_id=user_id,
-                username=user_info.get("username", ""),
-                display_name=user_info.get("display_name", ""),
-                permissions=DEFAULT_USER_PERMISSIONS,
-                avatar_url=user_info.get("avatar", "")
+                access_token_jti=access_token_jti,
+                device_info=None
             )
-            logger.info(f"Assigned {len(DEFAULT_USER_PERMISSIONS)} default permissions to new user")
-        else:
-            # Existing user - just update basic info (keep existing permissions)
-            await self.user_repo.create_or_update_user(
-                user_id=user_id,
-                username=user_info.get("username", ""),
-                display_name=user_info.get("display_name", ""),
-                permissions=None,   # Don't update permissions for existing users
-                avatar_url=user_info.get("avatar", "")
+
+            token_expiry = get_token_expiry(access_token)
+            expires_in = int((token_expiry - datetime.now(timezone.utc)).total_seconds())
+
+            logger.info(f"Successfully authenticated user: {user_info['username']} (ID: {user_data['user_id']})")
+
+            return {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "Bearer",
+                "expires_in": expires_in,
+                "user": user_info
+            }
+
+        except requests.RequestException as e:
+            logger.error(f"Network error during OAuth2 exchange: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Network error communicating with Mezon: {str(e)}"
             )
-            logger.debug(f"Updated user info for user_id={user_id}")
 
-        user_data = {"user_id": user_id}
-
-        # Generate JWT access token
-        access_token = generate_jwt_token(user_data)
-
-        # Get JTI from access token for refresh token linking
-        access_token_jti = get_token_jti(access_token)
-
-        if not access_token_jti:
-            raise HTTPException(status_code=500, detail="Failed to generate token ID")
-
-        refresh_token = await self.refresh_token_repo.create_refresh_token(
-            user_id=user_id,
-            access_token_jti=access_token_jti,
-            device_info=None
-        )
-
-        token_expiry = get_token_expiry(access_token)
-        expires_in = int((token_expiry - datetime.now(timezone.utc)).total_seconds())
-
-        logger.info(f"Successfully authenticated user: {user_info['username']} (ID: {user_data['user_id']})")
-
-        return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "Bearer",
-            "expires_in": expires_in,
-            "user": user_info
-        }
-        
     async def get_current_user(self, user_id: str) -> Dict[str, Any]:
         user_info = await self.user_repo.get_user_info(user_id)
         if not user_info:
