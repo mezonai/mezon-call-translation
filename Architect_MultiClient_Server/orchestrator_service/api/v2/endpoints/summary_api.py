@@ -7,10 +7,7 @@ from datetime import datetime
 from typing import Optional
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
-from orchestrator_service.services.postgresql.pg_transcript_repository import (
-    PgTranscriptRepository,
-)
-from orchestrator_service.models.summary_models import RoomSummaryResponse
+from orchestrator_service.services.summary_service import SummaryService, get_summary_service
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -29,59 +26,37 @@ async def get_summary_by_room_name(
         None, description="End time for room summary (ISO format: 2024-01-31T23:59:59)"
     ),
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
+    summary_service: SummaryService = Depends(get_summary_service)
 ):
     """
     Get summary by room name.
     """
-    pg_repo = PgTranscriptRepository()
-    if not pg_repo.connected:
-        await pg_repo.connect()
-
-    if auth.can_view_all_rooms:
-        summaries = await pg_repo.get_summary_by_room_name(
-            room_name, start_time, end_time
+    try:
+        data, count = await summary_service.get_summary_by_room_name(
+            room_name, start_time, end_time, auth
         )
-
-    else:
-        summaries = await pg_repo.get_summary_by_room_name(
-            room_name, start_time, end_time, auth.user_id
-        )
-
-    summary_models = []
-    for summary in summaries:
-        if summary.get("room_id") is not None:
-            summary["room_id"] = str(summary["room_id"])
-        summary_models.append(RoomSummaryResponse.model_construct(**summary))
-
-    return {"status": "ok", "data": summary_models, "count": len(summary_models)}
+        return {"status": "ok", "data": data, "count": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get summary by room name {room_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @client_router.get("/room/id/{room_id}", response_description="Get summary by room ID")
 async def get_summary_by_room_id(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
+    summary_service: SummaryService = Depends(get_summary_service)
 ):
     """
     Get summary by room id.
     """
-    pg_repo = PgTranscriptRepository()
-    if not pg_repo.connected:
-        await pg_repo.connect()
-
-    if not auth.can_view_all_rooms:
-        has_access = await pg_repo.user_has_room_access(room_id, auth.user_id)
-        if not has_access:
-            logger.warning(
-                f"User {auth.user_id} denied access to room statistics for {room_id}"
-            )
-            raise HTTPException(
-                status_code=403, detail="You don't have access to this room"
-            )
-
-    summary = await pg_repo.get_summary_by_room_id(room_id)
-
-    if summary.get("room_id") is not None:
-        summary["room_id"] = str(summary["room_id"])
-    summary = RoomSummaryResponse.model_construct(**summary)
-
-    return {"status": "ok", "data": summary}
+    try:
+        summary = await summary_service.get_summary_by_room_id(room_id, auth)
+        return {"status": "ok", "data": summary}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get summary by room id {room_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
