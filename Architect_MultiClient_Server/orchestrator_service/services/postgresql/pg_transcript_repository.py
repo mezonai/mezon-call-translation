@@ -1121,3 +1121,12 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to save track metadata: {e}")
             return None
+
+# --------------- Singleton ---------------
+_pg_transcript_repository: PgTranscriptRepository | None = None
+
+def get_pg_transcript_repository() -> PgTranscriptRepository:
+    global _pg_transcript_repository
+    if _pg_transcript_repository is None:
+        _pg_transcript_repository = PgTranscriptRepository()
+    return _pg_transcript_repository

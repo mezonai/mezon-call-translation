@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from fastapi import HTTPException
 from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository, get_pg_transcript_repository
 from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
@@ -21,8 +21,8 @@ logger = get_logger(__name__)
 class SummaryService:
     """Service to handle room summarization logic"""
 
-    def __init__(self):
-        self.pg_repo = PgTranscriptRepository()
+    def __init__(self, pg_repo: PgTranscriptRepository):
+        self.pg_repo = pg_repo
         self.config = get_config()
         # Create LLM service based on configured provider
         self.llm_service = create_llm_service(self.config.llm)
@@ -400,12 +400,13 @@ class SummaryService:
 
         return RoomSummaryResponse.model_construct(**summary)
 
-# Singleton
-_summary_service = None
-
+# Get singleton instance
+_summary_service: SummaryService | None = None
 
 def get_summary_service() -> SummaryService:
     global _summary_service
     if _summary_service is None:
-        _summary_service = SummaryService()
+        _summary_service = SummaryService(
+            pg_repo=get_pg_transcript_repository()
+        )
     return _summary_service

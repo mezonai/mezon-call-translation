@@ -132,3 +132,12 @@ class PgUserPermissionRepository:
         except Exception as e:
             logger.error(f"Failed to get user info: {e}")
             return None
+
+# --------------- Singleton ---------------
+_pg_user_permission_repository: PgUserPermissionRepository | None = None
+
+def get_pg_user_permission_repository() -> PgUserPermissionRepository:
+    global _pg_user_permission_repository
+    if _pg_user_permission_repository is None:
+        _pg_user_permission_repository = PgUserPermissionRepository()
+    return _pg_user_permission_repository

@@ -4,7 +4,7 @@ from typing import Optional, Tuple, List, Dict, Any
 from fastapi import HTTPException
 from google.protobuf.json_format import MessageToDict
 from orchestrator_service.auth.authorization import AuthContext
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository, get_pg_transcript_repository
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
@@ -12,12 +12,8 @@ from orchestrator_service.utils.time_convert import convert_to_iso_8601
 logger = get_logger(__name__)
 
 class RoomService:
-    def __init__(self, repository: PgTranscriptRepository):
-        self.pg_repo = repository
-
-    async def _ensure_connected(self):
-        if not self.pg_repo.connected:
-            await self.pg_repo.connect()
+    def __init__(self, pg_repo: PgTranscriptRepository):
+        self.pg_repo = pg_repo
 
     def _serialize_room(self, room: dict) -> dict:
         serialized_room = dict(room)
@@ -35,8 +31,6 @@ class RoomService:
         limit: int,
         skip: int
     ) -> Tuple[List[dict], int]:
-        await self._ensure_connected()
-
         if auth.can_view_all_rooms:
             rooms = await self.pg_repo.list_rooms(status, search, from_utc, to_utc, limit, skip)
             total = await self.pg_repo.count_rooms(status, search, from_utc, to_utc)
@@ -51,8 +45,6 @@ class RoomService:
         room_id: str, 
         auth: AuthContext
     ) -> dict:
-        await self._ensure_connected()
-
         if not auth.can_view_all_rooms:
             has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
@@ -74,8 +66,6 @@ class RoomService:
         room_id: str, 
         auth: AuthContext
     ) -> dict:
-        await self._ensure_connected()
-
         if not auth.can_view_all_rooms:
             has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
@@ -106,8 +96,6 @@ class RoomService:
         room_id: str,
         auth: AuthContext
     ) -> List[Dict[str, Any]]:
-        await self._ensure_connected()
-
         if not auth.can_view_all_rooms:
             has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
@@ -162,8 +150,6 @@ class RoomService:
             raise HTTPException(status_code=500, detail=str(e))
 
     async def list_participants(self, room_id: str) -> list:
-        await self._ensure_connected()
-
         room = await self.pg_repo.get_room_by_id(room_id)
         if not room:
             raise HTTPException(status_code=404, detail="Room not found")
@@ -175,6 +161,13 @@ class RoomService:
         except LiveKitServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+# Get singleton instance
+_room_service: RoomService | None = None
+
 def get_room_service() -> RoomService:
-    repo = PgTranscriptRepository()
-    return RoomService(repository=repo)
+    global _room_service
+    if _room_service is None:
+        _room_service = RoomService(
+            pg_repo=get_pg_transcript_repository()
+        )
+    return _room_service

@@ -11,6 +11,7 @@ Handles OAuth2 authentication flow with Mezon:
 
 """
 
+import re
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
@@ -70,6 +71,14 @@ async def exchange_code_for_token(
     Raises:
         HTTPException: 400 if state invalid, 500 if OAuth2 exchange fails
     """
+    # Validate state parameter format (11 alphanumeric characters)
+    if not re.match(r'^[a-zA-Z0-9]{11}$', request.state):
+        logger.warning(f"Invalid state parameter format: {request.state}")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid state parameter. Must be 11 alphanumeric characters."
+        )
+
     try:
         result = await auth_service.exchange_code_for_token(request.code, request.state)
         return ExchangeCodeResponse(**result)
@@ -205,9 +214,13 @@ async def logout(
     Requires:
         Authorization: Bearer <access_token>
     """
+    jti = user.get("jti")
+    if not jti:
+        raise HTTPException(status_code=400, detail="Invalid token format")
+
     try:
         await auth_service.logout(
-            jti=user.get("jti"),
+            jti=jti,
             user_id=user.get("user_id"),
             exp_timestamp=user.get("exp"),
             refresh_token=request.refresh_token

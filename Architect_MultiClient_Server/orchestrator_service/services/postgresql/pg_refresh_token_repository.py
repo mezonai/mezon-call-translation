@@ -174,3 +174,12 @@ class PgRefreshTokenRepository:
         except Exception as e:
             logger.error(f"Failed to revoke refresh token: {e}")
             return False
+
+# --------------- Singleton ---------------
+_pg_refresh_token_repository: PgRefreshTokenRepository | None = None
+
+def get_pg_refresh_token_repository() -> PgRefreshTokenRepository:
+    global _pg_refresh_token_repository
+    if _pg_refresh_token_repository is None:
+        _pg_refresh_token_repository = PgRefreshTokenRepository()
+    return _pg_refresh_token_repository

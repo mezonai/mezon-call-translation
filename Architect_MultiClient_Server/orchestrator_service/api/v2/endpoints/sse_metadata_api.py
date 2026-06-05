@@ -12,6 +12,7 @@ from orchestrator_service.constants.permissions import METADATA_EVENTS_VIEW_ALL
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.sse_metadata_service import SseMetadataService, get_sse_metadata_service
 from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.models.metadata_event_models import MetadataEventType
 
 
 logger = get_logger(__name__)
@@ -237,6 +238,21 @@ async def list_metadata_events(
     - **skip**: Number of records to skip for pagination
     - **sort_order**: Sort direction for created_at ('asc' = ascending/oldest first, 'desc' = descending/newest first, default: 'desc')
     """
+    # Validate event_type
+    if event_type is not None and MetadataEventType.is_valid(event_type) is False:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid event_type. Must be one of: {', '.join(MetadataEventType)}"
+        )
+
+    # Validate time range
+    if from_utc is not None and to_utc is not None and from_utc >= to_utc:
+        raise HTTPException(status_code=400, detail="from_utc must be before to_utc")
+
+    # Validate sort_order
+    if sort_order not in ["asc", "desc"]:
+        raise HTTPException(status_code=400, detail="sort_order must be 'asc' (ascending) or 'desc' (descending)")
+    
     try:
         events, total = await sse_service.list_metadata_events(
             event_type, room_id, from_utc, to_utc, limit, skip, sort_order
