@@ -226,7 +226,7 @@ class LoggerConfig:
     level: str = "INFO"
     # Rotation
     rotation_max_mb: int = 500
-    backup_count: int = 30
+    backup_count: int = 5
     # Notification level 
     notification_level: str = "ERROR"
 

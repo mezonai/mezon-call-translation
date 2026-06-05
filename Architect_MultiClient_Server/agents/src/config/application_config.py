@@ -422,7 +422,7 @@ class LoggerConfig:
     """Logger configuration"""
     level: str = "INFO"
     rotation_max_mb: int = 500
-    backup_count: int = 30
+    backup_count: int = 5
     
     @classmethod
     def from_env(cls) -> 'LoggerConfig':
