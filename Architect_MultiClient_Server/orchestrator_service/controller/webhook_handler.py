@@ -28,10 +28,6 @@ class WebhookHandler:
         self.egress_service = egress_service
         self.transcription_service = transcription_service
         self.room_registry = get_room_registry()
-        # Track connection abort attempts per participant identity
-        # Format: {"participant_identity": abort_count}
-        self.connection_abort_counter: Dict[str, int] = {}
-        self.ABORT_THRESHOLD = 3
 
     async def handle_event(self, event: Dict[str, Any]) -> WebhookResponse:
         """
@@ -208,13 +204,8 @@ class WebhookHandler:
             if status in ["EGRESS_FAILED", "EGRESS_ABORTED"]:
                 error = egress.get("error", "no error info")
                 logger.error(f"Egress failed: {error}")
-                pg_repo = self.transcription_service.pg_repo
-                if not pg_repo.connected:
-                    await pg_repo.connect()
-                await pg_repo.save_track_metadata(
-                    egress_id=egress_id,
-                    error=error,
-                    status="failed",
+                asyncio.create_task(
+                    self._attempt_egress_recovery(room_name, egress_id, error)
                 )
                 return WebhookResponse(received=True, action="egress_ended_failed")
             logger.info(
@@ -233,150 +224,110 @@ class WebhookHandler:
         return WebhookResponse(received=True, action="egress_ending_logged")
 
     async def _handle_participant_connection_aborted(self, event: Dict) -> WebhookResponse:
-        """
-        Handle when a participant connection is aborted.
-        
-        Note: In this context, participant_identity is actually the egress_id (e.g., EG_zpoDnfindTY8)
-        
-        Tracks abort attempts per egress. After ABORT_THRESHOLD (3) failures:
-        - Query the database for the track using egress_id
-        - Verify egress info from LiveKit API
-        - Log detailed information about the failed track
-        
-        Args:
-            event: Webhook event with participant connection abort info
-            
-        Returns:
-            WebhookResponse with status and action
-        """
+        """Handle when a participant connection is aborted — log only."""
         room_name = event.get("room", {}).get("name", "unknown")
         egress_id = event.get("participant", {}).get("identity", "unknown")  # Actually egress_id
         disconnect_reason = event.get("participant", {}).get("disconnectReason", "unknown")
-        
-        # Increment abort counter for this egress
-        current_count = self.connection_abort_counter.get(egress_id, 0) + 1
-        self.connection_abort_counter[egress_id] = current_count
-        
+
         logger.error(
-            f"🔴 Egress connection aborted [{current_count}/{self.ABORT_THRESHOLD}]: "
-            f"egress_id={egress_id}, room={room_name}, "
-            f"reason={disconnect_reason}"
+            f"🔴 Egress connection aborted: "
+            f"egress_id={egress_id}, room={room_name}, reason={disconnect_reason}"
         )
-        
-        # If we haven't reached the threshold yet, just log and return
-        if current_count < self.ABORT_THRESHOLD:
-            return WebhookResponse(
-                received=True, 
-                action="participant_connection_aborted_logged"
-            )
-        
-        # Reached threshold - perform full investigation
-        logger.error(
-            f"⚠️ Egress connection failed {self.ABORT_THRESHOLD} times: {egress_id}"
-        )
-        
+
+        return WebhookResponse(received=True, action="participant_connection_aborted_logged")
+
+    async def _attempt_egress_recovery(self, room_name: str, egress_id: str, error: str) -> None:
+        """
+        Attempt to restart recording after egress failure.
+        Checks if participant is still in room, then restarts egress for the track.
+        """
         try:
-            # Query database for track using egress_id (participant_identity is actually egress_id)
             pg_repo = self.transcription_service.pg_repo
             if not pg_repo.connected:
                 await pg_repo.connect()
-            
-            # participant_identity is actually the egress_id, query directly by id
+
             track = await pg_repo.get_track_by_id(track_id=egress_id)
-            
-            if track:
+            if not track:
+                logger.error(f"[Recovery] No track found in DB for egress: {egress_id}")
+                return
+
+            participant_identity = track.get("participant_identity")
+            track_id = track.get("track_id")
+
+            logger.info(
+                f"[Recovery] Found track: egress={egress_id}, "
+                f"track_id={track_id}, participant={participant_identity}"
+            )
+
+            if not participant_identity:
+                logger.error(f"[Recovery] No participant_identity in track record for egress: {egress_id}")
+                return
+
+            livekit_service = get_livekit_service()
+            if not livekit_service.is_available:
+                logger.error("[Recovery] LiveKit service not available")
+                return
+
+            participant_detail = await livekit_service.get_participant_detail(
+                room_name=room_name,
+                identity=participant_identity
+            )
+
+            if not participant_detail or not participant_detail.get("found"):
                 logger.error(
-                    f"📊 Found track for egress {egress_id}:"
+                    f"[Recovery] Participant '{participant_identity}' not found in room '{room_name}', "
+                    f"skipping recovery"
                 )
-                logger.error(
-                    f"  - Track ID: {track.get('id')}, "
-                    f"Status: {track.get('status')}, "
-                    f"Participant: {track.get('participant_identity')}, "
-                    f"Created: {track.get('created_at')}"
+                await pg_repo.save_track_metadata(
+                    egress_id=egress_id,
+                    error=error,
+                    status="failed",
+                )
+                return
+
+            logger.info(
+                f"[Recovery] Participant still in room: identity={participant_detail.get('identity')}, "
+                f"state={participant_detail.get('state')}"
+            )
+
+            tracks = participant_detail.get("tracks", [])
+            track_found = False
+            track_info = None
+            if track_id and tracks:
+                for t in tracks:
+                    if t.get("sid") == track_id:
+                        track_found = True
+                        track_info = t
+                        break
+
+            if track_found and track_info:
+                logger.info(
+                    f"[Recovery] Track found, restarting recording: "
+                    f"sid={track_info.get('sid')}, type={track_info.get('type')}, "
+                    f"source={track_info.get('source')}"
+                )
+                asyncio.create_task(
+                    self.egress_service.start_recording(
+                        room_name=room_name,
+                        track_sid=track_info.get("sid"),
+                        track_type=track_info.get("type"),
+                        source=track_info.get("source"),
+                        identity=participant_detail.get("identity"),
+                    )
                 )
             else:
                 logger.error(
-                    f"❌ No track found in database for egress: {egress_id}"
+                    f"[Recovery] Track {track_id} not found in participant's tracks. "
+                    f"Available: {[t.get('sid') for t in tracks]}"
                 )
-                track = {}
-            
-            # Verify participant info from LiveKit
-            try:
-                livekit_service = get_livekit_service()
-                if livekit_service.is_available:
-                    # Get detailed participant info from LiveKit if we have participant identity from track
-                    participant_identity = track.get("participant_identity") if track else None
-                    track_id = track.get("track_id") if track else None
-                    if participant_identity:
-                        participant_detail = await livekit_service.get_participant_detail(
-                            room_name=room_name,
-                            identity=participant_identity
-                        )
-                        
-                        if participant_detail and participant_detail.get("found"):
-                            logger.info(
-                                f"✅ Participant found in LiveKit: "
-                                f"identity={participant_detail.get('identity')}, "
-                                f"state={participant_detail.get('state')}, "
-                                f"name={participant_detail.get('name')}, "
-                                f"joined_at={participant_detail.get('joined_at')}"
-                            )
-                            
-                            # Check if track_id exists in participant's tracks
-                            tracks = participant_detail.get("tracks", [])
-                            track_found = False
-                            track_info = None
-                            if track_id and tracks:
-                                for t in tracks:
-                                    if t.get("sid") == track_id:
-                                        track_found = True
-                                        track_info = t
-                                        logger.info(
-                                            f"✅ Track found in participant: "
-                                            f"sid={track_info.get('sid')}, "
-                                            f"type={track_info.get('type')}, "
-                                            f"name={track_info.get('name')}, "
-                                            f"muted={track_info.get('muted')}, "
-                                            f"source={track_info.get('source')}"
-                                        )
-                                        break
-                            
-                            if track_found and track_info:
-                                # Track exists, start recording
-                                logger.error(f"Starting recording for existing track...")
-                            elif not track_found and track_id:
-                                logger.error(
-                                    f"❌ Track {track_id} NOT found in participant's tracks. "
-                                    f"Available tracks: {[t.get('sid') for t in tracks]}"
-                                )
-                        else:
-                            logger.error(
-                                f"❌ Participant NOT found in LiveKit: {participant_detail}"
-                            )
-                    else:
-                        logger.error("No participant identity in track record to verify in LiveKit")
-                else:
-                    logger.error("LiveKit service not available for participant verification")
-                    
-            except Exception as e:
-                logger.error(f"Error verifying participant in LiveKit: {e}")
-            
-            # Reset counter after handling
-            self.connection_abort_counter[egress_id] = 0
-            
-            return WebhookResponse(
-                received=True,
-                action="participant_connection_failed_investigated",
-            )
-            
+                await pg_repo.save_track_metadata(
+                    egress_id=egress_id,
+                    error=error,
+                    status="failed",
+                )
+
         except Exception as e:
-            logger.error(f"Error handling connection abort investigation: {e}")
-            # Reset counter even on error
-            self.connection_abort_counter[egress_id] = 0
-            return WebhookResponse(
-                received=True,
-                action="participant_connection_aborted_error"
-            )
+            logger.error(f"[Recovery] Error during egress recovery for {egress_id}: {e}")
 
     def _build_egress_info(self, egress: Dict, file_data: Dict) -> EgressInfo:
         """Build EgressInfo object from event data (simplified)"""
