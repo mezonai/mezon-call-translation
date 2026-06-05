@@ -265,9 +265,13 @@ class PgTranscriptRepository:
                         skipped_count += 1
                         continue
 
+                    ts = p.get("timestamp") or datetime.now(timezone.utc)
+                    if isinstance(ts, datetime):
+                        ts = ts.isoformat()
+                    
                     participants_to_add.append({
                         "participant_identity": identity,
-                        "timestamp": p.get("timestamp", datetime.utcnow())
+                        "timestamp": ts,
                     })
 
                 if participants_to_add:
