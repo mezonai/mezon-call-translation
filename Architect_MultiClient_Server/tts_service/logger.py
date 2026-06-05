@@ -1,64 +1,52 @@
 import logging
 import os
 import sys
-from logging.handlers import RotatingFileHandler
+from logging.handlers import SysLogHandler
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root
-LOG_DIR = os.path.join(BASE_DIR, "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
+from tts_service.config.app_config import get_config
 
+# Configuration from app_config
+config = get_config()
+log_level = getattr(logging, config.logger.level, logging.INFO)
 
-log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
-log_level = getattr(logging, log_level_str, logging.INFO)
+# --- SAFE INTERNAL FALLBACK LOGGER ---
+fallback_logger = logging.getLogger("SysLogHandler.fallback")
+fallback_logger.propagate = False
+if not fallback_logger.handlers:
+    console_handler = logging.StreamHandler(sys.stderr)
+    console_handler.setFormatter(logging.Formatter(
+        "%(asctime)s | INTERNAL_LOG_ERROR | %(levelname)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+    fallback_logger.addHandler(console_handler)
 
 def setup_logger(name: str) -> logging.Logger:
     """Setup logging configuration for a new logger"""
     logger = logging.getLogger(name)
 
-    # Only configure logger if it hasn't been configured yet
     if not logger.handlers:
-        # Create formatters
-        console_formatter = logging.Formatter(
-            "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-        
-        # Console handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(console_formatter)
-        console_handler.setLevel(log_level)
         logger.propagate = False
-        logger.addHandler(console_handler)
+        service_name = "tts_service"
         
-        # Optional file handler for specific loggers
-        if name == 'metrics':
-            file_handler = RotatingFileHandler(
-                os.path.join(LOG_DIR, "metrics.log"),
-                maxBytes=10*1024*1024,  # 10MB
-                backupCount=5
-            )
-            file_formatter = logging.Formatter(
-                '%(asctime)s - %(levelname)s - %(message)s'
-            )
-            file_handler.setFormatter(file_formatter)
-            file_handler.setLevel(log_level)
-            logger.addHandler(file_handler)
-    
-    # Set level
+        try:
+            syslog_handler = SysLogHandler(address='/dev/log')
+            syslog_formatter = logging.Formatter(f"{service_name}[%(process)d]: %(name)s | %(levelname)s | %(message)s")
+            syslog_handler.setFormatter(syslog_formatter)
+            syslog_handler.setLevel(log_level)
+            logger.addHandler(syslog_handler)
+        except Exception as e:
+            fallback_logger.error(f"Cannot connect to rsyslog socket: {e}")
+
     logger.setLevel(log_level)
-    
     return logger
 
-# Set up base logger 
-logger = setup_logger(__name__)
-
-# Suppress noisy loggers
-logging.getLogger('websockets').setLevel(logging.WARNING)
-logging.getLogger('asyncio').setLevel(logging.WARNING)  
-
-# Set up metrics logger
-metrics_logger = setup_logger('metrics')
+# Suppress noisy log messages from third-party libraries
+logging.getLogger("websockets").setLevel(logging.WARNING)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 def get_logger(name: str) -> logging.Logger:
-    """Get logger with consistent formatting"""
+    """Utility function to get a logger with consistent formatting"""
     return setup_logger(name)
+
+# Set up the base logger
+logger = get_logger(__name__)

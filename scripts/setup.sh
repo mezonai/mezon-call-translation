@@ -196,6 +196,7 @@ install_dependencies() {
             gcc \
             curl \
             wget \
+            rsyslog \
             git
 
         print_success "System dependencies installed!"
