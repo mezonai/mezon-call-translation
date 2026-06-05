@@ -9,7 +9,7 @@ from orchestrator_service.utils.notification_log_handler import NotificationHand
 # Load config
 _cfg = get_config().logger
 log_level = getattr(logging, _cfg.level, logging.INFO)
-notification_level = getattr(logging, _cfg.notification_level, logging.ERROR)
+notification_level = getattr(logging, getattr(_cfg, 'notification_level', 'ERROR'), logging.ERROR)
 
 # --- SAFE INTERNAL FALLBACK LOGGER ---
 fallback_logger = logging.getLogger("SysLogHandler.fallback")
