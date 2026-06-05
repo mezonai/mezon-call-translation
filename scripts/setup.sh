@@ -184,7 +184,7 @@ install_dependencies() {
         $SUDO add-apt-repository -y ppa:deadsnakes/ppa
         $SUDO apt-get update
 
-        print_info "Installing system dependencies (Python 3.12, PortAudio, FFmpeg)..."
+        print_info "Installing system dependencies (Python 3.12, PortAudio, FFmpeg, rsyslog)..."
         $SUDO apt-get install -y \
             python3.12 \
             python3.12-venv \
@@ -196,7 +196,12 @@ install_dependencies() {
             gcc \
             curl \
             wget \
-            git
+            git \
+            rsyslog
+
+        print_info "Starting rsyslog service..."
+        $SUDO systemctl enable rsyslog
+        $SUDO systemctl start rsyslog
 
         print_success "System dependencies installed!"
     else

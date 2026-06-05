@@ -66,8 +66,6 @@ class LoggingConfig:
     date_format: str = "%Y-%m-%d %H:%M:%S"
     app_log_file: str = "logs/app.log"
     metrics_log_file: str = "logs/metrics.log"
-    max_file_size: int = 10 * 1024 * 1024  # 10MB
-    backup_count: int = 5
 
 
 @dataclass
@@ -196,9 +194,6 @@ class ConfigManager:
         config.logging.date_format = os.getenv("LOG_DATE_FORMAT", config.logging.date_format)
         config.logging.app_log_file = os.getenv("LOG_APP_FILE", config.logging.app_log_file)
         config.logging.metrics_log_file = os.getenv("LOG_METRICS_FILE", config.logging.metrics_log_file)
-        max_file_size_mb = int(os.getenv("LOG_MAX_FILE_SIZE_MB", 10))
-        config.logging.max_file_size = max_file_size_mb * 1024 * 1024
-        config.logging.backup_count = int(os.getenv("LOG_BACKUP_COUNT", config.logging.backup_count))
         
         # MinIO configuration
         config.minio.endpoint = os.getenv("MINIO_ENDPOINT", config.minio.endpoint)
@@ -302,9 +297,7 @@ class ConfigManager:
                 "format": config.logging.format,
                 "date_format": config.logging.date_format,
                 "app_log_file": config.logging.app_log_file,
-                "metrics_log_file": config.logging.metrics_log_file,
-                "max_file_size": config.logging.max_file_size,
-                "backup_count": config.logging.backup_count
+                "metrics_log_file": config.logging.metrics_log_file
             },
 
         }

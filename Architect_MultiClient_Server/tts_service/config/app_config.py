@@ -12,8 +12,6 @@ class TTSConfig:
 @dataclass
 class LoggerConfig:
     level: str = field(default_factory=lambda: os.getenv('LOG_LEVEL', 'INFO').upper())
-    rotation_max_mb: int = field(default_factory=lambda: int(os.getenv('LOG_ROTATION_MAX_MB', '500')))
-    backup_count: int = field(default_factory=lambda: int(os.getenv('LOG_BACKUP_COUNT', '5')))
 
 class Config:
     _instance = None
