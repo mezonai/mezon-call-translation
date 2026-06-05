@@ -342,7 +342,7 @@ class PgTranscriptRepository:
         try:
             uuid.UUID(room_id)
         except (ValueError, AttributeError):
-            logger.warning(f"get_tracks_by_room: invalid UUID format '{room_id}', returning empty")
+            logger.warning(f"get_tracks_by_room: invalid UUID format repr={repr(room_id)}, returning empty")
             return []
         uid = room_id
         session_factory = get_session_factory()
