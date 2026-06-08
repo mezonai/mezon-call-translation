@@ -1,6 +1,4 @@
 import logging
-import os
-import sys
 from logging.handlers import SysLogHandler
 
 from tts_service.config.app_config import get_config
@@ -8,17 +6,6 @@ from tts_service.config.app_config import get_config
 # Configuration from app_config
 config = get_config()
 log_level = getattr(logging, config.logger.level, logging.INFO)
-
-# --- SAFE INTERNAL FALLBACK LOGGER ---
-fallback_logger = logging.getLogger("SysLogHandler.fallback")
-fallback_logger.propagate = False
-if not fallback_logger.handlers:
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setFormatter(logging.Formatter(
-        "%(asctime)s | INTERNAL_LOG_ERROR | %(levelname)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    ))
-    fallback_logger.addHandler(console_handler)
 
 def setup_logger(name: str) -> logging.Logger:
     """Setup logging configuration for a new logger"""
@@ -35,7 +22,7 @@ def setup_logger(name: str) -> logging.Logger:
             syslog_handler.setLevel(log_level)
             logger.addHandler(syslog_handler)
         except Exception as e:
-            fallback_logger.error(f"Cannot connect to rsyslog socket: {e}")
+            print(f"Cannot connect to rsyslog socket: {e}", flush=True)
 
     logger.setLevel(log_level)
     return logger

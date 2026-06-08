@@ -197,6 +197,7 @@ install_dependencies() {
             curl \
             wget \
             rsyslog \
+            logrotate \
             git
 
         print_success "System dependencies installed!"

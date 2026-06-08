@@ -1,6 +1,4 @@
 import logging
-import os
-import sys
 from logging.handlers import SysLogHandler
 
 from orchestrator_service.config.application_config import get_config
@@ -10,17 +8,6 @@ from orchestrator_service.utils.notification_log_handler import NotificationHand
 _cfg = get_config().logger
 log_level = getattr(logging, _cfg.level, logging.INFO)
 notification_level = getattr(logging, getattr(_cfg, 'notification_level', 'ERROR'), logging.ERROR)
-
-# --- SAFE INTERNAL FALLBACK LOGGER ---
-fallback_logger = logging.getLogger("SysLogHandler.fallback")
-fallback_logger.propagate = False
-if not fallback_logger.handlers:
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setFormatter(logging.Formatter(
-        "%(asctime)s | INTERNAL_LOG_ERROR | %(levelname)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    ))
-    fallback_logger.addHandler(console_handler)
 
 def setup_logger(name: str) -> logging.Logger:
     """Setup logging configuration for a new logger"""
@@ -48,7 +35,7 @@ def setup_logger(name: str) -> logging.Logger:
             syslog_handler.setLevel(log_level)
             logger.addHandler(syslog_handler)
         except Exception as e:
-            fallback_logger.error(f"Cannot connect to rsyslog socket: {e}")
+            print(f"Cannot connect to rsyslog socket: {e}", flush=True)
 
     logger.setLevel(log_level)
     return logger
