@@ -5,13 +5,12 @@ Handles rooms, tracks, chunks, summary, and metadata events.
 
 import json
 from datetime import datetime, timezone
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple, Set
 import uuid
 
 from sqlalchemy import text
 from orchestrator_service.services.postgresql.database import get_session_factory
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
 
@@ -42,6 +41,31 @@ class PgTranscriptRepository:
     # ROOMS
     # ------------------------------------------------------------------
 
+    def _build_list_rooms_condition_query(
+        self,
+        status: Optional[str] = None,
+        search: Optional[str] = None,
+        from_utc: Optional[datetime] = None,
+        to_utc: Optional[datetime] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        condition_query = ""
+        params = {}
+
+        if status:
+            condition_query += " AND status = :status"
+            params["status"] = status
+        if from_utc:
+            condition_query += " AND created_at >= :from_utc"
+            params["from_utc"] = from_utc
+        if to_utc:
+            condition_query += " AND created_at <= :to_utc"
+            params["to_utc"] = to_utc
+        if search:
+            condition_query += " AND (room_name ILIKE :search OR EXISTS (SELECT 1 FROM jsonb_array_elements(participants) AS p WHERE p->>'participant_identity' ILIKE :search))"
+            params["search"] = f"%{search}%"
+
+        return condition_query, params
+
     async def list_rooms(
         self,
         status: Optional[str] = None,
@@ -52,23 +76,18 @@ class PgTranscriptRepository:
         skip: int = 0,
     ) -> List[Dict[str, Any]]:
         session_factory = get_session_factory()
-        query = "SELECT * FROM rooms WHERE 1=1"
-        params = {"limit": limit, "offset": skip}
 
-        if status:
-            query += " AND status = :status"
-            params["status"] = status
-        if from_utc:
-            query += " AND created_at >= :from_utc"
-            params["from_utc"] = from_utc
-        if to_utc:
-            query += " AND created_at <= :to_utc"
-            params["to_utc"] = to_utc
-        if search:
-            query += " AND (room_name ILIKE :search OR EXISTS (SELECT 1 FROM jsonb_array_elements(participants) AS p WHERE p->>'participant_identity' ILIKE :search))"
-            params["search"] = f"%{search}%"
+        conditions, params = self._build_list_rooms_condition_query(
+            status=status,
+            search=search,
+            from_utc=from_utc,
+            to_utc=to_utc
+        )
 
-        query += " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+        query = f"SELECT * FROM rooms WHERE 1=1 {conditions} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+        
+        params["limit"] = limit
+        params["offset"] = skip
 
         try:
             async with session_factory() as session:
@@ -77,7 +96,6 @@ class PgTranscriptRepository:
                 rooms = []
                 for row in rows:
                     r = dict(row._mapping)
-                    r["_id"] = str(r["id"])
                     rooms.append(r)
                 return rooms
         except Exception as e:
@@ -92,21 +110,15 @@ class PgTranscriptRepository:
         to_utc: Optional[datetime] = None,
     ) -> int:
         session_factory = get_session_factory()
-        query = "SELECT COUNT(*) FROM rooms WHERE 1=1"
-        params = {}
 
-        if status:
-            query += " AND status = :status"
-            params["status"] = status
-        if from_utc:
-            query += " AND created_at >= :from_utc"
-            params["from_utc"] = from_utc
-        if to_utc:
-            query += " AND created_at <= :to_utc"
-            params["to_utc"] = to_utc
-        if search:
-            query += " AND (room_name ILIKE :search OR EXISTS (SELECT 1 FROM jsonb_array_elements(participants) AS p WHERE p->>'participant_identity' ILIKE :search))"
-            params["search"] = f"%{search}%"
+        conditions, params = self._build_list_rooms_condition_query(
+            status=status,
+            search=search,
+            from_utc=from_utc,
+            to_utc=to_utc
+        )
+
+        query = f"SELECT COUNT(*) FROM rooms WHERE 1=1 {conditions}"
 
         try:
             async with session_factory() as session:
@@ -127,31 +139,10 @@ class PgTranscriptRepository:
                 row = result.fetchone()
                 if row:
                     r = dict(row._mapping)
-                    r["_id"] = str(r["id"])
                     return r
                 return None
         except Exception as e:
             logger.error(f"Failed to get room by id: {e}")
-            return None
-
-    async def get_room_by_name(self, room_name: str) -> Optional[Dict[str, Any]]:
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                result = await session.execute(
-                    text(
-                        "SELECT * FROM rooms WHERE room_name = :name ORDER BY created_at DESC LIMIT 1"
-                    ),
-                    {"name": room_name},
-                )
-                row = result.fetchone()
-                if row:
-                    r = dict(row._mapping)
-                    r["_id"] = str(r["id"])
-                    return r
-                return None
-        except Exception as e:
-            logger.error(f"Failed to get room by name: {e}")
             return None
 
     async def create_room_session(
@@ -233,17 +224,113 @@ class PgTranscriptRepository:
     async def save_batch_participants(
         self, room_id: str, participants: List[Dict[str, Any]]
     ) -> Dict[str, int]:
-        added = 0
-        for p in participants:
-            if await self.save_participant(
-                room_id, p.get("participant_identity"), p.get("timestamp")
-            ):
-                added += 1
-        return {
-            "success": True,
-            "added_count": added,
-            "skipped_count": len(participants) - added,
-        }
+        if not participants:
+            return {"success": True, "added_count": 0, "skipped_count": 0}
+
+        session_factory = get_session_factory()
+
+        try:
+            async with session_factory() as session:
+                result = await session.execute(
+                    text("SELECT participants FROM rooms WHERE id = :id"),
+                    {"id": room_id}
+                )
+                row = result.fetchone()
+
+                if not row:
+                    logger.error(f"Room {room_id} not found")
+                    return {"success": False, "added_count": 0, "skipped_count": 0}
+                
+                room = dict(row._mapping) if row else {}
+                
+                existing_participants = room.get("participants") or []
+                
+                existing_identities: Set[str] = {
+                    p.get("participant_identity")
+                    for p in existing_participants
+                    if p.get("participant_identity")
+                }
+
+                participants_to_add = []
+                skipped_count = 0
+
+                for p in participants:
+                    identity = p.get("participant_identity")
+
+                    if not identity:
+                        skipped_count += 1
+                        continue
+
+                    if identity in existing_identities:
+                        skipped_count += 1
+                        continue
+
+                    ts = p.get("timestamp") or datetime.now(timezone.utc)
+                    if isinstance(ts, datetime):
+                        ts = ts.isoformat()
+                    
+                    participants_to_add.append({
+                        "participant_identity": identity,
+                        "timestamp": ts,
+                    })
+
+                if participants_to_add:
+                    added_count = len(participants_to_add)
+
+                    await session.execute(
+                        text("""
+                            UPDATE rooms 
+                            SET participants = participants || CAST(:new_participants AS jsonb)
+                            WHERE id = :id
+                        """),
+                        {
+                            "id": room_id,
+                            "new_participants": json.dumps(participants_to_add)
+                        }
+                    )
+                    await session.commit()
+                    logger.info(f"✅ Batch save to room {room_id}: Added {added_count}, Skipped {skipped_count}")
+
+                    return {
+                        "success": True,
+                        "added_count": added_count,
+                        "skipped_count": skipped_count,
+                    }
+                else:
+                    logger.info(f"ℹ️ No new participants to add to room {room_id}")
+                    return {
+                        "success": True,
+                        "added_count": 0,
+                        "skipped_count": skipped_count
+                    }
+        
+        except Exception as e:
+            logger.error(f"❌ Error in save_batch_participants: {e}")
+            return {"success": False, "added_count": 0, "skipped_count": 0}
+
+    async def update_room_participants(
+        self, room_id: str, participants: List[Dict[str, Any]]
+    ) -> bool:
+        uid = room_id
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                await session.execute(
+                    text("""
+                    UPDATE rooms 
+                    SET participants = CAST(:p AS jsonb)
+                    WHERE id = :id
+                """),
+                    {
+                        "id": uid,
+                        "p": json.dumps(participants),
+                    },
+                )
+                await session.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update room participants: {e}")
+            return False
 
     # ------------------------------------------------------------------
     # TRACKS
@@ -252,7 +339,11 @@ class PgTranscriptRepository:
     async def get_tracks_by_room(
         self, room_id: str, status: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        uid = room_id
+        try:
+            uid = str(uuid.UUID(str(room_id)))
+        except (ValueError, AttributeError):
+            logger.warning(f"get_tracks_by_room: invalid UUID format repr={repr(room_id)}, returning empty")
+            return []
         session_factory = get_session_factory()
         query = "SELECT * FROM tracks WHERE room_ref_id = :rid"
         params = {"rid": uid}
@@ -266,7 +357,6 @@ class PgTranscriptRepository:
                 tracks = []
                 for row in rows:
                     t = dict(row._mapping)
-                    t["_id"] = t["id"]
                     t["room_ref_id"] = str(t["room_ref_id"])
                     tracks.append(t)
                 return tracks
@@ -284,7 +374,6 @@ class PgTranscriptRepository:
                 row = result.fetchone()
                 if row:
                     t = dict(row._mapping)
-                    t["_id"] = t["id"]
                     if t.get("room_ref_id"):
                         t["room_ref_id"] = str(t["room_ref_id"])
                     return t
@@ -314,7 +403,6 @@ class PgTranscriptRepository:
                 row = res.fetchone()
                 if row:
                     t = dict(row._mapping)
-                    t["_id"] = t["id"]
                     return {"success": True, "track": t}
                 return {"success": False, "error": "Not found"}
         except Exception as e:
@@ -348,7 +436,6 @@ class PgTranscriptRepository:
                 pending = res.scalar() or 0
                 if pending == 0:
                     r = dict(row._mapping)
-                    r["_id"] = str(r["id"])
                     return r
                 return None
         except Exception as e:
@@ -384,7 +471,35 @@ class PgTranscriptRepository:
             return False
 
     async def user_has_room_access(self, room_id: str, user_id: str) -> bool:
-        return True  # Handled in user permission repo, skip complex check for now
+        session_factory = get_session_factory()
+
+        try:
+            query = """
+                SELECT 1
+                FROM rooms
+                WHERE id = :room_id
+                AND participants @> CAST(:uid AS jsonb)
+                LIMIT 1
+            """
+
+            params = {
+                "room_id": room_id,
+                "uid": json.dumps([{"participant_identity": user_id}])
+            }
+
+            async with session_factory() as session:
+                result = await session.execute(text(query), params)
+                has_access = result.scalar() is not None
+
+                logger.debug(
+                    f"user_has_room_access: user_id={user_id}, room_id={room_id}, has_access={has_access}"
+                )
+
+                return has_access
+
+        except Exception as e:
+            logger.error(f"Failed to check user room access: {e}")
+            return False
 
     async def get_room_statistics_by_id(self, room_id: str) -> Dict[str, Any]:
         uid = room_id
@@ -429,8 +544,8 @@ class PgTranscriptRepository:
                     "completed_tracks": completed,
                     "remaining_tracks": total - completed,
                     "total_segments": segments,
-                    "created_at": convert_to_iso_8601(created_at_raw),
-                    "finalized_at": convert_to_iso_8601(finaled_at_raw) if finaled_at_raw else None,
+                    "created_at": created_at_raw,
+                    "finalized_at": finaled_at_raw if finaled_at_raw else None,
                     "total_duration_sec": total_duration_sec,
                 }
         except Exception as e:
@@ -447,9 +562,35 @@ class PgTranscriptRepository:
         limit: int = 10,
         skip: int = 0,
     ) -> List[dict]:
-        return await self.list_rooms(
-            status, search, from_utc, to_utc, limit, skip
-        )  # Simplified for now
+        session_factory = get_session_factory()
+
+        conditions, params = self._build_list_rooms_condition_query(
+            status=status,
+            search=search,
+            from_utc=from_utc,
+            to_utc=to_utc
+        )
+
+        conditions += " AND participants @> CAST(:uid AS jsonb)"
+        params["uid"] = json.dumps([{"participant_identity": user_id}])
+        
+        query = f"SELECT * FROM rooms WHERE 1=1 {conditions} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+
+        params["limit"] = limit
+        params["offset"] = skip
+
+        try:
+            async with session_factory() as session:
+                result = await session.execute(text(query), params)
+                rows = result.fetchall()
+                rooms = []
+                for row in rows:
+                    r = dict(row._mapping)
+                    rooms.append(r)
+                return rooms
+        except Exception as e:
+            logger.error(f"Failed to list rooms by user: {e}")
+            return []
 
     async def count_rooms_by_user(
         self,
@@ -459,18 +600,27 @@ class PgTranscriptRepository:
         from_utc: Optional[datetime] = None,
         to_utc: Optional[datetime] = None,
     ) -> int:
-        return await self.count_rooms(status, search, from_utc, to_utc)
+        session_factory = get_session_factory()
 
-    # ------------------------------------------------------------------
-    # CHUNKS
-    # ------------------------------------------------------------------
+        conditions, params = self._build_list_rooms_condition_query(
+            status=status,
+            search=search,
+            from_utc=from_utc,
+            to_utc=to_utc
+        )
 
-    async def get_full_transcript(self, track_id: str) -> List[Dict]:
-        chunks = await self.get_chunks_by_track(track_id, sorted_by_index=True)
-        full = []
-        for c in chunks:
-            full.extend(c.get("segments", []))
-        return full
+        conditions += " AND participants @> CAST(:uid AS jsonb)"
+        params["uid"] = json.dumps([{"participant_identity": user_id}])
+        
+        query = f"SELECT COUNT(*) FROM rooms WHERE 1=1 {conditions}"
+
+        try:
+            async with session_factory() as session:
+                result = await session.execute(text(query), params)
+                return result.scalar() or 0
+        except Exception as e:
+            logger.error(f"Failed to list rooms by user: {e}")
+            return []
 
     # ------------------------------------------------------------------
     # SUMMARY
@@ -484,8 +634,8 @@ class PgTranscriptRepository:
             async with session_factory() as session:
                 await session.execute(
                     text("""
-                    INSERT INTO rooms_summary (id, room_id, room_name, participants, summary_data, full_text, messages, total_segments, created_at)
-                    VALUES (:id, :rid, :rname, CAST(:parts AS jsonb), CAST(:sum AS jsonb), :ft, CAST(:msgs AS jsonb), :ts, :now)
+                    INSERT INTO rooms_summary (id, room_id, room_name, participants, summary_data, messages, total_segments, created_at)
+                    VALUES (:id, :rid, :rname, CAST(:parts AS jsonb), CAST(:sum AS jsonb), CAST(:msgs AS jsonb), :ts, :now)
                 """),
                     {
                         "id": uid,
@@ -493,7 +643,6 @@ class PgTranscriptRepository:
                         "rname": summary_data.get("room_name"),
                         "parts": json.dumps(summary_data.get("participants", [])),
                         "sum": json.dumps(summary_data.get("summary_data", {})),
-                        "ft": summary_data.get("full_text"),
                         "msgs": json.dumps(summary_data.get("messages", [])),
                         "ts": summary_data.get("total_segments", 0),
                         "now": summary_data.get(
@@ -545,49 +694,19 @@ class PgTranscriptRepository:
                 row = res.fetchone()
                 if row:
                     s = dict(row._mapping)
-                    s["_id"] = str(s["id"])
                     s["room_id"] = str(s["room_id"])
-                    s["created_at"] = convert_to_iso_8601(room.get("created_at"))
-                    s["completed_at"] = convert_to_iso_8601(room.get("completed_at"))
+                    s["created_at"] = room.get("created_at")
+                    s["completed_at"] = room.get("completed_at")
 
-                    # Calculate speech durations for each member
-                    speaking_participants = s.get("participants") or []
-                    duration_map = {}
-                    duration_res = await session.execute(
-                        text("""
-                            SELECT t.participant_identity, COALESCE(SUM(tc.end_time - tc.start_time), 0.0) as duration
-                            FROM tracks t
-                            JOIN transcript_chunks tc ON t.id = tc.track_ref_id
-                            WHERE t.room_ref_id = :room_id
-                            GROUP BY t.participant_identity
-                        """),
-                        {"room_id": uid}
-                    )
-                    duration_rows = duration_res.fetchall()
-                    for d_row in duration_rows:
-                        if d_row[0]:
-                            duration_map[d_row[0]] = float(d_row[1])
-
+                    # Read speech durations directly from the rooms table participants column
                     speech_durations = []
-                    # Process speakers (active participants in rooms_summary)
-                    for user_id in speaking_participants:
-                        if user_id.startswith("EG_"):
-                            continue
-                        duration = duration_map.get(user_id, 0.0)
-                        speech_durations.append({
-                            "participant_identity": user_id,
-                            "duration": round(duration, 2)
-                        })
-
-                    # Process non-speakers (those in room but not in speaking_participants)
                     room_participants = room.get("participants") or []
-                    speaking_set = set(speaking_participants)
                     for p in room_participants:
                         user_id = p.get("participant_identity")
-                        if user_id and user_id not in speaking_set and not user_id.startswith("EG_"):
+                        if user_id and not user_id.startswith("EG_"):
                             speech_durations.append({
                                 "participant_identity": user_id,
-                                "duration": 0.0
+                                "duration": p.get("duration", 0.0)
                             })
 
                     s["speech_durations"] = speech_durations
@@ -596,6 +715,60 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to get summary by id: {e}")
             return {}
+
+    async def get_summary_by_room_name(
+        self,
+        room_name: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                # 1. build query for rooms
+                r_query = "SELECT * FROM rooms WHERE room_name = :rname"
+                r_params = {"rname": room_name}
+                if start_time:
+                    r_query += " AND created_at >= :st"
+                    r_params["st"] = start_time
+                if end_time:
+                    r_query += " AND created_at <= :et"
+                    r_params["et"] = end_time
+                if user_id:
+                    r_query += " AND participants @> CAST(:uid AS jsonb)"
+                    r_params["uid"] = json.dumps([{"participant_identity": user_id}])
+
+                r_query += " ORDER BY created_at ASC"
+                r_res = await session.execute(text(r_query), r_params)
+                room_list = [dict(r._mapping) for r in r_res.fetchall()]
+
+                if not room_list:
+                    return []
+
+                room_dict = {str(r["id"]): r for r in room_list}
+                room_ids = tuple([r["id"] for r in room_list])
+
+                # 2. get summaries
+                s_query = "SELECT * FROM rooms_summary WHERE room_id = ANY(:rids)"
+                s_res = await session.execute(text(s_query), {"rids": list(room_ids)})
+                summary_list = [dict(s._mapping) for s in s_res.fetchall()]
+
+                summary_response_list = []
+
+                for summary in summary_list:
+                    summary_response = dict(summary)
+                    summary_response["room_id"] = str(summary["room_id"])
+
+                    room = room_dict.get(str(summary["room_id"]), {})
+                    summary_response["created_at"] = room.get("created_at")
+                    summary_response["completed_at"] = room.get("completed_at")
+                    summary_response_list.append(summary_response)
+
+                return summary_response_list
+        except Exception as e:
+            logger.error(f"Failed to get summary by room name: {e}")
+            return []
 
     # ------------------------------------------------------------------
     # METADATA EVENTS
@@ -641,7 +814,6 @@ class PgTranscriptRepository:
                 row = res.fetchone()
                 if row:
                     e = dict(row._mapping)
-                    e["_id"] = str(e["id"])
                     e["room_id"] = str(e["room_id"])
                     return e
                 return None
@@ -704,14 +876,13 @@ class PgTranscriptRepository:
                     )
 
                 if chunk_documents:
-                    for doc in chunk_documents:
-                        await session.execute(
-                            text("""
+                    await session.execute(
+                        text("""
                             INSERT INTO transcript_chunks (id, track_ref_id, chunk_index, start_time, end_time, item_count, segments)
                             VALUES (:id, :tid, :idx, :st, :et, :cnt, CAST(:seg AS jsonb))
                         """),
-                            doc,
-                        )
+                        chunk_documents,
+                    )
 
                     await session.execute(
                         text(
@@ -726,6 +897,73 @@ class PgTranscriptRepository:
             logger.error(f"Failed to append chunks: {e}")
             return False
 
+    def _build_metadata_events_condition_query(
+        self,
+        event_type: Optional[str] = None,
+        room_id: Optional[str] = None,
+        from_utc: Optional[datetime] = None,
+        to_utc: Optional[datetime] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        condition_query = ""
+        params = {}
+
+        if room_id:
+            condition_query += " AND room_id = :rid"
+            params["rid"] = room_id
+        if event_type:
+            condition_query += " AND event_type = :etype"
+            params["etype"] = event_type
+        if from_utc:
+            condition_query += " AND created_at >= :from_utc"
+            params["from_utc"] = from_utc
+        if to_utc:
+            condition_query += " AND created_at <= :to_utc"
+            params["to_utc"] = to_utc
+
+        return condition_query, params
+
+    async def get_metadata_events(
+        self,
+        event_type: Optional[str] = None,
+        room_id: Optional[str] = None,
+        from_utc: Optional[datetime] = None,
+        to_utc: Optional[datetime] = None,
+        limit: int = 100,
+        skip: int = 0,
+        sort_order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        session_factory = get_session_factory()
+        
+        conditions, params = self._build_metadata_events_condition_query(
+            event_type=event_type,
+            room_id=room_id,
+            from_utc=from_utc,
+            to_utc=to_utc
+        )
+
+        order = "ASC" if sort_order.lower() == "asc" else "DESC"
+        query = f"SELECT * FROM metadata_events WHERE 1=1 {conditions} ORDER BY created_at {order} LIMIT :limit OFFSET :skip"
+
+        params["limit"] = limit
+        params["skip"] = skip
+
+        try:
+            async with session_factory() as session:
+                res = await session.execute(text(query), params)
+                rows = res.fetchall()
+                events = []
+                for row in rows:
+                    e = dict(row._mapping)
+                    if e.get("room_id"):
+                        e["room_id"] = str(e["room_id"])
+                    if isinstance(e.get("created_at"), datetime):
+                        e["created_at"] = e["created_at"].isoformat() + "Z"
+                    events.append(e)
+                return events
+        except Exception as e:
+            logger.error(f"Failed to get metadata events: {e}")
+            return []
+
     async def count_metadata_events(
         self,
         event_type: Optional[str] = None,
@@ -734,21 +972,15 @@ class PgTranscriptRepository:
         to_utc: Optional[datetime] = None,
     ) -> int:
         session_factory = get_session_factory()
-        query = "SELECT COUNT(*) FROM metadata_events WHERE 1=1"
-        params = {}
+        
+        conditions, params = self._build_metadata_events_condition_query(
+            event_type=event_type,
+            room_id=room_id,
+            from_utc=from_utc,
+            to_utc=to_utc
+        )
 
-        if room_id:
-            query += " AND room_id = :rid"
-            params["rid"] = room_id
-        if event_type:
-            query += " AND event_type = :etype"
-            params["etype"] = event_type
-        if from_utc:
-            query += " AND created_at >= :from_utc"
-            params["from_utc"] = from_utc
-        if to_utc:
-            query += " AND created_at <= :to_utc"
-            params["to_utc"] = to_utc
+        query = f"SELECT COUNT(*) FROM metadata_events WHERE 1=1 {conditions}"
 
         try:
             async with session_factory() as session:
@@ -785,118 +1017,41 @@ class PgTranscriptRepository:
                 chunks = []
                 for row in rows:
                     c = dict(row._mapping)
-                    c["_id"] = c["id"]
                     chunks.append(c)
                 return chunks
         except Exception as e:
             logger.error(f"Failed to get chunks by track: {e}")
             return []
 
-    async def get_metadata_events(
+    async def get_chunks_by_track_ids(
         self,
-        event_type: Optional[str] = None,
-        room_id: Optional[str] = None,
-        from_utc: Optional[datetime] = None,
-        to_utc: Optional[datetime] = None,
-        limit: int = 100,
-        skip: int = 0,
-        sort_order: str = "desc",
+        track_ids: List[str],
+        sorted_by_index: bool = True,
     ) -> List[Dict[str, Any]]:
-        session_factory = get_session_factory()
-        query = "SELECT * FROM metadata_events WHERE 1=1"
-        params = {"limit": limit, "skip": skip}
-
-        if room_id:
-            query += " AND room_id = :rid"
-            params["rid"] = room_id
-        if event_type:
-            query += " AND event_type = :etype"
-            params["etype"] = event_type
-        if from_utc:
-            query += " AND created_at >= :from_utc"
-            params["from_utc"] = from_utc
-        if to_utc:
-            query += " AND created_at <= :to_utc"
-            params["to_utc"] = to_utc
-
-        order = "ASC" if sort_order == "asc" else "DESC"
-        query += f" ORDER BY created_at {order} LIMIT :limit OFFSET :skip"
-
-        try:
-            async with session_factory() as session:
-                res = await session.execute(text(query), params)
-                rows = res.fetchall()
-                events = []
-                for row in rows:
-                    e = dict(row._mapping)
-                    e["_id"] = str(e["id"])
-                    if e.get("room_id"):
-                        e["room_id"] = str(e["room_id"])
-                    if isinstance(e.get("created_at"), datetime):
-                        e["created_at"] = e["created_at"].isoformat() + "Z"
-                    events.append(e)
-                return events
-        except Exception as e:
-            logger.error(f"Failed to get metadata events: {e}")
+        if not track_ids:
             return []
 
-    async def get_summary_by_room_name(
-        self,
-        room_name: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        user_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
         session_factory = get_session_factory()
+        
+        # Safely construct IN clause with parameters
+        placeholders = ", ".join([f":tid_{i}" for i in range(len(track_ids))])
+        query = f"SELECT * FROM transcript_chunks WHERE track_ref_id IN ({placeholders})"
+        params = {f"tid_{i}": tid for i, tid in enumerate(track_ids)}
+
+        if sorted_by_index:
+            query += " ORDER BY chunk_index ASC"
+
         try:
             async with session_factory() as session:
-                # 1. build query for rooms
-                r_query = "SELECT * FROM rooms WHERE room_name = :rname"
-                r_params = {"rname": room_name}
-                if start_time:
-                    r_query += " AND created_at >= :st"
-                    r_params["st"] = start_time
-                if end_time:
-                    r_query += " AND created_at <= :et"
-                    r_params["et"] = end_time
-                if user_id:
-                    r_query += " AND participants @> CAST(:uid AS jsonb)"
-                    r_params["uid"] = json.dumps([user_id])
-
-                r_query += " ORDER BY created_at ASC"
-                r_res = await session.execute(text(r_query), r_params)
-                room_list = [dict(r._mapping) for r in r_res.fetchall()]
-
-                if not room_list:
-                    return []
-
-                room_dict = {str(r["id"]): r for r in room_list}
-                room_ids = tuple([r["id"] for r in room_list])
-
-                # 2. get summaries
-                s_query = "SELECT * FROM rooms_summary WHERE room_id IN :rids"
-                s_res = await session.execute(text(s_query), {"rids": room_ids})
-                summary_list = [dict(s._mapping) for s in s_res.fetchall()]
-
-                summary_response_list = []
-
-                for summary in summary_list:
-                    summary_response = dict(summary)
-                    summary_response["_id"] = str(summary["id"])
-                    summary_response["room_id"] = str(summary["room_id"])
-
-                    room = room_dict.get(str(summary["room_id"]), {})
-                    summary_response["created_at"] = convert_to_iso_8601(
-                        room.get("created_at")
-                    )
-                    summary_response["completed_at"] = convert_to_iso_8601(
-                        room.get("completed_at")
-                    )
-                    summary_response_list.append(summary_response)
-
-                return summary_response_list
+                result = await session.execute(text(query), params)
+                rows = result.fetchall()
+                chunks = []
+                for row in rows:
+                    c = dict(row._mapping)
+                    chunks.append(c)
+                return chunks
         except Exception as e:
-            logger.error(f"Failed to get summary by room name: {e}")
+            logger.error(f"Failed to get chunks by track ids: {e}")
             return []
 
     async def save_track_metadata(
@@ -966,307 +1121,20 @@ class PgTranscriptRepository:
                 row = res.fetchone()
                 if row:
                     d = dict(row._mapping)
-                    d["_id"] = d["id"]
                     if d.get("room_ref_id"):
                         d["room_ref_id"] = str(d["room_ref_id"])
-                    logger.info(f"📝 Track metadata saved: _id(egress)={egress_id}")
+                    logger.info(f"📝 Track metadata saved: id(egress)={egress_id}")
                     return d
                 return None
         except Exception as e:
             logger.error(f"Failed to save track metadata: {e}")
             return None
 
-    # Missing functions implemented:
+# --------------- Singleton ---------------
+_pg_transcript_repository: PgTranscriptRepository | None = None
 
-    async def count_chunks_by_track(self, track_id: str) -> int:
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                res = await session.execute(
-                    text(
-                        "SELECT COUNT(*) FROM transcript_chunks WHERE track_ref_id = :tid"
-                    ),
-                    {"tid": track_id},
-                )
-                return res.scalar() or 0
-        except Exception as e:
-            logger.error(f"Failed to count chunks: {e}")
-            return 0
-
-    async def count_tracks_by_date_range(
-        self, start_date: datetime, end_date: datetime, status: str = None
-    ) -> int:
-        session_factory = get_session_factory()
-        query = (
-            "SELECT COUNT(*) FROM tracks WHERE created_at >= :sd AND created_at <= :ed"
-        )
-        params = {"sd": start_date, "ed": end_date}
-        if status:
-            query += " AND status = :st"
-            params["st"] = status
-        try:
-            async with session_factory() as session:
-                res = await session.execute(text(query), params)
-                return res.scalar() or 0
-        except Exception as e:
-            logger.error(f"Failed to count tracks: {e}")
-            return 0
-
-    async def count_tracks_by_participant(
-        self, participant_identity: str, status: str = None
-    ) -> int:
-        session_factory = get_session_factory()
-        query = "SELECT COUNT(*) FROM tracks WHERE participant_identity = :pid"
-        params = {"pid": participant_identity}
-        if status:
-            query += " AND status = :st"
-            params["st"] = status
-        try:
-            async with session_factory() as session:
-                res = await session.execute(text(query), params)
-                return res.scalar() or 0
-        except Exception as e:
-            logger.error(f"Failed to count tracks by participant: {e}")
-            return 0
-
-    async def count_tracks_by_participant_date_range(
-        self,
-        participant_identity: str,
-        start_date: datetime,
-        end_date: datetime,
-        status: str = None,
-    ) -> int:
-        session_factory = get_session_factory()
-        query = "SELECT COUNT(*) FROM tracks WHERE participant_identity = :pid AND created_at >= :sd AND created_at <= :ed"
-        params = {"pid": participant_identity, "sd": start_date, "ed": end_date}
-        if status:
-            query += " AND status = :st"
-            params["st"] = status
-        try:
-            async with session_factory() as session:
-                res = await session.execute(text(query), params)
-                return res.scalar() or 0
-        except Exception as e:
-            logger.error(f"Failed to count participant tracks: {e}")
-            return 0
-
-    async def count_tracks_by_room(self, room_id: str, status: str = None) -> int:
-        session_factory = get_session_factory()
-        query = "SELECT COUNT(*) FROM tracks WHERE room_ref_id = :rid"
-        params = {"rid": room_id}
-        if status:
-            query += " AND status = :st"
-            params["st"] = status
-        try:
-            async with session_factory() as session:
-                res = await session.execute(text(query), params)
-                return res.scalar() or 0
-        except Exception as e:
-            logger.error(f"Failed to count tracks: {e}")
-            return 0
-
-    async def get_chunk_by_index(
-        self, track_id: str, chunk_index: int
-    ) -> Optional[Dict[str, Any]]:
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                res = await session.execute(
-                    text(
-                        "SELECT * FROM transcript_chunks WHERE track_ref_id = :tid AND chunk_index = :idx"
-                    ),
-                    {"tid": track_id, "idx": chunk_index},
-                )
-                row = res.fetchone()
-                if row:
-                    d = dict(row._mapping)
-                    d["_id"] = d["id"]
-                    return d
-                return None
-        except Exception as e:
-            logger.error(f"Failed to get chunk: {e}")
-            return None
-
-    async def get_chunks_by_time_range(
-        self, track_id: str, start_time: float, end_time: float
-    ) -> List[Dict[str, Any]]:
-        session_factory = get_session_factory()
-        query = """
-            SELECT * FROM transcript_chunks 
-            WHERE track_ref_id = :tid AND start_time <= :et AND end_time >= :st
-            ORDER BY start_time ASC
-        """
-        try:
-            async with session_factory() as session:
-                res = await session.execute(
-                    text(query), {"tid": track_id, "st": start_time, "et": end_time}
-                )
-                chunks = []
-                for row in res.fetchall():
-                    c = dict(row._mapping)
-                    c["_id"] = c["id"]
-                    chunks.append(c)
-                return chunks
-        except Exception as e:
-            logger.error(f"Failed to get chunks: {e}")
-            return []
-
-    async def get_participant_statistics(
-        self, participant_identity: str
-    ) -> Dict[str, Any]:
-        tracks = await self.get_tracks_by_participant(participant_identity)
-        total_duration = 0
-        total_segments = 0
-        rooms = set()
-
-        for track in tracks:
-            rooms.add(str(track.get("room_ref_id")))
-            chunks = await self.get_chunks_by_track(str(track["_id"]))
-            for chunk in chunks:
-                total_segments += chunk.get("item_count", 0)
-
-            audio_info = track.get("audio_info", {})
-            duration_ns = int(
-                audio_info.get("duration_sec", "0") if audio_info else "0"
-            )
-            total_duration += duration_ns / 1_000_000_000
-
-        return {
-            "participant_identity": participant_identity,
-            "total_tracks": len(tracks),
-            "unique_rooms": len(rooms),
-            "total_duration_sec": total_duration,
-            "total_segments": total_segments,
-        }
-
-    async def get_tracks_by_date_range(
-        self,
-        start_date: datetime,
-        end_date: datetime,
-        status: str = None,
-        limit: int = 100,
-        skip: int = 0,
-    ) -> List[Dict[str, Any]]:
-        session_factory = get_session_factory()
-        query = "SELECT * FROM tracks WHERE created_at >= :sd AND created_at <= :ed"
-        params = {"sd": start_date, "ed": end_date, "limit": limit, "skip": skip}
-        if status:
-            query += " AND status = :st"
-            params["st"] = status
-        query += " ORDER BY created_at DESC LIMIT :limit OFFSET :skip"
-        try:
-            async with session_factory() as session:
-                res = await session.execute(text(query), params)
-                tracks = []
-                for row in res.fetchall():
-                    t = dict(row._mapping)
-                    t["_id"] = t["id"]
-                    t["room_ref_id"] = (
-                        str(t["room_ref_id"]) if t.get("room_ref_id") else None
-                    )
-                    tracks.append(t)
-                return tracks
-        except Exception as e:
-            logger.error(f"Failed to get tracks: {e}")
-            return []
-
-    async def get_tracks_by_participant(
-        self,
-        participant_identity: str,
-        status: str = None,
-        limit: int = None,
-        skip: int = 0,
-    ) -> List[Dict[str, Any]]:
-        session_factory = get_session_factory()
-        query = "SELECT * FROM tracks WHERE participant_identity = :pid"
-        params = {"pid": participant_identity}
-        if status:
-            query += " AND status = :st"
-            params["st"] = status
-        query += " ORDER BY created_at DESC"
-        if limit is not None:
-            query += " LIMIT :limit"
-            params["limit"] = limit
-        if skip > 0:
-            query += " OFFSET :skip"
-            params["skip"] = skip
-
-        try:
-            async with session_factory() as session:
-                res = await session.execute(text(query), params)
-                tracks = []
-                for row in res.fetchall():
-                    t = dict(row._mapping)
-                    t["_id"] = t["id"]
-                    t["room_ref_id"] = (
-                        str(t["room_ref_id"]) if t.get("room_ref_id") else None
-                    )
-                    tracks.append(t)
-                return tracks
-        except Exception as e:
-            logger.error(f"Failed to get tracks: {e}")
-            return []
-
-    async def get_tracks_by_participant_date_range(
-        self,
-        participant_identity: str,
-        start_date: datetime,
-        end_date: datetime,
-        status: str = None,
-        limit: int = 100,
-        skip: int = 0,
-    ) -> List[Dict[str, Any]]:
-        session_factory = get_session_factory()
-        query = "SELECT * FROM tracks WHERE participant_identity = :pid AND created_at >= :sd AND created_at <= :ed"
-        params = {
-            "pid": participant_identity,
-            "sd": start_date,
-            "ed": end_date,
-            "limit": limit,
-            "skip": skip,
-        }
-        if status:
-            query += " AND status = :st"
-            params["st"] = status
-        query += " ORDER BY created_at DESC LIMIT :limit OFFSET :skip"
-        try:
-            async with session_factory() as session:
-                res = await session.execute(text(query), params)
-                tracks = []
-                for row in res.fetchall():
-                    t = dict(row._mapping)
-                    t["_id"] = t["id"]
-                    t["room_ref_id"] = (
-                        str(t["room_ref_id"]) if t.get("room_ref_id") else None
-                    )
-                    tracks.append(t)
-                return tracks
-        except Exception as e:
-            logger.error(f"Failed to get tracks: {e}")
-            return []
-
-    async def list_tracks(
-        self, status: str = None, limit: int = 100, skip: int = 0
-    ) -> List[Dict[str, Any]]:
-        session_factory = get_session_factory()
-        query = "SELECT * FROM tracks"
-        params = {"limit": limit, "skip": skip}
-        if status:
-            query += " WHERE status = :st"
-            params["st"] = status
-        query += " ORDER BY created_at DESC LIMIT :limit OFFSET :skip"
-        try:
-            async with session_factory() as session:
-                res = await session.execute(text(query), params)
-                tracks = []
-                for row in res.fetchall():
-                    t = dict(row._mapping)
-                    t["_id"] = t["id"]
-                    t["room_ref_id"] = (
-                        str(t["room_ref_id"]) if t.get("room_ref_id") else None
-                    )
-                    tracks.append(t)
-                return tracks
-        except Exception as e:
-            logger.error(f"Failed to list tracks: {e}")
-            return []
+def get_pg_transcript_repository() -> PgTranscriptRepository:
+    global _pg_transcript_repository
+    if _pg_transcript_repository is None:
+        _pg_transcript_repository = PgTranscriptRepository()
+    return _pg_transcript_repository

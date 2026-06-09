@@ -7,7 +7,6 @@ from .application_config import (
     Config,
     get_config,
     LiveKitConfig,
-    MongoDBConfig,
     ServerConfig,
     LoggerConfig,
     MinIOConfig,
@@ -16,7 +15,6 @@ from .application_config import (
 
 __all__ = [
     "LiveKitConfig",
-    "MongoDBConfig",
     "ServerConfig",
     "LoggerConfig",
     "MinIOConfig",

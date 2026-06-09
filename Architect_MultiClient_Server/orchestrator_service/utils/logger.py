@@ -3,6 +3,7 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.utils.notification_log_handler import NotificationHandler
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # project root
 LOG_DIR = os.path.join(BASE_DIR, "logs")
@@ -28,8 +29,16 @@ def setup_logger(name: str) -> logging.Logger:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(console_formatter)
         console_handler.setLevel(log_level)
+
         logger.propagate = False
         logger.addHandler(console_handler)
+
+        # Notification handler
+        notification_handler = NotificationHandler()
+        notification_handler.setLevel(logging.ERROR)
+        notification_handler.setFormatter(console_formatter)
+
+        logger.addHandler(notification_handler)
         
         # Optional file handler for specific loggers
         if name == 'metrics':

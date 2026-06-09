@@ -4,6 +4,7 @@ Mirrors TokenBlacklistService (MongoDB) interface exactly.
 """
 
 import hashlib
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, Literal
 
@@ -42,11 +43,12 @@ class PgTokenBlacklistRepository:
                         INSERT INTO token_blacklist
                             (id, jti, user_id, token_hash, blacklisted_at, expires_at, reason)
                         VALUES
-                            (gen_random_uuid(), :jti, :user_id, :token_hash,
+                            (:id, :jti, :user_id, :token_hash,
                              :blacklisted_at, :expires_at, :reason)
                         ON CONFLICT (jti) DO NOTHING
                     """),
                     {
+                        "id": str(uuid.uuid4()),
                         "jti": jti,
                         "user_id": user_id,
                         "token_hash": token_hash,
@@ -80,3 +82,12 @@ class PgTokenBlacklistRepository:
             logger.error(f"Failed to check blacklist: {e}")
             # Fail closed — treat as blacklisted if DB unavailable
             return True
+
+# --------------- Singleton ---------------
+_pg_token_blacklist_repository: PgTokenBlacklistRepository | None = None
+
+def get_pg_token_blacklist_repository() -> PgTokenBlacklistRepository:
+    global _pg_token_blacklist_repository
+    if _pg_token_blacklist_repository is None:
+        _pg_token_blacklist_repository = PgTokenBlacklistRepository()
+    return _pg_token_blacklist_repository

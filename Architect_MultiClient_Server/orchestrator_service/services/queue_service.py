@@ -8,6 +8,7 @@ Supports multiple queue types through generic type parameter.
 import logging
 from typing import Dict, Any, Optional, List, Type, TypeVar, Generic, ClassVar
 
+from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
 from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
@@ -229,8 +230,103 @@ class QueueService(Generic[T]):
         except Exception as e:
             logger.error(f"Failed to get pending tasks: {e}")
             return []
-
-
+    
+    async def get_dlq_tasks(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get list of tasks in Dead Letter Queue.
+        
+        Args:
+            limit: Maximum number of tasks to return
+            
+        Returns:
+            List of DLQ task dictionaries with error info
+        """
+        try:
+            producer = await self._get_producer()
+            dlq_stream_key = f"{producer.stream_key}:dlq"
+            
+            # Read messages from DLQ stream
+            messages = await producer._redis.xrange(
+                dlq_stream_key,
+                count=limit
+            )
+            
+            dlq_tasks = []
+            for message_id, data in messages:
+                # Decode message
+                task_data = {
+                    k.decode() if isinstance(k, bytes) else k:
+                    v.decode() if isinstance(v, bytes) else v
+                    for k, v in data.items()
+                }
+                
+                dlq_tasks.append({
+                    "message_id": message_id.decode() if isinstance(message_id, bytes) else message_id,
+                    "task_id": task_data.get("task_id"),
+                    "filename": task_data.get("filename"),
+                    "created_at": float(task_data.get("created_at", 0)),
+                    "dead_letter_at": float(task_data.get("dead_letter_at", 0)),
+                    "final_error": task_data.get("final_error", "Unknown error"),
+                    "retry_count": int(task_data.get("retry_count", 0)),
+                    "status": "dead_letter",
+                })
+            
+            return dlq_tasks
+            
+        except Exception as e:
+            logger.error(f"Failed to get DLQ tasks: {e}")
+            return []
+    
+    async def retry_dlq_task(self, task_id: str) -> bool:
+        """
+        Retry a single task from DLQ.
+        
+        Moves task from DLQ back to main queue with retry_count reset.
+        
+        Args:
+            task_id: The task ID to retry
+            
+        Returns:
+            True if retry was successful, False otherwise
+        """
+        try:
+            producer = await self._get_producer()
+            dlq_stream_key = f"{producer.stream_key}:dlq"
+            
+            # Find the task in DLQ
+            messages = await producer._redis.xrange(dlq_stream_key)
+            
+            for message_id, data in messages:
+                task_data = {
+                    k.decode() if isinstance(k, bytes) else k:
+                    v.decode() if isinstance(v, bytes) else v
+                    for k, v in data.items()
+                }
+                
+                if task_data.get("task_id") == task_id:
+                    # Reset retry_count and re-enqueue to main stream
+                    task_data["retry_count"] = "0"
+                    
+                    # Remove dead letter tracking fields
+                    task_data.pop("final_error", None)
+                    task_data.pop("dead_letter_at", None)
+                    
+                    # Re-enqueue to main stream
+                    await producer._redis.xadd(producer.stream_key, task_data)
+                    
+                    # Remove from DLQ
+                    await producer._redis.xdel(dlq_stream_key, message_id)
+                    
+                    logger.info(f"Retried DLQ task: {task_id}")
+                    return True
+            
+            logger.warning(f"Task {task_id} not found in DLQ")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to retry DLQ task {task_id}: {e}")
+            return False
+        
 # ========================================
 # Factory Functions
 # ========================================
@@ -278,9 +374,7 @@ def get_queue_service_by_name(queue_name: str) -> QueueService:
     # Only need to map for known types, new types can be added here
     _task_class_map = {
         "transcription": TranscriptionTask,
-        # Add more as needed:
-        # "tts": TTSTask,
-        # "agent": AgentTask,
+        "save_transcription": SaveTranscriptionTask,
     }
     
     # Check if queue name is registered

@@ -19,7 +19,6 @@ Redis Streams Commands Used:
 
 import asyncio
 import json
-import logging
 import os
 import socket
 import time

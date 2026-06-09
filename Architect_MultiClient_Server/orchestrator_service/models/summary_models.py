@@ -3,8 +3,15 @@ Pydantic models for room summary
 """
 
 from datetime import datetime
+from enum import Enum
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
+
+
+class RetryType(str, Enum):
+    SUMMARY = "summary"
+    ACTION_ITEMS = "action_items"
+    ALL = "all"
 
 class ActionItemResult(BaseModel):
     participant_identity: str = Field(description="Participant identity")
@@ -25,6 +32,7 @@ class ActionItemsResult(BaseModel):
 class SummaryActionItemsResult(BaseModel):
     summary: str = Field(description="Combined summary text of the conversation")
     action_items: List[ActionItemResult] = Field(description="List of action items for all participants")
+    is_success: bool = Field(description="Whether both summary and action items succeeded", default=True)
 
 class RoomSummary(BaseModel):
     """Model for storing room conversation summary"""
@@ -32,7 +40,7 @@ class RoomSummary(BaseModel):
     room_name: str = Field(description="Room Name", default="")
     participants: List[str] = Field(description="Participants", default=[])
     summary_data: Dict[str, Any] = Field(description="Summary Data", default={})
-    full_text: str = Field(description="Full Text", default="")
+    messages: List[Dict[str, Any]] = Field(description="Messages array", default=[])
     created_at: datetime = Field(description="Created At", default_factory=datetime.utcnow)
     total_segments: int = Field(description="Total Segments", default=0)
 
@@ -41,7 +49,7 @@ class RoomSummaryResponse(BaseModel):
     room_name: str = Field(description="Room Name", default="")
     participants: List[str] = Field(description="Participants", default=[])
     summary_data: Dict[str, Any] = Field(description="Summary Data", default={})
-    full_text: str = Field(description="Full Text", default="")
+    messages: List[Dict[str, Any]] = Field(description="Messages array", default=[])
     created_at: str = Field(description="Created At", default="")
     completed_at: str = Field(description="Completed At", default="")
     total_segments: int = Field(description="Total Segments", default=0)

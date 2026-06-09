@@ -72,7 +72,7 @@ class TranscriptionService:
                     )
                     if room:
                         await metadata_channel.push_room_record_done(
-                            room_id=str(room.get("_id")),
+                            room_id=str(room.get("id")),
                             room_name=room.get("room_name"),
                         )
                 elif track_result:
@@ -175,7 +175,7 @@ class TranscriptionService:
         self, room_id: str, participant_identity: str, timestamp: datetime = None
     ) -> bool:
         """
-        Save participant info to MongoDB
+        Save participant info to PostgreSQL
 
         Args:
             participant_identity: Participant identity
@@ -200,7 +200,7 @@ class TranscriptionService:
         self, room_id: str, participants: List[Dict[str, Any]]
     ) -> Dict[str, int]:
         """
-        Save batch of participants to MongoDB
+        Save batch of participants to PostgreSQL
         """
         try:
             if not self.pg_repo.connected:
@@ -225,9 +225,9 @@ class TranscriptionService:
         Save track metadata to STT service
 
         Args:
-            egress_id: Unique egress identifier (used as _id)
+            egress_id: Unique egress identifier (used as id)
             track_id: Track identifier
-            room_ref_id: Reference to room document _id
+            room_ref_id: Reference to room document id
             participant_identity: Participant identity
             audio_info: Dict containing {filename, ...}
             status: Track status (default: "pending")

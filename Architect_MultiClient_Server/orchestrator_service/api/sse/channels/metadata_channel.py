@@ -116,7 +116,7 @@ class MetadataChannel:
 
     async def _save_event_to_db(self, event_data: Dict[str, Any]) -> Optional[str]:
         """
-        Save metadata event to MongoDB with TTL.
+        Save metadata event to PostgreSQL with TTL.
         Events will be automatically deleted after 3 days.
 
         Args:
@@ -128,7 +128,7 @@ class MetadataChannel:
         try:
             # Prepare document with event_id as _id and created_at for TTL
             doc = {
-                "_id": event_data["event_id"],  # Use event_id as document _id
+                "event_id": event_data["event_id"],  # Use event_id as document _id
                 "event_type": event_data["event_type"],
                 "room_id": event_data["room"]["room_id"],
                 "room_name": event_data["room"]["room_name"],
@@ -183,7 +183,7 @@ class MetadataChannel:
             f"(room_id={room_id}, room_name={room_name})"
         )
 
-        # Save event to MongoDB with TTL
+        # Save event to PostgreSQL with TTL
         await self._save_event_to_db(event_data)
 
         return {
@@ -246,7 +246,7 @@ class MetadataChannel:
             f"(room_id={room_id}, room_name={room_name}, duration={duration_seconds}s)"
         )
 
-        # Save event to MongoDB with TTL
+        # Save event to PostgreSQL with TTL
         await self._save_event_to_db(event_data)
 
         return {
@@ -268,7 +268,7 @@ class MetadataChannel:
     ) -> Dict[str, Any]:
         """
         Push room_record_done event to all connected bots.
-        Automatically fetches tracks from MongoDB and builds file_results.
+        Automatically fetches tracks from PostgreSQL and builds file_results.
 
         Args:
             room_id: Room identifier
@@ -287,13 +287,13 @@ class MetadataChannel:
                 f"[Metadata Channel] No active bot connections, room_record_done event may be lost"
             )
 
-        # Fetch tracks from MongoDB and build file_results
+        # Fetch tracks from PostgreSQL and build file_results
         file_results = []
         try:
             tracks = await self.pg_repo.get_tracks_by_room(room_id)
 
             for track in tracks:
-                audio_info = track.get("audio_info", {})
+                audio_info = track.get("audio_info") or {}
 
                 started_at_ns = audio_info.get("started_at_ns")
                 ended_at_ns = audio_info.get("ended_at_ns")
@@ -336,7 +336,7 @@ class MetadataChannel:
             f"(room_id={room_id}, room_name={room_name}, files={len(file_results)})"
         )
 
-        # Save event to MongoDB with TTL
+        # Save event to PostgreSQL with TTL
         await self._save_event_to_db(event_data)
 
         return {
@@ -398,7 +398,7 @@ class MetadataChannel:
             f"(room_id={room_id}, room_name={room_name})"
         )
 
-        # Save event to MongoDB with TTL
+        # Save event to PostgreSQL with TTL
         await self._save_event_to_db(event_data)
 
         return {

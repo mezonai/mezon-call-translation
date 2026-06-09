@@ -3,7 +3,7 @@ Permission-Based Authorization System (Flat Permission Model)
 
 Features:
 - Flat permission model: users have direct permission lists
-- Load permissions from MongoDB users collection
+- Load permissions from PostgreSQL users collection
 - Fallback to empty permissions if DB unavailable
 - FastAPI dependencies for authorization
 - Easy to grant/revoke permissions per user

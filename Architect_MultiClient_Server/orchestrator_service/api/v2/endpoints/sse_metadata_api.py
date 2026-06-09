@@ -3,24 +3,21 @@ SSE Metadata API
 Endpoints for bot to receive agent metadata events via SSE
 """
 from fastapi import APIRouter, HTTPException, Query, Depends
-from pydantic import BaseModel, Field
+from uuid import UUID
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any
 from datetime import datetime
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import METADATA_EVENTS_VIEW_ALL
-from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.sse_metadata_service import SseMetadataService, get_sse_metadata_service
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.metadata_event_models import MetadataEventType
 
 
 logger = get_logger(__name__)
 router = APIRouter()
-
-# Get singleton instances
-metadata_channel = MetadataChannel()
 
 
 # ==================== Pydantic Models ====================
@@ -29,7 +26,16 @@ class RoomInfo(BaseModel):
     """Room information"""
     room_id: str = Field(..., description="Room identifier")
     room_name: str = Field(..., description="Room name")
-    
+
+    @field_validator("room_id")
+    @classmethod
+    def validate_uuid(cls, v: str) -> str:
+        try:
+            UUID(v)
+        except (ValueError, AttributeError):
+            raise ValueError(f"Invalid UUID format: {v!r}")
+        return v
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -110,7 +116,9 @@ class SessionSummaryDoneRequest(RoomInfo):
 
 @router.get("/sse/metadata")
 async def sse_metadata_endpoint(
-    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL))):
+    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL)),
+    sse_service: SseMetadataService = Depends(get_sse_metadata_service)
+):
     """
     SSE endpoint for bot to receive agent metadata events.
     
@@ -121,13 +129,17 @@ async def sse_metadata_endpoint(
     Returns:
         StreamingResponse with SSE events
     """
-    return await metadata_channel.create_connection(auth.user_id)
+    return await sse_service.create_connection(auth.user_id)
 
 
 # ==================== Push Endpoints ====================
 
 @router.post("/push_metadata/session_started")
-async def push_session_started_api(req: SessionStartedRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
+async def push_session_started_api(
+    req: SessionStartedRequest, 
+    auth: Dict[str, Any] = Depends(verify_api_key),
+    sse_service: SseMetadataService = Depends(get_sse_metadata_service)
+):
     """
     Push session_started event to all connected bots via SSE.
     
@@ -138,15 +150,18 @@ async def push_session_started_api(req: SessionStartedRequest, auth: Dict[str, A
         Status and statistics
         
     """
-    result = await metadata_channel.push_room_started(
+    return await sse_service.push_room_started(
         room_id=req.room_id,
         room_name=req.room_name
     )
-    return result
 
 
 @router.post("/push_metadata/session_ended")
-async def push_session_ended_api(req: SessionEndedRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
+async def push_session_ended_api(
+    req: SessionEndedRequest, 
+    auth: Dict[str, Any] = Depends(verify_api_key),
+    sse_service: SseMetadataService = Depends(get_sse_metadata_service)
+):
     """
     Push session_ended event to all connected bots via SSE.
     
@@ -157,19 +172,22 @@ async def push_session_ended_api(req: SessionEndedRequest, auth: Dict[str, Any] 
         Status and statistics
     
     """
-    result = await metadata_channel.push_room_ended(
+    return await sse_service.push_room_ended(
         room_id=req.room_id,
         room_name=req.room_name,
         duration_seconds=req.duration_seconds
     )
-    return result
 
 
 @router.post("/push_metadata/session_record_done")
-async def push_session_record_done_api(req: SessionRecordDoneRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
+async def push_session_record_done_api(
+    req: SessionRecordDoneRequest, 
+    auth: Dict[str, Any] = Depends(verify_api_key),
+    sse_service: SseMetadataService = Depends(get_sse_metadata_service)
+):
     """
     Push session_record_done event to all connected bots via SSE.
-    File results are automatically fetched from MongoDB based on room_id.
+    File results are automatically fetched from PostgreSQL based on room_id.
     
     Args:
         req: Session record done event data
@@ -178,15 +196,18 @@ async def push_session_record_done_api(req: SessionRecordDoneRequest, auth: Dict
         Status and statistics
 
     """
-    result = await metadata_channel.push_room_record_done(
+    return await sse_service.push_room_record_done(
         room_id=req.room_id,
         room_name=req.room_name
     )
-    return result
 
 
 @router.post("/push_metadata/session_summary_done")
-async def push_session_summary_done_api(req: SessionSummaryDoneRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
+async def push_session_summary_done_api(
+    req: SessionSummaryDoneRequest, 
+    auth: Dict[str, Any] = Depends(verify_api_key),
+    sse_service: SseMetadataService = Depends(get_sse_metadata_service)
+):
     """
     Push session_summary_done event to all connected bots via SSE.
     Notifies that room summary/analysis has been completed.
@@ -198,11 +219,10 @@ async def push_session_summary_done_api(req: SessionSummaryDoneRequest, auth: Di
         Status and statistics
     
     """
-    result = await metadata_channel.push_room_summary_done(
+    return await sse_service.push_room_summary_done(
         room_id=req.room_id,
         room_name=req.room_name
     )
-    return result
 
 @router.get("/metadata", response_description="List metadata events")
 async def list_metadata_events(
@@ -213,7 +233,8 @@ async def list_metadata_events(
     limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     sort_order: str = Query("desc", description="Sort order: 'asc' for ascending, 'desc' for descending (default: 'desc')"),
-    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL))
+    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL)),
+    sse_service: SseMetadataService = Depends(get_sse_metadata_service)
 ):
     """
     Get metadata events with optional filters.
@@ -241,38 +262,21 @@ async def list_metadata_events(
     # Validate sort_order
     if sort_order not in ["asc", "desc"]:
         raise HTTPException(status_code=400, detail="sort_order must be 'asc' (ascending) or 'desc' (descending)")
-
+    
     try:
-        pg_repo = PgTranscriptRepository()
-        if not pg_repo.connected:
-            await pg_repo.connect()
-
-        # Get events and count
-        events = await pg_repo.get_metadata_events(
-            event_type=event_type,
-            room_id=room_id,
-            from_utc=from_utc,
-            to_utc=to_utc,
-            limit=limit,
-            skip=skip,
-            sort_order=sort_order
-        )
-
-        total = await pg_repo.count_metadata_events(
-            event_type=event_type,
-            room_id=room_id,
-            from_utc=from_utc,
-            to_utc=to_utc
+        events, total = await sse_service.list_metadata_events(
+            event_type, room_id, from_utc, to_utc, limit, skip, sort_order
         )
         return {
             "status": "ok",
             "total": total,
             "limit": limit,
             "skip": skip,
-            "ttl_seconds": 259200,  # 3 days in seconds
+            "ttl_seconds": 259200,  # 3 days
             "data": events
         }
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to list metadata events: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list metadata events: {str(e)}")
@@ -281,7 +285,8 @@ async def list_metadata_events(
 @router.get("/metadata/{event_id}", response_description="Get metadata event by event_id")
 async def get_metadata_event_by_id(
     event_id: str,
-    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL))
+    auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL)),
+    sse_service: SseMetadataService = Depends(get_sse_metadata_service)
 ):
     """
     Get single metadata event by event_id (UUID).
@@ -289,15 +294,7 @@ async def get_metadata_event_by_id(
     - **event_id**: Event UUID
     """
     try:
-        pg_repo = PgTranscriptRepository()
-        if not pg_repo.connected:
-            await pg_repo.connect()
-
-        event = await pg_repo.get_metadata_event_by_event_id(event_id)
-
-        if not event:
-            raise HTTPException(status_code=404, detail=f"Event not found: {event_id}")
-
+        event = await sse_service.get_metadata_event_by_id(event_id)
         return {
             "status": "ok",
             "data": event

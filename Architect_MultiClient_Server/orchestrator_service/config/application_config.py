@@ -59,33 +59,6 @@ class LiveKitConfig:
             return False
         return True
 
-
-# ============================================================================
-# MongoDB Configuration (kept for reference / migration)
-# ============================================================================
-
-@dataclass
-class MongoDBConfig:
-    host: str = "localhost"  # hoặc "mongodb" nếu chạy trong Docker
-    port: int = 27017
-    username: str = "root"
-    password: str = "rootpassword"
-    database: str = "mezon_transcripts"
-    collection: str = "transcripts"
-    
-    @classmethod
-    def from_env(cls) -> 'MongoDBConfig':
-        """Create MongoDB config from environment variables"""
-        return cls(
-            host=os.getenv('MONGODB_HOST', 'localhost'),
-            port=int(os.getenv('MONGODB_PORT', '27017')),
-            username=os.getenv('MONGODB_USERNAME', 'root'),
-            password=os.getenv('MONGODB_PASSWORD', 'rootpassword'),
-            database=os.getenv('MONGODB_DATABASE', 'mezon_transcripts'),
-            collection=os.getenv('MONGODB_COLLECTION', 'transcripts'),
-        )
-
-
 # ============================================================================
 # PostgreSQL Configuration (primary database)
 # ============================================================================
@@ -346,6 +319,37 @@ class RedisConfig:
 
 
 # ============================================================================
+# Notification Configuration (Mezon Webhook)
+# ============================================================================
+
+@dataclass
+class NotificationConfig:
+    """Configuration for sending notifications via Mezon webhooks"""
+    enabled: bool = True
+    stream_key: str = "notifications"  # Redis stream key
+    group_name: str = "notification-workers"  # Consumer group
+    webhook_endpoint: str = "https://webhook.mezon.ai/webhooks"
+    max_retries: int = 3
+    retry_delay_sec: int = 5
+    channel_id: str = ""  # Target Mezon channel ID
+    webhook_token: str = ""  # Webhook authentication token
+    
+    @classmethod
+    def from_env(cls) -> 'NotificationConfig':
+        """Create Notification config from environment variables"""
+        return cls(
+            enabled=os.getenv('NOTIFICATION_ENABLED', 'true').lower() == 'true',
+            stream_key=os.getenv('NOTIFICATION_STREAM_KEY', 'notifications'),
+            group_name=os.getenv('NOTIFICATION_GROUP_NAME', 'notification-workers'),
+            webhook_endpoint=os.getenv('NOTIFICATION_WEBHOOK_ENDPOINT', 'https://your_web_hook/webhooks'),
+            max_retries=int(os.getenv('NOTIFICATION_MAX_RETRIES', '3')),
+            retry_delay_sec=int(os.getenv('NOTIFICATION_RETRY_DELAY_SEC', '5')),
+            channel_id=os.getenv('NOTIFICATION_CHANNEL_ID', ''),
+            webhook_token=os.getenv('NOTIFICATION_WEBHOOK_TOKEN', ''),
+        )
+
+
+# ============================================================================
 # OAuth2 Configuration
 # ============================================================================
 
@@ -401,7 +405,6 @@ class Config:
         # Load all configuration sections
         self.livekit = LiveKitConfig.from_env()
         self.stt_service = STTServiceConfig.from_env()
-        self.mongodb = MongoDBConfig.from_env()
         self.postgresql = PostgreSQLConfig.from_env()
         self.server = ServerConfig.from_env()
         self.logger = LoggerConfig.from_env()
@@ -409,6 +412,7 @@ class Config:
         self.minio = MinIOConfig.from_env()
         self.llm = LLMConfig.from_env()
         self.redis = RedisConfig.from_env()
+        self.notification = NotificationConfig.from_env()
         self.oauth2 = OAuth2Config.from_env()
 
         self._initialized = True
