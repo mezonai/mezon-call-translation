@@ -127,7 +127,7 @@ class LocalLLMService(BaseLLMService):
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
             "json_schema": json_schema,
-            "max_tokens": 150000,
+            "max_tokens": 15000,
             "temperature": 0,
         }
 
