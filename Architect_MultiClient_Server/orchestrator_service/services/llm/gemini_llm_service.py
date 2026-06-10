@@ -81,12 +81,14 @@ class GeminiLLMService(BaseLLMService):
             return SummaryActionItemsResult(
                 summary="\n\n".join(summary_parts),
                 action_items=action_items_result.action_items,
-                is_success=True,
+                summary_success=True,
+                action_items_success=True,
             )
         except Exception as e:
             logger.error(f"Gemini summarization error: {e}")
             return SummaryActionItemsResult(
                 summary=f"An error occurred during summarization: {e}",
                 action_items=[],
-                is_success=False,
+                summary_success=False,
+                action_items_success=False,
             )

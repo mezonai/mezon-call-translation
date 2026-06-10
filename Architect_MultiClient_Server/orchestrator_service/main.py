@@ -35,6 +35,7 @@ from orchestrator_service.services.redis.redis_save_transcription_service import
     RedisSaveTranscriptionService,
 )
 from orchestrator_service.services.notification_worker import NotificationWorker
+from orchestrator_service.services.summary_outbox_worker import SummaryOutboxWorker
 
 from orchestrator_service.api.v2.router import (
     api_router as api_router_v2,
@@ -110,6 +111,11 @@ async def lifespan(app: FastAPI):
         notification_worker = NotificationWorker()
         await notification_worker.start()
         logger.info("✅ Notification worker started")
+
+        # Initialize Summary Outbox worker
+        summary_outbox_worker = SummaryOutboxWorker()
+        await summary_outbox_worker.start()
+        logger.info("✅ Summary Outbox worker started")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Redis services: {e}")
         raise
@@ -129,6 +135,15 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Notification worker stopped")
     except Exception as e:
         logger.error(f"Error stopping Notification worker: {e}")
+
+    # Stop summary outbox worker
+    try:
+        logger.info("Stopping Summary Outbox worker...")
+        summary_outbox_worker = SummaryOutboxWorker()
+        await summary_outbox_worker.stop()
+        logger.info("✅ Summary Outbox worker stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Summary Outbox worker: {e}")
 
     # Step 1: Stop save transcription service
     try:

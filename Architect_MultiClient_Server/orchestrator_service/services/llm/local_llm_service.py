@@ -209,12 +209,14 @@ class LocalLLMService(BaseLLMService):
         else:
             action_items = action_items_res.action_items
 
-        is_success = not isinstance(summary_res, Exception) and not isinstance(action_items_res, Exception)
-        if is_success:
+        summary_success = not isinstance(summary_res, Exception)
+        action_items_success = not isinstance(action_items_res, Exception)
+        if summary_success and action_items_success:
             logger.info(f"Successfully generated summary and action items using Local LLM (2 requests) with room_id: {room_id}")
 
         return SummaryActionItemsResult(
             summary=summary,
             action_items=action_items,
-            is_success=is_success,
+            summary_success=summary_success,
+            action_items_success=action_items_success,
         )
