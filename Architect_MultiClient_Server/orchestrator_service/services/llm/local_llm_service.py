@@ -17,7 +17,7 @@ from tenacity import (
 )
 
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
-from orchestrator_service.services.llm.prompt import build_prompt_action_items, build_prompt_summary
+from orchestrator_service.services.llm.prompt import build_simple_prompt_action_items, build_prompt_summary
 from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.utils.logger import get_logger
 
@@ -161,7 +161,7 @@ class LocalLLMService(BaseLLMService):
         reraise=True,
     )
     async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
-        prompt = build_prompt_action_items(conversation_text, language)
+        prompt = build_simple_prompt_action_items(conversation_text, language)
         json_data = await self._call_local_llm(prompt, ActionItemsResult.model_json_schema())
         return ActionItemsResult.model_validate(json_data)
 

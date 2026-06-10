@@ -228,3 +228,34 @@ Are all tasks actionable and trackable?
 
 Is the output written in {language}?
 """
+
+
+def build_simple_prompt_action_items(conversation_text: str, language: str) -> str:
+    return f"""
+# ROLE
+You are an AI assistant specialized in extracting action items from meeting transcripts.
+
+# INPUT FORMAT
+Transcript format: [timestamp] participant_identity: transcript_text
+
+# CRITICAL RULES (NON-NEGOTIABLE)
+1. "participant_identity" must be the EXACT identifier from the transcript. Do not modify, translate, or normalize it.
+2. Extract ONLY concrete, real actionable tasks (deliverables, fixes, implementations, follow-ups). Do NOT extract questions, brainstorming ideas, or status updates.
+3. Write all task descriptions in {language}.
+4. If a deadline or time reference is explicitly mentioned for a task, append it to the end of the task description in the format: "(Deadline: [exact wording])". Do not convert to calendar dates.
+5. If a task has no clear owner or ownership is ambiguous, set participant_identity as "unknown".
+6. If no valid tasks exist, return an empty list.
+
+# OUTPUT INSTRUCTION
+- You must perform the task-centric extraction and ownership mapping internally.
+- Do NOT output any introduction, explanation, stage breakdown, or final checklist.
+- Respond ONLY with a single, valid JSON object matching the schema below.
+
+# JSON SCHEMA
+{ActionItemsResult.model_json_schema()}
+
+---
+TRANSCRIPT:
+{conversation_text}
+---
+"""
