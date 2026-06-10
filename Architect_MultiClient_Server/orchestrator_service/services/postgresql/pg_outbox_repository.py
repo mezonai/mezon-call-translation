@@ -160,3 +160,13 @@ class PgOutboxRepository:
         except Exception as e:
             logger.error(f"Failed to update outbox task {task_id}: {e}")
             return False
+
+
+_pg_outbox_repository: PgOutboxRepository | None = None
+
+
+def get_pg_outbox_repository() -> PgOutboxRepository:
+    global _pg_outbox_repository
+    if _pg_outbox_repository is None:
+        _pg_outbox_repository = PgOutboxRepository()
+    return _pg_outbox_repository
