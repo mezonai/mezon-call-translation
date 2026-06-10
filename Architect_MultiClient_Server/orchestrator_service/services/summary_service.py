@@ -3,13 +3,16 @@ Service for generating room summaries
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
+from fastapi import HTTPException
+from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository, get_pg_transcript_repository
 from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.models.summary_models import RetryType
+from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
+from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 from orchestrator_service.utils.logger import get_logger
 
@@ -19,8 +22,8 @@ logger = get_logger(__name__)
 class SummaryService:
     """Service to handle room summarization logic"""
 
-    def __init__(self):
-        self.pg_repo = PgTranscriptRepository()
+    def __init__(self, pg_repo: PgTranscriptRepository):
+        self.pg_repo = pg_repo
         self.outbox_repo = PgOutboxRepository()
         self.config = get_config()
         # Create LLM service based on configured provider
@@ -65,7 +68,7 @@ class SummaryService:
         all_segments = []
         participant_durations = {}
 
-        track_ids = [str(track["_id"]) for track in tracks]
+        track_ids = [str(track["id"]) for track in tracks]
         all_chunks = await self.pg_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
         
         chunks_by_track = {tid: [] for tid in track_ids}
@@ -80,7 +83,7 @@ class SummaryService:
                 track_start_ns = int(
                     track.get("audio_info", {}).get("started_at_ns", 0) or 0
                 )
-                chunks = chunks_by_track[str(track["_id"])]
+                chunks = chunks_by_track[str(track["id"])]
 
                 # Calculate duration for this track/participant using start_time and end_time of chunks 
                 track_duration = sum(
@@ -110,7 +113,7 @@ class SummaryService:
                             }
                         )
             except Exception as e:
-                logger.error(f"Error processing track {track.get('_id')}: {e}")
+                logger.error(f"Error processing track {track.get('id')}: {e}")
                 continue
 
         if not all_segments:
@@ -184,7 +187,7 @@ class SummaryService:
         try:
             # 7. Generate Summary via LLM (uses configured provider)
             summary_data_result = await self.llm_service.summarize_conversation(
-                conversation_text=full_text, language=self.config.llm.language
+                conversation_text=full_text, room_id=room_id, language=self.config.llm.language
             )
             action_items = summary_data_result.action_items
             action_items_dict = {
@@ -205,11 +208,11 @@ class SummaryService:
             )
             if not updated:
                 logger.error(f"Failed to update generated summary for room {room_id}")
-                return {**draft_summary, "_id": saved_id}
+                return {**draft_summary, "id": saved_id}
 
             logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
             result = dict(final_summary)
-            result["_id"] = saved_id
+            result["id"] = saved_id
 
             # 9. Notify clients via SSE if summary generation is successful
             if summary_data_result.summary_success and summary_data_result.action_items_success:
@@ -241,7 +244,7 @@ class SummaryService:
             return result
         except Exception as e:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
-            return {**draft_summary, "_id": saved_id}
+            return {**draft_summary, "id": saved_id}
 
     async def retry_summary_from_full_text(
         self, room_id: str, retry_type: RetryType = RetryType.ALL
@@ -327,7 +330,8 @@ class SummaryService:
             else:  # RetryType.ALL
                 result = await self.llm_service.summarize_conversation(
                     conversation_text=full_text,
-                    language=self.config.llm.language,
+                    room_id=room_id,
+                    language=self.config.llm.language
                 )
                 is_success = result.summary_success and result.action_items_success
 
@@ -360,13 +364,73 @@ class SummaryService:
             logger.error(f"Failed to retry summary for room {room_id} with type '{retry_type.value}': {e}")
             return None
 
+    async def get_summary_by_room_name(
+        self,
+        room_name: str,
+        start_time: Optional[datetime],
+        end_time: Optional[datetime],
+        auth: AuthContext
+    ) -> Tuple[List[RoomSummaryResponse], int]:
+        if not self.pg_repo.connected:
+            await self.pg_repo.connect()
+        
+        if auth.can_view_all_rooms:
+            summaries = await self.pg_repo.get_summary_by_room_name(
+                room_name, start_time, end_time
+            )
+        else:
+            summaries = await self.pg_repo.get_summary_by_room_name(
+                room_name, start_time, end_time, auth.user_id
+            )
 
-# Singleton
-_summary_service = None
+        summary_models = []
+        for summary in summaries:
+            if summary.get("room_id") is not None:
+                summary["room_id"] = str(summary["room_id"])
+            if summary.get("created_at") is not None:
+                summary["created_at"] = convert_to_iso_8601(summary["created_at"])
+            if summary.get("completed_at") is not None:
+                summary["completed_at"] = convert_to_iso_8601(summary["completed_at"])
+            summary_models.append(RoomSummaryResponse.model_construct(**summary))
 
+        return summary_models, len(summary_models)
+
+    async def get_summary_by_room_id(
+        self,
+        room_id: str,
+        auth: AuthContext
+    ) -> RoomSummaryResponse:
+        if not self.pg_repo.connected:
+            await self.pg_repo.connect()
+
+        if not auth.can_view_all_rooms:
+            has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
+            if not has_access:
+                logger.warning(
+                    f"User {auth.user_id} denied access to room statistics for {room_id}"
+                )
+                raise HTTPException(
+                    status_code=403, detail="You don't have access to this room"
+                )
+        
+        summary = await self.pg_repo.get_summary_by_room_id(room_id)
+        
+        if summary.get("room_id") is not None:
+            summary["room_id"] = str(summary["room_id"])
+        if summary.get("created_at") is not None:
+            summary["created_at"] = convert_to_iso_8601(summary["created_at"])
+        if summary.get("completed_at") is not None:
+            summary["completed_at"] = convert_to_iso_8601(summary["completed_at"])
+
+        return RoomSummaryResponse.model_construct(**summary)
+
+# Get singleton instance
+_summary_service: SummaryService | None = None
 
 def get_summary_service() -> SummaryService:
     global _summary_service
     if _summary_service is None:
-        _summary_service = SummaryService()
+        _summary_service = SummaryService(
+            pg_repo=get_pg_transcript_repository()
+        )
     return _summary_service

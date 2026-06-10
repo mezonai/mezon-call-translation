@@ -127,7 +127,7 @@ class LocalLLMService(BaseLLMService):
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
             "json_schema": json_schema,
-            "max_tokens": 150000,
+            "max_tokens": 15000,
             "temperature": 0,
         }
 
@@ -165,7 +165,7 @@ class LocalLLMService(BaseLLMService):
         json_data = await self._call_local_llm(prompt, ActionItemsResult.model_json_schema())
         return ActionItemsResult.model_validate(json_data)
 
-    async def summarize_conversation(self, conversation_text: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
+    async def summarize_conversation(self, conversation_text: str, room_id: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """
         Summarize conversation by running 2 focused local LLM requests.
 
@@ -183,7 +183,7 @@ class LocalLLMService(BaseLLMService):
 
         # Process summary result
         if isinstance(summary_res, Exception):
-            logger.error(f"Failed to generate summary using Local LLM: {summary_res}")
+            logger.error(f"Failed to generate summary using Local LLM with room_id: {room_id}| Error: {summary_res}")
             summary = f""
         else:
             summary_parts = [
@@ -204,7 +204,7 @@ class LocalLLMService(BaseLLMService):
 
         # Process action items result
         if isinstance(action_items_res, Exception):
-            logger.error(f"Failed to generate action items using Local LLM: {action_items_res}")
+            logger.error(f"Failed to generate action items using Local LLM with room_id: {room_id}| Error: {action_items_res}")
             action_items = []
         else:
             action_items = action_items_res.action_items
@@ -212,7 +212,7 @@ class LocalLLMService(BaseLLMService):
         summary_success = not isinstance(summary_res, Exception)
         action_items_success = not isinstance(action_items_res, Exception)
         if summary_success and action_items_success:
-            logger.info("Successfully generated summary and action items using Local LLM (2 requests)")
+            logger.info(f"Successfully generated summary and action items using Local LLM (2 requests) with room_id: {room_id}")
 
         return SummaryActionItemsResult(
             summary=summary,
