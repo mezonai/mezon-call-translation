@@ -16,7 +16,7 @@ from tenacity import (
     before_sleep_log,
 )
 
-from orchestrator_service.config.application_config import LLMConfig
+from orchestrator_service.config.application_config import LLMConfig, LLMProvider
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.gemini_llm_service import GeminiLLMService
 from orchestrator_service.services.llm.prompt import build_simple_prompt_action_items, build_prompt_summary
@@ -114,7 +114,7 @@ class LocalLLMService(BaseLLMService):
         self._fallback_service: Optional[GeminiLLMService] = None
         if config.fallback_enabled and config.fallback_api_key:
             fallback_config = LLMConfig(
-                provider='gemini',
+                provider=LLMProvider.GEMINI,
                 api_key=config.fallback_api_key,
                 model=config.fallback_model,
                 language=config.language,

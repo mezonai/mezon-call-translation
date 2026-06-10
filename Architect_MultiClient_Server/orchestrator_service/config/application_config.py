@@ -5,6 +5,7 @@ All configuration values are loaded from environment variables with sensible def
 
 import os
 from dataclasses import dataclass, field
+from enum import Enum
 
 # Try to load .env file if dotenv is available
 try:
@@ -260,10 +261,15 @@ class AuthConfig:
 # LLM Configuration
 # ============================================================================
 
+class LLMProvider(str, Enum):
+    GEMINI = "gemini"
+    LOCAL = "local"
+
+
 @dataclass
 class LLMConfig:
     """Unified LLM configuration for all providers (Gemini, Local, OpenAI, etc.)"""
-    provider: str = "local" # "gemini" | "local" | "openai"
+    provider: str = LLMProvider.LOCAL  # LLMProvider.GEMINI | LLMProvider.LOCAL
     api_key: str = ""
     model: str  = "Qwen3.5-35B-A3B"
     base_url: str = None
