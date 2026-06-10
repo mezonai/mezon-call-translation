@@ -116,6 +116,8 @@ class RoomService:
         file_results = []
         for track in tracks:
             audio_info = track.get("audio_info", {})
+            if not audio_info:
+                continue
             file_results.append({
                 "participant_identity": track.get("participant_identity"),
                 "filename": audio_info.get("filename", ""),
