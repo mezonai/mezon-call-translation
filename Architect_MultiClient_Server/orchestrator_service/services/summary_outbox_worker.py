@@ -2,13 +2,11 @@
 Summary Outbox Worker Service - Processes and retries failed summarization tasks.
 """
 
-import os
-from typing import List
-
 import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Any, Callable, Awaitable, Optional
 
+from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository
 from orchestrator_service.models.summary_models import RetryType
 from orchestrator_service.services.summary_service import get_summary_service
@@ -67,19 +65,15 @@ class SummaryOutboxWorker:
     """Background worker that polls and processes pending outbox tasks at scheduled hours."""
 
     def __init__(self):
+        outbox_cfg = get_config().outbox
         self.outbox_repo = PgOutboxRepository()
         self._running = False
         self._worker_task: Optional[asyncio.Task] = None
         self._last_run_hour = -1  # Prevent duplicate runs in the same hour
-        self._check_interval_sec = int(os.getenv("OUTBOX_CHECK_INTERVAL_SEC", "30"))
-        self._delay_between_items = int(os.getenv("OUTBOX_DELAY_BETWEEN_ITEMS_SEC", "30"))
-        self._batch_limit = int(os.getenv("OUTBOX_BATCH_LIMIT", "5"))
-        hours_str = os.getenv("OUTBOX_RETRY_SUMMARIZATION_TARGET_HOURS", "19,20,21")
-        
-        try:
-            self._target_hours: List[int] = [int(h.strip()) for h in hours_str.split(",") if h.strip()]
-        except ValueError:
-            self._target_hours = [19, 20, 21]
+        self._check_interval_sec = outbox_cfg.check_interval_sec
+        self._delay_between_items = outbox_cfg.delay_between_items_sec
+        self._batch_limit = outbox_cfg.batch_limit
+        self._target_hours = outbox_cfg.retry_summarization_target_hours
         logger.info("SummaryOutboxWorker initialized")
 
     async def start(self) -> None:
