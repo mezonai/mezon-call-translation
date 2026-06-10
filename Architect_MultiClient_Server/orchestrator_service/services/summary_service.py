@@ -187,7 +187,7 @@ class SummaryService:
         try:
             # 7. Generate Summary via LLM (uses configured provider)
             summary_data_result = await self.llm_service.summarize_conversation(
-                conversation_text=full_text, language=self.config.llm.language
+                conversation_text=full_text, room_id=room_id, language=self.config.llm.language
             )
             action_items = summary_data_result.action_items
             action_items_dict = {
@@ -330,6 +330,7 @@ class SummaryService:
             else:  # RetryType.ALL
                 result = await self.llm_service.summarize_conversation(
                     conversation_text=full_text,
+                    room_id=room_id,
                     language=self.config.llm.language
                 )
                 is_success = result.summary_success and result.action_items_success

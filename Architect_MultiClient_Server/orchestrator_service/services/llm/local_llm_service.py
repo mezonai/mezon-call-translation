@@ -17,7 +17,7 @@ from tenacity import (
 )
 
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
-from orchestrator_service.services.llm.prompt import build_prompt_action_items, build_prompt_summary
+from orchestrator_service.services.llm.prompt import build_simple_prompt_action_items, build_prompt_summary
 from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.utils.logger import get_logger
 
@@ -161,11 +161,11 @@ class LocalLLMService(BaseLLMService):
         reraise=True,
     )
     async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
-        prompt = build_prompt_action_items(conversation_text, language)
+        prompt = build_simple_prompt_action_items(conversation_text, language)
         json_data = await self._call_local_llm(prompt, ActionItemsResult.model_json_schema())
         return ActionItemsResult.model_validate(json_data)
 
-    async def summarize_conversation(self, conversation_text: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
+    async def summarize_conversation(self, conversation_text: str, room_id: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """
         Summarize conversation by running 2 focused local LLM requests.
 
@@ -183,7 +183,7 @@ class LocalLLMService(BaseLLMService):
 
         # Process summary result
         if isinstance(summary_res, Exception):
-            logger.error(f"Failed to generate summary using Local LLM: {summary_res}")
+            logger.error(f"Failed to generate summary using Local LLM with room_id {room_id}: {summary_res}")
             summary = f""
         else:
             summary_parts = [
@@ -204,7 +204,7 @@ class LocalLLMService(BaseLLMService):
 
         # Process action items result
         if isinstance(action_items_res, Exception):
-            logger.error(f"Failed to generate action items using Local LLM: {action_items_res}")
+            logger.error(f"Failed to generate action items using Local LLM with room_id: {room_id}: {action_items_res}")
             action_items = []
         else:
             action_items = action_items_res.action_items
@@ -212,7 +212,7 @@ class LocalLLMService(BaseLLMService):
         summary_success = not isinstance(summary_res, Exception)
         action_items_success = not isinstance(action_items_res, Exception)
         if summary_success and action_items_success:
-            logger.info("Successfully generated summary and action items using Local LLM (2 requests)")
+            logger.info(f"Successfully generated summary and action items using Local LLM (2 requests) with room_id: {room_id}")
 
         return SummaryActionItemsResult(
             summary=summary,

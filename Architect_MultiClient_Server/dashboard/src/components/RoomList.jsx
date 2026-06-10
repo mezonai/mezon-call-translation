@@ -276,9 +276,9 @@ const RoomList = () => {
               ) : (
                 rooms.map((room) => (
                   <tr
-                    key={room._id}
+                    key={room.id}
                     className="hover:bg-gray-50 cursor-pointer transition"
-                    onClick={() => goToRoom(room._id)}
+                    onClick={() => goToRoom(room.id)}
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
@@ -298,7 +298,7 @@ const RoomList = () => {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          goToRoom(room._id);
+                          goToRoom(room.id);
                         }}
                         className="text-blue-600 hover:text-blue-900 font-medium"
                       >
