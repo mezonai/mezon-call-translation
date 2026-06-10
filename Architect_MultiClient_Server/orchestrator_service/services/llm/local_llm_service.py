@@ -16,7 +16,7 @@ from tenacity import (
     before_sleep_log,
 )
 
-from orchestrator_service.config.application_config import get_config, LLMConfig
+from orchestrator_service.config.application_config import LLMConfig
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.gemini_llm_service import GeminiLLMService
 from orchestrator_service.services.llm.prompt import build_simple_prompt_action_items, build_prompt_summary
@@ -112,19 +112,18 @@ class LocalLLMService(BaseLLMService):
         logger.info(f"Initialized Local LLM service: {config.base_url}, model: {config.model}")
 
         self._fallback_service: Optional[GeminiLLMService] = None
-        fb = get_config().gemma_fallback
-        if fb.enabled and fb.api_key:
+        if config.fallback_enabled and config.fallback_api_key:
             fallback_config = LLMConfig(
-                provider='gemma',
-                api_key=fb.api_key,
-                model=fb.model,
+                provider='gemini',
+                api_key=config.fallback_api_key,
+                model=config.fallback_model,
                 language=config.language,
             )
             try:
                 self._fallback_service = GeminiLLMService(fallback_config)
-                logger.info(f"Gemma fallback service initialized: model={fb.model}")
+                logger.info(f"LLM fallback service initialized: model={config.fallback_model}")
             except Exception as e:
-                logger.warning(f"Failed to initialize Gemma fallback service: {e}")
+                logger.warning(f"Failed to initialize LLM fallback service: {e}")
 
     def _build_headers(self) -> Dict[str, str]:
         """
@@ -185,7 +184,7 @@ class LocalLLMService(BaseLLMService):
     async def summarize_conversation(self, conversation_text: str, room_id: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """
         Summarize conversation by running 2 focused local LLM requests.
-        If either sub-task fails, retries with Gemma fallback (if configured).
+        If either sub-task fails, retries with LLM fallback (if configured).
         If fallback also fails, returns with success=False for the failed parts.
 
         Args:
@@ -211,10 +210,10 @@ class LocalLLMService(BaseLLMService):
         if action_items_failed:
             logger.error(f"Local LLM action_items failed: {action_items_res}")
 
-        # Phase 2: Gemma fallback — only retry the failed sub-tasks
+        # Phase 2: LLM fallback — only retry the failed sub-tasks
         if (summary_failed or action_items_failed) and self._fallback_service is not None:
             logger.warning(
-                f"Attempting Gemma fallback (summary_failed={summary_failed}, "
+                f"Attempting LLM fallback (summary_failed={summary_failed}, "
                 f"action_items_failed={action_items_failed})"
             )
             fallback_coros = []
@@ -234,20 +233,20 @@ class LocalLLMService(BaseLLMService):
                 fb_res = fb_results[fb_idx]
                 fb_idx += 1
                 if isinstance(fb_res, Exception):
-                    logger.error(f"Gemma fallback summary also failed: {fb_res}")
+                    logger.error(f"LLM fallback summary also failed: {fb_res}")
                 else:
                     summary_res = fb_res
                     summary_failed = False
-                    logger.info("Gemma fallback summary succeeded.")
+                    logger.info("LLM fallback summary succeeded.")
 
             if action_items_failed:
                 fb_res = fb_results[fb_idx]
                 if isinstance(fb_res, Exception):
-                    logger.error(f"Gemma fallback action_items also failed: {fb_res}")
+                    logger.error(f"LLM fallback action_items also failed: {fb_res}")
                 else:
                     action_items_res = fb_res
                     action_items_failed = False
-                    logger.info("Gemma fallback action_items succeeded.")
+                    logger.info("LLM fallback action_items succeeded.")
 
         # Phase 3: build final result
         if summary_failed:

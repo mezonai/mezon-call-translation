@@ -266,9 +266,14 @@ class LLMConfig:
     provider: str = "local" # "gemini" | "local" | "openai"
     api_key: str = ""
     model: str  = "Qwen3.5-35B-A3B"
-    base_url: str = None 
+    base_url: str = None
     timeout: int = 120
     language: str = "Vietnamese"
+    # Fallback to a Gemini-family model when primary LLM fails
+    fallback_enabled: bool = False
+    fallback_api_key: str = ""
+    fallback_model: str = "gemma-4-31b-it"
+
     @classmethod
     def from_env(cls) -> 'LLMConfig':
         return cls(
@@ -278,31 +283,14 @@ class LLMConfig:
             api_key=os.getenv('LLM_API_KEY', ''),
             timeout=int(os.getenv('LLM_TIMEOUT', '120')),
             language=os.getenv('LLM_LANGUAGE', 'Vietnamese'),
+            fallback_enabled=os.getenv('LLM_FALLBACK_ENABLED', 'false').lower() == 'true',
+            fallback_api_key=os.getenv('LLM_FALLBACK_API_KEY', ''),
+            fallback_model=os.getenv('LLM_FALLBACK_MODEL', 'gemma-4-31b-it'),
         )
 
     def validate(self) -> bool:
         # Optional validation if needed
         return True
-
-
-# ============================================================================
-# Gemma Fallback Configuration
-# ============================================================================
-
-@dataclass
-class GemmaFallbackConfig:
-    """Gemma 4 fallback config in case primary LLM fail."""
-    enabled: bool = False
-    api_key: str = ""
-    model: str = "gemma-4-31b-it"
-
-    @classmethod
-    def from_env(cls) -> 'GemmaFallbackConfig':
-        return cls(
-            enabled=os.getenv('GEMMA_FALLBACK_ENABLED', 'false').lower() == 'true',
-            api_key=os.getenv('GEMMA_FALLBACK_API_KEY', ''),
-            model=os.getenv('GEMMA_FALLBACK_MODEL', 'gemma-4-31b-it'),
-        )
 
 
 # ============================================================================
@@ -431,7 +419,6 @@ class Config:
         self.auth = AuthConfig.from_env()
         self.minio = MinIOConfig.from_env()
         self.llm = LLMConfig.from_env()
-        self.gemma_fallback = GemmaFallbackConfig.from_env()
         self.redis = RedisConfig.from_env()
         self.notification = NotificationConfig.from_env()
         self.oauth2 = OAuth2Config.from_env()
