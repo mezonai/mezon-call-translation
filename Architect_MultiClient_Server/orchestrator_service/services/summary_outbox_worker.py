@@ -70,10 +70,9 @@ class SummaryOutboxWorker:
         self.outbox_repo = PgOutboxRepository()
         self._running = False
         self._worker_task: Optional[asyncio.Task] = None
-        self._check_interval_sec = 30  # Interval to check for targeted time
-        self._delay_between_items = 30  # 30-second delay between processing items
         self._last_run_hour = -1  # Prevent duplicate runs in the same hour
-
+        self._check_interval_sec = int(os.getenv("OUTBOX_CHECK_INTERVAL_SEC", "30"))
+        self._delay_between_items = int(os.getenv("OUTBOX_DELAY_BETWEEN_ITEMS_SEC", "30"))
         self._batch_limit = int(os.getenv("OUTBOX_BATCH_LIMIT", "5"))
         hours_str = os.getenv("OUTBOX_RETRY_SUMMARIZATION_TARGET_HOURS", "19,20,21")
         

@@ -19,7 +19,7 @@ from tenacity import (
 from orchestrator_service.config.application_config import get_config, LLMConfig
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.gemini_llm_service import GeminiLLMService
-from orchestrator_service.services.llm.prompt import build_prompt_action_items, build_prompt_summary
+from orchestrator_service.services.llm.prompt import build_simple_prompt_action_items, build_prompt_summary
 from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.utils.logger import get_logger
 
@@ -144,7 +144,7 @@ class LocalLLMService(BaseLLMService):
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
             "json_schema": json_schema,
-            "max_tokens": 150000,
+            "max_tokens": 15000,
             "temperature": 0,
         }
 
@@ -161,7 +161,7 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError)),
+        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError, RuntimeError)),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
@@ -173,16 +173,16 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError)),
+        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError, RuntimeError)),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
     async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
-        prompt = build_prompt_action_items(conversation_text, language)
+        prompt = build_simple_prompt_action_items(conversation_text, language)
         json_data = await self._call_local_llm(prompt, ActionItemsResult.model_json_schema())
         return ActionItemsResult.model_validate(json_data)
 
-    async def summarize_conversation(self, conversation_text: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
+    async def summarize_conversation(self, conversation_text: str, room_id: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """
         Summarize conversation by running 2 focused local LLM requests.
         If either sub-task fails, retries with Gemma fallback (if configured).
@@ -251,6 +251,7 @@ class LocalLLMService(BaseLLMService):
 
         # Phase 3: build final result
         if summary_failed:
+            logger.error(f"Failed to generate summary (all attempts exhausted) with room_id: {room_id}: {action_items_res}")
             summary = ""
         else:
             summary_parts = [
@@ -265,10 +266,15 @@ class LocalLLMService(BaseLLMService):
                 summary_parts.append(f"Next Focus\n{summary_res.next_focus}")
             summary = "\n\n".join(summary_parts)
 
-        action_items = [] if action_items_failed else action_items_res.action_items
+        # Process action items result
+        if action_items_failed:
+            logger.error(f"Failed to generate action items (all attempts exhausted) with room_id: {room_id}: {action_items_res}")
+            action_items = []
+        else:
+            action_items = action_items_res.action_items
 
         if not summary_failed and not action_items_failed:
-            logger.info("Successfully generated summary and action items using Local LLM (2 requests)")
+            logger.info(f"Successfully generated summary and action items with room_id: {room_id}")
 
         return SummaryActionItemsResult(
             summary=summary,

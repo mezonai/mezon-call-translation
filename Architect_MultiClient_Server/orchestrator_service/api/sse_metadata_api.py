@@ -3,7 +3,8 @@ SSE Metadata API
 Endpoints for bot to receive agent metadata events via SSE
 """
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from uuid import UUID
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -27,7 +28,16 @@ class RoomInfo(BaseModel):
     """Room information"""
     room_id: str = Field(..., description="Room identifier")
     room_name: str = Field(..., description="Room name")
-    
+
+    @field_validator("room_id")
+    @classmethod
+    def validate_uuid(cls, v: str) -> str:
+        try:
+            UUID(v)
+        except (ValueError, AttributeError):
+            raise ValueError(f"Invalid UUID format: {v!r}")
+        return v
+
     class Config:
         json_schema_extra = {
             "example": {

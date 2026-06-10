@@ -95,9 +95,7 @@ class PgRefreshTokenRepository:
                 row = result.fetchone()
             if row:
                 doc = dict(row._mapping)
-                # Expose _id for interface compatibility
                 doc["id"] = str(doc["id"])
-                doc["_id"] = doc["id"]
                 logger.debug(f"Refresh token validated for user_id={doc['user_id']}")
                 return doc
             logger.warning("Invalid or expired refresh token")
@@ -177,70 +175,11 @@ class PgRefreshTokenRepository:
             logger.error(f"Failed to revoke refresh token: {e}")
             return False
 
-    async def revoke_all_user_tokens(self, user_id: str) -> int:
-        """Revoke all refresh tokens for a user. Returns count revoked."""
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        UPDATE refresh_tokens
-                        SET is_revoked = true
-                        WHERE user_id = :user_id AND is_revoked = false
-                        RETURNING id
-                    """),
-                    {"user_id": user_id},
-                )
-                rows = result.fetchall()
-                await session.commit()
-            count = len(rows)
-            logger.info(f"Revoked {count} refresh tokens for user_id={user_id}")
-            return count
-        except Exception as e:
-            logger.error(f"Failed to revoke user tokens: {e}")
-            return 0
+# --------------- Singleton ---------------
+_pg_refresh_token_repository: PgRefreshTokenRepository | None = None
 
-    async def delete_refresh_token(self, refresh_token: str) -> bool:
-        """Permanently delete a refresh token."""
-        token_hash = self._hash_token(refresh_token)
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        DELETE FROM refresh_tokens
-                        WHERE refresh_token_hash = :hash
-                        RETURNING id
-                    """),
-                    {"hash": token_hash},
-                )
-                row = result.fetchone()
-                await session.commit()
-            if row:
-                logger.info("Deleted refresh token")
-                return True
-            logger.warning("Refresh token not found for deletion")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to delete refresh token: {e}")
-            return False
-
-    async def get_user_active_tokens_count(self, user_id: str) -> int:
-        """Count active (non-revoked, non-expired) refresh tokens for a user."""
-        now = datetime.now(timezone.utc)
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        SELECT COUNT(*) FROM refresh_tokens
-                        WHERE user_id = :user_id
-                          AND is_revoked = false
-                          AND expires_at > :now
-                    """),
-                    {"user_id": user_id, "now": now},
-                )
-                return result.scalar() or 0
-        except Exception as e:
-            logger.error(f"Failed to count user tokens: {e}")
-            return 0
+def get_pg_refresh_token_repository() -> PgRefreshTokenRepository:
+    global _pg_refresh_token_repository
+    if _pg_refresh_token_repository is None:
+        _pg_refresh_token_repository = PgRefreshTokenRepository()
+    return _pg_refresh_token_repository
