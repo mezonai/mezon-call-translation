@@ -686,7 +686,7 @@ class PgTranscriptRepository:
                     event_type=event_data.get("event_type"),
                     room_id=room_uid,
                     room_name=event_data.get("room_name"),
-                    metadata=event_data.get("metadata", {}),
+                    event_metadata=event_data.get("metadata", {}),
                     timestamp=str(event_data.get("timestamp")),
                     created_at=datetime.now(timezone.utc),
                 )
