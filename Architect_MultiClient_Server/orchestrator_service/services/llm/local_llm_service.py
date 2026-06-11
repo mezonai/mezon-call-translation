@@ -206,14 +206,14 @@ class LocalLLMService(BaseLLMService):
         action_items_failed = isinstance(action_items_res, Exception)
 
         if summary_failed:
-            logger.error(f"Local LLM summary failed: {summary_res}")
+            logger.error(f"Local LLM summary failed with room_id: {room_id}: {summary_res}")
         if action_items_failed:
-            logger.error(f"Local LLM action_items failed: {action_items_res}")
+            logger.error(f"Local LLM action_items failed with room_id: {room_id}: {action_items_res}")
 
         # Phase 2: LLM fallback — only retry the failed sub-tasks
         if (summary_failed or action_items_failed) and self._fallback_service is not None:
             logger.warning(
-                f"Attempting LLM fallback (summary_failed={summary_failed}, "
+                f"Attempting LLM fallback with room_id: {room_id} (summary_failed={summary_failed}, "
                 f"action_items_failed={action_items_failed})"
             )
             fallback_coros = []
@@ -233,20 +233,20 @@ class LocalLLMService(BaseLLMService):
                 fb_res = fb_results[fb_idx]
                 fb_idx += 1
                 if isinstance(fb_res, Exception):
-                    logger.error(f"LLM fallback summary also failed: {fb_res}")
+                    logger.error(f"LLM fallback summary also failed with room_id: {room_id}: {fb_res}")
                 else:
                     summary_res = fb_res
                     summary_failed = False
-                    logger.info("LLM fallback summary succeeded.")
+                    logger.info(f"LLM fallback summary succeeded with room_id: {room_id}")
 
             if action_items_failed:
                 fb_res = fb_results[fb_idx]
                 if isinstance(fb_res, Exception):
-                    logger.error(f"LLM fallback action_items also failed: {fb_res}")
+                    logger.error(f"LLM fallback action_items also failed with room_id: {room_id}: {fb_res}")
                 else:
                     action_items_res = fb_res
                     action_items_failed = False
-                    logger.info("LLM fallback action_items succeeded.")
+                    logger.info(f"LLM fallback action_items succeeded with room_id: {room_id}")
 
         # Phase 3: build final result
         if summary_failed:
