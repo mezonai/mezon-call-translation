@@ -10,8 +10,10 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Set
 
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
+from orchestrator_service.services.postgresql.models import User
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -36,13 +38,10 @@ class PgUserPermissionRepository:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                result = await session.execute(
-                    text("SELECT permissions FROM users WHERE id = :id"),
-                    {"id": user_id},
-                )
-                row = result.fetchone()
-            if row and row[0]:
-                permissions = set(row[0])
+                user = await session.get(User, user_id)
+                permissions_list = user.permissions if user else None
+            if permissions_list is not None:
+                permissions = set(permissions_list)
                 self._cache[user_id] = permissions
                 logger.debug(f"Loaded {len(permissions)} permissions for user_id={user_id}")
                 return permissions
@@ -66,41 +65,36 @@ class PgUserPermissionRepository:
     ) -> bool:
         """Upsert a user record."""
         now = datetime.now(timezone.utc)
-        import json
-
         session_factory = get_session_factory()
 
-        insert_params = {
+        insert_values = {
             "id": user_id,
             "username": username,
             "display_name": display_name,
             "avatar_url": avatar_url,
-            "permissions": json.dumps(permissions if permissions is not None else []),
-            "now": now,
+            "permissions": permissions if permissions is not None else [],
+            "created_at": now,
+            "updated_at": now
         }
 
-        update_clauses = ["username = EXCLUDED.username", "updated_at = EXCLUDED.updated_at"]
-
-        if display_name is not None:
-            update_clauses.append("display_name = EXCLUDED.display_name")
-
-        if avatar_url is not None:
-            update_clauses.append("avatar_url = EXCLUDED.avatar_url")
-
-        if permissions is not None:
-            update_clauses.append("permissions = EXCLUDED.permissions")
-
-        update_sql = ", ".join(update_clauses)
-
-        query = f"""
-            INSERT INTO users (id, username, display_name, avatar_url, permissions, created_at, updated_at)
-            VALUES (:id, :username, :display_name, :avatar_url, CAST(:permissions AS jsonb), :now, :now)
-            ON CONFLICT (id) DO UPDATE 
-            SET {update_sql}
-        """
         try:
             async with session_factory() as session:
-                await session.execute(text(query), insert_params)
+                stmt = insert(User).values(**insert_values)
+                update_dict = {
+                    "username": stmt.excluded.username,
+                    "updated_at": stmt.excluded.updated_at
+                }
+                if display_name is not None:
+                    update_dict["display_name"] = stmt.excluded.display_name
+                if avatar_url is not None:
+                    update_dict["avatar_url"] = stmt.excluded.avatar_url
+                if permissions is not None:
+                    update_dict["permissions"] = stmt.excluded.permissions
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[User.id],
+                    set_=update_dict
+                )
+                await session.execute(stmt)
                 await session.commit()
                 
             logger.info(f"Created/updated user user_id={user_id}, username={username}")
@@ -110,25 +104,13 @@ class PgUserPermissionRepository:
             logger.error(f"Failed to create/update user: {e}")
             return False
 
-    async def get_user_info(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def get_user_info(self, user_id: str) -> Optional[User]:
         """Return full user document or None."""
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        SELECT id, username, display_name, avatar_url,
-                               permissions, created_at, updated_at
-                        FROM users WHERE id = :id
-                    """),
-                    {"id": user_id},
-                )
-                row = result.fetchone()
-            if row:
-                doc = dict(row._mapping)
-                doc["user_id"] = doc["id"]   # backward compat
-                return doc
-            return None
+                user_obj = await session.get(User, user_id)
+                return user_obj
         except Exception as e:
             logger.error(f"Failed to get user info: {e}")
             return None

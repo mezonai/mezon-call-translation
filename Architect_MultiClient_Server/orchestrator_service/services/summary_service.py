@@ -68,26 +68,24 @@ class SummaryService:
         all_segments = []
         participant_durations = {}
 
-        track_ids = [str(track["id"]) for track in tracks]
+        track_ids = [str(track.id) for track in tracks]
         all_chunks = await self.pg_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
         
         chunks_by_track = {tid: [] for tid in track_ids}
         for chunk in all_chunks:
-            tid = str(chunk.get("track_ref_id"))
+            tid = str(chunk.track_ref_id)
             if tid in chunks_by_track:
                 chunks_by_track[tid].append(chunk)
 
         for track in tracks:
             try:
-                participant = track.get("participant_identity", "Unknown")
-                track_start_ns = int(
-                    track.get("audio_info", {}).get("started_at_ns", 0) or 0
-                )
-                chunks = chunks_by_track[str(track["id"])]
+                participant = track.participant_identity or "Unknown"
+                track_start_ns = int(track.audio_info.started_at_ns or 0)
+                chunks = chunks_by_track[str(track.id)]
 
                 # Calculate duration for this track/participant using start_time and end_time of chunks 
                 track_duration = sum(
-                    (c.get("end_time") or 0.0) - (c.get("start_time") or 0.0)
+                    (c.end_time or 0.0) - (c.start_time or 0.0)
                     for c in chunks
                 )
                 if participant != "Unknown":
@@ -96,7 +94,7 @@ class SummaryService:
                     )
 
                 for chunk in chunks:
-                    for seg in chunk.get("segments", []):
+                    for seg in (chunk.segments or []):
                         text = seg.get("text", "").strip()
                         if not text:
                             continue
@@ -148,9 +146,9 @@ class SummaryService:
             turns.append(current_turn)
 
         # Update room participants list in-place with their calculated speech durations and save 
-        room_participants = room_doc.get("participants") or []
+        room_participants = room_doc.participants or []
         for p in room_participants:
-            user_id = p.get("participant_identity")
+            user_id = p.participant_identity
             if user_id:
                 p["duration"] = round(participant_durations.get(user_id, 0.0), 2)
 

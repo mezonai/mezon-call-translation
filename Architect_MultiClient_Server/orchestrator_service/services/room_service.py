@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from google.protobuf.json_format import MessageToDict
 from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository, get_pg_transcript_repository
+from orchestrator_service.services.postgresql.models import Room
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
@@ -15,10 +16,16 @@ class RoomService:
     def __init__(self, pg_repo: PgTranscriptRepository):
         self.pg_repo = pg_repo
 
-    def _serialize_room(self, room: dict) -> dict:
-        serialized_room = dict(room)
-        if serialized_room.get("id") is not None:
-            serialized_room["id"] = str(serialized_room["id"])
+    def _serialize_room(self, room: Room) -> dict:
+        serialized_room = {
+            "id": str(room.id),
+            "room_name": room.room_name,
+            "status": room.status,
+            "participants": room.participants,
+            "created_at": room.created_at,
+            "finalized_at": room.finalized_at,
+            "completed_at": room.completed_at,
+        }
         return serialized_room
 
     async def list_rooms(
@@ -115,11 +122,11 @@ class RoomService:
         
         file_results = []
         for track in tracks:
-            audio_info = track.get("audio_info", {})
+            audio_info = track.audio_info or {}
             if not audio_info:
                 continue
             file_results.append({
-                "participant_identity": track.get("participant_identity"),
+                "participant_identity": track.participant_identity,
                 "filename": audio_info.get("filename", ""),
                 "started_at_ns": audio_info.get("started_at_ns"),
                 "ended_at_ns": audio_info.get("ended_at_ns"),
@@ -158,7 +165,7 @@ class RoomService:
 
         try:
             livekit_service = get_livekit_service()
-            participants = await livekit_service.list_participants(room.get("room_name"))
+            participants = await livekit_service.list_participants(room.room_name)
             return participants
         except LiveKitServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))

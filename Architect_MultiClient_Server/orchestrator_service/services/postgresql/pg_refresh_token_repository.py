@@ -9,9 +9,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
-from sqlalchemy import text
+from sqlalchemy import text, select, update
 
 from orchestrator_service.services.postgresql.database import get_session_factory
+from orchestrator_service.services.postgresql.models import RefreshToken
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.utils.logger import get_logger
 
@@ -47,25 +48,17 @@ class PgRefreshTokenRepository:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                await session.execute(
-                    text("""
-                        INSERT INTO refresh_tokens
-                            (id, user_id, refresh_token_hash, access_token_jti,
-                             expires_at, created_at, device_info, is_revoked)
-                        VALUES
-                            (:id, :user_id, :refresh_token_hash, :access_token_jti,
-                             :expires_at, :created_at, :device_info, false)
-                    """),
-                    {
-                        "id": token_id,
-                        "user_id": user_id,
-                        "refresh_token_hash": token_hash,
-                        "access_token_jti": access_token_jti,
-                        "expires_at": expires_at,
-                        "created_at": now,
-                        "device_info": device_info,
-                    },
+                new_refresh_token = RefreshToken(
+                    id=token_id,
+                    user_id=user_id,
+                    refresh_token_hash=token_hash,
+                    access_token_jti=access_token_jti,
+                    expires_at=expires_at,
+                    created_at=now,
+                    device_info=device_info,
+                    is_revoked=False,
                 )
+                session.add(new_refresh_token)
                 await session.commit()
             logger.info(f"Created refresh token for user_id={user_id}, id={token_id}")
             return refresh_token
@@ -73,31 +66,27 @@ class PgRefreshTokenRepository:
             logger.error(f"Failed to create refresh token: {e}")
             raise
 
-    async def validate_refresh_token(self, refresh_token: str) -> Optional[Dict[str, Any]]:
+    async def validate_refresh_token(self, refresh_token: str) -> Optional[RefreshToken]:
         """Validate token; return token doc dict or None."""
         token_hash = self._hash_token(refresh_token)
         now = datetime.now(timezone.utc)
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        SELECT id, user_id, refresh_token_hash, access_token_jti,
-                               expires_at, created_at, device_info, is_revoked
-                        FROM refresh_tokens
-                        WHERE refresh_token_hash = :hash
-                          AND is_revoked = false
-                          AND expires_at > :now
-                        LIMIT 1
-                    """),
-                    {"hash": token_hash, "now": now},
+                stmt = (
+                    select(RefreshToken)
+                    .where(
+                        RefreshToken.refresh_token_hash == token_hash,
+                        RefreshToken.is_revoked == False,
+                        RefreshToken.expires_at > now,
+                    )
+                    .limit(1)
                 )
-                row = result.fetchone()
-            if row:
-                doc = dict(row._mapping)
-                doc["id"] = str(doc["id"])
-                logger.debug(f"Refresh token validated for user_id={doc['user_id']}")
-                return doc
+                token_obj = await session.scalar(stmt)
+
+            if token_obj:
+                logger.debug(f"Refresh token validated for user_id={token_obj.user_id}")
+                return token_obj
             logger.warning("Invalid or expired refresh token")
             return None
         except Exception as e:
@@ -121,27 +110,24 @@ class PgRefreshTokenRepository:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        UPDATE refresh_tokens
-                        SET refresh_token_hash = :hash,
-                            access_token_jti   = :jti,
-                            expires_at         = :expires_at,
-                            created_at         = :now
-                        WHERE id = :id AND is_revoked = false
-                        RETURNING id
-                    """),
-                    {
-                        "hash": token_hash,
-                        "jti": new_access_token_jti,
-                        "expires_at": expires_at,
-                        "now": now,
-                        "id": str(token_id),
-                    },
+                stmt = (
+                    update(RefreshToken)
+                    .where(
+                        RefreshToken.id == str(token_id),
+                        RefreshToken.is_revoked == False
+                    )
+                    .values(
+                        refresh_token_hash=token_hash,
+                        access_token_jti=new_access_token_jti,
+                        expires_at=expires_at,
+                        created_at=now,
+                    )
+                    .returning(RefreshToken.id)
                 )
-                row = result.fetchone()
+                result = await session.execute(stmt)
+                updated_id = result.scalar()
                 await session.commit()
-            if row:
+            if updated_id:
                 logger.debug(f"Rotated refresh token id={token_id}")
                 return new_refresh_token
             logger.warning(f"Refresh token not found or revoked for id={token_id}")
@@ -156,17 +142,16 @@ class PgRefreshTokenRepository:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        UPDATE refresh_tokens SET is_revoked = true
-                        WHERE refresh_token_hash = :hash
-                        RETURNING id
-                    """),
-                    {"hash": token_hash},
+                stmt = (
+                    update(RefreshToken)
+                    .where(RefreshToken.refresh_token_hash == token_hash)
+                    .values(is_revoked=True)
+                    .returning(RefreshToken.id)
                 )
-                row = result.fetchone()
+                result = await session.execute(stmt)
+                updated_id = result.scalar()
                 await session.commit()
-            if row:
+            if updated_id:
                 logger.info("Revoked refresh token")
                 return True
             logger.warning("Refresh token not found for revocation")

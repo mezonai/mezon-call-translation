@@ -66,14 +66,14 @@ class TranscriptionService:
                     status="wait_process",
                 )
 
-                if track_result and track_result.get("room_ref_id"):
+                if track_result and track_result.room_ref_id:
                     room = await self.pg_repo.check_event_record_done(
-                        track_result.get("room_ref_id")
+                        track_result.room_ref_id
                     )
                     if room:
                         await metadata_channel.push_room_record_done(
-                            room_id=str(room.get("id")),
-                            room_name=room.get("room_name"),
+                            room_id=str(room.id),
+                            room_name=room.room_name,
                         )
                 elif track_result:
                     logger.warning(
