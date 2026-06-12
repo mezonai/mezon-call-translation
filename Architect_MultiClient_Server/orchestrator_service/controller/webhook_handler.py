@@ -313,6 +313,7 @@ class WebhookHandler:
                         track_type=track_info.get("type"),
                         source=track_info.get("source"),
                         identity=participant_detail.get("identity"),
+                        force_update=True
                     )
                 )
             else:
