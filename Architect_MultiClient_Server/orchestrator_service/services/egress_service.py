@@ -55,7 +55,8 @@ class EgressService:
         track_sid: str,
         track_type: str,
         source: str,
-        identity: str
+        identity: str,
+        force_update: bool = False,
     ) -> Optional[str]:
         """
         start recording a track
@@ -67,7 +68,7 @@ class EgressService:
         
         # Check duplicate
         existing_egress_id = await repo.get_egress_id(room_name, track_sid)
-        if existing_egress_id:
+        if existing_egress_id and not force_update:
             logger.info(f"⏭ Track {track_sid} was recorded, skipping")
             return existing_egress_id
         
