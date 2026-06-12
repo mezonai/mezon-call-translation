@@ -185,10 +185,10 @@ class AuthService:
         return {
             "status": "ok",
             "user": {
-                "user_id": user_info.get("user_id"),
-                "username": user_info.get("username"),
-                "display_name": user_info.get("display_name"),
-                "avatar": user_info.get("avatar_url")
+                "user_id": user_info.id,
+                "username": user_info.username,
+                "display_name": user_info.display_name,
+                "avatar": user_info.avatar_url
             }
         }
 
@@ -199,7 +199,7 @@ class AuthService:
             raise HTTPException(status_code=401, detail="Invalid or expired refresh token. Please login again.")
 
         # Get user_id from refresh token
-        user_id = token_doc["user_id"]
+        user_id = token_doc.user_id
 
         # Get user data from token (permissions will be loaded from DB on each request)
         user_data = {
@@ -207,7 +207,7 @@ class AuthService:
         }
 
         # Blacklist the old access token (if not already expired/blacklisted)
-        old_jti = token_doc["access_token_jti"]
+        old_jti = token_doc.access_token_jti
 
         # We need to get the expiry of the old token - for now,assume it's expired
         # In production, you might want to store this or calculate
@@ -227,7 +227,7 @@ class AuthService:
 
         # Rotate refresh token with new access token JTI and expiry
         new_refresh_token = await self.refresh_token_repo.rotate_refresh_token(
-            token_doc["id"],
+            token_doc.id,
             new_jti
         )
 

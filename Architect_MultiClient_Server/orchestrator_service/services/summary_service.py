@@ -68,26 +68,24 @@ class SummaryService:
         all_segments = []
         participant_durations = {}
 
-        track_ids = [str(track["id"]) for track in tracks]
+        track_ids = [str(track.id) for track in tracks]
         all_chunks = await self.pg_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
         
         chunks_by_track = {tid: [] for tid in track_ids}
         for chunk in all_chunks:
-            tid = str(chunk.get("track_ref_id"))
+            tid = str(chunk.track_ref_id)
             if tid in chunks_by_track:
                 chunks_by_track[tid].append(chunk)
 
         for track in tracks:
             try:
-                participant = track.get("participant_identity", "Unknown")
-                track_start_ns = int(
-                    track.get("audio_info", {}).get("started_at_ns", 0) or 0
-                )
-                chunks = chunks_by_track[str(track["id"])]
+                participant = track.participant_identity or "Unknown"
+                track_start_ns = int(track.audio_info.started_at_ns or 0)
+                chunks = chunks_by_track[str(track.id)]
 
                 # Calculate duration for this track/participant using start_time and end_time of chunks 
                 track_duration = sum(
-                    (c.get("end_time") or 0.0) - (c.get("start_time") or 0.0)
+                    (c.end_time or 0.0) - (c.start_time or 0.0)
                     for c in chunks
                 )
                 if participant != "Unknown":
@@ -96,7 +94,7 @@ class SummaryService:
                     )
 
                 for chunk in chunks:
-                    for seg in chunk.get("segments", []):
+                    for seg in (chunk.segments or []):
                         text = seg.get("text", "").strip()
                         if not text:
                             continue
@@ -148,9 +146,9 @@ class SummaryService:
             turns.append(current_turn)
 
         # Update room participants list in-place with their calculated speech durations and save 
-        room_participants = room_doc.get("participants") or []
+        room_participants = room_doc.participants or []
         for p in room_participants:
-            user_id = p.get("participant_identity")
+            user_id = p.participant_identity
             if user_id:
                 p["duration"] = round(participant_durations.get(user_id, 0.0), 2)
 
@@ -373,23 +371,34 @@ class SummaryService:
             await self.pg_repo.connect()
         
         if auth.can_view_all_rooms:
-            summaries = await self.pg_repo.get_summary_by_room_name(
+            summaries, rooms = await self.pg_repo.get_summary_by_room_name(
                 room_name, start_time, end_time
             )
         else:
-            summaries = await self.pg_repo.get_summary_by_room_name(
+            summaries, rooms = await self.pg_repo.get_summary_by_room_name(
                 room_name, start_time, end_time, auth.user_id
             )
 
+        if not summaries:
+            return [], 0
+
+        room_dict = {str(r.id): r for r in rooms}
         summary_models = []
+
         for summary in summaries:
-            if summary.get("room_id") is not None:
-                summary["room_id"] = str(summary["room_id"])
-            if summary.get("created_at") is not None:
-                summary["created_at"] = convert_to_iso_8601(summary["created_at"])
-            if summary.get("completed_at") is not None:
-                summary["completed_at"] = convert_to_iso_8601(summary["completed_at"])
-            summary_models.append(RoomSummaryResponse.model_construct(**summary))
+            summary_dict = {c.name: getattr(summary, c.name) for c in summary.__table__.columns}
+            room = room_dict.get(str(summary.room_id))
+            summary_dict["created_at"] = room.created_at if room else None
+            summary_dict["completed_at"] = room.completed_at if room else None
+
+            if summary_dict.get("room_id") is not None:
+                summary_dict["room_id"] = str(summary_dict["room_id"])
+            if summary_dict.get("created_at") is not None:
+                summary_dict["created_at"] = convert_to_iso_8601(summary_dict["created_at"])
+            if summary_dict.get("completed_at") is not None:
+                summary_dict["completed_at"] = convert_to_iso_8601(summary_dict["completed_at"])
+
+            summary_models.append(RoomSummaryResponse.model_construct(**summary_dict))
 
         return summary_models, len(summary_models)
 
@@ -411,16 +420,34 @@ class SummaryService:
                     status_code=403, detail="You don't have access to this room"
                 )
         
-        summary = await self.pg_repo.get_summary_by_room_id(room_id)
-        
-        if summary.get("room_id") is not None:
-            summary["room_id"] = str(summary["room_id"])
-        if summary.get("created_at") is not None:
-            summary["created_at"] = convert_to_iso_8601(summary["created_at"])
-        if summary.get("completed_at") is not None:
-            summary["completed_at"] = convert_to_iso_8601(summary["completed_at"])
+        summary, room = await self.pg_repo.get_summary_by_room_id(room_id)
+        if not summary or not room:
+            return RoomSummaryResponse.model_construct()
 
-        return RoomSummaryResponse.model_construct(**summary)
+        summary_dict = {c.name: getattr(summary, c.name) for c in summary.__table__.columns}
+        summary_dict["created_at"] = room.created_at
+        summary_dict["completed_at"] = room.completed_at
+
+        if summary_dict.get("room_id") is not None:
+            summary_dict["room_id"] = str(summary_dict["room_id"])
+        if summary_dict.get("created_at") is not None:
+            summary_dict["created_at"] = convert_to_iso_8601(summary_dict["created_at"])
+        if summary_dict.get("completed_at") is not None:
+            summary_dict["completed_at"] = convert_to_iso_8601(summary_dict["completed_at"])
+
+        speech_durations = []
+        room_participants = room.participants or []
+        for p in room_participants:
+            user_id = p.get("participant_identity")
+            if user_id and not user_id.startswith("EG_"):
+                speech_durations.append({
+                    "participant_identity": user_id,
+                    "duration": p.get("duration", 0.0)
+                })
+                
+        summary_dict["speech_durations"] = speech_durations
+
+        return RoomSummaryResponse.model_construct(**summary_dict)
 
 # Get singleton instance
 _summary_service: SummaryService | None = None
