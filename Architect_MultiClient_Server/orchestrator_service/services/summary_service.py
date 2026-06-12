@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from fastapi import HTTPException
 from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
+from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository, get_pg_outbox_repository
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository, get_pg_transcript_repository
 from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.config.application_config import get_config
@@ -21,8 +22,9 @@ logger = get_logger(__name__)
 class SummaryService:
     """Service to handle room summarization logic"""
 
-    def __init__(self, pg_repo: PgTranscriptRepository):
+    def __init__(self, pg_repo: PgTranscriptRepository, outbox_repo: PgOutboxRepository):
         self.pg_repo = pg_repo
+        self.outbox_repo = outbox_repo
         self.config = get_config()
         # Create LLM service based on configured provider
         self.llm_service = create_llm_service(self.config.llm)
@@ -213,11 +215,30 @@ class SummaryService:
             result["id"] = saved_id
 
             # 9. Notify clients via SSE if summary generation is successful
-            if summary_data_result.is_success:
+            if summary_data_result.summary_success and summary_data_result.action_items_success:
                 metadata_channel = MetadataChannel()
                 await metadata_channel.push_room_summary_done(
                     room_id=str(room_id), room_name=room_doc.get("room_name", "Unknown")
                 )
+            else:
+                if not summary_data_result.summary_success and not summary_data_result.action_items_success:
+                    retry_type = RetryType.ALL
+                elif not summary_data_result.summary_success:
+                    retry_type = RetryType.SUMMARY
+                else:
+                    retry_type = RetryType.ACTION_ITEMS
+
+                error_msg = f"{retry_type} summarization task failed in initial run."
+
+                logger.warning(
+                    f"{retry_type} task failed for room {room_id}. Creating outbox task."
+                )
+                await self.outbox_repo.add_retry_summarization_task_to_outbox(
+                    room_id=str(room_id),
+                    retry_type=retry_type,
+                    error_msg=error_msg
+                    )
+
             return result
         except Exception as e:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
@@ -308,9 +329,9 @@ class SummaryService:
                 result = await self.llm_service.summarize_conversation(
                     conversation_text=full_text,
                     room_id=room_id,
-                    language=self.config.llm.language,
+                    language=self.config.llm.language
                 )
-                is_success = result.is_success
+                is_success = result.summary_success and result.action_items_success
 
                 summary_data = {
                     "summary": result.summary,
@@ -408,6 +429,7 @@ def get_summary_service() -> SummaryService:
     global _summary_service
     if _summary_service is None:
         _summary_service = SummaryService(
-            pg_repo=get_pg_transcript_repository()
+            pg_repo=get_pg_transcript_repository(),
+            outbox_repo=get_pg_outbox_repository(),
         )
     return _summary_service

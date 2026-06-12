@@ -4,7 +4,8 @@ All configuration values are loaded from environment variables with sensible def
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 
 # Try to load .env file if dotenv is available
 try:
@@ -260,15 +261,25 @@ class AuthConfig:
 # LLM Configuration
 # ============================================================================
 
+class LLMProvider(str, Enum):
+    GEMINI = "gemini"
+    LOCAL = "local"
+
+
 @dataclass
 class LLMConfig:
     """Unified LLM configuration for all providers (Gemini, Local, OpenAI, etc.)"""
-    provider: str = "local" # "gemini" | "local" | "openai"
+    provider: str = LLMProvider.LOCAL  # LLMProvider.GEMINI | LLMProvider.LOCAL
     api_key: str = ""
     model: str  = "Qwen3.5-35B-A3B"
-    base_url: str = None 
+    base_url: str = None
     timeout: int = 120
     language: str = "Vietnamese"
+    # Fallback to a Gemini-family model when primary LLM fails
+    fallback_enabled: bool = False
+    fallback_api_key: str = ""
+    fallback_model: str = "gemma-4-31b-it"
+
     @classmethod
     def from_env(cls) -> 'LLMConfig':
         return cls(
@@ -278,6 +289,9 @@ class LLMConfig:
             api_key=os.getenv('LLM_API_KEY', ''),
             timeout=int(os.getenv('LLM_TIMEOUT', '120')),
             language=os.getenv('LLM_LANGUAGE', 'Vietnamese'),
+            fallback_enabled=os.getenv('LLM_FALLBACK_ENABLED', 'false').lower() == 'true',
+            fallback_api_key=os.getenv('LLM_FALLBACK_API_KEY', ''),
+            fallback_model=os.getenv('LLM_FALLBACK_MODEL', 'gemma-4-31b-it'),
         )
 
     def validate(self) -> bool:
@@ -382,6 +396,33 @@ class OAuth2Config:
 
 
 # ============================================================================
+# Outbox Worker Configuration
+# ============================================================================
+
+@dataclass
+class OutboxConfig:
+    """Configuration for the Summary Outbox Worker"""
+    check_interval_sec: int = 30
+    delay_between_items_sec: int = 30
+    batch_limit: int = 5
+    retry_summarization_target_hours: list = field(default_factory=lambda: [19, 20, 21])
+
+    @classmethod
+    def from_env(cls) -> 'OutboxConfig':
+        hours_str = os.getenv("OUTBOX_RETRY_SUMMARIZATION_TARGET_HOURS", "19,20,21")
+        try:
+            target_hours = [int(h.strip()) for h in hours_str.split(",") if h.strip()]
+        except ValueError:
+            target_hours = [19, 20, 21]
+        return cls(
+            check_interval_sec=int(os.getenv("OUTBOX_CHECK_INTERVAL_SEC", "30")),
+            delay_between_items_sec=int(os.getenv("OUTBOX_DELAY_BETWEEN_ITEMS_SEC", "30")),
+            batch_limit=int(os.getenv("OUTBOX_BATCH_LIMIT", "5")),
+            retry_summarization_target_hours=target_hours,
+        )
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -414,6 +455,7 @@ class Config:
         self.redis = RedisConfig.from_env()
         self.notification = NotificationConfig.from_env()
         self.oauth2 = OAuth2Config.from_env()
+        self.outbox = OutboxConfig.from_env()
 
         self._initialized = True
         self._validate_all()

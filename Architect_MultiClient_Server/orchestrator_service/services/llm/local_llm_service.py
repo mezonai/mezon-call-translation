@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import httpx
 from pydantic import ValidationError
 from tenacity import (
@@ -16,7 +16,9 @@ from tenacity import (
     before_sleep_log,
 )
 
+from orchestrator_service.config.application_config import LLMConfig, LLMProvider
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
+from orchestrator_service.services.llm.gemini_llm_service import GeminiLLMService
 from orchestrator_service.services.llm.prompt import build_simple_prompt_action_items, build_prompt_summary
 from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.utils.logger import get_logger
@@ -109,6 +111,20 @@ class LocalLLMService(BaseLLMService):
             raise ValueError("base_url is required for LocalLLMService")
         logger.info(f"Initialized Local LLM service: {config.base_url}, model: {config.model}")
 
+        self._fallback_service: Optional[GeminiLLMService] = None
+        if config.fallback_enabled and config.fallback_api_key:
+            fallback_config = LLMConfig(
+                provider=LLMProvider.GEMINI,
+                api_key=config.fallback_api_key,
+                model=config.fallback_model,
+                language=config.language,
+            )
+            try:
+                self._fallback_service = GeminiLLMService(fallback_config)
+                logger.info(f"LLM fallback service initialized: model={config.fallback_model}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize LLM fallback service: {e}")
+
     def _build_headers(self) -> Dict[str, str]:
         """
         Build HTTP headers for API requests.
@@ -144,77 +160,107 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError)),
+        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError, RuntimeError)),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
-    async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
+    async def _summarize_summary_local(self, conversation_text: str, language: str) -> SummaryResult:
+        logger.info(f"[Local LLM] Calling summarize_summary (model={self.config.model})")
         prompt = build_prompt_summary(conversation_text, language)
         json_data = await self._call_local_llm(prompt, SummaryResult.model_json_schema())
-        return SummaryResult.model_validate(json_data)
+        result = SummaryResult.model_validate(json_data)
+        logger.info("[Local LLM] summarize_summary succeeded")
+        return result
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError)),
+        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError, RuntimeError)),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
-    async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
+    async def _summarize_action_items_local(self, conversation_text: str, language: str) -> ActionItemsResult:
+        logger.info(f"[Local LLM] Calling summarize_action_items (model={self.config.model})")
         prompt = build_simple_prompt_action_items(conversation_text, language)
         json_data = await self._call_local_llm(prompt, ActionItemsResult.model_json_schema())
-        return ActionItemsResult.model_validate(json_data)
+        result = ActionItemsResult.model_validate(json_data)
+        logger.info("[Local LLM] summarize_action_items succeeded")
+        return result
+
+    async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
+        try:
+            return await self._summarize_summary_local(conversation_text, language)
+        except Exception as e:
+            if self._fallback_service is not None:
+                logger.warning(f"[Local LLM] summarize_summary failed after all retries, switching to fallback: {e}")
+                result = await self._fallback_service.summarize_summary(conversation_text, language)
+                logger.info(f"[Fallback LLM] summarize_summary succeeded (model={self.config.fallback_model})")
+                return result
+            raise
+
+    async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
+        try:
+            return await self._summarize_action_items_local(conversation_text, language)
+        except Exception as e:
+            if self._fallback_service is not None:
+                logger.warning(f"[Local LLM] summarize_action_items failed after all retries, switching to fallback: {e}")
+                result = await self._fallback_service.summarize_action_items(conversation_text, language)
+                logger.info(f"[Fallback LLM] summarize_action_items succeeded (model={self.config.fallback_model})")
+                return result
+            raise
 
     async def summarize_conversation(self, conversation_text: str, room_id: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """
-        Summarize conversation by running 2 focused local LLM requests.
+        Summarize conversation by running 2 focused LLM requests concurrently.
+        Each sub-task retries 3 times on local LLM then falls back to Gemini once.
+        Returns success=False for any part that exhausts all attempts.
 
         Args:
             conversation_text: Formatted conversation transcript
+            room_id: Room identifier for logging
+            language: Output language
 
         Returns:
             SummaryActionItemsResult with summary and action items
         """
-        summary_task = self.summarize_summary(conversation_text, language)
-        action_items_task = self.summarize_action_items(conversation_text, language)
-
-        results = await asyncio.gather(summary_task, action_items_task, return_exceptions=True)
+        results = await asyncio.gather(
+            self.summarize_summary(conversation_text, language),
+            self.summarize_action_items(conversation_text, language),
+            return_exceptions=True,
+        )
         summary_res, action_items_res = results
 
-        # Process summary result
-        if isinstance(summary_res, Exception):
-            logger.error(f"Failed to generate summary using Local LLM with room_id {room_id}: {summary_res}")
-            summary = f""
+        summary_failed = isinstance(summary_res, Exception)
+        action_items_failed = isinstance(action_items_res, Exception)
+
+        if summary_failed:
+            logger.error(f"Failed to generate summary (all attempts exhausted) with room_id: {room_id}: {summary_res}")
+            summary = ""
         else:
             summary_parts = [
                 f"Context\n{summary_res.context}",
                 f"Key Discussions\n{summary_res.key_discussions}",
             ]
-
             if summary_res.decisions and summary_res.decisions.strip():
                 summary_parts.append(f"Decisions\n{summary_res.decisions}")
-
             if summary_res.unresolved_issues and summary_res.unresolved_issues.strip():
                 summary_parts.append(f"Unresolved Issues\n{summary_res.unresolved_issues}")
-
             if summary_res.next_focus and summary_res.next_focus.strip():
                 summary_parts.append(f"Next Focus\n{summary_res.next_focus}")
-
             summary = "\n\n".join(summary_parts)
 
-        # Process action items result
-        if isinstance(action_items_res, Exception):
-            logger.error(f"Failed to generate action items using Local LLM with room_id: {room_id}: {action_items_res}")
+        if action_items_failed:
+            logger.error(f"Failed to generate action items (all attempts exhausted) with room_id: {room_id}: {action_items_res}")
             action_items = []
         else:
             action_items = action_items_res.action_items
 
-        is_success = not isinstance(summary_res, Exception) and not isinstance(action_items_res, Exception)
-        if is_success:
-            logger.info(f"Successfully generated summary and action items using Local LLM (2 requests) with room_id: {room_id}")
+        if not summary_failed and not action_items_failed:
+            logger.info(f"Successfully generated summary and action items with room_id: {room_id}")
 
         return SummaryActionItemsResult(
             summary=summary,
             action_items=action_items,
-            is_success=is_success,
+            summary_success=not summary_failed,
+            action_items_success=not action_items_failed,
         )
