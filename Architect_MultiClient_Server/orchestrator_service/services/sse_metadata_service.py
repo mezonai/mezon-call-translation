@@ -39,7 +39,7 @@ class SseMetadataService:
         skip: int,
         sort_order: str
     ) -> Tuple[List[Dict[str, Any]], int]:
-        events = await self.pg_repo.get_metadata_events(
+        raw_events = await self.pg_repo.get_metadata_events(
             event_type=event_type,
             room_id=room_id,
             from_utc=from_utc,
@@ -56,14 +56,40 @@ class SseMetadataService:
             to_utc=to_utc
         )
 
+        events = []
+        for event in raw_events:
+            e = {
+                "id": str(event.id),
+                "event_id": event.event_id,
+                "event_type": event.event_type,
+                "room_id": str(event.room_id) if event.room_id else None,
+                "room_name": event.room_name,
+                "metadata": event.event_metadata,
+                "timestamp": event.timestamp,
+                "created_at": event.created_at.isoformat() + "Z" if isinstance(event.created_at, datetime) else None
+            }
+
+            events.append(e)
+
         return events, total
 
     async def get_metadata_event_by_id(self, event_id: str) -> Dict[str, Any]:
-        event = await self.pg_repo.get_metadata_event_by_event_id(event_id)
-        if not event:
+        event_obj = await self.pg_repo.get_metadata_event_by_event_id(event_id)
+        if not event_obj:
             raise HTTPException(status_code=404, detail=f"Event not found: {event_id}")
 
-        return event
+        event_dict = {
+            "id": str(event_obj.id),
+            "event_id": event_obj.event_id,
+            "event_type": event_obj.event_type,
+            "room_id": str(event_obj.room_id) if event_obj.room_id else None,
+            "room_name": event_obj.room_name,
+            "metadata": event_obj.event_metadata,
+            "timestamp": event_obj.timestamp,
+            "created_at": event_obj.created_at.isoformat() + "Z" if isinstance(event_obj.created_at, datetime) else None
+        }
+
+        return event_dict
 
 # Get singleton instances
 _metadata_channel = None

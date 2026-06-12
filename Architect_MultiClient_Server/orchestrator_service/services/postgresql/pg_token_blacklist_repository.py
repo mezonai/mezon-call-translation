@@ -41,7 +41,7 @@ class PgTokenBlacklistRepository:
         try:
             async with session_factory() as session:
                 stmt = insert(TokenBlacklist).values(
-                    id=str(uuid.uuid4()),
+                    id=uuid.uuid4(),
                     jti=jti,
                     user_id=user_id,
                     token_hash=token_hash,

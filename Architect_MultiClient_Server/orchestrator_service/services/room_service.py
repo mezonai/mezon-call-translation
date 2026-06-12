@@ -89,14 +89,29 @@ class RoomService:
                 status_code=404, detail=f"Room with ID '{room_id}' not found"
             )
 
-        if stats.get("room_id") is not None:
-            stats["room_id"] = str(stats["room_id"])
-        if stats.get("created_at") is not None:
-            stats["created_at"] = convert_to_iso_8601(stats["created_at"])
-        if stats.get("finalized_at") is not None:
-            stats["finalized_at"] = convert_to_iso_8601(stats["finalized_at"])
+        room = stats["room"]
+        tracks = stats["tracks"]
+        total_segments = stats["total_segments"]
 
-        return stats
+        total_tracks = len(tracks)
+        completed_tracks = sum(1 for t in tracks if t == "completed")
+
+        total_duration_sec: float = 0.0
+        if room.finalized_at and room.created_at:
+            total_duration_sec = (room.finalized_at - room.created_at).total_seconds()
+
+        return {
+            "room_id": str(room.id),
+            "room_name": room.room_name,
+            "status": room.status,
+            "total_tracks": total_tracks,
+            "completed_tracks": completed_tracks,
+            "remaining_tracks": total_tracks - completed_tracks,
+            "total_segments": total_segments,
+            "created_at": convert_to_iso_8601(room.created_at) if room.created_at else None,
+            "finalized_at": convert_to_iso_8601(room.finalized_at) if room.finalized_at else None,
+            "total_duration_sec": total_duration_sec,
+        }
 
     async def get_audio_info(
         self,
@@ -122,7 +137,7 @@ class RoomService:
         
         file_results = []
         for track in tracks:
-            audio_info = track.audio_info or {}
+            audio_info = track.audio_info
             if not audio_info:
                 continue
             file_results.append({

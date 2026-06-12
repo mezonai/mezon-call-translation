@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any, Tuple, Set
 import uuid
 
-from sqlalchemy import text, select, update, exists, func
+from sqlalchemy import text, select, update, exists, func, cast, String, Select
 from sqlalchemy.dialects.postgresql import insert
 from orchestrator_service.services.postgresql.database import get_session_factory
 from orchestrator_service.services.postgresql.models import Room, Track, RoomSummary, MetadataEvent, TranscriptChunk
@@ -45,12 +45,12 @@ class PgTranscriptRepository:
 
     def _build_list_rooms_condition_query(
         self,
-        stmt,
+        stmt: Select,
         status: Optional[str] = None,
         search: Optional[str] = None,
         from_utc: Optional[datetime] = None,
         to_utc: Optional[datetime] = None,
-    ):
+    ) -> Select:
         if status:
             stmt = stmt.where(Room.status == status)
         if from_utc:
@@ -135,7 +135,7 @@ class PgTranscriptRepository:
     ) -> Optional[str]:
         session_factory = get_session_factory()
         now = datetime.now(timezone.utc)
-        uid = str(uuid.uuid4())
+        uid = uuid.uuid4()
         try:
             async with session_factory() as session:
                 new_room = Room(
@@ -147,7 +147,7 @@ class PgTranscriptRepository:
                 )
                 session.add(new_room)
                 await session.commit()
-                return new_room.id
+                return str(new_room.id)
         except Exception as e:
             logger.error(f"Failed to create room: {e}")
             return None
@@ -214,12 +214,11 @@ class PgTranscriptRepository:
         try:
             async with session_factory() as session:
                 room = await session.get(Room, room_id)
-                existing_participants = room.participants
-
-                if existing_participants is None:
+                if not room:
                     logger.error(f"Room {room_id} not found")
                     return {"success": False, "added_count": 0, "skipped_count": 0}
-                
+
+                existing_participants = room.participants or []
                 existing_identities: Set[str] = {
                     p.get("participant_identity")
                     for p in existing_participants
@@ -453,30 +452,16 @@ class PgTranscriptRepository:
                 if not room:
                     return {}
 
-                total_duration_sec: float = 0.0
-                if room.finalized_at and room.created_at:
-                    total_duration_sec = (room.finalized_at - room.created_at).total_seconds()
-
                 track_stmt = select(Track.status).where(Track.room_ref_id == room_id)
                 tracks = list((await session.scalars(track_stmt)).all())
-                
-                completed = sum(1 for t in tracks if t == "completed")
-                total = len(tracks)
 
                 sum_stmt = select(RoomSummary.total_segments).where(RoomSummary.room_id == room_id)
                 segments = await session.scalar(sum_stmt) or 0
 
                 return {
-                    "room_id": str(room.id),
-                    "room_name": room.room_name,
-                    "status": room.status,
-                    "total_tracks": total,
-                    "completed_tracks": completed,
-                    "remaining_tracks": total - completed,
-                    "total_segments": segments,
-                    "created_at": room.created_at,
-                    "finalized_at": room.finalized_at,
-                    "total_duration_sec": total_duration_sec,
+                    "room": room,
+                    "tracks": tracks,
+                    "total_segments": segments
                 }
         except Exception as e:
             logger.error(f"Failed to get room stats: {e}")
@@ -582,13 +567,13 @@ class PgTranscriptRepository:
             logger.error(f"Failed to update summary: {e}")
             return False
 
-    async def get_summary_by_room_id(self, room_id: str) -> Dict[str, Any]:
+    async def get_summary_by_room_id(self, room_id: str) -> Tuple[Optional[RoomSummary], Optional[Room]]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
                 room = await session.get(Room, room_id)
                 if not room:
-                    return {}
+                    return None, None
 
                 stmt = (
                     select(RoomSummary)
@@ -596,31 +581,11 @@ class PgTranscriptRepository:
                     .order_by(RoomSummary.created_at.desc())
                     .limit(1)
                 )
-                result = await session.scalar(stmt)
-
-                if result:
-                    s = {c.name: getattr(result, c.name) for c in result.__table__.columns}
-                    s["room_id"] = str(s["room_id"])
-                    s["created_at"] = room.created_at
-                    s["completed_at"] = room.completed_at
-
-                    # Read speech durations directly from the rooms table participants column
-                    speech_durations = []
-                    room_participants = room.participants or []
-                    for p in room_participants:
-                        user_id = p.get("participant_identity")
-                        if user_id and not user_id.startswith("EG_"):
-                            speech_durations.append({
-                                "participant_identity": user_id,
-                                "duration": p.get("duration", 0.0)
-                            })
-
-                    s["speech_durations"] = speech_durations
-                    return s
-                return {}
+                summary = await session.scalar(stmt)
+                return summary, room
         except Exception as e:
             logger.error(f"Failed to get summary by id: {e}")
-            return {}
+            return None, None
 
     async def get_summary_by_room_name(
         self,
@@ -628,7 +593,7 @@ class PgTranscriptRepository:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         user_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[RoomSummary], List[Room]]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -645,30 +610,18 @@ class PgTranscriptRepository:
                 room_list = list((await session.scalars(room_stmt)).all())
 
                 if not room_list:
-                    return []
+                    return [], []
 
-                room_dict = {str(r.id): r for r in room_list}
                 room_ids = [r.id for r in room_list]
 
                 # 2. get summaries
                 summary_stmt = select(RoomSummary).where(RoomSummary.room_id.in_(room_ids))
                 summary_list = list((await session.scalars(summary_stmt)).all())
 
-                summary_response_list = []
-
-                for summary in summary_list:
-                    summary_response = {c.name: getattr(summary, c.name) for c in summary.__table__.columns}
-                    summary_response["room_id"] = str(summary.room_id)
-
-                    room = room_dict.get(str(summary.room_id), {})
-                    summary_response["created_at"] = room.created_at
-                    summary_response["completed_at"] = room.completed_at
-                    summary_response_list.append(summary_response)
-
-                return summary_response_list
+                return summary_list, room_list
         except Exception as e:
             logger.error(f"Failed to get summary by room name: {e}")
-            return []
+            return [], []
 
     # ------------------------------------------------------------------
     # METADATA EVENTS
@@ -676,7 +629,7 @@ class PgTranscriptRepository:
 
     async def save_metadata_event(self, event_data: Dict[str, Any]) -> Optional[str]:
         session_factory = get_session_factory()
-        uid = str(uuid.uuid4())
+        uid = uuid.uuid4()
         room_uid = event_data.get("room_id")
         try:
             async with session_factory() as session:
@@ -705,25 +658,7 @@ class PgTranscriptRepository:
         try:
             async with session_factory() as session:
                 stmt = select(MetadataEvent).where(MetadataEvent.event_id == event_id)
-                row = await session.scalar(stmt)
-
-                if not row:
-                    return None
-
-                e = {
-                    "id": row.id,
-                    "event_id": row.event_id,
-                    "event_type": row.event_type,
-                    "room_id": str(row.room_id) if row.room_id else None,
-                    "room_name": row.room_name,
-                    "metadata": row.event_metadata,
-                    "timestamp": row.timestamp,
-                }
-                
-                if isinstance(row.created_at, datetime):
-                    e["created_at"] = row.created_at.isoformat() + "Z"
-
-                return e
+                return await session.scalar(stmt)
         except Exception as e:
             logger.error(f"Failed to get event by id: {e}")
             return None
@@ -769,7 +704,7 @@ class PgTranscriptRepository:
                         chunk_segments[-1].get("end", 0.0) if chunk_segments else 0.0
                     )
                     new_chunk = TranscriptChunk(
-                        id=str(uuid.uuid4()),
+                        id=uuid.uuid4(),
                         track_ref_id=track_ref_id,
                         chunk_index=start_index + i,
                         start_time=start_time,
@@ -798,12 +733,12 @@ class PgTranscriptRepository:
 
     def _build_metadata_events_condition_query(
         self,
-        stmt,
+        stmt: Select,
         event_type: Optional[str] = None,
         room_id: Optional[str] = None,
         from_utc: Optional[datetime] = None,
         to_utc: Optional[datetime] = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> Select:
         if room_id:
             stmt = stmt.where(MetadataEvent.room_id == room_id)
         if event_type:
@@ -844,25 +779,7 @@ class PgTranscriptRepository:
 
         try:
             async with session_factory() as session:
-                rows = list((await session.scalars(stmt)).all())
-                events = []
-                for row in rows:
-                    e = {
-                        "id": row.id,
-                        "event_id": row.event_id,
-                        "event_type": row.event_type,
-                        "room_id": str(row.room_id) if row.room_id else None,
-                        "room_name": row.room_name,
-                        "metadata": row.event_metadata,
-                        "timestamp": row.timestamp,
-                    }
-                    
-                    if isinstance(row.created_at, datetime):
-                        e["created_at"] = row.created_at.isoformat() + "Z"
-
-                    events.append(e)
-
-                return events
+                return list((await session.scalars(stmt)).all())
         except Exception as e:
             logger.error(f"Failed to get metadata events: {e}")
             return []

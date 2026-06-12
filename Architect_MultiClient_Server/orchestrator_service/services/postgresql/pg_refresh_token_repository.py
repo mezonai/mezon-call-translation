@@ -43,7 +43,7 @@ class PgRefreshTokenRepository:
         expiry = expiry_days if expiry_days is not None else auth_config.refresh_token_expiry_days
         expires_at = datetime.now(timezone.utc) + timedelta(days=expiry)
         now = datetime.now(timezone.utc)
-        token_id = str(uuid.uuid4())
+        token_id = uuid.uuid4()
 
         session_factory = get_session_factory()
         try:
@@ -113,7 +113,7 @@ class PgRefreshTokenRepository:
                 stmt = (
                     update(RefreshToken)
                     .where(
-                        RefreshToken.id == str(token_id),
+                        RefreshToken.id == token_id,
                         RefreshToken.is_revoked == False
                     )
                     .values(

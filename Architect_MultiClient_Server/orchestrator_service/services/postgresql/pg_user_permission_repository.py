@@ -39,8 +39,10 @@ class PgUserPermissionRepository:
         try:
             async with session_factory() as session:
                 user = await session.get(User, user_id)
-                permissions_list = user.permissions if user else None
-            if permissions_list is not None:
+                if not user:
+                    logger.debug(f"No user found for user_id={user_id}")
+                    return set()
+                permissions_list = user.permissions or []
                 permissions = set(permissions_list)
                 self._cache[user_id] = permissions
                 logger.debug(f"Loaded {len(permissions)} permissions for user_id={user_id}")
