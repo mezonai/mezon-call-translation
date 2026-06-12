@@ -164,10 +164,13 @@ class LocalLLMService(BaseLLMService):
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
-    async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
+    async def _summarize_summary_local(self, conversation_text: str, language: str) -> SummaryResult:
+        logger.info(f"[Local LLM] Calling summarize_summary (model={self.config.model})")
         prompt = build_prompt_summary(conversation_text, language)
         json_data = await self._call_local_llm(prompt, SummaryResult.model_json_schema())
-        return SummaryResult.model_validate(json_data)
+        result = SummaryResult.model_validate(json_data)
+        logger.info("[Local LLM] summarize_summary succeeded")
+        return result
 
     @retry(
         stop=stop_after_attempt(3),
@@ -176,25 +179,50 @@ class LocalLLMService(BaseLLMService):
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
-    async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
+    async def _summarize_action_items_local(self, conversation_text: str, language: str) -> ActionItemsResult:
+        logger.info(f"[Local LLM] Calling summarize_action_items (model={self.config.model})")
         prompt = build_simple_prompt_action_items(conversation_text, language)
         json_data = await self._call_local_llm(prompt, ActionItemsResult.model_json_schema())
-        return ActionItemsResult.model_validate(json_data)
+        result = ActionItemsResult.model_validate(json_data)
+        logger.info("[Local LLM] summarize_action_items succeeded")
+        return result
+
+    async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
+        try:
+            return await self._summarize_summary_local(conversation_text, language)
+        except Exception as e:
+            if self._fallback_service is not None:
+                logger.warning(f"[Local LLM] summarize_summary failed after all retries, switching to fallback: {e}")
+                result = await self._fallback_service.summarize_summary(conversation_text, language)
+                logger.info(f"[Fallback LLM] summarize_summary succeeded (model={self.config.fallback_model})")
+                return result
+            raise
+
+    async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
+        try:
+            return await self._summarize_action_items_local(conversation_text, language)
+        except Exception as e:
+            if self._fallback_service is not None:
+                logger.warning(f"[Local LLM] summarize_action_items failed after all retries, switching to fallback: {e}")
+                result = await self._fallback_service.summarize_action_items(conversation_text, language)
+                logger.info(f"[Fallback LLM] summarize_action_items succeeded (model={self.config.fallback_model})")
+                return result
+            raise
 
     async def summarize_conversation(self, conversation_text: str, room_id: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """
-        Summarize conversation by running 2 focused local LLM requests.
-        If either sub-task fails, retries with LLM fallback (if configured).
-        If fallback also fails, returns with success=False for the failed parts.
+        Summarize conversation by running 2 focused LLM requests concurrently.
+        Each sub-task retries 3 times on local LLM then falls back to Gemini once.
+        Returns success=False for any part that exhausts all attempts.
 
         Args:
             conversation_text: Formatted conversation transcript
+            room_id: Room identifier for logging
             language: Output language
 
         Returns:
             SummaryActionItemsResult with summary and action items
         """
-        # Phase 1: primary local LLM
         results = await asyncio.gather(
             self.summarize_summary(conversation_text, language),
             self.summarize_action_items(conversation_text, language),
@@ -206,51 +234,7 @@ class LocalLLMService(BaseLLMService):
         action_items_failed = isinstance(action_items_res, Exception)
 
         if summary_failed:
-            logger.error(f"Local LLM summary failed with room_id: {room_id}: {summary_res}")
-        if action_items_failed:
-            logger.error(f"Local LLM action_items failed with room_id: {room_id}: {action_items_res}")
-
-        # Phase 2: LLM fallback — only retry the failed sub-tasks
-        if (summary_failed or action_items_failed) and self._fallback_service is not None:
-            logger.warning(
-                f"Attempting LLM fallback with room_id: {room_id} (summary_failed={summary_failed}, "
-                f"action_items_failed={action_items_failed})"
-            )
-            fallback_coros = []
-            if summary_failed:
-                fallback_coros.append(
-                    self._fallback_service.summarize_summary(conversation_text, language)
-                )
-            if action_items_failed:
-                fallback_coros.append(
-                    self._fallback_service.summarize_action_items(conversation_text, language)
-                )
-
-            fb_results = await asyncio.gather(*fallback_coros, return_exceptions=True)
-            fb_idx = 0
-
-            if summary_failed:
-                fb_res = fb_results[fb_idx]
-                fb_idx += 1
-                if isinstance(fb_res, Exception):
-                    logger.error(f"LLM fallback summary also failed with room_id: {room_id}: {fb_res}")
-                else:
-                    summary_res = fb_res
-                    summary_failed = False
-                    logger.info(f"LLM fallback summary succeeded with room_id: {room_id}")
-
-            if action_items_failed:
-                fb_res = fb_results[fb_idx]
-                if isinstance(fb_res, Exception):
-                    logger.error(f"LLM fallback action_items also failed with room_id: {room_id}: {fb_res}")
-                else:
-                    action_items_res = fb_res
-                    action_items_failed = False
-                    logger.info(f"LLM fallback action_items succeeded with room_id: {room_id}")
-
-        # Phase 3: build final result
-        if summary_failed:
-            logger.error(f"Failed to generate summary (all attempts exhausted) with room_id: {room_id}: {action_items_res}")
+            logger.error(f"Failed to generate summary (all attempts exhausted) with room_id: {room_id}: {summary_res}")
             summary = ""
         else:
             summary_parts = [
@@ -265,7 +249,6 @@ class LocalLLMService(BaseLLMService):
                 summary_parts.append(f"Next Focus\n{summary_res.next_focus}")
             summary = "\n\n".join(summary_parts)
 
-        # Process action items result
         if action_items_failed:
             logger.error(f"Failed to generate action items (all attempts exhausted) with room_id: {room_id}: {action_items_res}")
             action_items = []
