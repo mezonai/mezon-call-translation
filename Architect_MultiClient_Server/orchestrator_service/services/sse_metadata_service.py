@@ -59,10 +59,10 @@ class SseMetadataService:
         events = []
         for event in raw_events:
             e = {
-                "id": str(event.id),
+                "id": event.id,
                 "event_id": event.event_id,
                 "event_type": event.event_type,
-                "room_id": str(event.room_id) if event.room_id else None,
+                "room_id": event.room_id,
                 "room_name": event.room_name,
                 "metadata": event.event_metadata,
                 "timestamp": event.timestamp,
@@ -79,10 +79,10 @@ class SseMetadataService:
             raise HTTPException(status_code=404, detail=f"Event not found: {event_id}")
 
         event_dict = {
-            "id": str(event_obj.id),
+            "id": event_obj.id,
             "event_id": event_obj.event_id,
             "event_type": event_obj.event_type,
-            "room_id": str(event_obj.room_id) if event_obj.room_id else None,
+            "room_id": event_obj.room_id,
             "room_name": event_obj.room_name,
             "metadata": event_obj.event_metadata,
             "timestamp": event_obj.timestamp,

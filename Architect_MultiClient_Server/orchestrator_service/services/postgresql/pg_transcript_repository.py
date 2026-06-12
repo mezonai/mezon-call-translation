@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any, Tuple, Set
 import uuid
 
-from sqlalchemy import text, select, update, exists, func, cast, String, Select
+from sqlalchemy import text, select, update, exists, func, Select, or_
 from sqlalchemy.dialects.postgresql import insert
 from orchestrator_service.services.postgresql.database import get_session_factory
 from orchestrator_service.services.postgresql.models import Room, Track, RoomSummary, MetadataEvent, TranscriptChunk
@@ -59,13 +59,12 @@ class PgTranscriptRepository:
             stmt = stmt.where(Room.created_at <= to_utc)
         if search:
             search_term = f"%{search}%"
-            
-            jsonb_exists = text(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements(participants) AS p WHERE p->>'participant_identity' ILIKE :search)"
-            ).bindparams(search=search_term)
 
             stmt = stmt.where(
-                Room.room_name.ilike(search_term) | jsonb_exists
+                or_(
+                    Room.room_name.ilike(search_term),
+                    Room.participants.contains([{"participant_identity": search}])
+                )
             )
 
         return stmt
@@ -443,29 +442,6 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to check user room access: {e}")
             return False
-
-    async def get_room_statistics_by_id(self, room_id: str) -> Dict[str, Any]:
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                room = await session.get(Room, room_id)
-                if not room:
-                    return {}
-
-                track_stmt = select(Track.status).where(Track.room_ref_id == room_id)
-                tracks = list((await session.scalars(track_stmt)).all())
-
-                sum_stmt = select(RoomSummary.total_segments).where(RoomSummary.room_id == room_id)
-                segments = await session.scalar(sum_stmt) or 0
-
-                return {
-                    "room": room,
-                    "tracks": tracks,
-                    "total_segments": segments
-                }
-        except Exception as e:
-            logger.error(f"Failed to get room stats: {e}")
-            return {}
 
     async def list_rooms_by_user(
         self,

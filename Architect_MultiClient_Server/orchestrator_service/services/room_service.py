@@ -18,7 +18,7 @@ class RoomService:
 
     def _serialize_room(self, room: Room) -> dict:
         serialized_room = {
-            "id": str(room.id),
+            "id": room.id,
             "room_name": room.room_name,
             "status": room.status,
             "participants": room.participants,
@@ -83,25 +83,23 @@ class RoomService:
                     status_code=403, detail="You don't have access to this room"
                 )
 
-        stats = await self.pg_repo.get_room_statistics_by_id(room_id)
-        if not stats:
+        summary, room = await self.pg_repo.get_summary_by_room_id(room_id)
+        tracks = await self.pg_repo.get_tracks_by_room(room_id)
+        if not room:
             raise HTTPException(
                 status_code=404, detail=f"Room with ID '{room_id}' not found"
             )
 
-        room = stats["room"]
-        tracks = stats["tracks"]
-        total_segments = stats["total_segments"]
-
+        total_segments = summary.total_segments if summary else 0
         total_tracks = len(tracks)
-        completed_tracks = sum(1 for t in tracks if t == "completed")
+        completed_tracks = sum(1 for t in tracks if t.status == "completed")
 
         total_duration_sec: float = 0.0
         if room.finalized_at and room.created_at:
             total_duration_sec = (room.finalized_at - room.created_at).total_seconds()
 
         return {
-            "room_id": str(room.id),
+            "room_id": room.id,
             "room_name": room.room_name,
             "status": room.status,
             "total_tracks": total_tracks,
