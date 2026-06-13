@@ -282,7 +282,7 @@ class RedisSaveTranscriptionService:
                 if success_res and success_res.get("success"):
                     track_data = success_res.get("track", {})
                     # Get room_ref_id from updated track
-                    room_ref_id = track_data.room_ref_id
+                    room_ref_id = track_data.room_ref_id if track_data else None
                     
                     # Log final summary
                     logger.info(
