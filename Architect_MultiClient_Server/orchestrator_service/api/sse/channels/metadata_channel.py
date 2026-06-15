@@ -293,13 +293,13 @@ class MetadataChannel:
             tracks = await self.pg_repo.get_tracks_by_room(room_id)
 
             for track in tracks:
-                audio_info = track.get("audio_info") or {}
+                audio_info = track.audio_info
 
                 started_at_ns = audio_info.get("started_at_ns")
                 ended_at_ns = audio_info.get("ended_at_ns")
 
                 file_result = {
-                    "participant_identity": track.get("participant_identity", ""),
+                    "participant_identity": track.participant_identity,
                     "filename": audio_info.get("filename", ""),
                     "started_at_ns": started_at_ns,
                     "ended_at_ns": ended_at_ns,

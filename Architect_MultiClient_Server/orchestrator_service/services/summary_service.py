@@ -216,7 +216,7 @@ class SummaryService:
             if summary_data_result.summary_success and summary_data_result.action_items_success:
                 metadata_channel = MetadataChannel()
                 await metadata_channel.push_room_summary_done(
-                    room_id=str(room_id), room_name=room_doc.get("room_name", "Unknown")
+                    room_id=str(room_id), room_name=room_doc.room_name or "Unknown"
                 )
             else:
                 if not summary_data_result.summary_success and not summary_data_result.action_items_success:
@@ -258,11 +258,11 @@ class SummaryService:
         if not self.pg_repo.connected:
             await self.pg_repo.connect()
 
-        summary_doc = await self.pg_repo.get_summary_by_room_id(room_id)
+        summary_doc, room_doc = await self.pg_repo.get_summary_by_room_id(room_id)
         if not summary_doc:
             raise ValueError(f"Not found summary_doc for room_id: {room_id}")
 
-        messages = summary_doc.get("messages", [])
+        messages = summary_doc.messages or []
         if not messages:
             raise ValueError(f"messages is empty for room_id: {room_id}")
 
@@ -271,7 +271,7 @@ class SummaryService:
         )
 
         # Extract existing summary_data to preserve fields that aren't being retried
-        existing_summary_data = summary_doc.get("summary_data") or {}
+        existing_summary_data = summary_doc.summary_data or {}
         existing_summary = existing_summary_data.get("summary", "")
         existing_action_items = existing_summary_data.get("action_items", {})
 
@@ -349,7 +349,7 @@ class SummaryService:
             if is_success:
                 metadata_channel = MetadataChannel()
                 await metadata_channel.push_room_summary_done(
-                    room_id=room_id, room_name=summary_doc.get("room_name", "Unknown")
+                    room_id=room_id, room_name=summary_doc.room_name or "Unknown"
                 )
 
             logger.info(
