@@ -67,18 +67,6 @@ class LocalLLMService(BaseLLMService):
             except Exception as e:
                 logger.warning(f"Failed to initialize LLM fallback service: {e}")
 
-    def _build_headers(self) -> Dict[str, str]:
-        """
-        Build HTTP headers for API requests.
-
-        Returns:
-            Dictionary of HTTP headers
-        """
-        headers = {"Content-Type": "application/json"}
-        if self.config.api_key:
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
-        return headers
-
     async def _call_local_llm(self, prompt: str, response_model: type[BaseModel]) -> Dict[str, Any]:
         response = await self.client.beta.chat.completions.parse(
             model=self.config.model,
