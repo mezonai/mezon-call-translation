@@ -80,7 +80,7 @@ class SummaryService:
         for track in tracks:
             try:
                 participant = track.participant_identity or "Unknown"
-                track_start_ns = int(track.audio_info.started_at_ns or 0)
+                track_start_ns = int(track.audio_info.get("started_at_ns", 0) or 0)
                 chunks = chunks_by_track[str(track.id)]
 
                 # Calculate duration for this track/participant using start_time and end_time of chunks 
@@ -111,7 +111,7 @@ class SummaryService:
                             }
                         )
             except Exception as e:
-                logger.error(f"Error processing track {track.get('id')}: {e}")
+                logger.error(f"Error processing track {track.id}: {e}")
                 continue
 
         if not all_segments:
@@ -148,7 +148,7 @@ class SummaryService:
         # Update room participants list in-place with their calculated speech durations and save 
         room_participants = room_doc.participants or []
         for p in room_participants:
-            user_id = p.participant_identity
+            user_id = p.get("participant_identity")
             if user_id:
                 p["duration"] = round(participant_durations.get(user_id, 0.0), 2)
 
@@ -164,7 +164,7 @@ class SummaryService:
 
         draft_summary: Dict[str, Any] = {
             "room_id": room_id,
-            "room_name": room_doc.get("room_name", "Unknown"),
+            "room_name": room_doc.room_name or "Unknown",
             "participants": list(unique_participants),
             "summary_data": {},
             "messages": turns,
