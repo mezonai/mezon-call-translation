@@ -409,7 +409,7 @@ class PgTranscriptRepository:
                     )
                     .values(
                         status="completed",
-                        updated_at=datetime.now(timezone.utc)
+                        completed_at=datetime.now(timezone.utc)
                     )
                     .returning(Room)
                 )
