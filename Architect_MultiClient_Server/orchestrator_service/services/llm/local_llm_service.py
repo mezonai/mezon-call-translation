@@ -90,7 +90,9 @@ class LocalLLMService(BaseLLMService):
     async def _summarize_summary_local(self, conversation_text: str, language: str) -> SummaryResult:
         logger.info(f"[Local LLM] Calling summarize_summary (model={self.config.model})")
         prompt = build_prompt_summary(conversation_text, language)
-        return await self._call_local_llm(prompt, SummaryResult)
+        result = await self._call_local_llm(prompt, SummaryResult)
+        logger.info("[Local LLM] summarize_summary succeeded")
+        return result
 
     @retry(
         stop=stop_after_attempt(3),
@@ -102,7 +104,9 @@ class LocalLLMService(BaseLLMService):
     async def _summarize_action_items_local(self, conversation_text: str, language: str) -> ActionItemsResult:
         logger.info(f"[Local LLM] Calling summarize_action_items (model={self.config.model})")
         prompt = build_simple_prompt_action_items(conversation_text, language)
-        return await self._call_local_llm(prompt, ActionItemsResult)
+        result = await self._call_local_llm(prompt, ActionItemsResult)
+        logger.info("[Local LLM] summarize_action_items succeeded")
+        return result
 
     async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
         try:
