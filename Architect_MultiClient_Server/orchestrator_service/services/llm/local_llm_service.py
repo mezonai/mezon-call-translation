@@ -6,8 +6,9 @@ import json
 import logging
 import re
 from typing import Any, Dict, Optional
+from openai import AsyncOpenAI, APIError, APIConnectionError, RateLimitError
 import httpx
-from pydantic import ValidationError
+from pydantic import ValidationError, BaseModel
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -25,74 +26,6 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-
-def extract_json_from_llm(result: dict) -> Dict[str, Any]:
-    """
-    Safely extract JSON payload from OpenAI-compatible chat completion responses.
-
-    Args:
-        result: Raw API response dictionary
-
-    Returns:
-        Extracted JSON dictionary
-
-    Raises:
-        RuntimeError: If response format is invalid
-        ValueError: If no valid JSON found in response
-    """
-    if "choices" not in result:
-        logger.error("Invalid local LLM API response: missing 'choices'")
-        logger.debug(json.dumps(result, indent=2, ensure_ascii=False))
-        raise RuntimeError("Invalid API response")
-
-    msg = result["choices"][0].get("message", {})
-    raw = (msg.get("content") or msg.get("reasoning_content") or "").strip()
-
-    if not raw:
-        raise ValueError("Empty LLM output")
-
-    # 1) Direct JSON parse
-    try:
-        return json.loads(raw)
-    except Exception:
-        logger.warning(f"Direct JSON parse failed, attempting to extract JSON from LLM outputL: {raw}")
-        pass
-
-    # 2) Extract balanced JSON object candidates
-    stack = []
-    start = None
-    candidates = []
-    for i, ch in enumerate(raw):
-        if ch == "{":
-            if not stack:
-                start = i
-            stack.append(ch)
-        elif ch == "}":
-            if stack:
-                stack.pop()
-                if not stack and start is not None:
-                    candidates.append(raw[start : i + 1])
-
-    for candidate in reversed(candidates):
-        try:
-            return json.loads(candidate)
-        except Exception:
-            logger.warning("Candidate JSON parse failed, trying next candidate")
-            continue
-
-    # 3) Extract JSON in markdown code blocks
-    blocks = re.findall(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
-    for block in reversed(blocks):
-        try:
-            return json.loads(block)
-        except Exception:
-            logger.warning("Markdown code block JSON parse failed, trying next block")
-            continue
-
-    logger.error("Cannot extract JSON from local LLM output")
-    raise ValueError("No valid JSON found in LLM response")
-
-
 class LocalLLMService(BaseLLMService):
     """Local LLM service for OpenAI-compatible API"""
 
@@ -109,6 +42,15 @@ class LocalLLMService(BaseLLMService):
         super().__init__(config)
         if not config.base_url:
             raise ValueError("base_url is required for LocalLLMService")
+
+        base_url = config.base_url.replace("/chat/completions", "").rstrip("/")
+
+        self.client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=config.api_key,
+            timeout=config.timeout,
+        )
+
         logger.info(f"Initialized Local LLM service: {config.base_url}, model: {config.model}")
 
         self._fallback_service: Optional[GeminiLLMService] = None
@@ -137,55 +79,42 @@ class LocalLLMService(BaseLLMService):
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         return headers
 
-    async def _call_local_llm(self, prompt: str, json_schema: Dict[str, Any]) -> Dict[str, Any]:
-        payload = {
-            "model": self.config.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "response_format": {"type": "json_object"},
-            "json_schema": json_schema,
-            "max_tokens": 15000,
-            "temperature": 0,
-        }
-
-        async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-            response = await client.post(
-                self.config.base_url,
-                headers=self._build_headers(),
-                json=payload,
-            )
-        response.raise_for_status()
-        result = response.json()
-        return extract_json_from_llm(result)
+    async def _call_local_llm(self, prompt: str, response_model: type[BaseModel]) -> Dict[str, Any]:
+        response = await self.client.beta.chat.completions.parse(
+            model=self.config.model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format=response_model,
+            temperature=0,
+            max_tokens=15000,
+        )
+        result = response.choices[0].message.parsed
+        if result is None:
+            raise ValueError("LLM returned no structured output")
+        return result
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError, RuntimeError)),
+        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, ValueError, ValidationError, RuntimeError)),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
     async def _summarize_summary_local(self, conversation_text: str, language: str) -> SummaryResult:
         logger.info(f"[Local LLM] Calling summarize_summary (model={self.config.model})")
         prompt = build_prompt_summary(conversation_text, language)
-        json_data = await self._call_local_llm(prompt, SummaryResult.model_json_schema())
-        result = SummaryResult.model_validate(json_data)
-        logger.info("[Local LLM] summarize_summary succeeded")
-        return result
+        return await self._call_local_llm(prompt, SummaryResult)
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((httpx.HTTPError, ValueError, ValidationError, RuntimeError)),
+        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, ValueError, ValidationError, RuntimeError)),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
     async def _summarize_action_items_local(self, conversation_text: str, language: str) -> ActionItemsResult:
         logger.info(f"[Local LLM] Calling summarize_action_items (model={self.config.model})")
         prompt = build_simple_prompt_action_items(conversation_text, language)
-        json_data = await self._call_local_llm(prompt, ActionItemsResult.model_json_schema())
-        result = ActionItemsResult.model_validate(json_data)
-        logger.info("[Local LLM] summarize_action_items succeeded")
-        return result
+        return await self._call_local_llm(prompt, ActionItemsResult)
 
     async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
         try:

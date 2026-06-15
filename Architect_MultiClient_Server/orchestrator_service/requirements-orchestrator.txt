@@ -38,6 +38,7 @@ alembic>=1.13.0                # Database migration tool
 # AI & LLM Services
 # ========================================
 google-genai>=0.3.0            # Google Gemini API SDK
+openai>=1.30.0                 # OpenAI Python SDK
 tenacity>=8.0.0                # Retry library with exponential backoff
 
 # ========================================
