@@ -415,8 +415,7 @@ class PgTranscriptRepository:
                 )
                 result = await session.execute(stmt_update)
                 await session.commit()
-
-                return result.rowcount > 0
+                return result.scalar_one_or_none() is not None
         except Exception as e:
             logger.error(f"Failed check and complete room: {e}")
             return False
