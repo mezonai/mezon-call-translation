@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from typing import Any, Dict, Optional
-from openai import AsyncOpenAI, APIError, APIConnectionError, RateLimitError
+from openai import AsyncOpenAI, APIError, APIConnectionError, RateLimitError, LengthFinishReasonError
 import httpx
 from pydantic import ValidationError, BaseModel
 from tenacity import (
@@ -83,7 +83,7 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, ValueError, ValidationError, RuntimeError)),
+        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, LengthFinishReasonError, ValueError, ValidationError, RuntimeError)),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
@@ -97,7 +97,7 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, ValueError, ValidationError, RuntimeError)),
+        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, LengthFinishReasonError, ValueError, ValidationError, RuntimeError)),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
