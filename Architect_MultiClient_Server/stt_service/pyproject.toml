@@ -1,7 +1,7 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 120                     
-src = ["agents", "dashboard", "orchestrator_service", "stt_service", "tts_service"]
+src = ["."]
 
 [tool.ruff.lint]
 select = [
@@ -18,7 +18,7 @@ select = [
 ignore = ["E501"]   # Ignore "line too long" (E501) for unbreakable strings/URLs
 
 [tool.ruff.lint.isort]
-known-first-party = ["agents", "dashboard", "orchestrator_service", "stt_service", "tts_service"]
+known-first-party = ["stt_service"]
 
 [tool.ruff.format]
 quote-style = "double"  # Strictly enforce double quotes "" for all strings
@@ -34,12 +34,14 @@ warn_unreachable = true                 # Warn about unreachable code after retu
 
 [[tool.mypy.overrides]]
 module = [
-    "openai.*",
-    "httpx.*",
-    "google.*",
     "livekit.*",
     "redis.*",
-    "tenacity.*",
-    "uvicorn.*",
+    "prometheus_client.*",
+    "psutil.*",
+    "minio.*",
+    "faster_whisper.*",
+    "vosk.*",
+    "dotenv.*",
 ]
 ignore_missing_imports = true
+

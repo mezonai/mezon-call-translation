@@ -11,42 +11,55 @@ This repository contains the backend services for the Mezon Call Translation pro
 
 ## Code Quality & Type Checking
 
-To maintain high code quality, consistent formatting, and type safety, the project uses **Ruff** for linting and formatting, and **MyPy** for static type analysis.
+To maintain high code quality, consistent formatting, and type safety, each service (**agents**, **orchestrator_service**, **stt_service**, and **tts_service**) has its own individual `pyproject.toml` configuration file. 
+
+This allows you to run linting, formatting, and type checking either globally from the root directory (`Architect_MultiClient_Server`) or locally inside each service directory.
 
 ### 1. Linting & Formatting with Ruff
 
-Ruff is an extremely fast Python linter and code formatter.
+Ruff is configured inside each service directory to lint and format its own codebase.
 
-#### Check for linting issues:
-To scan the codebase for code quality issues, unused imports, or style violations, run:
+#### Running globally (from the root directory):
+To check or format all services from the `Architect_MultiClient_Server` folder, run:
 ```bash
-cd Architect_MultiClient_Server
-ruff check agents/ dashboard/ orchestrator_service/ stt_service/ tts_service/
+# Check for linting issues (Redirect output to a file to prevent terminal overflow)
+ruff check agents/ orchestrator_service/ stt_service/ tts_service/ > ruff_errors.txt
+
+# Automatically fix linting issues
+ruff check --fix agents/ orchestrator_service/ stt_service/ tts_service/
+
+# Format code
+ruff format agents/ orchestrator_service/ stt_service/ tts_service/
 ```
 
-#### Automatically fix linting issues:
-To let Ruff automatically resolve fixable violations (such as sorting imports, removing unused imports, etc.):
+#### Running locally (within a specific service):
+You can also run Ruff directly inside any service directory. It will automatically detect its local `pyproject.toml`:
 ```bash
-cd Architect_MultiClient_Server
-ruff check --fix agents/ dashboard/ orchestrator_service/ stt_service/ tts_service/
+cd agents
+ruff check . > ruff_errors.txt        # Check (Recommended: redirect output to a file)
+ruff check --fix .                     # Fix
+ruff format .                          # Format
 ```
 
-#### Format the code:
-To apply code formatting matching the rules configured in `pyproject.toml` (e.g. double quotes, line-length limit):
-```bash
-cd Architect_MultiClient_Server
-ruff format agents/ dashboard/ orchestrator_service/ stt_service/ tts_service/
-```
+---
 
 ### 2. Static Type Checking with MyPy
 
-MyPy verifies type hints across the services to ensure type safety.
+MyPy verifies type hints across the services. Because each service has specific library dependencies and type overrides, it is recommended to run MyPy from within the respective service directory, or target the directory from the root.
 
-#### Run type checking:
+#### Running globally (from the root directory):
 ```bash
-mypy agents/ dashboard/ orchestrator_service/ stt_service/ tts_service/
+# Check types (Recommended: redirect output to a file)
+mypy agents/ orchestrator_service/ stt_service/ tts_service/ > mypy_errors.txt
+```
+
+#### Running locally (within a specific service):
+```bash
+cd orchestrator_service
+mypy . > mypy_errors.txt               # Check (Recommended: redirect output to a file)
 ```
 
 ---
 
 > You can configure Ruff and MyPy to run automatically in your IDE (e.g., VS Code or PyCharm) on save, or integrate them into your Git pre-commit hooks to ensure only clean code is committed.
+
