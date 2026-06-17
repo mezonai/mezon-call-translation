@@ -49,3 +49,9 @@ redis>=5.0.0                   # Redis client for task queue
 # Configuration & Environment
 # ========================================
 python-dotenv>=1.0.0           # Load environment variables from .env
+
+# ========================================
+# Development & Quality
+# ========================================
+ruff>=0.4.0                    # Fast linter and code formatter
+mypy>=1.10.0                   # Static type checker
