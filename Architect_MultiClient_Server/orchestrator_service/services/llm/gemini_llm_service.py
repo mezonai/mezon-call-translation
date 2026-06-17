@@ -1,6 +1,10 @@
 """
 Gemini LLM service implementation
 """
+import json
+import re
+
+from typing import Dict, Any
 from google import genai
 
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
@@ -10,6 +14,64 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+def extract_json_from_llm(raw_text: dict) -> Dict[str, Any]:
+    """
+    Safely extract JSON payload from OpenAI-compatible chat completion responses.
+
+    Args:
+        raw_text: Raw API response dictionary
+
+    Returns:
+        Extracted JSON dictionary
+
+    Raises:
+        RuntimeError: If response format is invalid
+        ValueError: If no valid JSON found in response
+    """
+    raw = raw_text.strip()
+    if not raw:
+        raise ValueError("Empty LLM output")
+
+    # 1) Direct JSON parse
+    try:
+        return json.loads(raw)
+    except Exception:
+        logger.warning(f"Direct JSON parse failed, attempting to extract JSON from LLM outputL: {raw}")
+        pass
+
+    # 2) Extract balanced JSON object candidates
+    stack = []
+    start = None
+    candidates = []
+    for i, ch in enumerate(raw):
+        if ch == "{":
+            if not stack:
+                start = i
+            stack.append(ch)
+        elif ch == "}":
+            if stack:
+                stack.pop()
+                if not stack and start is not None:
+                    candidates.append(raw[start : i + 1])
+
+    for candidate in reversed(candidates):
+        try:
+            return json.loads(candidate)
+        except Exception:
+            logger.warning("Candidate JSON parse failed, trying next candidate")
+            continue
+
+    # 3) Extract JSON in markdown code blocks
+    blocks = re.findall(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    for block in reversed(blocks):
+        try:
+            return json.loads(block)
+        except Exception:
+            logger.warning("Markdown code block JSON parse failed, trying next block")
+            continue
+
+    logger.error("Cannot extract JSON from local LLM output")
+    raise ValueError("No valid JSON found in LLM response")
 
 class GeminiLLMService(BaseLLMService):
     """Gemini LLM service implementation using Google Generative AI SDK"""
@@ -42,7 +104,7 @@ class GeminiLLMService(BaseLLMService):
                 "response_json_schema": SummaryResult.model_json_schema(),
             },
         )
-        return SummaryResult.model_validate_json(response.text)
+        return SummaryResult.model_validate(extract_json_from_llm(response.text))
 
     async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
         prompt = build_prompt_action_items(conversation_text, language)
@@ -54,7 +116,7 @@ class GeminiLLMService(BaseLLMService):
                 "response_json_schema": ActionItemsResult.model_json_schema(),
             },
         )
-        return ActionItemsResult.model_validate_json(response.text)
+        return ActionItemsResult.model_validate(extract_json_from_llm(response.text))
 
     async def summarize_conversation(self, conversation_text: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
         """Run 2 Gemini requests: one for summary and one for action items."""

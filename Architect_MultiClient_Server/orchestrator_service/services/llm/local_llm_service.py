@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from typing import Any, Dict, Optional
-from openai import AsyncOpenAI, APIError, APIConnectionError, RateLimitError
+from openai import AsyncOpenAI, APIError, APIConnectionError, RateLimitError, LengthFinishReasonError
 import httpx
 from pydantic import ValidationError, BaseModel
 from tenacity import (
@@ -83,8 +83,8 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, ValueError, ValidationError, RuntimeError)),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
+        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, LengthFinishReasonError, ValueError, ValidationError, RuntimeError)),
+        before_sleep=before_sleep_log(logger, logging.ERROR),
         reraise=True,
     )
     async def _summarize_summary_local(self, conversation_text: str, language: str) -> SummaryResult:
@@ -97,8 +97,8 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, ValueError, ValidationError, RuntimeError)),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
+        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, LengthFinishReasonError, ValueError, ValidationError, RuntimeError)),
+        before_sleep=before_sleep_log(logger, logging.ERROR),
         reraise=True,
     )
     async def _summarize_action_items_local(self, conversation_text: str, language: str) -> ActionItemsResult:
@@ -113,7 +113,7 @@ class LocalLLMService(BaseLLMService):
             return await self._summarize_summary_local(conversation_text, language)
         except Exception as e:
             if self._fallback_service is not None:
-                logger.warning(f"[Local LLM] summarize_summary failed after all retries, switching to fallback: {e}")
+                logger.error(f"[Local LLM] summarize_summary failed after all retries, switching to fallback: {e}")
                 result = await self._fallback_service.summarize_summary(conversation_text, language)
                 logger.info(f"[Fallback LLM] summarize_summary succeeded (model={self.config.fallback_model})")
                 return result
@@ -124,7 +124,7 @@ class LocalLLMService(BaseLLMService):
             return await self._summarize_action_items_local(conversation_text, language)
         except Exception as e:
             if self._fallback_service is not None:
-                logger.warning(f"[Local LLM] summarize_action_items failed after all retries, switching to fallback: {e}")
+                logger.error(f"[Local LLM] summarize_action_items failed after all retries, switching to fallback: {e}")
                 result = await self._fallback_service.summarize_action_items(conversation_text, language)
                 logger.info(f"[Fallback LLM] summarize_action_items succeeded (model={self.config.fallback_model})")
                 return result
