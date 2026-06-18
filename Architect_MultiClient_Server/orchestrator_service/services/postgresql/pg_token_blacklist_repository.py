@@ -49,9 +49,7 @@ class PgTokenBlacklistRepository:
                     expires_at=expires_at,
                     reason=reason,
                 )
-                stmt = stmt.on_conflict_do_nothing(
-                    index_elements=[TokenBlacklist.jti]
-                )
+                stmt = stmt.on_conflict_do_nothing(index_elements=[TokenBlacklist.jti])
                 await session.execute(stmt)
                 await session.commit()
             logger.info(f"Blacklisted token jti={jti}, user_id={user_id}, reason={reason}")
@@ -75,8 +73,10 @@ class PgTokenBlacklistRepository:
             # Fail closed — treat as blacklisted if DB unavailable
             return True
 
+
 # --------------- Singleton ---------------
 _pg_token_blacklist_repository: PgTokenBlacklistRepository | None = None
+
 
 def get_pg_token_blacklist_repository() -> PgTokenBlacklistRepository:
     global _pg_token_blacklist_repository

@@ -18,20 +18,20 @@ logger = get_logger(__name__)
 class NotificationProducerService:
     """
     Service for producing notification tasks to Redis Stream.
-    
+
     Simplified to support generic notifications with title and message dict.
     Message dict can contain different formats (text, embeds, mentions, markdown, etc).
     """
-    
+
     def __init__(self):
         """Initialize notification producer service"""
         self._config = get_config().notification
         self._producer: Optional[RedisProducerService[NotificationTask]] = None
-    
+
     async def connect(self) -> None:
         """
         Establish connection to Redis producer service.
-        
+
         Raises:
             ConnectionError: If cannot connect to Redis
         """
@@ -40,19 +40,19 @@ class NotificationProducerService:
                 task_class=NotificationTask,
                 stream_key=self._config.stream_key,
             )
-            
+
             await self._producer.connect()
             logger.info("✅ NotificationProducerService connected")
         except Exception as e:
             logger.error(f"❌ Failed to connect producer: {e}", exc_info=True)
             raise
-    
+
     async def disconnect(self) -> None:
         """Disconnect producer"""
         if self._producer:
             await self._producer.close()
             logger.info("NotificationProducerService disconnected")
-    
+
     async def send(
         self,
         title: str,
@@ -60,14 +60,14 @@ class NotificationProducerService:
     ) -> bool:
         """
         Send a notification with title and message dict.
-        
+
         Args:
             title: Notification title/subject
             message: Message content as dict.
-            
+
         Returns:
             True if task was enqueued successfully
-            
+
         Example:
             await producer.send(
                 title="Room Registration Error",
@@ -80,30 +80,27 @@ class NotificationProducerService:
             title=title,
             message=message,
         )
-        
+
         return await self.send_notification_task(task)
-    
+
     async def send_notification_task(self, task: NotificationTask) -> bool:
         """
         Send a notification task to Redis Stream.
-        
+
         Args:
             task: NotificationTask to send
-            
+
         Returns:
             True if task was enqueued successfully
         """
         if not self._producer:
             await self.connect()
-        
+
         try:
             message_id = await self._producer.enqueue(task)
-            
-            logger.info(
-                f"📤 Notification task enqueued: {task.title} "
-                f"(message_id: {message_id})"
-            )
-            
+
+            logger.info(f"📤 Notification task enqueued: {task.title} " f"(message_id: {message_id})")
+
             return True
         except Exception as e:
             logger.error(f"❌ Failed to enqueue notification task: {e}", exc_info=True)

@@ -57,9 +57,7 @@ async def verify_account(account: Dict[str, str]) -> None:
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Authentication service timeout")
     except httpx.RequestError:
-        raise HTTPException(
-            status_code=503, detail="Authentication service unavailable"
-        )
+        raise HTTPException(status_code=503, detail="Authentication service unavailable")
 
 
 @router.post("/create_dispatch", response_model=DispatchActionResponseModel)
@@ -73,9 +71,7 @@ async def api_create_dispatch(
     try:
         result = await livekit_service.ensure_dispatch(body.room_name)
         if result.get("dispatch") is not None:
-            result["dispatch"] = MessageToDict(
-                result["dispatch"], preserving_proto_field_name=True
-            )
+            result["dispatch"] = MessageToDict(result["dispatch"], preserving_proto_field_name=True)
         return DispatchActionResponseModel(**result)
     except LiveKitServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -92,9 +88,7 @@ async def api_cancel_dispatch(
     try:
         result = await livekit_service.cancel_dispatch(body.room_name)
         if result.get("dispatch") is not None:
-            result["dispatch"] = MessageToDict(
-                result["dispatch"], preserving_proto_field_name=True
-            )
+            result["dispatch"] = MessageToDict(result["dispatch"], preserving_proto_field_name=True)
         return DispatchActionResponseModel(**result)
     except LiveKitServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -114,9 +108,7 @@ async def list_participants(room_id: str) -> ParticipantListResponseModel:
         participants = await livekit_service.list_participants(room.get("room_name"))
         return ParticipantListResponseModel(
             status="ok",
-            participants=[
-                ParticipantModel(**participant) for participant in participants
-            ],
+            participants=[ParticipantModel(**participant) for participant in participants],
         )
     except LiveKitServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))

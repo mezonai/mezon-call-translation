@@ -67,26 +67,18 @@ class TranscriptionService:
                 )
 
                 if track_result and track_result.room_ref_id:
-                    room = await self.pg_repo.check_event_record_done(
-                        track_result.room_ref_id
-                    )
+                    room = await self.pg_repo.check_event_record_done(track_result.room_ref_id)
                     if room:
                         await metadata_channel.push_room_record_done(
                             room_id=str(room.id),
                             room_name=room.room_name,
                         )
                 elif track_result:
-                    logger.warning(
-                        f"Track metadata saved but no room_ref_id found: {track_result}"
-                    )
+                    logger.warning(f"Track metadata saved but no room_ref_id found: {track_result}")
                 else:
-                    logger.warning(
-                        "Failed to save track metadata: track_result is None"
-                    )
+                    logger.warning("Failed to save track metadata: track_result is None")
 
-                logger.info(
-                    f"✅ Track metadata updated: egress={egress_info.get('egressId')}"
-                )
+                logger.info(f"✅ Track metadata updated: egress={egress_info.get('egressId')}")
             except Exception as e:
                 logger.warning(f"Failed to update track metadata: {e}")
                 # Continue processing even if metadata update fails
@@ -127,17 +119,13 @@ class TranscriptionService:
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-            updated = await self.pg_repo.final_room_status(
-                room_name=room_name, room_id=room_id
-            )
+            updated = await self.pg_repo.final_room_status(room_name=room_name, room_id=room_id)
 
             if not updated:
                 return False
 
             if await self.pg_repo.check_event_record_done(room_id):
-                await metadata_channel.push_room_record_done(
-                    room_id=str(room_id), room_name=room_name
-                )
+                await metadata_channel.push_room_record_done(room_id=str(room_id), room_name=room_name)
 
             if await self.pg_repo.check_and_complete_room(room_id):
                 service = get_summary_service()
@@ -158,9 +146,7 @@ class TranscriptionService:
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-            room_id = await self.pg_repo.create_room_session(
-                room_name=room_name
-            )
+            room_id = await self.pg_repo.create_room_session(room_name=room_name)
             return {
                 "success": True,
                 "message": f"Room {room_name} started successfully",
@@ -171,9 +157,7 @@ class TranscriptionService:
 
         return None
 
-    async def save_participant(
-        self, room_id: str, participant_identity: str, timestamp: datetime = None
-    ) -> bool:
+    async def save_participant(self, room_id: str, participant_identity: str, timestamp: datetime = None) -> bool:
         """
         Save participant info to PostgreSQL
 
@@ -196,18 +180,14 @@ class TranscriptionService:
             logger.exception(f"Failed to save participant: {e}")
             return False
 
-    async def save_participants_batch(
-        self, room_id: str, participants: List[Dict[str, Any]]
-    ) -> Dict[str, int]:
+    async def save_participants_batch(self, room_id: str, participants: List[Dict[str, Any]]) -> Dict[str, int]:
         """
         Save batch of participants to PostgreSQL
         """
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-            result = await self.pg_repo.save_batch_participants(
-                room_id=room_id, participants=participants
-            )
+            result = await self.pg_repo.save_batch_participants(room_id=room_id, participants=participants)
             return result
         except Exception as e:
             logger.exception(f"Failed to save batch participants: {e}")
@@ -253,9 +233,7 @@ class TranscriptionService:
             )
 
             if not track_result:
-                logger.error(
-                    f"Failed to save track metadata for egress_id '{egress_id}'"
-                )
+                logger.error(f"Failed to save track metadata for egress_id '{egress_id}'")
                 return False
 
             return True

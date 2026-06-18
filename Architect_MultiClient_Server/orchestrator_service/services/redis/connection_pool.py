@@ -100,9 +100,7 @@ class RedisConnectionManager:
             RuntimeError: If connect() has not completed successfully.
         """
         if not self._pool:
-            raise RuntimeError(
-                "Redis connection pool not initialized. Call await connect() first."
-            )
+            raise RuntimeError("Redis connection pool not initialized. Call await connect() first.")
         return self._pool
 
     def get_client(self) -> Redis:

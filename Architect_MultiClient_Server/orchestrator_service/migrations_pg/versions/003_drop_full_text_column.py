@@ -11,29 +11,27 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '003_drop_full_text_column'
-down_revision = '002_calc_part_durations'
+revision = "003_drop_full_text_column"
+down_revision = "002_calc_part_durations"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
     # Drop full_text column from rooms_summary table
-    op.drop_column('rooms_summary', 'full_text')
+    op.drop_column("rooms_summary", "full_text")
 
 
 def downgrade() -> None:
     import json
 
     # Re-add full_text column to rooms_summary table
-    op.add_column('rooms_summary', sa.Column('full_text', sa.Text(), nullable=True))
+    op.add_column("rooms_summary", sa.Column("full_text", sa.Text(), nullable=True))
 
     # Rebuild full_text in Python to avoid asyncpg issues with JSONB ->> operator.
     # Format: "[{timestamp}] {participant_id}: {content}" joined by newline.
     bind = op.get_bind()
-    result = bind.execute(
-        sa.text("SELECT id, messages FROM rooms_summary WHERE messages IS NOT NULL")
-    )
+    result = bind.execute(sa.text("SELECT id, messages FROM rooms_summary WHERE messages IS NOT NULL"))
 
     for row in result:
         try:
@@ -57,4 +55,3 @@ def downgrade() -> None:
         except Exception:
             # Skip rows with malformed/unexpected messages data
             continue
-

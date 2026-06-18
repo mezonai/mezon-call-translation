@@ -1,6 +1,7 @@
 """
 Gemini LLM service implementation
 """
+
 import json
 import re
 
@@ -13,6 +14,7 @@ from orchestrator_service.models.summary_models import ActionItemsResult, Summar
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
 
 def extract_json_from_llm(raw_text: dict) -> Dict[str, Any]:
     """
@@ -73,6 +75,7 @@ def extract_json_from_llm(raw_text: dict) -> Dict[str, Any]:
     logger.error("Cannot extract JSON from local LLM output")
     raise ValueError("No valid JSON found in LLM response")
 
+
 class GeminiLLMService(BaseLLMService):
     """Gemini LLM service implementation using Google Generative AI SDK"""
 
@@ -118,7 +121,9 @@ class GeminiLLMService(BaseLLMService):
         )
         return ActionItemsResult.model_validate(extract_json_from_llm(response.text))
 
-    async def summarize_conversation(self, conversation_text: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
+    async def summarize_conversation(
+        self, conversation_text: str, language: str = "Vietnamese"
+    ) -> SummaryActionItemsResult:
         """Run 2 Gemini requests: one for summary and one for action items."""
         try:
             summary_result = await self.summarize_summary(conversation_text, language)

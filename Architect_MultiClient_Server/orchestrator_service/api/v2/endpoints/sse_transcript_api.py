@@ -16,6 +16,7 @@ router = APIRouter()
 sse_manager = SSEManager()
 message_channel = MessageChannel(sse_manager)
 
+
 class PushMessageRequest(BaseModel):
     room_name: str
     message: str
@@ -27,10 +28,10 @@ class PushMessageRequest(BaseModel):
 async def push_transcript_api(req: PushMessageRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push transcript to all SSE connections in a room.
-    
+
     Args:
         req: Push transcript request
-    
+
     Returns:
         Status and statistics
     """
@@ -38,22 +39,21 @@ async def push_transcript_api(req: PushMessageRequest, auth: Dict[str, Any] = De
         room=req.room_name,
         message=req.message,
         message_type=req.message_type,
-        participant_identity=req.participant_identity
+        participant_identity=req.participant_identity,
     )
     return result
 
 
 @router.get("/sse/stream_transcript")
-async def sse_endpoint(room: str,
-    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL))):
+async def sse_endpoint(room: str, auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL))):
     """
     SSE endpoint for real-time message streaming.
-    
+
     Args:
         appid: Application ID for authentication and connection management
         token: Authentication token
         room: Room name to subscribe to
-    
+
     Returns:
         StreamingResponse with SSE events
     """

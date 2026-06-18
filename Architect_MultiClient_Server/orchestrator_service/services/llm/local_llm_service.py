@@ -1,6 +1,7 @@
 """
 Local LLM service (OpenAI-compatible API)
 """
+
 import asyncio
 import json
 import logging
@@ -25,6 +26,7 @@ from orchestrator_service.models.summary_models import ActionItemsResult, Summar
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
 
 class LocalLLMService(BaseLLMService):
     """Local LLM service for OpenAI-compatible API"""
@@ -83,7 +85,17 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, LengthFinishReasonError, ValueError, ValidationError, RuntimeError)),
+        retry=retry_if_exception_type(
+            (
+                APIError,
+                APIConnectionError,
+                RateLimitError,
+                LengthFinishReasonError,
+                ValueError,
+                ValidationError,
+                RuntimeError,
+            )
+        ),
         before_sleep=before_sleep_log(logger, logging.ERROR),
         reraise=True,
     )
@@ -97,7 +109,17 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, LengthFinishReasonError, ValueError, ValidationError, RuntimeError)),
+        retry=retry_if_exception_type(
+            (
+                APIError,
+                APIConnectionError,
+                RateLimitError,
+                LengthFinishReasonError,
+                ValueError,
+                ValidationError,
+                RuntimeError,
+            )
+        ),
         before_sleep=before_sleep_log(logger, logging.ERROR),
         reraise=True,
     )
@@ -130,7 +152,9 @@ class LocalLLMService(BaseLLMService):
                 return result
             raise
 
-    async def summarize_conversation(self, conversation_text: str, room_id: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
+    async def summarize_conversation(
+        self, conversation_text: str, room_id: str, language: str = "Vietnamese"
+    ) -> SummaryActionItemsResult:
         """
         Summarize conversation by running 2 focused LLM requests concurrently.
         Each sub-task retries 3 times on local LLM then falls back to Gemini once.
@@ -171,7 +195,9 @@ class LocalLLMService(BaseLLMService):
             summary = "\n\n".join(summary_parts)
 
         if action_items_failed:
-            logger.error(f"Failed to generate action items (all attempts exhausted) with room_id: {room_id}: {action_items_res}")
+            logger.error(
+                f"Failed to generate action items (all attempts exhausted) with room_id: {room_id}: {action_items_res}"
+            )
             action_items = []
         else:
             action_items = action_items_res.action_items

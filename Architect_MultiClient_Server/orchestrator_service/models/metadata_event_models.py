@@ -1,6 +1,7 @@
 """
 Models and enums for metadata events
 """
+
 from enum import Enum
 
 
@@ -11,6 +12,7 @@ class MetadataEventType(str, Enum):
     These events track room lifecycle and are broadcast via SSE
     and persisted to MongoDB with 3-day TTL.
     """
+
     ROOM_STARTED = "room_started"
     ROOM_ENDED = "room_ended"
     ROOM_RECORD_DONE = "room_record_done"

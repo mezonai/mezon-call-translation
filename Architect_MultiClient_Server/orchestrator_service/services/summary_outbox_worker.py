@@ -39,6 +39,7 @@ class OutboxHandlerRegistry:
 # Task Handlers
 # ------------------------------------------------------------------
 
+
 async def handle_retry_summarization(configs: Dict[str, Any]) -> None:
     room_id = configs.get("room_id")
     retry_type_str = configs.get("retry_type")
@@ -49,9 +50,7 @@ async def handle_retry_summarization(configs: Dict[str, Any]) -> None:
     retry_type = RetryType(retry_type_str)
 
     logger.info(f"Retrying summarization for room {room_id} with type {retry_type.value}")
-    summary_data = await get_summary_service().retry_summary_from_full_text(
-        room_id=room_id, retry_type=retry_type
-    )
+    summary_data = await get_summary_service().retry_summary_from_full_text(room_id=room_id, retry_type=retry_type)
     if not summary_data:
         raise RuntimeError("Failed to generate summary or action items via retry")
 
@@ -83,10 +82,7 @@ class SummaryOutboxWorker:
             return
 
         self._running = True
-        self._worker_task = asyncio.create_task(
-            self._worker_loop(),
-            name="summary-outbox-worker-loop"
-        )
+        self._worker_task = asyncio.create_task(self._worker_loop(), name="summary-outbox-worker-loop")
         logger.info("✅ SummaryOutboxWorker started")
 
     async def stop(self) -> None:
@@ -127,7 +123,9 @@ class SummaryOutboxWorker:
 
     async def _process_batch(self) -> None:
         """Fetch and process up to 5 pending tasks sorted by oldest first."""
-        tasks = await self.outbox_repo.fetch_pending_outbox_tasks(limit=self._batch_limit, use_case=OutboxUseCase.RETRY_SUMMARIZATION.value)
+        tasks = await self.outbox_repo.fetch_pending_outbox_tasks(
+            limit=self._batch_limit, use_case=OutboxUseCase.RETRY_SUMMARIZATION.value
+        )
         if not tasks:
             logger.info("No pending outbox tasks found to process.")
             return
@@ -145,33 +143,25 @@ class SummaryOutboxWorker:
                 await self.outbox_repo.update_outbox_task_status(
                     task_id=task_id,
                     status=OutboxStatus.FAILED.value,
-                    error_msg=f"No handler registered for use_case: {use_case}"
+                    error_msg=f"No handler registered for use_case: {use_case}",
                 )
                 continue
 
             try:
                 # Mark as processing
-                await self.outbox_repo.update_outbox_task_status(
-                    task_id=task_id,
-                    status=OutboxStatus.PROCESSING.value
-                )
+                await self.outbox_repo.update_outbox_task_status(task_id=task_id, status=OutboxStatus.PROCESSING.value)
 
                 # Execute handler
                 await handler(configs)
 
                 # Mark as completed on success
-                await self.outbox_repo.update_outbox_task_status(
-                    task_id=task_id,
-                    status=OutboxStatus.COMPLETED.value
-                )
+                await self.outbox_repo.update_outbox_task_status(task_id=task_id, status=OutboxStatus.COMPLETED.value)
                 logger.info(f"✅ Outbox task {task_id} completed successfully")
 
             except Exception as e:
                 # Task fails completely and is marked as failed on the first attempt
                 await self.outbox_repo.update_outbox_task_status(
-                    task_id=task_id,
-                    status=OutboxStatus.FAILED.value,
-                    error_msg=str(e)
+                    task_id=task_id, status=OutboxStatus.FAILED.value, error_msg=str(e)
                 )
                 logger.error(f"❌ Outbox task {task_id} failed and marked as 'failed': {e}", exc_info=True)
 

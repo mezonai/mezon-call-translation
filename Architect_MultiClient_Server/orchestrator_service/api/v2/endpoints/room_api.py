@@ -23,6 +23,7 @@ from orchestrator_service.utils.transcript_validators import (
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
+
 def _serialize_room(room: dict) -> dict:
     serialized_room = dict(room)
     if serialized_room.get("id") is not None:
@@ -38,12 +39,8 @@ async def list_rooms(
         max_length=VC.MAX_SEARCH_QUERY_LENGTH,
         description="Search by room name or participant identity",
     ),
-    from_utc: Optional[datetime] = Query(
-        default=None, description="Start of time range (UTC, ISO 8601)"
-    ),
-    to_utc: Optional[datetime] = Query(
-        default=None, description="End of time range (UTC, ISO 8601)"
-    ),
+    from_utc: Optional[datetime] = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
+    to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
@@ -97,7 +94,7 @@ async def list_rooms(
 async def get_room_by_id(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
-    room_service: RoomService = Depends(get_room_service)
+    room_service: RoomService = Depends(get_room_service),
 ):
     """
     Get room details by room ID.
@@ -114,13 +111,11 @@ async def get_room_by_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get(
-    "/id/{room_id}/statistics", response_description="Get room statistics by ID"
-)
+@router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
 async def get_room_statistics_by_id(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
-    room_service: RoomService = Depends(get_room_service)
+    room_service: RoomService = Depends(get_room_service),
 ):
     """
     Get detailed statistics for a specific room by ID.
@@ -142,13 +137,11 @@ async def get_room_statistics_by_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get(
-    "/audio_info/{room_id}", response_description="Get all audio info for a room"
-)
+@router.get("/audio_info/{room_id}", response_description="Get all audio info for a room")
 async def get_audio_info(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
-    room_service: RoomService = Depends(get_room_service)
+    room_service: RoomService = Depends(get_room_service),
 ) -> dict[str, Any]:
     """
     Get all audio info for a specific room by ID.
@@ -163,9 +156,7 @@ async def get_audio_info(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}"
-        )
+        logger.error(f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}")
         return {
             "status": "error",
             "message": f"Failed to fetch audio info for room {room_id}: {str(e)}",

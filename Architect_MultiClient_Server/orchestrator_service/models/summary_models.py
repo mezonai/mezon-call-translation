@@ -13,9 +13,11 @@ class RetryType(str, Enum):
     ACTION_ITEMS = "action_items"
     ALL = "all"
 
+
 class ActionItemResult(BaseModel):
     participant_identity: str = Field(description="Participant identity")
     participant_actions: List[str] = Field(description="List of actions performed by the participant")
+
 
 class SummaryResult(BaseModel):
     context: str = Field(description="Meeting context and participant permissions")
@@ -35,8 +37,10 @@ class SummaryActionItemsResult(BaseModel):
     summary_success: bool = Field(description="Whether summary task succeeded", default=True)
     action_items_success: bool = Field(description="Whether action items task succeeded", default=True)
 
+
 class RoomSummary(BaseModel):
     """Model for storing room conversation summary"""
+
     room_id: str = Field(description="Room ID")
     room_name: str = Field(description="Room Name", default="")
     participants: List[str] = Field(description="Participants", default=[])
@@ -44,6 +48,7 @@ class RoomSummary(BaseModel):
     messages: List[Dict[str, Any]] = Field(description="Messages array", default=[])
     created_at: datetime = Field(description="Created At", default_factory=datetime.utcnow)
     total_segments: int = Field(description="Total Segments", default=0)
+
 
 class RoomSummaryResponse(BaseModel):
     room_id: str = Field(description="Room ID", default="")

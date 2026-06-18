@@ -26,15 +26,13 @@ async def get_summary_by_room_name(
         None, description="End time for room summary (ISO format: 2024-01-31T23:59:59)"
     ),
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
-    summary_service: SummaryService = Depends(get_summary_service)
+    summary_service: SummaryService = Depends(get_summary_service),
 ):
     """
     Get summary by room name.
     """
     try:
-        data, count = await summary_service.get_summary_by_room_name(
-            room_name, start_time, end_time, auth
-        )
+        data, count = await summary_service.get_summary_by_room_name(room_name, start_time, end_time, auth)
         return {"status": "ok", "data": data, "count": count}
     except HTTPException:
         raise
@@ -47,7 +45,7 @@ async def get_summary_by_room_name(
 async def get_summary_by_room_id(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
-    summary_service: SummaryService = Depends(get_summary_service)
+    summary_service: SummaryService = Depends(get_summary_service),
 ):
     """
     Get summary by room id.

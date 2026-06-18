@@ -90,8 +90,6 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Failed to initialize PostgreSQL engine: {e}")
         raise
 
-
-
     # Connect Redis Connection Pool (shared by all repositories)
     try:
         redis_manager = get_connection_manager()
@@ -106,7 +104,7 @@ async def lifespan(app: FastAPI):
         save_transcription_service = RedisSaveTranscriptionService()
         await save_transcription_service.start()
         logger.info("✅ Save Transcription consumer service started")
-        
+
         # Initialize Notification worker
         notification_worker = NotificationWorker()
         await notification_worker.start()

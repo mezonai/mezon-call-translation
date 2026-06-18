@@ -10,9 +10,9 @@ from .egress_repository import EgressRepository, EgressRepository
 from .connection_pool import get_redis_connection
 
 __all__ = [
-    'BaseHashRepository',
-    'RoomRegistryRepository',
-    'EgressRepository',
-    'EgressRepository',
-    'get_redis_connection',
+    "BaseHashRepository",
+    "RoomRegistryRepository",
+    "EgressRepository",
+    "EgressRepository",
+    "get_redis_connection",
 ]

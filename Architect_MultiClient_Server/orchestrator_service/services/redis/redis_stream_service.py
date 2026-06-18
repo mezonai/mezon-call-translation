@@ -25,13 +25,13 @@ import time
 import uuid
 from dataclasses import dataclass
 from typing import (
-    Any, 
-    ClassVar, 
-    Dict, 
-    Generic, 
-    List, 
-    Optional, 
-    Type, 
+    Any,
+    ClassVar,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    Type,
     TypeVar,
 )
 
@@ -52,16 +52,18 @@ logger = get_logger(__name__)
 
 # Type variable bound to StreamTaskProtocol
 # Any class implementing the protocol can be used as T
-T = TypeVar('T', bound=StreamTaskProtocol)
+T = TypeVar("T", bound=StreamTaskProtocol)
 
 
 # ========================================
 # Data Classes
 # ========================================
 
+
 @dataclass
 class WorkerInfo:
     """Information about a worker in the consumer group."""
+
     consumer_id: str
     hostname: str
     pid: int
@@ -75,19 +77,20 @@ class WorkerInfo:
 # Service Class
 # ========================================
 
+
 class RedisStreamService(Generic[T]):
     """
     Generic Redis Stream-based distributed task queue.
-    
+
     Type parameter T: The task type this service handles (must implement StreamTaskProtocol)
-    
+
     Architecture:
     - Uses Redis Streams for persistent, ordered task storage
     - Consumer Groups for distributing tasks across workers
     - Each worker has unique consumer ID: worker-{hostname}-{pid}-{uuid}
     - Orphaned tasks auto-claimed after idle timeout
     - Dead letter queue for tasks exceeding retry limit
-    
+
     Keys used:
     - {stream_key}: Main task stream
     - {stream_key}:dlq: Dead letter queue
@@ -95,10 +98,10 @@ class RedisStreamService(Generic[T]):
     - {stream_key}:workers: Worker heartbeats (Hash)
     - {stream_key}:stats: Queue statistics (Hash)
     """
-    
+
     # Registry for singleton instances per (task_class, stream_key)
-    _instances: ClassVar[Dict[str, 'RedisStreamService']] = {}
-    
+    _instances: ClassVar[Dict[str, "RedisStreamService"]] = {}
+
     def __init__(
         self,
         task_class: Type[T],
@@ -107,7 +110,7 @@ class RedisStreamService(Generic[T]):
     ):
         """
         Initialize Redis Stream service.
-        
+
         Args:
             task_class: Class used to parse tasks (must implement StreamTaskProtocol)
             stream_key: Redis stream key (default: from config)
@@ -120,19 +123,19 @@ class RedisStreamService(Generic[T]):
         self._running = False
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._recovery_task: Optional[asyncio.Task] = None
-        
+
         # Set defaults for missing config fields
-        if not hasattr(self._config, 'block_timeout_ms'):
+        if not hasattr(self._config, "block_timeout_ms"):
             self._config.block_timeout_ms = 5000
-        if not hasattr(self._config, 'max_retries'):
+        if not hasattr(self._config, "max_retries"):
             self._config.max_retries = 3
-        if not hasattr(self._config, 'claim_min_idle_time_ms'):
+        if not hasattr(self._config, "claim_min_idle_time_ms"):
             self._config.claim_min_idle_time_ms = 60000
-        if not hasattr(self._config, 'heartbeat_interval_sec'):
+        if not hasattr(self._config, "heartbeat_interval_sec"):
             self._config.heartbeat_interval_sec = 10
-        if not hasattr(self._config, 'worker_timeout_sec'):
+        if not hasattr(self._config, "worker_timeout_sec"):
             self._config.worker_timeout_sec = 60
-        
+
         # Keys - use provided values or fall back to config
         self._stream_key = stream_key
         self._group_name = group_name
@@ -140,47 +143,47 @@ class RedisStreamService(Generic[T]):
         self._tasks_prefix = f"{self._stream_key}:tasks"
         self._workers_key = f"{self._stream_key}:workers"
         self._stats_key = f"{self._stream_key}:stats"
-        
+
         logger.info(
             f"RedisStreamService[{task_class.__name__}] created - "
             f"stream='{self._stream_key}', consumer_id='{self._consumer_id}'"
         )
-    
+
     @classmethod
     def get_instance(
-        cls, 
+        cls,
         task_class: Type[T],
         stream_key: Optional[str] = None,
         group_name: Optional[str] = None,
-    ) -> 'RedisStreamService[T]':
+    ) -> "RedisStreamService[T]":
         """
         Get or create singleton instance for the given task class and stream.
-        
+
         Args:
             task_class: Class used to parse tasks
             stream_key: Redis stream key (default: from config)
             group_name: Consumer group name (default: from config)
-        
+
         Returns:
             RedisStreamService instance for the specified configuration
         """
         effective_stream_key = stream_key
         instance_key = f"{task_class.__name__}:{effective_stream_key}"
-        
+
         if instance_key not in cls._instances:
             cls._instances[instance_key] = cls(
                 task_class=task_class,
                 stream_key=stream_key,
                 group_name=group_name,
             )
-        
+
         return cls._instances[instance_key]
-    
+
     def _generate_consumer_id(self) -> str:
         """Generate unique consumer ID for this worker.
-        
+
         Format: worker-{hostname}-{pid}-{uuid4_short}
-        
+
         The UUID suffix ensures uniqueness even when:
         - Running in containers with same hostname
         - PIDs are recycled after restart
@@ -190,40 +193,37 @@ class RedisStreamService(Generic[T]):
         pid = os.getpid()
         unique_suffix = uuid.uuid4().hex[:8]  # 8 char hex string
         return f"worker-{hostname}-{pid}-{unique_suffix}"
-    
+
     async def connect(self) -> None:
         """
         Initialize Redis connection pool and create consumer group.
-        
+
         Raises:
             ConnectionError: If cannot connect to Redis
         """
         if self._redis is not None:
             logger.debug("Redis already connected")
             return
-        
+
         try:
             manager = get_connection_manager()
             if not manager.is_connected:
                 await manager.connect()
             self._redis = Redis(connection_pool=manager.get_pool())
             await self._redis.ping()
-            logger.info(
-                f"✅ Redis stream service using shared pool at "
-                f"{self._config.host}:{self._config.port}"
-            )
-            
+            logger.info(f"✅ Redis stream service using shared pool at " f"{self._config.host}:{self._config.port}")
+
             # Create consumer group (idempotent)
             await self._ensure_consumer_group()
-            
+
             # Initialize stats
             await self._init_stats()
-            
+
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
             self._redis = None
             raise ConnectionError(f"Redis connection failed: {e}")
-    
+
     async def _ensure_consumer_group(self) -> None:
         """Create consumer group if it doesn't exist."""
         try:
@@ -232,7 +232,7 @@ class RedisStreamService(Generic[T]):
                 self._stream_key,
                 self._group_name,
                 id="0",  # Start from beginning
-                mkstream=True
+                mkstream=True,
             )
             logger.info(f"✅ Created consumer group '{self._group_name}' for stream '{self._stream_key}'")
         except ResponseError as e:
@@ -241,23 +241,26 @@ class RedisStreamService(Generic[T]):
                 logger.debug(f"Consumer group '{self._group_name}' already exists")
             else:
                 raise
-    
+
     async def _init_stats(self) -> None:
         """Initialize statistics hash."""
         stats_exist = await self._redis.exists(self._stats_key)
         if not stats_exist:
-            await self._redis.hset(self._stats_key, mapping={
-                "total_enqueued": "0",
-                "total_processed": "0",
-                "total_failed": "0",
-                "total_retried": "0",
-                "created_at": str(time.time()),
-            })
-    
+            await self._redis.hset(
+                self._stats_key,
+                mapping={
+                    "total_enqueued": "0",
+                    "total_processed": "0",
+                    "total_failed": "0",
+                    "total_retried": "0",
+                    "created_at": str(time.time()),
+                },
+            )
+
     async def disconnect(self, release_pending: bool = True) -> None:
         """
         Close Redis connection with graceful shutdown.
-        
+
         Args:
             release_pending: If True, release this worker's pending tasks back to stream
                            so other workers can pick them up
@@ -268,41 +271,36 @@ class RedisStreamService(Generic[T]):
                 released = await self.release_my_pending_tasks()
                 if released > 0:
                     logger.info(f"Released {released} pending task(s) back to stream")
-            
+
             # Remove worker registration
             await self._unregister_worker()
             await self._redis.close()
             self._redis = None
 
         logger.info("Redis stream client released (shared pool kept open)")
-    
+
     async def release_my_pending_tasks(self) -> int:
         """
         Release all pending tasks owned by this consumer back to the stream.
-        
+
         This allows other workers to claim them. Use during graceful shutdown
         or when a worker needs to stop temporarily.
-        
+
         Returns:
             Number of tasks released
         """
         if not self._redis:
             return 0
-        
+
         try:
             # Get pending tasks for this consumer
             result = await self._redis.xpending_range(
-                self._stream_key,
-                self._group_name,
-                min="-",
-                max="+",
-                count=1000,
-                consumername=self._consumer_id
+                self._stream_key, self._group_name, min="-", max="+", count=1000, consumername=self._consumer_id
             )
-            
+
             if not result:
                 return 0
-            
+
             released_count = 0
             for entry in result:
                 message_id = decode_value(entry["message_id"])
@@ -311,10 +309,10 @@ class RedisStreamService(Generic[T]):
                 # We do this by setting the idle time in PEL very high so it can be auto-claimed
                 # Or we can delete from PEL without ACK using XCLAIM to a dummy consumer
                 # Best approach: Just don't ACK - the task will be auto-claimed by another worker
-                
+
                 # For immediate release, we can use XCLAIM to transfer to a special "released" consumer
                 # Then those tasks will be auto-claimed since "released" won't process them
-                
+
                 # Actually, best approach is to XCLAIM with FORCE to reset idle time
                 # This effectively makes the task available for auto-claim immediately
                 try:
@@ -326,48 +324,44 @@ class RedisStreamService(Generic[T]):
                         "__released__",  # Dummy consumer that won't process
                         min_idle_time=0,
                         message_ids=[message_id],
-                        force=True
+                        force=True,
                     )
                     released_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to release task {message_id}: {e}")
-            
+
             return released_count
-            
+
         except Exception as e:
             logger.error(f"Error releasing pending tasks: {e}")
             return 0
-    
+
     # ========================================
     # Task Operations (XADD, XACK, etc.)
     # ========================================
-    
-    async def read_tasks(
-        self,
-        count: int = 1,
-        block_ms: Optional[int] = None
-    ) -> List[T]:
+
+    async def read_tasks(self, count: int = 1, block_ms: Optional[int] = None) -> List[T]:
         """
         Read tasks from stream as consumer in group.
-        
+
         Uses XREADGROUP which:
         - Only returns messages not yet delivered to other consumers
         - Marks messages as pending (in-progress) for this consumer
         - Blocks if no messages available (if block_ms specified)
-        
+
         Args:
             count: Maximum number of tasks to read
             block_ms: Milliseconds to block waiting for messages (None = don't block)
-        
+
         Returns:
             List of tasks (type T)
         """
         if not self._redis:
             raise ConnectionError("Not connected to Redis")
-        
+
         if block_ms is None:
             block_ms = self._config.block_timeout_ms
-        
+
         try:
             # XREADGROUP GROUP group consumer [COUNT count] [BLOCK ms] STREAMS key >
             # ">" means only new messages (not pending ones)
@@ -376,12 +370,12 @@ class RedisStreamService(Generic[T]):
                 consumername=self._consumer_id,
                 streams={self._stream_key: ">"},
                 count=count,
-                block=block_ms
+                block=block_ms,
             )
-            
+
             if not result:
                 return []
-            
+
             tasks: List[T] = []
             for stream_name, messages in result:
                 for message_id, data in messages:
@@ -389,7 +383,7 @@ class RedisStreamService(Generic[T]):
                     # Use injected task_class to parse the message
                     task = self._task_class.from_stream_message(message_id_str, data)
                     tasks.append(task)
-                    
+
                     # Update task status in metadata
                     await self._redis.hset(
                         f"{self._tasks_prefix}:{task.task_id}",
@@ -397,112 +391,95 @@ class RedisStreamService(Generic[T]):
                             "status": StreamTaskStatus.PROCESSING.value,
                             "consumer_id": self._consumer_id,
                             "processing_started_at": str(time.time()),
-                        }
+                        },
                     )
-                    
+
                     logger.debug(f"📖 Read task {task.task_id} (msg_id={message_id_str})")
-            
+
             return tasks
-            
+
         except Exception as e:
             logger.error(f"Error reading from stream: {e}")
             raise
-    
+
     async def acknowledge(self, task: T) -> bool:
         """
         Acknowledge successful task completion.
-        
+
         Removes the message from pending entries list (PEL) and deletes it from stream.
-        
+
         Args:
             task: The completed task (type T)
-        
+
         Returns:
             True if acknowledged successfully
         """
         if not self._redis:
             raise ConnectionError("Not connected to Redis")
-        
+
         try:
             # XACK removes message from pending entries
-            result = await self._redis.xack(
-                self._stream_key,
-                self._group_name,
-                task.message_id
-            )
-            
+            result = await self._redis.xack(self._stream_key, self._group_name, task.message_id)
+
             if result > 0:
                 # XDEL removes the message completely from stream
-                deleted = await self._redis.xdel(
-                    self._stream_key,
-                    task.message_id
-                )
-                
+                deleted = await self._redis.xdel(self._stream_key, task.message_id)
+
                 if deleted > 0:
                     logger.debug(f"🗑️ Deleted message {task.message_id} from stream")
-                
+
                 # Delete task metadata since task is completed and no longer needed
                 await self._redis.delete(f"{self._tasks_prefix}:{task.task_id}")
-                
+
                 # Update stats
                 await self._redis.hincrby(self._stats_key, "total_processed", 1)
-                
+
                 logger.info(f"✅ Acknowledged task {task.task_id}")
                 return True
             else:
                 logger.warning(f"Task {task.task_id} was not in pending list")
                 return False
-                
+
         except Exception as e:
             logger.error(f"Error acknowledging task {task.task_id}: {e}")
             raise
-    
-    async def reject(
-        self,
-        task: T,
-        error: str,
-        retry: bool = True
-    ) -> bool:
+
+    async def reject(self, task: T, error: str, retry: bool = True) -> bool:
         """
         Reject a failed task.
-        
+
         If retry=True and retry_count < max_retries:
             - Re-add to stream with incremented retry_count
         Else:
             - Move to dead letter queue
-        
+
         In both cases, ACK the original message to remove from pending.
-        
+
         Args:
             task: The failed task (type T)
             error: Error message
             retry: Whether to retry the task
-        
+
         Returns:
             True if task was re-queued, False if sent to DLQ
         """
         if not self._redis:
             raise ConnectionError("Not connected to Redis")
-        
+
         new_retry_count = task.retry_count + 1
         should_retry = retry and new_retry_count <= self._config.max_retries
-        
+
         try:
             if should_retry:
                 # Re-add to stream with incremented retry count
                 task_data = task.to_dict()
                 task_data["retry_count"] = str(new_retry_count)
                 task_data["last_error"] = error[:500]  # Truncate long errors
-                
-                new_message_id = await self._redis.xadd(
-                    self._stream_key,
-                    task_data,
-                    maxlen=100000,
-                    approximate=True
-                )
-                
+
+                new_message_id = await self._redis.xadd(self._stream_key, task_data, maxlen=100000, approximate=True)
+
                 new_message_id_str = decode_value(new_message_id)
-                
+
                 # Update task metadata hash to track retry
                 await self._redis.hset(
                     f"{self._tasks_prefix}:{task.task_id}",
@@ -512,12 +489,12 @@ class RedisStreamService(Generic[T]):
                         "retry_count": str(new_retry_count),
                         "last_error": error[:500],
                         "retried_at": str(time.time()),
-                    }
+                    },
                 )
-                
+
                 # Update stats
                 await self._redis.hincrby(self._stats_key, "total_retried", 1)
-                
+
                 logger.warning(
                     f"🔄 Task {task.task_id} failed (attempt {task.retry_count + 1}), "
                     f"re-queued as {new_message_id_str}: {error}"
@@ -527,9 +504,9 @@ class RedisStreamService(Generic[T]):
                 task_data = task.to_dict()
                 task_data["final_error"] = error[:500]
                 task_data["dead_letter_at"] = str(time.time())
-                
+
                 await self._redis.xadd(self._dlq_key, task_data)
-                
+
                 # Update task status
                 await self._redis.hset(
                     f"{self._tasks_prefix}:{task.task_id}",
@@ -537,48 +514,47 @@ class RedisStreamService(Generic[T]):
                         "status": StreamTaskStatus.DEAD_LETTER.value,
                         "final_error": error[:500],
                         "dead_letter_at": str(time.time()),
-                    }
+                    },
                 )
-                
+
                 # Update stats
                 await self._redis.hincrby(self._stats_key, "total_failed", 1)
-                
+
                 logger.error(
-                    f"Task {task.task_id} moved to dead letter queue after "
-                    f"{task.retry_count + 1} attempts: {error}"
+                    f"Task {task.task_id} moved to dead letter queue after " f"{task.retry_count + 1} attempts: {error}"
                 )
-            
+
             # Always ACK the original message
             await self._redis.xack(self._stream_key, self._group_name, task.message_id)
-            
+
             return should_retry
-            
+
         except Exception as e:
             logger.error(f"Error rejecting task {task.task_id}: {e}")
             raise
-    
+
     # ========================================
     # Pending Tasks & Recovery (XPENDING, XCLAIM)
     # ========================================
-    
+
     async def get_pending_summary(self) -> Dict[str, Any]:
         """
         Get summary of pending (in-progress) tasks.
-        
+
         Returns:
             Dict with pending count, min/max message IDs, and consumer breakdown
         """
         if not self._redis:
             raise ConnectionError("Not connected to Redis")
-        
+
         try:
             # XPENDING stream group - returns summary
             result = await self._redis.xpending(self._stream_key, self._group_name)
-            
+
             # Handle empty or None result
             if not result or (isinstance(result, (list, tuple)) and len(result) == 0):
                 return {"pending_count": 0, "consumers": {}}
-            
+
             # Handle dict format (some redis-py versions return dict)
             if isinstance(result, dict):
                 pending_count = result.get("pending", 0)
@@ -591,7 +567,7 @@ class RedisStreamService(Generic[T]):
             else:
                 logger.warning(f"Unexpected xpending result format: {type(result)} - {result}")
                 return {"pending_count": 0, "consumers": {}}
-            
+
             # Decode consumer info
             consumer_info = {}
             if consumers:
@@ -607,29 +583,25 @@ class RedisStreamService(Generic[T]):
                 "max_message_id": decode_value(max_id),
                 "consumers": consumer_info,
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting pending summary: {e}")
             raise
-    
-    async def get_pending_tasks(
-        self,
-        count: int = 100,
-        min_idle_time_ms: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+
+    async def get_pending_tasks(self, count: int = 100, min_idle_time_ms: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Get detailed info about pending tasks.
-        
+
         Args:
             count: Maximum number of tasks to return
             min_idle_time_ms: Only return tasks idle for at least this long
-        
+
         Returns:
             List of pending task info dicts
         """
         if not self._redis:
             raise ConnectionError("Not connected to Redis")
-        
+
         try:
             # XPENDING stream group - start end count [consumer]
             result = await self._redis.xpending_range(
@@ -639,58 +611,56 @@ class RedisStreamService(Generic[T]):
                 max="+",
                 count=count,
             )
-            
+
             pending_tasks = []
             for entry in result:
                 message_id = decode_value(entry["message_id"])
                 consumer = decode_value(entry["consumer"])
-                
+
                 idle_time_ms = entry["time_since_delivered"]
                 delivery_count = entry["times_delivered"]
-                
+
                 # Filter by idle time if specified
                 if min_idle_time_ms and idle_time_ms < min_idle_time_ms:
                     continue
-                
-                pending_tasks.append({
-                    "message_id": message_id,
-                    "consumer": consumer,
-                    "idle_time_ms": idle_time_ms,
-                    "delivery_count": delivery_count,
-                })
-            
+
+                pending_tasks.append(
+                    {
+                        "message_id": message_id,
+                        "consumer": consumer,
+                        "idle_time_ms": idle_time_ms,
+                        "delivery_count": delivery_count,
+                    }
+                )
+
             return pending_tasks
-            
+
         except Exception as e:
             logger.error(f"Error getting pending tasks: {e}")
             raise
-    
-    async def claim_orphaned_tasks(
-        self,
-        min_idle_time_ms: Optional[int] = None,
-        count: int = 10
-    ) -> List[T]:
+
+    async def claim_orphaned_tasks(self, min_idle_time_ms: Optional[int] = None, count: int = 10) -> List[T]:
         """
         Claim orphaned tasks from crashed/stale workers.
-        
+
         Uses XAUTOCLAIM which atomically:
         1. Finds pending messages idle > min_idle_time_ms
         2. Claims them for this consumer
         3. Returns the claimed messages
-        
+
         Args:
             min_idle_time_ms: Minimum idle time to consider task orphaned
             count: Maximum tasks to claim
-        
+
         Returns:
             List of claimed tasks (type T)
         """
         if not self._redis:
             raise ConnectionError("Not connected to Redis")
-        
+
         if min_idle_time_ms is None:
             min_idle_time_ms = self._config.claim_min_idle_time_ms
-        
+
         try:
             # XAUTOCLAIM stream group consumer min-idle-time start [COUNT count]
             result = await self._redis.xautoclaim(
@@ -699,29 +669,29 @@ class RedisStreamService(Generic[T]):
                 self._consumer_id,
                 min_idle_time=min_idle_time_ms,
                 start_id="0-0",
-                count=count
+                count=count,
             )
-            
+
             if not result or len(result) < 2:
                 return []
-            
+
             # result = (next_start_id, [(msg_id, data), ...], [deleted_ids])
             _, messages, deleted_ids = result if len(result) == 3 else (*result, [])
-            
+
             if deleted_ids:
                 logger.warning(f"Found {len(deleted_ids)} deleted messages during autoclaim")
-            
+
             tasks: List[T] = []
             for message_id, data in messages:
                 if data is None:
                     # Message was deleted
                     continue
-                    
+
                 message_id_str = decode_value(message_id)
                 # Use injected task_class to parse the message
                 task = self._task_class.from_stream_message(message_id_str, data)
                 tasks.append(task)
-                
+
                 # Update task metadata
                 await self._redis.hset(
                     f"{self._tasks_prefix}:{task.task_id}",
@@ -729,29 +699,26 @@ class RedisStreamService(Generic[T]):
                         "status": StreamTaskStatus.PROCESSING.value,
                         "consumer_id": self._consumer_id,
                         "claimed_at": str(time.time()),
-                    }
+                    },
                 )
-                
-                logger.info(
-                    f"🔄 Claimed orphaned task {task.task_id} "
-                    f"(was pending for {min_idle_time_ms}ms+)"
-                )
-            
+
+                logger.info(f"🔄 Claimed orphaned task {task.task_id} " f"(was pending for {min_idle_time_ms}ms+)")
+
             return tasks
-            
+
         except Exception as e:
             logger.error(f"Error claiming orphaned tasks: {e}")
             raise
-    
+
     # ========================================
     # Worker Heartbeat & Registration
     # ========================================
-    
+
     async def register_worker(self) -> None:
         """Register this worker with heartbeat."""
         if not self._redis:
             return
-        
+
         worker_info = {
             "consumer_id": self._consumer_id,
             "hostname": socket.gethostname(),
@@ -762,15 +729,15 @@ class RedisStreamService(Generic[T]):
             "tasks_processed": "0",
             "tasks_failed": "0",
         }
-        
+
         await self._redis.hset(self._workers_key, self._consumer_id, json.dumps(worker_info))
         logger.info(f"✅ Registered worker: {self._consumer_id}")
-    
+
     async def update_heartbeat(self, current_task_id: Optional[str] = None) -> None:
         """Update worker heartbeat."""
         if not self._redis:
             return
-        
+
         try:
             # Get current worker info
             worker_data = await self._redis.hget(self._workers_key, self._consumer_id)
@@ -778,21 +745,21 @@ class RedisStreamService(Generic[T]):
                 info = json.loads(worker_data)
             else:
                 info = {"consumer_id": self._consumer_id}
-            
+
             info["last_heartbeat"] = str(time.time())
             if current_task_id is not None:
                 info["current_task"] = current_task_id
-            
+
             await self._redis.hset(self._workers_key, self._consumer_id, json.dumps(info))
-            
+
         except Exception as e:
             logger.debug(f"Error updating heartbeat: {e}")
-    
+
     async def increment_worker_stats(self, processed: int = 0, failed: int = 0) -> None:
         """Increment worker statistics."""
         if not self._redis:
             return
-        
+
         try:
             worker_data = await self._redis.hget(self._workers_key, self._consumer_id)
             if worker_data:
@@ -802,30 +769,30 @@ class RedisStreamService(Generic[T]):
                 await self._redis.hset(self._workers_key, self._consumer_id, json.dumps(info))
         except Exception as e:
             logger.debug(f"Error updating worker stats: {e}")
-    
+
     async def _unregister_worker(self) -> None:
         """Unregister this worker on shutdown."""
         if not self._redis:
             return
-        
+
         try:
             await self._redis.hdel(self._workers_key, self._consumer_id)
             logger.info(f"Unregistered worker: {self._consumer_id}")
         except Exception as e:
             logger.debug(f"Error unregistering worker: {e}")
-    
+
     async def get_active_workers(self) -> List[WorkerInfo]:
         """Get list of active workers."""
         if not self._redis:
             return []
-        
+
         try:
             workers_data = await self._redis.hgetall(self._workers_key)
             workers = []
-            
+
             now = time.time()
             timeout = self._config.worker_timeout_sec
-            
+
             for consumer_id, data in workers_data.items():
                 consumer_id_str = decode_value(consumer_id)
                 try:
@@ -834,35 +801,37 @@ class RedisStreamService(Generic[T]):
 
                     # Only include workers with recent heartbeat
                     if now - last_heartbeat < timeout:
-                        workers.append(WorkerInfo(
-                            consumer_id=consumer_id_str,
-                            hostname=info.get("hostname", "unknown"),
-                            pid=int(info.get("pid", 0)),
-                            last_heartbeat=last_heartbeat,
-                            current_task_id=info.get("current_task") or None,
-                            tasks_processed=int(info.get("tasks_processed", 0)),
-                            tasks_failed=int(info.get("tasks_failed", 0)),
-                        ))
+                        workers.append(
+                            WorkerInfo(
+                                consumer_id=consumer_id_str,
+                                hostname=info.get("hostname", "unknown"),
+                                pid=int(info.get("pid", 0)),
+                                last_heartbeat=last_heartbeat,
+                                current_task_id=info.get("current_task") or None,
+                                tasks_processed=int(info.get("tasks_processed", 0)),
+                                tasks_failed=int(info.get("tasks_failed", 0)),
+                            )
+                        )
                 except (json.JSONDecodeError, ValueError):
                     continue
-            
+
             return workers
-            
+
         except Exception as e:
             logger.error(f"Error getting active workers: {e}")
             return []
-    
+
     async def cleanup_stale_workers(self) -> int:
         """Remove stale worker entries. Returns count removed."""
         if not self._redis:
             return 0
-        
+
         try:
             workers_data = await self._redis.hgetall(self._workers_key)
             now = time.time()
             timeout = self._config.worker_timeout_sec * 3  # 3x timeout before cleanup
             removed = 0
-            
+
             for consumer_id, data in workers_data.items():
                 consumer_id_str = decode_value(consumer_id)
                 try:
@@ -875,54 +844,54 @@ class RedisStreamService(Generic[T]):
                         logger.info(f"🗑️  Removed stale worker: {consumer_id_str}")
                 except (json.JSONDecodeError, ValueError):
                     continue
-            
+
             return removed
-            
+
         except Exception as e:
             logger.error(f"Error cleaning up stale workers: {e}")
             return 0
-    
+
     # ========================================
     # Background Tasks (Heartbeat, Recovery)
     # ========================================
-    
+
     async def start_background_tasks(self) -> None:
         """Start heartbeat and recovery background tasks."""
         if self._running:
             return
-        
+
         self._running = True
         await self.register_worker()
-        
+
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self._recovery_task = asyncio.create_task(self._recovery_loop())
-        
+
         logger.info("✅ Background tasks started (heartbeat + recovery)")
-    
+
     async def stop_background_tasks(self) -> None:
         """Stop all background tasks."""
         self._running = False
-        
+
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
             try:
                 await self._heartbeat_task
             except asyncio.CancelledError:
                 pass
-        
+
         if self._recovery_task:
             self._recovery_task.cancel()
             try:
                 await self._recovery_task
             except asyncio.CancelledError:
                 pass
-        
+
         logger.info("Background tasks stopped")
-    
+
     async def _heartbeat_loop(self) -> None:
         """Periodic heartbeat update."""
         interval = self._config.heartbeat_interval_sec
-        
+
         while self._running:
             try:
                 await self.update_heartbeat()
@@ -932,49 +901,50 @@ class RedisStreamService(Generic[T]):
             except Exception as e:
                 logger.debug(f"Heartbeat error: {e}")
                 await asyncio.sleep(interval)
-    
+
     async def _recovery_loop(self) -> None:
         """Periodically check for and claim orphaned tasks."""
         # Run less frequently than heartbeat
         interval = self._config.worker_timeout_sec
-        
+
         while self._running:
             try:
                 await asyncio.sleep(interval)
-                
+
                 # Cleanup stale workers
                 await self.cleanup_stale_workers()
-                
+
                 # Note: We don't auto-process claimed tasks here
                 # The consumer loop should call claim_orphaned_tasks when idle
-                
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Recovery loop error: {e}")
                 await asyncio.sleep(interval)
-    
+
 
 # ========================================
 # Factory Functions
 # ========================================
 
+
 def create_stream_service(
     task_class: Type[T],
     stream_key: str,
     group_name: str,
-) -> 'RedisStreamService[T]':
+) -> "RedisStreamService[T]":
     """
     Create or get a RedisStreamService for a specific task type.
-    
+
     Uses singleton pattern - returns existing instance if one exists
     for the given (task_class, stream_key) combination.
-    
+
     Args:
         task_class: Class implementing StreamTaskProtocol
         stream_key: Redis stream key (default: from config)
         group_name: Consumer group name (default: from config)
-    
+
     Returns:
         RedisStreamService instance for the specified task type
     """

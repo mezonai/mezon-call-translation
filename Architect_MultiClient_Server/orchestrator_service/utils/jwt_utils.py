@@ -26,9 +26,7 @@ JWT_ALGORITHM = "HS256"
 
 # Validate configuration on module load
 if not JWT_SECRET:
-    logger.warning(
-        "⚠️  JWT_SECRET is not set. JWT token generation and validation will fail!"
-    )
+    logger.warning("⚠️  JWT_SECRET is not set. JWT token generation and validation will fail!")
 
 logger.info(f"JWT Configuration: Algorithm={JWT_ALGORITHM}, Expiry={JWT_EXPIRY_DAYS} days")
 

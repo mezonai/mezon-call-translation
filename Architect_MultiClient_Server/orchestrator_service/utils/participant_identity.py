@@ -1,6 +1,7 @@
 """
 Participant identity utilities
 """
+
 import json
 from orchestrator_service.utils.logger import get_logger
 import re
@@ -25,8 +26,7 @@ def parse_participant_identity(participant_identity: str) -> str:
             ext_name = data["extName"]
 
             if isinstance(ext_name, str):
-
-                sanitized = re.sub(r'[^a-zA-Z0-9_-]+', '_', ext_name)
+                sanitized = re.sub(r"[^a-zA-Z0-9_-]+", "_", ext_name)
 
                 # If sanitized becomes empty → fallback
                 if sanitized:

@@ -1,6 +1,7 @@
 """
 Base abstract class for all LLM service providers
 """
+
 from abc import ABC, abstractmethod
 from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.config.application_config import LLMConfig

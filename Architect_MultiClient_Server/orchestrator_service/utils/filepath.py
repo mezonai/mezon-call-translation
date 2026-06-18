@@ -16,17 +16,16 @@ class Filepath:
         (?P<random_id>[0-9a-f]{6})                     # 6 hex characters
         \.(?P<ext>ogg|webm)$                           # extension
         """,
-        re.VERBOSE
+        re.VERBOSE,
     )
+
     @classmethod
-    def build(cls, identity: str, source: str, 
-                       track_type: str, room_id: str) -> str:
+    def build(cls, identity: str, source: str, track_type: str, room_id: str) -> str:
         """Create filepath for MinIO storage with random suffix"""
         ext = "ogg" if track_type == "AUDIO" else "webm"
         random_id = secrets.token_hex(3)  # 6 hex characters
-        
-        return f"{room_id}/{identity}-{source}-{track_type.lower()}-{random_id}.{ext}"
 
+        return f"{room_id}/{identity}-{source}-{track_type.lower()}-{random_id}.{ext}"
 
     @classmethod
     def parse(cls, filepath: str) -> Dict[str, str]:
@@ -39,6 +38,6 @@ class Filepath:
         match = cls.PATTERN.match(filepath)
         if not match:
             raise ValueError(f"Invalid filepath format: {filepath}")
-        
+
         result = match.groupdict()
         return result

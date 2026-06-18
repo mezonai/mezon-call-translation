@@ -48,10 +48,10 @@ class PgOutboxRepository:
                     text(check_query),
                     {
                         "use_case": OutboxUseCase.RETRY_SUMMARIZATION.value,
-                        "room_id": room_id, 
+                        "room_id": room_id,
                         "retry_type": retry_type,
-                        "status": OutboxStatus.PENDING.value
-                    }
+                        "status": OutboxStatus.PENDING.value,
+                    },
                 )
                 existing = res.fetchone()
 
@@ -70,7 +70,7 @@ class PgOutboxRepository:
                             "id": task_id,
                             "error_msg": error_msg,
                             "now": now,
-                        }
+                        },
                     )
                 else:
                     # Insert new outbox task
@@ -90,7 +90,7 @@ class PgOutboxRepository:
                             "configs": configs_json,
                             "error_msg": error_msg,
                             "now": now,
-                        }
+                        },
                     )
                 await session.commit()
                 return True
@@ -119,10 +119,7 @@ class PgOutboxRepository:
 
         try:
             async with session_factory() as session:
-                res = await session.execute(
-                    text(query),
-                    params
-                )
+                res = await session.execute(text(query), params)
                 rows = res.fetchall()
                 tasks = []
                 for row in rows:

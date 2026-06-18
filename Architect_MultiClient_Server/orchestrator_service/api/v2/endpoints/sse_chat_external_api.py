@@ -2,6 +2,7 @@
 SSE Chat External API
 Endpoints for bot to receive chat external events via SSE
 """
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
@@ -24,12 +25,13 @@ chat_external_channel = ChatExternalChannel(sse_manager)
 
 class PushChatExternalRequest(BaseModel):
     """Request model for pushing chat external events"""
+
     room_name: str
     room_id: str
     participant_identity: str
     message: str
     time: Optional[str] = None
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -37,7 +39,7 @@ class PushChatExternalRequest(BaseModel):
                 "room_id": "room-12345",
                 "participant_identity": "user@example.com",
                 "message": "Hello from room",
-                "time": "2026-03-01T10:30:00Z"
+                "time": "2026-03-01T10:30:00Z",
             }
         }
 
@@ -46,9 +48,9 @@ class PushChatExternalRequest(BaseModel):
 async def sse_chat_external_endpoint(auth: AuthContext = Depends(require_any_permission(CHAT_EXTERNAL_VIEW_ALL))):
     """
     SSE endpoint for bot to receive chat external events.
-    
+
     Args:
-    
+
     Returns:
         StreamingResponse with SSE events
     """
@@ -59,10 +61,10 @@ async def sse_chat_external_endpoint(auth: AuthContext = Depends(require_any_per
 async def push_chat_external_api(req: PushChatExternalRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     Push chat external event to all connected bots via SSE.
-    
+
     Args:
         req: Chat external event data
-    
+
     Returns:
         Status and statistics
     """
@@ -71,8 +73,6 @@ async def push_chat_external_api(req: PushChatExternalRequest, auth: Dict[str, A
         room_id=req.room_id,
         participant_identity=req.participant_identity,
         message=req.message,
-        time=req.time
+        time=req.time,
     )
     return result
-
-

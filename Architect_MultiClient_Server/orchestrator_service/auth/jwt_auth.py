@@ -25,9 +25,7 @@ logger = get_logger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-async def verify_jwt(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security)
-) -> Dict[str, Any]:
+async def verify_jwt(credentials: Optional[HTTPAuthorizationCredentials] = Security(security)) -> Dict[str, Any]:
     """
     Verify JWT token issued by orchestrator after Mezon OAuth2 authentication.
 
@@ -57,7 +55,7 @@ async def verify_jwt(
         raise HTTPException(
             status_code=401,
             detail="Missing Authorization header. Please login with Mezon.",
-            headers={"WWW-Authenticate": "Bearer"}
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     token = credentials.credentials
@@ -71,11 +69,7 @@ async def verify_jwt(
 
         if not jti:
             logger.warning("JWT token missing JTI claim")
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid token format.",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
+            raise HTTPException(status_code=401, detail="Invalid token format.", headers={"WWW-Authenticate": "Bearer"})
 
         # Check if token is blacklisted
         blacklist_repo = PgTokenBlacklistRepository()
@@ -86,7 +80,7 @@ async def verify_jwt(
             raise HTTPException(
                 status_code=401,
                 detail="Token has been revoked. Please login again.",
-                headers={"WWW-Authenticate": "Bearer"}
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
         logger.debug(f"JWT authentication successful for user_id={payload.get('user_id')}, jti={jti}")
@@ -96,23 +90,16 @@ async def verify_jwt(
     except jwt.ExpiredSignatureError:
         logger.warning("JWT token has expired")
         raise HTTPException(
-            status_code=401,
-            detail="Token has expired. Please login again.",
-            headers={"WWW-Authenticate": "Bearer"}
+            status_code=401, detail="Token has expired. Please login again.", headers={"WWW-Authenticate": "Bearer"}
         )
     except jwt.InvalidTokenError as e:
         logger.warning(f"Invalid JWT token: {e}")
         raise HTTPException(
-            status_code=401,
-            detail="Invalid authentication token.",
-            headers={"WWW-Authenticate": "Bearer"}
+            status_code=401, detail="Invalid authentication token.", headers={"WWW-Authenticate": "Bearer"}
         )
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         logger.error(f"Unexpected error during JWT verification: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Authentication verification failed."
-        )
+        raise HTTPException(status_code=500, detail="Authentication verification failed.")

@@ -22,9 +22,7 @@ logger = get_logger(__name__)
 class WebhookHandler:
     """Webhook event handler from LiveKit"""
 
-    def __init__(
-        self, egress_service: EgressService, transcription_service: TranscriptionService
-    ):
+    def __init__(self, egress_service: EgressService, transcription_service: TranscriptionService):
         self.egress_service = egress_service
         self.transcription_service = transcription_service
         self.room_registry = get_room_registry()
@@ -97,22 +95,16 @@ class WebhookHandler:
 
         logger.info(f"  Room: {room_name}")
         logger.info(f"  Participant: {identity}")
-        logger.info(
-            f"  Track: {track.sid} (mime: {track.mime_type}, source: {track.source})"
-        )
+        logger.info(f"  Track: {track.sid} (mime: {track.mime_type}, source: {track.source})")
 
         if track.is_audio:
             asyncio.create_task(
-                self.egress_service.start_recording(
-                    room_name, track.sid, track.track_type, track.source, identity
-                )
+                self.egress_service.start_recording(room_name, track.sid, track.track_type, track.source, identity)
             )
             return WebhookResponse(received=True, action="recording_started")
 
         logger.info(f"  ⏭ Skipping {track.track_type}")
-        return WebhookResponse(
-            received=True, action=f"skipped_{track.track_type.lower()}"
-        )
+        return WebhookResponse(received=True, action=f"skipped_{track.track_type.lower()}")
 
     async def _handle_track_unpublished(self, event: Dict) -> WebhookResponse:
         """Handle when a track is unpublished"""
@@ -120,9 +112,7 @@ class WebhookHandler:
         track_sid = event.get("track", {}).get("sid", "")
 
         if await self.egress_service.mark_unpublished(room_name, track_sid):
-            logger.info(
-                f"  Track {track_sid} unpublished in room {room_name}, egress auto-stop"
-            )
+            logger.info(f"  Track {track_sid} unpublished in room {room_name}, egress auto-stop")
             return WebhookResponse(received=True, action="egress_removed")
 
         return WebhookResponse(received=True, action="no_active_egress")
@@ -147,9 +137,7 @@ class WebhookHandler:
             try:
                 parsed = Filepath.parse(filepath)
                 participant_identity = parsed.get("identity")
-                logger.debug(
-                    f"Parsed participant identity '{participant_identity}' from filepath: {filepath}"
-                )
+                logger.debug(f"Parsed participant identity '{participant_identity}' from filepath: {filepath}")
             except ValueError as e:
                 logger.warning(f"Failed to parse filepath '{filepath}': {e}")
             except Exception as e:
@@ -185,9 +173,7 @@ class WebhookHandler:
         egress_id = egress_info.get("egressId", "unknown")
         status = egress_info.get("status", "unknown")
         room_name = egress_info.get("roomName", "unknown")
-        logger.info(
-            f"egress_updated: room={room_name}, egress_id={egress_id}, status={status}"
-        )
+        logger.info(f"egress_updated: room={room_name}, egress_id={egress_id}, status={status}")
         return WebhookResponse(received=True, action="egress_updated_logged")
 
     async def _handle_egress_ended(self, event: Dict) -> WebhookResponse:
@@ -197,20 +183,14 @@ class WebhookHandler:
 
         room_name = egress.get("roomName", "unknown")
         egress_id = egress.get("egressId", "unknown")
-        logger.info(
-            f"  Egress ended: {egress_id} for room {room_name} with status {status}"
-        )
+        logger.info(f"  Egress ended: {egress_id} for room {room_name} with status {status}")
         if status != "EGRESS_COMPLETE":
             if status in ["EGRESS_FAILED", "EGRESS_ABORTED"]:
                 error = egress.get("error", "no error info")
                 logger.error(f"Egress failed: {error}")
-                asyncio.create_task(
-                    self._attempt_egress_recovery(room_name, egress_id, error)
-                )
+                asyncio.create_task(self._attempt_egress_recovery(room_name, egress_id, error))
                 return WebhookResponse(received=True, action="egress_ended_failed")
-            logger.info(
-                f"Egress not completed: {status}, egress_ended full event: {event}"
-            )
+            logger.info(f"Egress not completed: {status}, egress_ended full event: {event}")
             return WebhookResponse(received=True, action="egress_ended_not_complete")
 
         file_data = egress.get("file", {})
@@ -230,8 +210,7 @@ class WebhookHandler:
         disconnect_reason = event.get("participant", {}).get("disconnectReason", "unknown")
 
         logger.error(
-            f"🔴 Egress connection aborted: "
-            f"egress_id={egress_id}, room={room_name}, reason={disconnect_reason}"
+            f"🔴 Egress connection aborted: " f"egress_id={egress_id}, room={room_name}, reason={disconnect_reason}"
         )
 
         return WebhookResponse(received=True, action="participant_connection_aborted_logged")
@@ -269,8 +248,7 @@ class WebhookHandler:
                 return
 
             participant_detail = await livekit_service.get_participant_detail(
-                room_name=room_name,
-                identity=participant_identity
+                room_name=room_name, identity=participant_identity
             )
 
             if not participant_detail or not participant_detail.get("found"):
@@ -313,7 +291,7 @@ class WebhookHandler:
                         track_type=track_info.get("type"),
                         source=track_info.get("source"),
                         identity=participant_detail.get("identity"),
-                        force_update=True
+                        force_update=True,
                     )
                 )
             else:

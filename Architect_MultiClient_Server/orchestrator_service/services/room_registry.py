@@ -66,14 +66,10 @@ class RoomRegistry:
         try:
             room_id_str = str(room_id)
             if not room_id_str or room_id_str == "None":
-                logger.error(
-                    f"Cannot register room '{room_name}': room_id converts to invalid string '{room_id_str}'"
-                )
+                logger.error(f"Cannot register room '{room_name}': room_id converts to invalid string '{room_id_str}'")
                 return False
         except Exception as e:
-            logger.error(
-                f"Cannot register room '{room_name}': failed to convert room_id to string: {e}"
-            )
+            logger.error(f"Cannot register room '{room_name}': failed to convert room_id to string: {e}")
             return False
 
         repository = self._get_repository()
@@ -133,9 +129,7 @@ class RoomRegistry:
 
         # Validate the string format before converting
         if room_id_str == "None" or room_id_str == "null":
-            logger.error(
-                f"Room '{room_name}' has invalid room_id in Redis: '{room_id_str}'"
-            )
+            logger.error(f"Room '{room_name}' has invalid room_id in Redis: '{room_id_str}'")
             return None
 
         return room_id_str

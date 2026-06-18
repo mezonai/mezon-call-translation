@@ -67,9 +67,7 @@ async def retry_summary(
     type: RetryType = Query(RetryType.ALL, description="Type of retry: 'summary', 'action_items', or 'all'"),
 ):
     try:
-        summary_data = await get_summary_service().retry_summary_from_full_text(
-            room_id, retry_type=type
-        )
+        summary_data = await get_summary_service().retry_summary_from_full_text(room_id, retry_type=type)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

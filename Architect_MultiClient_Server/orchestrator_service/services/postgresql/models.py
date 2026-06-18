@@ -19,8 +19,10 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 import enum
 from orchestrator_service.models.summary_models import RetryType
 
+
 class OutboxUseCase(str, enum.Enum):
     RETRY_SUMMARIZATION = "retry_summarization"
+
 
 class OutboxStatus(str, enum.Enum):
     PENDING = "pending"
@@ -47,23 +49,13 @@ class Room(Base):
     __tablename__ = "rooms"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
-    mongo_id: Mapped[Optional[str]] = mapped_column(
-        Text, nullable=True
-    )  # migration mapping
+    mongo_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # migration mapping
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    participants: Mapped[Optional[dict]] = mapped_column(
-        JSONB, nullable=True, default=list
-    )
-    created_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    finalized_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    completed_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    participants: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=list)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalized_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_rooms_room_name", "room_name"),
@@ -88,20 +80,14 @@ class Track(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)  # egress_id
     track_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    room_ref_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        nullable=True
-    )  # UUID of rooms.id
+    room_ref_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)  # UUID of rooms.id
     participant_identity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     audio_info: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    updated_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_tracks_room_ref_id", "room_ref_id"),
@@ -123,9 +109,7 @@ class TranscriptChunk(Base):
     __tablename__ = "transcript_chunks"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    track_ref_id: Mapped[Optional[str]] = mapped_column(
-        Text, nullable=True
-    )  # egress_id
+    track_ref_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # egress_id
     chunk_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     start_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     end_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -151,17 +135,13 @@ class RoomSummary(Base):
     __tablename__ = "rooms_summary"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
-    room_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        nullable=True
-    )  # UUID of rooms.id
+    room_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)  # UUID of rooms.id
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     participants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     summary_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     messages: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     total_segments: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_rooms_summary_room_id", "room_id"),
@@ -181,19 +161,13 @@ class MetadataEvent(Base):
     __tablename__ = "metadata_events"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    event_id: Mapped[Optional[str]] = mapped_column(
-        Text, nullable=True
-    )  # UUID string from app
+    event_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # UUID string from app
     event_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     room_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)
     room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    event_metadata: Mapped[Optional[dict]] = mapped_column(
-        "metadata", JSONB, nullable=True
-    )
+    event_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
     timestamp: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_events_event_type", "event_type"),
@@ -218,15 +192,9 @@ class User(Base):
     username: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    permissions: Mapped[Optional[list]] = mapped_column(
-        JSONB, nullable=True, default=list
-    )
-    created_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    updated_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    permissions: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index("ix_users_username", "username"),)
 
@@ -245,12 +213,8 @@ class RefreshToken(Base):
     user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     refresh_token_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     access_token_jti: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     device_info: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -275,12 +239,8 @@ class TokenBlacklist(Base):
     jti: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    blacklisted_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    expires_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    blacklisted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
@@ -304,9 +264,7 @@ class OutboxTask(Base):
     status: Mapped[OutboxStatus] = mapped_column(SQLEnum(OutboxStatus), nullable=False, default=OutboxStatus.PENDING)
     configs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=datetime.utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
     )

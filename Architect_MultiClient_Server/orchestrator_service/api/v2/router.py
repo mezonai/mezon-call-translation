@@ -1,6 +1,7 @@
 """
 API v1 router - includes all endpoints
 """
+
 from fastapi import APIRouter
 
 from orchestrator_service.api.v2.endpoints.dispatch_api import router as dispatch_router

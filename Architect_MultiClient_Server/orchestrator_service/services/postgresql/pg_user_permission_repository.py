@@ -76,29 +76,23 @@ class PgUserPermissionRepository:
             "avatar_url": avatar_url,
             "permissions": permissions if permissions is not None else [],
             "created_at": now,
-            "updated_at": now
+            "updated_at": now,
         }
 
         try:
             async with session_factory() as session:
                 stmt = insert(User).values(**insert_values)
-                update_dict = {
-                    "username": stmt.excluded.username,
-                    "updated_at": stmt.excluded.updated_at
-                }
+                update_dict = {"username": stmt.excluded.username, "updated_at": stmt.excluded.updated_at}
                 if display_name is not None:
                     update_dict["display_name"] = stmt.excluded.display_name
                 if avatar_url is not None:
                     update_dict["avatar_url"] = stmt.excluded.avatar_url
                 if permissions is not None:
                     update_dict["permissions"] = stmt.excluded.permissions
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=[User.id],
-                    set_=update_dict
-                )
+                stmt = stmt.on_conflict_do_update(index_elements=[User.id], set_=update_dict)
                 await session.execute(stmt)
                 await session.commit()
-                
+
             logger.info(f"Created/updated user user_id={user_id}, username={username}")
             self._cache.pop(user_id, None)
             return True
@@ -117,8 +111,10 @@ class PgUserPermissionRepository:
             logger.error(f"Failed to get user info: {e}")
             return None
 
+
 # --------------- Singleton ---------------
 _pg_user_permission_repository: PgUserPermissionRepository | None = None
+
 
 def get_pg_user_permission_repository() -> PgUserPermissionRepository:
     global _pg_user_permission_repository

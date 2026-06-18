@@ -61,7 +61,7 @@ class ParticipantListResponseModel(BaseModel):
 async def api_create_dispatch(
     body: DispatchRequestModel,
     auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL)),
-    room_service: RoomService = Depends(get_room_service)
+    room_service: RoomService = Depends(get_room_service),
 ) -> DispatchActionResponseModel:
     """Create a dispatch for the specified room."""
     try:
@@ -77,7 +77,7 @@ async def api_create_dispatch(
 async def api_cancel_dispatch(
     body: DispatchRequestModel,
     auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL)),
-    room_service: RoomService = Depends(get_room_service)
+    room_service: RoomService = Depends(get_room_service),
 ) -> DispatchActionResponseModel:
     """Cancel a dispatch for the specified room."""
     try:
@@ -91,18 +91,15 @@ async def api_cancel_dispatch(
 
 @router.get("/rooms/participant/{room_id}", response_model=ParticipantListResponseModel)
 async def list_participants(
-    room_id: str, 
+    room_id: str,
     auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL)),
-    room_service: RoomService = Depends(get_room_service)
+    room_service: RoomService = Depends(get_room_service),
 ) -> ParticipantListResponseModel:
     """List participants in a room."""
     try:
         participants_data = await room_service.list_participants(room_id)
         return ParticipantListResponseModel(
-            status="ok",
-            participants=[
-                ParticipantModel(**participant) for participant in participants_data
-            ]
+            status="ok", participants=[ParticipantModel(**participant) for participant in participants_data]
         )
     except HTTPException:
         raise

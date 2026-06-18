@@ -19,6 +19,7 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class AuthContext:
     """
     Authorization context with permission checking.
@@ -66,13 +67,9 @@ class AuthContext:
         """
         if not self.has_permission(permission):
             logger.warning(
-                f"Permission denied: user_id={self.user_id} (username={self.username}) "
-                f"requires '{permission}'"
+                f"Permission denied: user_id={self.user_id} (username={self.username}) " f"requires '{permission}'"
             )
-            raise HTTPException(
-                status_code=403,
-                detail=f"Permission required: {permission}"
-            )
+            raise HTTPException(status_code=403, detail=f"Permission required: {permission}")
 
     def has_any_permission(self, *permissions: str) -> bool:
         """
@@ -108,9 +105,7 @@ class AuthContext:
         return f"AuthContext(user_id={self.user_id}, username={self.username}, permissions={len(self.permissions)})"
 
 
-async def get_auth_context(
-    user: Dict[str, Any] = Depends(verify_jwt)
-) -> AuthContext:
+async def get_auth_context(user: Dict[str, Any] = Depends(verify_jwt)) -> AuthContext:
     """
     Extract authorization context from JWT token.
     Loads flat permissions from users collection in database.
@@ -159,6 +154,7 @@ def require_permission(permission: str):
     Returns:
         FastAPI dependency function
     """
+
     async def check(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
         auth.require_permission(permission)
         return auth
@@ -176,16 +172,14 @@ def require_any_permission(*permissions: str):
     Returns:
         FastAPI dependency function
     """
+
     async def check(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
         if not auth.has_any_permission(*permissions):
             logger.warning(
                 f"Permission denied: user_id={auth.user_id} (username={auth.username}) "
                 f"requires one of: {', '.join(permissions)}"
             )
-            raise HTTPException(
-                status_code=403,
-                detail=f"One of these permissions required: {', '.join(permissions)}"
-            )
+            raise HTTPException(status_code=403, detail=f"One of these permissions required: {', '.join(permissions)}")
         return auth
 
     return check
@@ -209,16 +203,14 @@ def require_all_permissions(*permissions: str):
     Returns:
         FastAPI dependency function
     """
+
     async def check(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
         if not auth.has_all_permissions(*permissions):
             logger.warning(
                 f"Permission denied: user_id={auth.user_id} (username={auth.username}) "
                 f"requires all of: {', '.join(permissions)}"
             )
-            raise HTTPException(
-                status_code=403,
-                detail=f"All of these permissions required: {', '.join(permissions)}"
-            )
+            raise HTTPException(status_code=403, detail=f"All of these permissions required: {', '.join(permissions)}")
         return auth
 
     return check

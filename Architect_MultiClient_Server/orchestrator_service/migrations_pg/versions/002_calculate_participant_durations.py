@@ -11,8 +11,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '002_calc_part_durations'
-down_revision = '001_initial_schema'
+revision = "002_calc_part_durations"
+down_revision = "001_initial_schema"
 branch_labels = None
 depends_on = None
 

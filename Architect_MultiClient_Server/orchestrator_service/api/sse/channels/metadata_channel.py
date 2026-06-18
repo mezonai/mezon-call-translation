@@ -56,23 +56,15 @@ class MetadataChannel:
         context_key = self.CONTEXT_KEY
 
         # Close existing connection from same appid
-        existing_disconnected = await self.manager.disconnect_existing_appid(
-            self.CHANNEL_TYPE, context_key, appid
-        )
+        existing_disconnected = await self.manager.disconnect_existing_appid(self.CHANNEL_TYPE, context_key, appid)
         if existing_disconnected:
-            logger.info(
-                f"[Metadata Channel] Closed existing connection for appid {appid}"
-            )
+            logger.info(f"[Metadata Channel] Closed existing connection for appid {appid}")
 
         # Register new connection
-        connection_id = await self.manager.register_connection(
-            self.CHANNEL_TYPE, context_key, appid
-        )
+        connection_id = await self.manager.register_connection(self.CHANNEL_TYPE, context_key, appid)
 
         # Create dedicated queue
-        connection_queue = await self.manager.create_connection_queue(
-            self.CHANNEL_TYPE, context_key, connection_id
-        )
+        connection_queue = await self.manager.create_connection_queue(self.CHANNEL_TYPE, context_key, connection_id)
 
         logger.info(
             f"[Metadata Channel] New connection registered: {connection_id} "
@@ -158,12 +150,8 @@ class MetadataChannel:
         context_key = self.CONTEXT_KEY
 
         # Check if any bots are connected
-        if not await self.manager.has_active_connections(
-            self.CHANNEL_TYPE, context_key
-        ):
-            logger.warning(
-                f"[Metadata Channel] No active bot connections, room_started event may be lost"
-            )
+        if not await self.manager.has_active_connections(self.CHANNEL_TYPE, context_key):
+            logger.warning(f"[Metadata Channel] No active bot connections, room_started event may be lost")
 
         # Prepare event data
         event_data = self._create_base_event(
@@ -174,9 +162,7 @@ class MetadataChannel:
         )
 
         # Broadcast event
-        broadcast_count = await self.manager.broadcast_message(
-            self.CHANNEL_TYPE, context_key, event_data
-        )
+        broadcast_count = await self.manager.broadcast_message(self.CHANNEL_TYPE, context_key, event_data)
 
         logger.info(
             f"[Metadata Channel] Pushed room_started event to {broadcast_count} bots "
@@ -193,9 +179,7 @@ class MetadataChannel:
             "room_id": room_id,
             "room_name": room_name,
             "timestamp": event_data["timestamp"],
-            "active_connections": await self.manager.get_connection_count(
-                self.CHANNEL_TYPE, context_key
-            ),
+            "active_connections": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),
             "broadcast_to": broadcast_count,
         }
 
@@ -216,12 +200,8 @@ class MetadataChannel:
         context_key = self.CONTEXT_KEY
 
         # Check if any bots are connected
-        if not await self.manager.has_active_connections(
-            self.CHANNEL_TYPE, context_key
-        ):
-            logger.warning(
-                f"[Metadata Channel] No active bot connections, room_ended event may be lost"
-            )
+        if not await self.manager.has_active_connections(self.CHANNEL_TYPE, context_key):
+            logger.warning(f"[Metadata Channel] No active bot connections, room_ended event may be lost")
 
         # Prepare metadata
         metadata = {}
@@ -237,9 +217,7 @@ class MetadataChannel:
         )
 
         # Broadcast event
-        broadcast_count = await self.manager.broadcast_message(
-            self.CHANNEL_TYPE, context_key, event_data
-        )
+        broadcast_count = await self.manager.broadcast_message(self.CHANNEL_TYPE, context_key, event_data)
 
         logger.info(
             f"[Metadata Channel] Pushed room_ended event to {broadcast_count} bots "
@@ -257,15 +235,11 @@ class MetadataChannel:
             "room_name": room_name,
             "duration_seconds": duration_seconds,
             "timestamp": event_data["timestamp"],
-            "active_connections": await self.manager.get_connection_count(
-                self.CHANNEL_TYPE, context_key
-            ),
+            "active_connections": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),
             "broadcast_to": broadcast_count,
         }
 
-    async def push_room_record_done(
-        self, room_id: str, room_name: str
-    ) -> Dict[str, Any]:
+    async def push_room_record_done(self, room_id: str, room_name: str) -> Dict[str, Any]:
         """
         Push room_record_done event to all connected bots.
         Automatically fetches tracks from PostgreSQL and builds file_results.
@@ -280,12 +254,8 @@ class MetadataChannel:
         context_key = self.CONTEXT_KEY
 
         # Check if any bots are connected
-        if not await self.manager.has_active_connections(
-            self.CHANNEL_TYPE, context_key
-        ):
-            logger.warning(
-                f"[Metadata Channel] No active bot connections, room_record_done event may be lost"
-            )
+        if not await self.manager.has_active_connections(self.CHANNEL_TYPE, context_key):
+            logger.warning(f"[Metadata Channel] No active bot connections, room_record_done event may be lost")
 
         # Fetch tracks from PostgreSQL and build file_results
         file_results = []
@@ -306,13 +276,9 @@ class MetadataChannel:
                 }
                 file_results.append(file_result)
 
-            logger.info(
-                f"[Metadata Channel] Built file_results from {len(tracks)} tracks for room {room_id}"
-            )
+            logger.info(f"[Metadata Channel] Built file_results from {len(tracks)} tracks for room {room_id}")
         except Exception as e:
-            logger.error(
-                f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}"
-            )
+            logger.error(f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}")
             # Continue with empty file_results
 
         # Prepare metadata
@@ -327,9 +293,7 @@ class MetadataChannel:
         )
 
         # Broadcast event
-        broadcast_count = await self.manager.broadcast_message(
-            self.CHANNEL_TYPE, context_key, event_data
-        )
+        broadcast_count = await self.manager.broadcast_message(self.CHANNEL_TYPE, context_key, event_data)
 
         logger.info(
             f"[Metadata Channel] Pushed room_record_done event to {broadcast_count} bots "
@@ -347,9 +311,7 @@ class MetadataChannel:
             "room_name": room_name,
             "file_count": len(file_results),
             "timestamp": event_data["timestamp"],
-            "active_connections": await self.manager.get_connection_count(
-                self.CHANNEL_TYPE, context_key
-            ),
+            "active_connections": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),
             "broadcast_to": broadcast_count,
         }
 
@@ -373,12 +335,8 @@ class MetadataChannel:
         context_key = self.CONTEXT_KEY
 
         # Check if any bots are connected
-        if not await self.manager.has_active_connections(
-            self.CHANNEL_TYPE, context_key
-        ):
-            logger.warning(
-                f"[Metadata Channel] No active bot connections, room_summary_done event may be lost"
-            )
+        if not await self.manager.has_active_connections(self.CHANNEL_TYPE, context_key):
+            logger.warning(f"[Metadata Channel] No active bot connections, room_summary_done event may be lost")
 
         # Prepare event data
         event_data = self._create_base_event(
@@ -389,9 +347,7 @@ class MetadataChannel:
         )
 
         # Broadcast event
-        broadcast_count = await self.manager.broadcast_message(
-            self.CHANNEL_TYPE, context_key, event_data
-        )
+        broadcast_count = await self.manager.broadcast_message(self.CHANNEL_TYPE, context_key, event_data)
 
         logger.info(
             f"[Metadata Channel] Pushed room_summary_done event to {broadcast_count} bots "
@@ -408,8 +364,6 @@ class MetadataChannel:
             "room_id": room_id,
             "room_name": room_name,
             "timestamp": event_data["timestamp"],
-            "active_connections": await self.manager.get_connection_count(
-                self.CHANNEL_TYPE, context_key
-            ),
+            "active_connections": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),
             "broadcast_to": broadcast_count,
         }

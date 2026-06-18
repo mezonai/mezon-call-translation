@@ -39,12 +39,8 @@ async def list_rooms(
         max_length=VC.MAX_SEARCH_QUERY_LENGTH,
         description="Search by room name or participant identity",
     ),
-    from_utc: Optional[datetime] = Query(
-        default=None, description="Start of time range (UTC, ISO 8601)"
-    ),
-    to_utc: Optional[datetime] = Query(
-        default=None, description="End of time range (UTC, ISO 8601)"
-    ),
+    from_utc: Optional[datetime] = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
+    to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
 ):
@@ -110,9 +106,7 @@ async def get_room_by_id(
 
         room = await pg_repo.get_room_by_id(room_id)
         if not room:
-            raise HTTPException(
-                status_code=404, detail=f"Room with ID '{room_id}' not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
 
         room = _serialize_room(room)
 
@@ -124,9 +118,7 @@ async def get_room_by_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get(
-    "/id/{room_id}/statistics", response_description="Get room statistics by ID"
-)
+@router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
 async def get_room_statistics_by_id(
     room_id: str,
 ):
@@ -145,9 +137,7 @@ async def get_room_statistics_by_id(
 
         stats = await pg_repo.get_room_statistics_by_id(room_id)
         if not stats:
-            raise HTTPException(
-                status_code=404, detail=f"Room with ID '{room_id}' not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
 
         return {"status": "ok", "statistics": stats}
     except HTTPException:

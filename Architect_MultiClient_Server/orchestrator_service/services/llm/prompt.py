@@ -101,7 +101,6 @@ Return ONLY valid JSON that matches this schema:
 """
 
 
-
 def build_prompt_action_items(conversation_text: str, language: str) -> str:
     return f"""
 # ROLE
