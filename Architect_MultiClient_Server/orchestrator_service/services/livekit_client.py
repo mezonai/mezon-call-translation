@@ -264,12 +264,12 @@ class LiveKitClientService:
                         "tracks": [
                             {
                                 "sid": track.sid,
-                                "type": track.type,
+                                "type": api.TrackType.Name(track.type),
                                 "name": track.name,
                                 "muted": track.muted,
                                 "width": track.width,
                                 "height": track.height,
-                                "source": track.source,
+                                "source": api.TrackSource.Name(track.source),
                                 "mime_type": track.mime_type,
                             }
                             for track in p.tracks
