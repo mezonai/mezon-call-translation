@@ -1,0 +1,45 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120                     
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+    "E",    # PEP8 Errors: Basic style and formatting violations
+    "W",    # PEP8 Warnings: Minor styling issues
+    "F",    # Pyflakes: Catch critical logic errors (e.g., unused imports, undefined vars)
+    "I",    # Isort: Automatically sort and group imports
+    "N",    # Naming conventions: Enforce strict naming rules (e.g., snake_case for vars)
+    "UP",   # Pyupgrade: Keep codebase modern and clean
+    "B",    # Bugbear: Warn against bad patterns that easily cause hidden bugs
+    "SIM",  # Simplify: Make code more concise and readable
+    "RUF",  # Ruff-specific: Exclusive rules for best performance and code quality
+]
+ignore = ["E501"]   # Ignore "line too long" (E501) for unbreakable strings/URLs
+
+[tool.ruff.lint.isort]
+known-first-party = ["orchestrator_service"]
+
+[tool.ruff.format]
+quote-style = "double"  # Strictly enforce double quotes "" for all strings
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true                  # Warn when a function returns Any
+disallow_untyped_defs = false           # Don't require type annotations on all functions (gradual adoption)
+check_untyped_defs = true               # Still type-check function bodies even without annotations
+ignore_missing_imports = false          # Require stubs or config for all imports by default
+strict_optional = true                  # Distinguish between Optional[X] and X (None safety)
+warn_unreachable = true                 # Warn about unreachable code after return/raise
+
+[[tool.mypy.overrides]]
+module = [
+    "openai.*",
+    "httpx.*",
+    "google.*",
+    "livekit.*",
+    "redis.*",
+    "tenacity.*",
+    "uvicorn.*",
+]
+ignore_missing_imports = true
