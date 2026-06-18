@@ -251,8 +251,8 @@ class WebhookHandler:
                 logger.error(f"[Recovery] No track found in DB for egress: {egress_id}")
                 return
 
-            participant_identity = track.get("participant_identity")
-            track_id = track.get("track_id")
+            participant_identity = track.participant_identity
+            track_id = track.track_id
 
             logger.info(
                 f"[Recovery] Found track: egress={egress_id}, "
