@@ -19,11 +19,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-class OutboxUseCase(str, enum.Enum):
+class OutboxUseCase(enum.StrEnum):
     RETRY_SUMMARIZATION = "retry_summarization"
 
 
-class OutboxStatus(str, enum.Enum):
+class OutboxStatus(enum.StrEnum):
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"

@@ -5,6 +5,7 @@ Endpoints for bot to receive chat external events via SSE
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import ClassVar
 
 from orchestrator_service.api.sse.channels.chat_external_channel import ChatExternalChannel
 from orchestrator_service.api.sse.sse_manager import SSEManager
@@ -29,7 +30,7 @@ class PushChatExternalRequest(BaseModel):
     time: str | None = None
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "room_name": "my-room",
                 "room_id": "room-12345",

@@ -33,7 +33,7 @@ if not JWT_SECRET:
 logger.info(f"JWT Configuration: Algorithm={JWT_ALGORITHM}, Expiry={JWT_EXPIRY_DAYS} days")
 
 
-def generate_jwt_token(user_data: dict[str, Any], expiry_days: int = None, jti: str | None = None) -> str:
+def generate_jwt_token(user_data: dict[str, Any], expiry_days: int | None = None, jti: str | None = None) -> str:
     """
     Generate a JWT token containing user information.
 
@@ -155,7 +155,7 @@ def get_token_expiry(token: str) -> datetime:
 
     except Exception as e:
         logger.error(f"Failed to get token expiry: {e}")
-        raise jwt.InvalidTokenError(f"Cannot parse token expiry: {e}")
+        raise jwt.InvalidTokenError(f"Cannot parse token expiry: {e}") from e
 
 
 def is_token_expired(token: str) -> bool:

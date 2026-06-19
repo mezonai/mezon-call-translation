@@ -80,7 +80,7 @@ class RedisConnectionManager:
             logger.error(f"✗ Failed to create Redis connection pool: {e}")
             self._pool = None
             self._connected = False
-            raise ConnectionError(f"Redis connection failed: {e}")
+            raise ConnectionError(f"Redis connection failed: {e}") from e
 
     async def disconnect(self) -> None:
         """Close the shared connection pool."""

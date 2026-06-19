@@ -9,7 +9,7 @@ This worker:
 """
 
 import asyncio
-
+import contextlib
 import httpx
 
 from orchestrator_service.config.application_config import get_config
@@ -183,10 +183,8 @@ class NotificationWorker:
         # Cancel consumer task
         if self._consumer_task:
             self._consumer_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._consumer_task
-            except asyncio.CancelledError:
-                pass
 
         # Cleanup
         await self.disconnect()

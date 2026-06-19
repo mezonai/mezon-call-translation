@@ -88,19 +88,19 @@ async def verify_jwt(credentials: HTTPAuthorizationCredentials | None = Security
 
         return payload
 
-    except jwt.ExpiredSignatureError:
+    except jwt.ExpiredSignatureError as e:
         logger.warning("JWT token has expired")
         raise HTTPException(
             status_code=401, detail="Token has expired. Please login again.", headers={"WWW-Authenticate": "Bearer"}
-        )
+        ) from e
     except jwt.InvalidTokenError as e:
         logger.warning(f"Invalid JWT token: {e}")
         raise HTTPException(
             status_code=401, detail="Invalid authentication token.", headers={"WWW-Authenticate": "Bearer"}
-        )
+        ) from e
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         logger.error(f"Unexpected error during JWT verification: {e}")
-        raise HTTPException(status_code=500, detail="Authentication verification failed.")
+        raise HTTPException(status_code=500, detail="Authentication verification failed.") from e

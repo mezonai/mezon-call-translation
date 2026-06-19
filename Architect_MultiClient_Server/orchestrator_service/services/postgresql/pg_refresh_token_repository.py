@@ -76,7 +76,7 @@ class PgRefreshTokenRepository:
                     select(RefreshToken)
                     .where(
                         RefreshToken.refresh_token_hash == token_hash,
-                        RefreshToken.is_revoked == False,
+                        RefreshToken.is_revoked.is_(False),
                         RefreshToken.expires_at > now,
                     )
                     .limit(1)
@@ -111,7 +111,7 @@ class PgRefreshTokenRepository:
             async with session_factory() as session:
                 stmt = (
                     update(RefreshToken)
-                    .where(RefreshToken.id == token_id, RefreshToken.is_revoked == False)
+                    .where(RefreshToken.id == token_id, RefreshToken.is_revoked.is_(False))
                     .values(
                         refresh_token_hash=token_hash,
                         access_token_jti=new_access_token_jti,

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class WebhookResponse(BaseModel):
@@ -28,10 +28,10 @@ class TrackInfo(BaseModel):
 class EgressInfo(BaseModel):
     """Egress information để gửi đi (simplified to match TranscriptionRequest)"""
 
-    egressId: str
+    egress_id: str = Field(alias="egressId")
     filename: str
     location: str
     duration: str
-    startedAt: str
-    endedAt: str
+    started_at: str = Field(alias="startedAt")
+    ended_at: str = Field(alias="endedAt")
     source: str | None = None

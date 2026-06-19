@@ -3,6 +3,9 @@ import logging
 import time
 import traceback
 
+# Set containing strong references to tasks - prevents them from being garbage collected
+# Add task when create it - remove when task is done
+_active_recording_tasks = set()
 
 class NotificationHandler(logging.Handler):
     """
@@ -52,7 +55,11 @@ class NotificationHandler(logging.Handler):
             # Fire async task
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._send_notification(record, message))
+                notification_task = loop.create_task(self._send_notification(record, message))
+                _active_recording_tasks.add(notification_task)
+
+                # Request Python to automatically remove task when done
+                notification_task.add_done_callback(_active_recording_tasks.discard)
             except RuntimeError:
                 pass
 

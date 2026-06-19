@@ -126,10 +126,10 @@ class LiveKitClientService:
             return dispatches
         except Exception as e:
             if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
-                raise LiveKitServiceError(f"LiveKit server error: {e}")
+                raise LiveKitServiceError(f"LiveKit server error: {e}") from e
             if isinstance(e, LiveKitServiceError):
                 raise
-            raise LiveKitServiceError(f"Failed to list dispatches: {e}")
+            raise LiveKitServiceError(f"Failed to list dispatches: {e}") from e
 
     async def find_agent_dispatch(self, dispatches, agent_name: str | None = None) -> Any | None:
         """Find dispatch by configured or provided agent name."""
@@ -158,8 +158,8 @@ class LiveKitClientService:
             return {"status": "created", "dispatch": dispatch}
         except Exception as e:
             if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
-                raise LiveKitServiceError(f"LiveKit server error: {e}")
-            raise LiveKitServiceError(f"Failed to create dispatch: {e}")
+                raise LiveKitServiceError(f"LiveKit server error: {e}") from e
+            raise LiveKitServiceError(f"Failed to create dispatch: {e}") from e
 
     async def cancel_dispatch(self, room_name: str) -> dict[str, Any]:
         """Cancel an existing dispatch for the given room."""
@@ -184,8 +184,8 @@ class LiveKitClientService:
             }
         except Exception as e:
             if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
-                raise LiveKitServiceError(f"Failed to cancel dispatch: {e}")
-            raise LiveKitServiceError(f"Failed to cancel dispatch: {e}")
+                raise LiveKitServiceError(f"Failed to cancel dispatch: {e}") from e
+            raise LiveKitServiceError(f"Failed to cancel dispatch: {e}") from e
 
     async def list_participants(self, room_name: str):
         """List participants in a room."""
@@ -204,10 +204,10 @@ class LiveKitClientService:
             ]
         except Exception as e:
             if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
-                raise LiveKitServiceError(f"Failed to list participants: {e}")
+                raise LiveKitServiceError(f"Failed to list participants: {e}") from e
             if isinstance(e, LiveKitServiceError):
                 raise
-            raise LiveKitServiceError(f"Failed to list participants: {e}")
+            raise LiveKitServiceError(f"Failed to list participants: {e}") from e
 
     async def get_participant_detail(self, room_name: str, identity: str) -> dict[str, Any] | None:
         """
@@ -276,10 +276,10 @@ class LiveKitClientService:
             }
         except Exception as e:
             if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
-                raise LiveKitServiceError(f"Failed to get participant detail: {e}")
+                raise LiveKitServiceError(f"Failed to get participant detail: {e}") from e
             if isinstance(e, LiveKitServiceError):
                 raise
-            raise LiveKitServiceError(f"Failed to get participant detail: {e}")
+            raise LiveKitServiceError(f"Failed to get participant detail: {e}") from e
 
     async def cleanup(self):
         """Cleanup LiveKit client connection"""

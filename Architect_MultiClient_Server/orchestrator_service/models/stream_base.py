@@ -7,7 +7,7 @@ Common base types for producing tasks to Redis Streams.
 import time
 import uuid
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -21,7 +21,7 @@ class TaskPriority(int, Enum):
     BACKGROUND = 9
 
 
-class StreamTaskStatus(str, Enum):
+class StreamTaskStatus(StrEnum):
     """Task status in Redis Stream."""
 
     PENDING = "pending"

@@ -14,11 +14,11 @@ from .application_config import (
 )
 
 __all__ = [
+    "Config",
     "LiveKitConfig",
     "LoggerConfig",
     "MinIOConfig",
-    "STTServiceConfig",
     "ServerConfig",
-    "config",
+    "STTServiceConfig",
     "get_config",
 ]

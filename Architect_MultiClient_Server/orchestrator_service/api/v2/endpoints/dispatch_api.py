@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -17,26 +17,7 @@ class DispatchRequestModel(BaseModel):
     room_name: str = Field(..., description="Room name")
 
     class Config:
-        json_schema_extra = {"example": {"room_name": "Interview Room 1"}}
-
-
-class DispatchActionResponseModel(BaseModel):
-    status: str
-    message: str | None = None
-    dispatch: dict[str, Any] | None = None
-
-
-class ParticipantModel(BaseModel):
-    identity: str
-    name: str
-    state: str
-    joined_at: int
-    metadata: dict[str, Any]
-
-
-class ParticipantListResponseModel(BaseModel):
-    status: str
-    participants: list[ParticipantModel]
+        json_schema_extra: ClassVar[dict] = {"example": {"room_name": "Interview Room 1"}}
 
 
 class DispatchActionResponseModel(BaseModel):
@@ -71,7 +52,7 @@ async def api_create_dispatch(
     except HTTPException:
         raise
     except LiveKitServiceError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/cancel_dispatch")
@@ -87,7 +68,7 @@ async def api_cancel_dispatch(
     except HTTPException:
         raise
     except LiveKitServiceError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/rooms/participant/{room_id}", response_model=ParticipantListResponseModel)
@@ -105,4 +86,4 @@ async def list_participants(
     except HTTPException:
         raise
     except LiveKitServiceError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

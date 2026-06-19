@@ -4,7 +4,7 @@ Room Registry API - Manager active rooms for webhook processing
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import APIRouter, Depends, HTTPException
 from livekit import api
@@ -25,6 +25,9 @@ logger = get_logger(__name__)
 # Initialize transcription service
 transcription_service = TranscriptionService()
 
+# Set containing strong references to tasks - prevents them from being garbage collected
+# Add task when create it - remove when task is done
+_active_recording_tasks = set()
 
 class RoomRegisterRequest(BaseModel):
     """Request model for room registration"""
@@ -32,7 +35,7 @@ class RoomRegisterRequest(BaseModel):
     room_name: str = Field(..., description="Room name to register")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "room_name": "my-room-123",
             }
@@ -119,7 +122,7 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Dep
                             f"participant={participant_identity}, source={source_str}"
                         )
 
-                        asyncio.create_task(
+                        recording_task = asyncio.create_task(
                             egress_service.start_recording(
                                 request.room_name,
                                 track.sid,
@@ -128,6 +131,12 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Dep
                                 participant_identity,
                             )
                         )
+
+                        _active_recording_tasks.add(recording_task)
+
+                        # Request Python to automatically remove task when done
+                        recording_task.add_done_callback(_active_recording_tasks.discard)
+
                         tracks_started += 1
 
             # Save all participants at once
@@ -143,7 +152,9 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Dep
         # Continue - room is already registered
 
     metadata_channel = MetadataChannel()
-    asyncio.create_task(metadata_channel.push_room_started(str(room_id), request.room_name))
+    started_room_task = asyncio.create_task(metadata_channel.push_room_started(str(room_id), request.room_name))
+    _active_recording_tasks.add(started_room_task)
+    started_room_task.add_done_callback(_active_recording_tasks.discard)
 
     return {
         "status": "ok",
@@ -201,13 +212,17 @@ async def unregister_room(request: RoomUnregisterRequest, auth: dict[str, Any] =
             # Don't fail unregistration if egress stopping fails
 
         try:
-            asyncio.create_task(transcription_service.final_room(request.room_name, room_id))
+            final_room_task = asyncio.create_task(transcription_service.final_room(request.room_name, room_id))
+            _active_recording_tasks.add(final_room_task)
+            final_room_task.add_done_callback(_active_recording_tasks.discard)
         except Exception as e:
             logger.error(f"Error finalizing room '{request.room_name}': {e}", exc_info=True)
             # Don't fail unregistration if finalization fails
 
         metadata_channel = MetadataChannel()
-        asyncio.create_task(metadata_channel.push_room_ended(str(room_id), request.room_name))
+        ended_room_task = asyncio.create_task(metadata_channel.push_room_ended(str(room_id), request.room_name))
+        _active_recording_tasks.add(ended_room_task)
+        ended_room_task.add_done_callback(_active_recording_tasks.discard)
 
         return {
             "status": "ok",
@@ -221,7 +236,7 @@ async def unregister_room(request: RoomUnregisterRequest, auth: dict[str, Any] =
         raise
     except Exception as e:
         logger.error(f"Error unregistering room: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to unregister room: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Failed to unregister room: {e!s}") from e
 
 
 @router.get("/status/{room_name}", response_model=RoomStatusResponse)
@@ -240,7 +255,7 @@ async def get_room_status(room_name: str, auth: dict[str, Any] = Depends(verify_
         return RoomStatusResponse(room_name=room_name, registered=is_registered, room_id=room_id)
     except Exception as e:
         logger.error(f"Error getting room status: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get room status: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Failed to get room status: {e!s}") from e
 
 
 @router.get("/list", response_description="List all registered rooms")
@@ -257,7 +272,7 @@ async def list_registered_rooms(auth: dict[str, Any] = Depends(verify_api_key)):
         return {"status": "ok", "total": await registry.count_rooms(), "rooms": rooms}
     except Exception as e:
         logger.error(f"Error listing rooms: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list rooms: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Failed to list rooms: {e!s}") from e
 
 
 @router.delete("/clear-all", response_description="Clear all registered rooms")
@@ -269,7 +284,6 @@ async def clear_all_rooms(auth: dict[str, Any] = Depends(verify_api_key)):
     """
     try:
         registry = get_room_registry()
-        count = await registry.count_rooms()
         cleared = await registry.clear_all()
 
         return {
@@ -279,4 +293,4 @@ async def clear_all_rooms(auth: dict[str, Any] = Depends(verify_api_key)):
         }
     except Exception as e:
         logger.error(f"Error clearing rooms: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to clear rooms: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear rooms: {e!s}") from e

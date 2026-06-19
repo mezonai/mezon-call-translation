@@ -72,7 +72,7 @@ async def handle_webhook(request: Request):
 
     except json.JSONDecodeError as e:
         logger.error(f"✗ Invalid JSON: {e}")
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+        raise HTTPException(status_code=400, detail="Invalid JSON") from e
     except Exception as e:
         logger.error(f"✗ Error processing webhook: {e}")
         return WebhookResponse(received=False, error=str(e))
@@ -96,7 +96,7 @@ async def handle_internal_webhook(request: Request, auth: dict[str, Any] = Depen
 
     except json.JSONDecodeError as e:
         logger.error(f"✗ Invalid JSON: {e}")
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+        raise HTTPException(status_code=400, detail="Invalid JSON") from e
     except Exception as e:
         logger.error(f"✗ Error processing webhook: {e}")
         return HTTPException(status_code=500, detail=str(e))

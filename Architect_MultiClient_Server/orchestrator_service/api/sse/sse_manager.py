@@ -336,8 +336,8 @@ class SSEManager:
             shutdown_message = {"event": "disconnect", "data": {"message": "Server is shutting down"}}
 
             # Iterate through all queues and send shutdown message
-            for channel_type, contexts in list(self.connection_queues.items()):
-                for context_key, connections in list(contexts.items()):
+            for _, contexts in list(self.connection_queues.items()):
+                for _, connections in list(contexts.items()):
                     for connection_id, queue in list(connections.items()):
                         try:
                             # Non-blocking put - if queue full, skip

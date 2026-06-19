@@ -37,7 +37,7 @@ async def get_summary_by_room_name(
         raise
     except Exception as e:
         logger.error(f"Failed to get summary by room name {room_name}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @client_router.get("/room/id/{room_id}", response_description="Get summary by room ID")
@@ -56,4 +56,4 @@ async def get_summary_by_room_id(
         raise
     except Exception as e:
         logger.error(f"Failed to get summary by room id {room_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

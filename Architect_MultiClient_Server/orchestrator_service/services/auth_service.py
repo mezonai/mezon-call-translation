@@ -167,7 +167,7 @@ class AuthService:
 
         except requests.RequestException as e:
             logger.error(f"Network error during OAuth2 exchange: {e}")
-            raise HTTPException(status_code=500, detail=f"Network error communicating with Mezon: {e!s}")
+            raise HTTPException(status_code=500, detail=f"Network error communicating with Mezon: {e!s}") from e
 
     async def get_current_user(self, user_id: str) -> dict[str, Any]:
         user_info = await self.user_repo.get_user_info(user_id)

@@ -109,7 +109,7 @@ class RedisProducerService(Generic[T]):
         except Exception as e:
             logger.error(f"✗ Failed to connect to Redis: {e}")
             self._redis = None
-            raise ConnectionError(f"Redis connection failed: {e}")
+            raise ConnectionError(f"Redis connection failed: {e}") from e
 
     async def close(self) -> None:
         """Release this client's connections back to the shared pool (does not tear down the pool)."""

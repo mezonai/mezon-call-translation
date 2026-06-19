@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
+from typing import ClassVar
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.auth.verify_account import authenticate_account
@@ -36,19 +37,19 @@ class RoomInfo(BaseModel):
     def validate_uuid(cls, v: str) -> str:
         try:
             UUID(v)
-        except (ValueError, AttributeError):
-            raise ValueError(f"Invalid UUID format: {v!r}")
+        except (ValueError, AttributeError) as e:
+            raise ValueError(f"Invalid UUID format: {v!r}") from e
         return v
 
     class Config:
-        json_schema_extra = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
+        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
 
 
 class SessionStartedRequest(RoomInfo):
     """Request model for session_started event"""
 
     class Config:
-        json_schema_extra = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
+        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
 
 
 class SessionEndedRequest(RoomInfo):
@@ -57,7 +58,7 @@ class SessionEndedRequest(RoomInfo):
     duration_seconds: int | None = Field(None, description="Duration of room session in seconds")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {"room_id": "abc123", "room_name": "Interview Room 1", "duration_seconds": 3600}
         }
 
@@ -71,7 +72,7 @@ class FileResult(BaseModel):
     end_time: str = Field(..., description="Recording end time (ISO 8601)")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "participant_identity": "user_1",
                 "filename": "user_1_audio.mp3",
@@ -85,14 +86,14 @@ class SessionRecordDoneRequest(RoomInfo):
     """Request model for room_record_done event"""
 
     class Config:
-        json_schema_extra = {"example": {"room_id": "abc123", "room_name": "Room_1"}}
+        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "abc123", "room_name": "Room_1"}}
 
 
 class SessionSummaryDoneRequest(RoomInfo):
     """Request model for room_summary_done event"""
 
     class Config:
-        json_schema_extra = {"example": {"room_id": "69a66008cfc00881f1d7b382", "room_name": "H3U-EXdDg"}}
+        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "69a66008cfc00881f1d7b382", "room_name": "H3U-EXdDg"}}
 
 
 # ==================== SSE Endpoint ====================
@@ -212,7 +213,8 @@ async def list_metadata_events(
     - **to_utc**: Only events created at or before this time (UTC)
     - **limit**: Maximum number of events to return (1-1000)
     - **skip**: Number of records to skip for pagination
-    - **sort_order**: Sort direction for created_at ('asc' = ascending/oldest first, 'desc' = descending/newest first, default: 'desc')
+    - **sort_order**: Sort direction for created_at
+    ('asc' = ascending/oldest first, 'desc' = descending/newest first, default: 'desc')
     """
     # Validate event_type
     if event_type is not None and MetadataEventType.is_valid(event_type) is False:
@@ -261,7 +263,7 @@ async def list_metadata_events(
 
     except Exception as e:
         logger.error(f"Failed to list metadata events: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list metadata events: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Failed to list metadata events: {e!s}") from e
 
 
 @router.get("/metadata/{event_id}", response_description="Get metadata event by event_id")
@@ -289,4 +291,4 @@ async def get_metadata_event_by_id(
         raise
     except Exception as e:
         logger.error(f"Failed to get metadata event: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get metadata event: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Failed to get metadata event: {e!s}") from e

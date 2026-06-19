@@ -5,6 +5,7 @@ Endpoints for agents to receive requests from orchestrator via SSE
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
+from typing import ClassVar
 
 from orchestrator_service.api.sse.channels.agent_request_channel import AgentRequestChannel
 from orchestrator_service.api.sse.sse_manager import SSEManager
@@ -34,7 +35,7 @@ class SendAgentRequestBody(BaseModel):
     agent_id: str | None = Field(None, description="Agent ID to target specific agent")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "examples": [
                 {
                     "payload": {"request_type": "transcript_control", "action": "enable"},

@@ -1,12 +1,10 @@
-from dotenv import load_dotenv
-
-load_dotenv()
-
 import signal
 from contextlib import asynccontextmanager
-
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv()
 
 from orchestrator_service.api.dispatch_api import router as dispatch_router
 from orchestrator_service.api.queue_api import router as queue_router
@@ -27,8 +25,6 @@ from orchestrator_service.api.v2.router import (
 )  # Import the v2 API router
 from orchestrator_service.api.webhook_api import (
     egress_service,
-)
-from orchestrator_service.api.webhook_api import (
     router as webhook_router,
 )
 from orchestrator_service.config.application_config import get_config
@@ -95,10 +91,6 @@ async def lifespan(app: FastAPI):
         redis_manager = get_connection_manager()
         await redis_manager.connect()
         logger.info("✅ Redis connection pool created")
-
-        # Initialize Room Registry (auto-connects to Redis pool)
-        room_registry = get_room_registry()
-        logger.info("✅ Room Registry initialized")
 
         # Initialize Save Transcription consumer service
         save_transcription_service = RedisSaveTranscriptionService()

@@ -5,7 +5,7 @@ All configuration values are loaded from environment variables with sensible def
 
 import os
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 # Try to load .env file if dotenv is available
 try:
@@ -58,9 +58,7 @@ class LiveKitConfig:
     def validate(self) -> bool:
         """Validate LiveKit configuration"""
         # API key and secret are required
-        if not self.api_key or not self.api_secret:
-            return False
-        return True
+        return bool(self.api_key and self.api_secret)
 
 
 # ============================================================================
@@ -271,7 +269,7 @@ class AuthConfig:
 # ============================================================================
 
 
-class LLMProvider(str, Enum):
+class LLMProvider(StrEnum):
     GEMINI = "gemini"
     LOCAL = "local"
 

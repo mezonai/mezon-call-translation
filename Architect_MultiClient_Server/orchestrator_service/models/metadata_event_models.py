@@ -2,10 +2,10 @@
 Models and enums for metadata events
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class MetadataEventType(str, Enum):
+class MetadataEventType(StrEnum):
     """
     Enum for metadata event types.
 

@@ -12,7 +12,7 @@ Handles OAuth2 authentication flow with Mezon:
 """
 
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -82,7 +82,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest, auth_service: Au
         raise
     except Exception as e:
         logger.error(f"Unexpected error during OAuth2 exchange: {e}")
-        raise HTTPException(status_code=500, detail=f"Authentication failed: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Authentication failed: {e!s}") from e
 
 
 @router.get("/mezon/userinfo")
@@ -107,7 +107,7 @@ async def get_current_user(
         raise
     except Exception as e:
         logger.error(f"Error fetching user info: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # New Request/Response Models for Refresh and Logout
@@ -135,7 +135,7 @@ class BotLoginRequest(BaseModel):
     account: AccountModel = Field(..., description="Bot account credentials")
 
     class Config:
-        json_schema_extra = {"examples": [{"account": {"appid": "string", "token": "string"}}]}
+        json_schema_extra: ClassVar[dict] = {"examples": [{"account": {"appid": "string", "token": "string"}}]}
 
 
 class BotLoginResponse(BaseModel):
@@ -169,7 +169,7 @@ async def refresh_access_token(request: RefreshTokenRequest, auth_service: AuthS
         raise
     except Exception as e:
         logger.error(f"Error refreshing token: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to refresh token: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh token: {e!s}") from e
 
 
 @router.post("/logout")
@@ -208,7 +208,7 @@ async def logout(
         raise
     except Exception as e:
         logger.error(f"Error during logout: {e}")
-        raise HTTPException(status_code=500, detail=f"Logout failed: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Logout failed: {e!s}") from e
 
 
 @router.post("/mezon/bot/login", response_model=BotLoginResponse)
@@ -237,4 +237,4 @@ async def bot_login(request: BotLoginRequest, auth_service: AuthService = Depend
         raise
     except Exception as e:
         logger.error(f"❌ Bot login error: {e}")
-        raise HTTPException(status_code=500, detail=f"Bot authentication failed: {e!s}")
+        raise HTTPException(status_code=500, detail=f"Bot authentication failed: {e!s}") from e

@@ -88,7 +88,7 @@ async def list_rooms(
         raise
     except Exception as e:
         logger.error(f"Failed to list rooms: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/id/{room_id}", response_description="Get room by ID")
@@ -109,7 +109,7 @@ async def get_room_by_id(
         raise
     except Exception as e:
         logger.error(f"Failed to get room: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
@@ -135,7 +135,7 @@ async def get_room_statistics_by_id(
         raise
     except Exception as e:
         logger.error(f"Failed to get room statistics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/audio_info/{room_id}", response_description="Get all audio info for a room")

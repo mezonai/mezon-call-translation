@@ -156,7 +156,7 @@ class TranscriptionService:
 
         return None
 
-    async def save_participant(self, room_id: str, participant_identity: str, timestamp: datetime = None) -> bool:
+    async def save_participant(self, room_id: str, participant_identity: str, timestamp: datetime | None = None) -> bool:
         """
         Save participant info to PostgreSQL
 

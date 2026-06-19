@@ -3,7 +3,7 @@ SSE Agent Request API
 Endpoints for agents to receive requests from orchestrator via SSE
 """
 
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -39,7 +39,7 @@ class SendAgentRequestBody(BaseModel):
     agent_id: str | None = Field(None, description="Agent ID to target specific agent")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "examples": [
                 {
                     "payload": {"request_type": "transcript_control", "action": "enable"},

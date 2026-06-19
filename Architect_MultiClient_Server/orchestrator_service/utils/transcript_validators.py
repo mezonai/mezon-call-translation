@@ -53,13 +53,15 @@ def validate_room_name(value: str) -> str:
     """
     if not value or len(value) < VC.MIN_ROOM_NAME_LENGTH:
         raise HTTPException(
-            status_code=400, detail=f"Room name must be at least {VC.MIN_ROOM_NAME_LENGTH} character(s)"
+            status_code=400,
+            detail=f"Room name must be at least {VC.MIN_ROOM_NAME_LENGTH} character(s)"
         )
     if len(value) > VC.MAX_ROOM_NAME_LENGTH:
         raise HTTPException(status_code=400, detail=f"Room name must not exceed {VC.MAX_ROOM_NAME_LENGTH} characters")
     if not re.match(VC.ROOM_NAME_PATTERN, value):
         raise HTTPException(
-            status_code=400, detail="Room name can only contain alphanumeric characters, underscores, hyphens, and dots"
+            status_code=400,
+            detail="Room name can only contain alphanumeric characters, underscores, hyphens, and dots"
         )
     return value
 
@@ -103,10 +105,14 @@ def validate_egress_id(value: str) -> str:
     """
     if not value or len(value) < VC.MIN_EGRESS_ID_LENGTH:
         raise HTTPException(
-            status_code=400, detail=f"Egress ID must be at least {VC.MIN_EGRESS_ID_LENGTH} character(s)"
+            status_code=400,
+            detail=f"Egress ID must be at least {VC.MIN_EGRESS_ID_LENGTH} character(s)"
         )
     if len(value) > VC.MAX_EGRESS_ID_LENGTH:
-        raise HTTPException(status_code=400, detail=f"Egress ID must not exceed {VC.MAX_EGRESS_ID_LENGTH} characters")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Egress ID must not exceed {VC.MAX_EGRESS_ID_LENGTH} characters"
+        )
     return value
 
 

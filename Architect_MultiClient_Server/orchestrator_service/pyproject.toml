@@ -17,6 +17,18 @@ select = [
 ]
 ignore = ["E501"]   # Ignore "line too long" (E501) for unbreakable strings/URLs
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Security",
+    "orchestrator_service.auth.authorization.require_any_permission",
+]
+
 [tool.ruff.lint.isort]
 known-first-party = ["orchestrator_service"]
 

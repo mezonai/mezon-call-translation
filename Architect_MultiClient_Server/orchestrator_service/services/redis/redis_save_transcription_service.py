@@ -5,7 +5,9 @@ Consumer service that receives SaveTranscriptionTask batches from Redis
 and saves them progressively to PostgreSQL.
 """
 
+import contextlib
 import asyncio
+import contextlib
 import time
 
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
@@ -134,18 +136,14 @@ class RedisSaveTranscriptionService:
         # Cancel consumer task
         if self._consumer_task:
             self._consumer_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._consumer_task
-            except asyncio.CancelledError:
-                pass
 
         # Cancel orphan recovery
         if self._orphan_recovery_task:
             self._orphan_recovery_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._orphan_recovery_task
-            except asyncio.CancelledError:
-                pass
 
         # Stop background tasks
         if self._redis_service:

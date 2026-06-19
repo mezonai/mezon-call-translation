@@ -4,10 +4,10 @@ Agent Request Type Enum
 Defines the types of requests that can be sent from orchestrator to agent via SSE.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class AgentRequestType(str, Enum):
+class AgentRequestType(StrEnum):
     """
     Enum for agent request types.
     """

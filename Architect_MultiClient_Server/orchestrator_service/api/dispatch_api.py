@@ -55,10 +55,10 @@ async def verify_account(account: dict[str, str]) -> None:
         is_authenticated = await authenticate_account(account)
         if not is_authenticated:
             raise HTTPException(status_code=401, detail="Authentication failed")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Authentication service timeout")
-    except httpx.RequestError:
-        raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    except httpx.TimeoutException as e:
+        raise HTTPException(status_code=504, detail="Authentication service timeout") from e
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail="Authentication service unavailable") from e
 
 
 @router.post("/create_dispatch", response_model=DispatchActionResponseModel)
@@ -75,7 +75,7 @@ async def api_create_dispatch(
             result["dispatch"] = MessageToDict(result["dispatch"], preserving_proto_field_name=True)
         return DispatchActionResponseModel(**result)
     except LiveKitServiceError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/cancel_dispatch", response_model=DispatchActionResponseModel)
@@ -92,7 +92,7 @@ async def api_cancel_dispatch(
             result["dispatch"] = MessageToDict(result["dispatch"], preserving_proto_field_name=True)
         return DispatchActionResponseModel(**result)
     except LiveKitServiceError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/rooms/participant/{room_id}", response_model=ParticipantListResponseModel)
@@ -112,4 +112,4 @@ async def list_participants(room_id: str) -> ParticipantListResponseModel:
             participants=[ParticipantModel(**participant) for participant in participants],
         )
     except LiveKitServiceError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

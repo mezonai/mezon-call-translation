@@ -2,10 +2,12 @@
 Summary Outbox Worker Service - Processes and retries failed summarization tasks.
 """
 
+import contextlib
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.summary_models import RetryType
@@ -24,7 +26,7 @@ TaskHandler = Callable[[dict[str, Any]], Awaitable[None]]
 class OutboxHandlerRegistry:
     """Registry for mapping use_case to task handlers."""
 
-    _registry: dict[str, TaskHandler] = {}
+    _registry: ClassVar[dict[str, TaskHandler]] = {}
 
     @classmethod
     def register(cls, use_case: str, handler: TaskHandler):
@@ -93,10 +95,9 @@ class SummaryOutboxWorker:
 
         if self._worker_task:
             self._worker_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._worker_task
-            except asyncio.CancelledError:
-                pass
+        
         logger.info("✅ SummaryOutboxWorker stopped")
 
     async def _worker_loop(self) -> None:

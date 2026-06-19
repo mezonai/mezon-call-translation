@@ -130,7 +130,7 @@ async def list_available_queues(auth: AuthContext = Depends(require_any_permissi
 
     except Exception as e:
         logger.error(f"Error listing queues: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list queues: {e!s}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list queues: {e!s}") from e
 
 
 @router.get("/{queue_name}/stats", response_model=QueueStatsResponse)
@@ -156,12 +156,12 @@ async def get_queue_stats_by_name(
         return QueueStatsResponse(**stats)
 
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error getting stats for queue '{queue_name}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get queue stats: {e!s}"
-        )
+        ) from e
 
 
 @router.get("/{queue_name}/task/{task_id}", response_model=TaskStatusResponse)
@@ -204,14 +204,14 @@ async def get_task_status_by_queue(
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting task {task_id} from queue '{queue_name}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get task status: {e!s}"
-        )
+        ) from e
 
 
 @router.get("/{queue_name}/pending")
@@ -242,12 +242,12 @@ async def get_pending_tasks_by_queue(
         }
 
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error getting pending tasks for queue '{queue_name}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get pending tasks: {e!s}"
-        )
+        ) from e
 
 
 # ========================================
@@ -294,7 +294,7 @@ async def get_all_queues_overview(auth: AuthContext = Depends(require_any_permis
         logger.error(f"Error getting queue overview: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get queue overview: {e!s}"
-        )
+        ) from e
 
 
 # ========================================
@@ -336,10 +336,10 @@ async def get_dlq_tasks(
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error getting DLQ tasks for queue '{queue_name}': {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get DLQ tasks: {e!s}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get DLQ tasks: {e!s}") from e
 
 
 @router.post("/{queue_name}/dlq/retry", response_model=DLQRetryAllResponse)
@@ -376,9 +376,9 @@ async def retry_dlq_tasks(
             )
 
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error retrying DLQ tasks for queue '{queue_name}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retry DLQ tasks: {e!s}"
-        )
+        ) from e

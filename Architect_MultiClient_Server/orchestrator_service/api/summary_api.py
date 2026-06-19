@@ -68,7 +68,7 @@ async def retry_summary(
     try:
         summary_data = await get_summary_service().retry_summary_from_full_text(room_id, retry_type=type)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
     if summary_data is None:
         raise HTTPException(status_code=500, detail="Update summary_data to DB failed")

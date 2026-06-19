@@ -582,7 +582,8 @@ class PgTranscriptRepository:
                 # Assume self._split_into_chunks exists or just dump everything if not available
                 # Actually, Mongo implementation has self._split_into_chunks and self._create_chunk_document.
                 # I'll replicate the logic or just insert them directly.
-                # In Mongo, chunks are split. We'll implement a basic splitter here if needed, or just insert as one chunk for now.
+                # In Mongo, chunks are split. We'll implement a basic splitter here if needed, 
+                # or just insert as one chunk for now.
                 # To match exactly:
                 chunk_size = 50
                 chunks = [new_segments[i : i + chunk_size] for i in range(0, len(new_segments), chunk_size)]
@@ -692,7 +693,7 @@ class PgTranscriptRepository:
         self,
         track_id: str,
         sorted_by_index: bool = True,
-        limit: int = None,
+        limit: int | None = None,
         skip: int = 0,
     ) -> list[TranscriptChunk]:
         session_factory = get_session_factory()
@@ -732,7 +733,7 @@ class PgTranscriptRepository:
     async def save_track_metadata(
         self,
         *,
-        egress_id: str = None,
+        egress_id: str | None = None,
         track_id: str | None = None,
         room_ref_id: str | None = None,
         participant_identity: str | None = None,

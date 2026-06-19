@@ -18,6 +18,7 @@ Redis Streams Commands Used:
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import socket
@@ -217,7 +218,7 @@ class RedisStreamService(Generic[T]):
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
             self._redis = None
-            raise ConnectionError(f"Redis connection failed: {e}")
+            raise ConnectionError(f"Redis connection failed: {e}") from e
 
     async def _ensure_consumer_group(self) -> None:
         """Create consumer group if it doesn't exist."""
@@ -372,7 +373,7 @@ class RedisStreamService(Generic[T]):
                 return []
 
             tasks: list[T] = []
-            for stream_name, messages in result:
+            for _, messages in result:
                 for message_id, data in messages:
                     message_id_str = decode_value(message_id)
                     # Use injected task_class to parse the message
@@ -736,10 +737,8 @@ class RedisStreamService(Generic[T]):
         try:
             # Get current worker info
             worker_data = await self._redis.hget(self._workers_key, self._consumer_id)
-            if worker_data:
-                info = json.loads(worker_data)
-            else:
-                info = {"consumer_id": self._consumer_id}
+
+            info = json.loads(worker_data) if worker_data else {"consumer_id": self._consumer_id}
 
             info["last_heartbeat"] = str(time.time())
             if current_task_id is not None:
@@ -869,17 +868,13 @@ class RedisStreamService(Generic[T]):
 
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._heartbeat_task
-            except asyncio.CancelledError:
-                pass
 
         if self._recovery_task:
             self._recovery_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._recovery_task
-            except asyncio.CancelledError:
-                pass
 
         logger.info("Background tasks stopped")
 

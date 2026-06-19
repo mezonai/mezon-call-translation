@@ -4,8 +4,8 @@ Agent Request Payload Models
 Pydantic models for different request type payloads with discriminated union.
 """
 
-from enum import Enum
-from typing import Literal, Union
+from enum import StrEnum
+from typing import Literal, ClassVar
 
 from pydantic import BaseModel, Field
 
@@ -19,13 +19,13 @@ class TranscriptControlPayload(BaseModel):
     action: Literal["enable", "disable"] = Field(..., description="Action to perform: enable or disable transcription")
 
     class Config:
-        json_schema_extra = {"example": {"request_type": "transcript_control", "action": "enable"}}
+        json_schema_extra: ClassVar[dict] = {"example": {"request_type": "transcript_control", "action": "enable"}}
 
 
 class TtsPlayPayload(BaseModel):
     """Payload for tts_play request"""
 
-    class VoiceEnum(str, Enum):
+    class VoiceEnum(StrEnum):
         """Supported Kokoro voices for TTS requests."""
 
         AF_HEART = "af_heart"
@@ -45,7 +45,7 @@ class TtsPlayPayload(BaseModel):
     speed: float | None = Field(default=None, description="Optional speech speed multiplier (0.5-2.0)")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "request_type": "tts_play",
                 "text": "Hello from orchestrator",
@@ -64,7 +64,7 @@ class SendChatMessagePayload(BaseModel):
     sender_name: str = Field(default="Agent", description="Display name of the sender")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "request_type": "send_chat_message",
                 "message": "Hello from orchestrator!",
@@ -83,7 +83,7 @@ class StartAudioRecordingPayload(BaseModel):
     )
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "request_type": "start_audio_recording",
                 "track_id": "livekit_track_id_123",
@@ -93,6 +93,6 @@ class StartAudioRecordingPayload(BaseModel):
 
 
 # Discriminated Union of all payload types
-AgentRequestPayload = Union[
-    TranscriptControlPayload, TtsPlayPayload, SendChatMessagePayload, StartAudioRecordingPayload
-]
+AgentRequestPayload = (
+    TranscriptControlPayload | TtsPlayPayload | SendChatMessagePayload | StartAudioRecordingPayload
+)

@@ -136,7 +136,7 @@ class RoomService:
                 result["dispatch"] = MessageToDict(result["dispatch"], preserving_proto_field_name=True)
             return result
         except LiveKitServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def cancel_dispatch(self, room_name: str) -> dict:
         livekit_service = get_livekit_service()
@@ -146,7 +146,7 @@ class RoomService:
                 result["dispatch"] = MessageToDict(result["dispatch"], preserving_proto_field_name=True)
             return result
         except LiveKitServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def list_participants(self, room_id: str) -> list:
         room = await self.pg_repo.get_room_by_id(room_id)
@@ -158,7 +158,7 @@ class RoomService:
             participants = await livekit_service.list_participants(room.room_name)
             return participants
         except LiveKitServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # Get singleton instance

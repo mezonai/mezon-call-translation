@@ -201,7 +201,7 @@ class EgressService:
         rooms = await registry.list_rooms()
 
         total_stopped, total_failed = 0, 0
-        for room_name in rooms.keys():
+        for room_name in rooms:
             result = await self.stop_all_by_room(room_name)
             total_stopped += result["stopped"]
             total_failed += result["failed"]

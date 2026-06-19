@@ -150,7 +150,9 @@ class SummaryService:
         except Exception as e:
             logger.error(f"Failed to save speech durations to database: {e}")
 
-        # full_text is used for LLM summarization. It can be a long string, but we keep it as is for now since it's needed for the summary generation step. In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
+        # full_text is used for LLM summarization. 
+        # It can be a long string, but we keep it as is for now since it's needed for the summary generation step.
+        # In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
         full_text = "\n".join(f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in turns)
 
         draft_summary: dict[str, Any] = {
@@ -242,7 +244,7 @@ class SummaryService:
         if not self.pg_repo.connected:
             await self.pg_repo.connect()
 
-        summary_doc, room_doc = await self.pg_repo.get_summary_by_room_id(room_id)
+        summary_doc, _ = await self.pg_repo.get_summary_by_room_id(room_id)
         if not summary_doc:
             raise ValueError(f"Not found summary_doc for room_id: {room_id}")
 

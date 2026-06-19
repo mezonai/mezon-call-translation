@@ -16,6 +16,9 @@ from orchestrator_service.utils.participant_identity import parse_participant_id
 
 logger = get_logger(__name__)
 
+# Set containing strong references to tasks - prevents them from being garbage collected
+# Add task when create it - remove when task is done
+_active_recording_tasks = set()
 
 class WebhookHandler:
     """Webhook event handler from LiveKit"""
@@ -96,9 +99,13 @@ class WebhookHandler:
         logger.info(f"  Track: {track.sid} (mime: {track.mime_type}, source: {track.source})")
 
         if track.is_audio:
-            asyncio.create_task(
+            recording_task = asyncio.create_task(
                 self.egress_service.start_recording(room_name, track.sid, track.track_type, track.source, identity)
             )
+            _active_recording_tasks.add(recording_task)
+
+            # Add done callback to remove task from set when it completes
+            recording_task.add_done_callback(_active_recording_tasks.discard)
             return WebhookResponse(received=True, action="recording_started")
 
         logger.info(f"  ⏭ Skipping {track.track_type}")
@@ -150,7 +157,7 @@ class WebhookHandler:
             room_ref_id = await self.room_registry.get_room_id(room_name)
 
             # Save track metadata (filename will be updated later when egress ends)
-            asyncio.create_task(
+            track_metadata_task = asyncio.create_task(
                 self.transcription_service.save_track_metadata(
                     egress_id=egress_id,
                     track_id=track_id,
@@ -158,6 +165,9 @@ class WebhookHandler:
                     participant_identity=participant_identity,
                 )
             )
+
+            _active_recording_tasks.add(track_metadata_task)
+            track_metadata_task.add_done_callback(_active_recording_tasks.discard)
 
             return WebhookResponse(received=True, action="track_metadata_saved")
 
@@ -186,7 +196,11 @@ class WebhookHandler:
             if status in ["EGRESS_FAILED", "EGRESS_ABORTED"]:
                 error = egress.get("error", "no error info")
                 logger.error(f"Egress failed: {error}")
-                asyncio.create_task(self._attempt_egress_recovery(room_name, egress_id, error))
+
+                recovery_task = asyncio.create_task(self._attempt_egress_recovery(room_name, egress_id, error))
+                _active_recording_tasks.add(recovery_task)
+                recovery_task.add_done_callback(_active_recording_tasks.discard)
+
                 return WebhookResponse(received=True, action="egress_ended_failed")
             logger.info(f"Egress not completed: {status}, egress_ended full event: {event}")
             return WebhookResponse(received=True, action="egress_ended_not_complete")
@@ -197,7 +211,9 @@ class WebhookHandler:
         self._log_egress_info(egress_info)
 
         # Enqueue for transcription
-        asyncio.create_task(self.transcription_service.enqueue(egress_info.dict()))
+        enqueue_task = asyncio.create_task(self.transcription_service.enqueue(egress_info.dict()))
+        _active_recording_tasks.add(enqueue_task)
+        enqueue_task.add_done_callback(_active_recording_tasks.discard)
 
         return WebhookResponse(received=True, action="egress_ending_logged")
 
@@ -281,7 +297,8 @@ class WebhookHandler:
                     f"sid={track_info.get('sid')}, type={track_info.get('type')}, "
                     f"source={track_info.get('source')}"
                 )
-                asyncio.create_task(
+                
+                recording_task = asyncio.create_task(
                     self.egress_service.start_recording(
                         room_name=room_name,
                         track_sid=track_info.get("sid"),
@@ -291,6 +308,9 @@ class WebhookHandler:
                         force_update=True,
                     )
                 )
+
+                _active_recording_tasks.add(recording_task)
+                recording_task.add_done_callback(_active_recording_tasks.discard)
             else:
                 logger.error(
                     f"[Recovery] Track {track_id} not found in participant's tracks. "
@@ -310,13 +330,13 @@ class WebhookHandler:
         filepath = file_data.get("filename")
         parsed = Filepath.parse(filepath)
         return EgressInfo(
-            egressId=egress.get("egressId"),
+            egress_id=egress.get("egressId"),
             filename=file_data.get("filename"),
             source=parsed.get("source", ""),
             location=file_data.get("location", ""),
             duration=file_data.get("duration", 0),
-            startedAt=file_data.get("startedAt"),
-            endedAt=file_data.get("endedAt"),
+            started_at=file_data.get("startedAt"),
+            ended_at=file_data.get("endedAt"),
         )
 
     def _log_egress_info(self, info: EgressInfo):

@@ -80,7 +80,8 @@ class PgOutboxRepository:
                         INSERT INTO outbox_tasks
                             (id, use_case, status, configs, last_error, created_at, updated_at)
                         VALUES
-                            (:id, CAST(:use_case AS outboxusecase), CAST(:status AS outboxstatus), CAST(:configs AS jsonb), :error_msg, :now, :now)
+                            (:id, CAST(:use_case AS outboxusecase), CAST(:status AS outboxstatus),
+                            CAST(:configs AS jsonb), :error_msg, :now, :now)
                     """
                     await session.execute(
                         text(insert_query),
