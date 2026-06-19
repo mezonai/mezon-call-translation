@@ -1,20 +1,18 @@
 import asyncio
-import json
-from datetime import datetime
-from typing import Dict, Any
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.egress_service import EgressService
-from orchestrator_service.services.transcription_service import TranscriptionService
-from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.livekit_client import get_livekit_service
-from orchestrator_service.utils.filepath import Filepath
-from orchestrator_service.models.webhook_models import (
-    WebhookResponse,
-    TrackInfo,
-    EgressInfo,
-)
-from orchestrator_service.utils.participant_identity import parse_participant_identity
+from typing import Any
 
+from orchestrator_service.models.webhook_models import (
+    EgressInfo,
+    TrackInfo,
+    WebhookResponse,
+)
+from orchestrator_service.services.egress_service import EgressService
+from orchestrator_service.services.livekit_client import get_livekit_service
+from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.utils.filepath import Filepath
+from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.participant_identity import parse_participant_identity
 
 logger = get_logger(__name__)
 
@@ -27,7 +25,7 @@ class WebhookHandler:
         self.transcription_service = transcription_service
         self.room_registry = get_room_registry()
 
-    async def handle_event(self, event: Dict[str, Any]) -> WebhookResponse:
+    async def handle_event(self, event: dict[str, Any]) -> WebhookResponse:
         """
         Route event to appropriate handler
 
@@ -40,7 +38,7 @@ class WebhookHandler:
         event_type = event.get("event", "unknown")
         logger.info(f"📥 Received: {event_type}")
         if event_type not in {"egress_ended", "egress_started", "egress_updated", "participant_connection_aborted"}:
-            logger.info(f"  (skipping detailed processing for event type)")
+            logger.info("  (skipping detailed processing for event type)")
             # Get room name - different events have different structures
             room_name = event.get("room", {}).get("name", "")
             if not room_name:
@@ -66,10 +64,10 @@ class WebhookHandler:
         if handler:
             return await handler(event)
 
-        logger.info(f"  (ignored)")
+        logger.info("  (ignored)")
         return WebhookResponse(received=True, action="ignored")
 
-    async def _handle_participant_joined(self, event: Dict) -> WebhookResponse:
+    async def _handle_participant_joined(self, event: dict) -> WebhookResponse:
         """Handle when a participant joins - currently just logs the event"""
         room_name = event.get("room", {}).get("name", "unknown")
         identity = event.get("participant", {}).get("identity", "unknown")
@@ -81,7 +79,7 @@ class WebhookHandler:
 
         return WebhookResponse(received=True, action="participant_joined_logged")
 
-    async def _handle_track_published(self, event: Dict) -> WebhookResponse:
+    async def _handle_track_published(self, event: dict) -> WebhookResponse:
         """Handle when a track is published"""
         room_name = event.get("room", {}).get("name", "unknown")
         identity = event.get("participant", {}).get("identity", "unknown")
@@ -106,7 +104,7 @@ class WebhookHandler:
         logger.info(f"  ⏭ Skipping {track.track_type}")
         return WebhookResponse(received=True, action=f"skipped_{track.track_type.lower()}")
 
-    async def _handle_track_unpublished(self, event: Dict) -> WebhookResponse:
+    async def _handle_track_unpublished(self, event: dict) -> WebhookResponse:
         """Handle when a track is unpublished"""
         room_name = event.get("room", {}).get("name", "")
         track_sid = event.get("track", {}).get("sid", "")
@@ -117,7 +115,7 @@ class WebhookHandler:
 
         return WebhookResponse(received=True, action="no_active_egress")
 
-    async def _handle_egress_started(self, event: Dict) -> WebhookResponse:
+    async def _handle_egress_started(self, event: dict) -> WebhookResponse:
         """Handle when an egress starts - create track metadata"""
         egress_info = event.get("egressInfo")
 
@@ -167,7 +165,7 @@ class WebhookHandler:
             logger.error(f"Error saving track metadata: {e}")
             return WebhookResponse(received=True, action="egress_started_logged")
 
-    async def _handle_egress_updated(self, event: Dict) -> WebhookResponse:
+    async def _handle_egress_updated(self, event: dict) -> WebhookResponse:
         """Handle when an egress is updated"""
         egress_info = event.get("egressInfo", {})
         egress_id = egress_info.get("egressId", "unknown")
@@ -176,7 +174,7 @@ class WebhookHandler:
         logger.info(f"egress_updated: room={room_name}, egress_id={egress_id}, status={status}")
         return WebhookResponse(received=True, action="egress_updated_logged")
 
-    async def _handle_egress_ended(self, event: Dict) -> WebhookResponse:
+    async def _handle_egress_ended(self, event: dict) -> WebhookResponse:
         """Handle when an egress ends"""
         egress = event.get("egressInfo", {})
         status = egress.get("status", "unknown")
@@ -203,14 +201,14 @@ class WebhookHandler:
 
         return WebhookResponse(received=True, action="egress_ending_logged")
 
-    async def _handle_participant_connection_aborted(self, event: Dict) -> WebhookResponse:
+    async def _handle_participant_connection_aborted(self, event: dict) -> WebhookResponse:
         """Handle when a participant connection is aborted — log only."""
         room_name = event.get("room", {}).get("name", "unknown")
         egress_id = event.get("participant", {}).get("identity", "unknown")  # Actually egress_id
         disconnect_reason = event.get("participant", {}).get("disconnectReason", "unknown")
 
         logger.error(
-            f"🔴 Egress connection aborted: " f"egress_id={egress_id}, room={room_name}, reason={disconnect_reason}"
+            f"🔴 Egress connection aborted: egress_id={egress_id}, room={room_name}, reason={disconnect_reason}"
         )
 
         return WebhookResponse(received=True, action="participant_connection_aborted_logged")
@@ -234,8 +232,7 @@ class WebhookHandler:
             track_id = track.track_id
 
             logger.info(
-                f"[Recovery] Found track: egress={egress_id}, "
-                f"track_id={track_id}, participant={participant_identity}"
+                f"[Recovery] Found track: egress={egress_id}, track_id={track_id}, participant={participant_identity}"
             )
 
             if not participant_identity:
@@ -308,7 +305,7 @@ class WebhookHandler:
         except Exception as e:
             logger.error(f"[Recovery] Error during egress recovery for {egress_id}: {e}")
 
-    def _build_egress_info(self, egress: Dict, file_data: Dict) -> EgressInfo:
+    def _build_egress_info(self, egress: dict, file_data: dict) -> EgressInfo:
         """Build EgressInfo object from event data (simplified)"""
         filepath = file_data.get("filename")
         parsed = Filepath.parse(filepath)

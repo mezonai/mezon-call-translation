@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Protocol, Union, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 class TaskPriority(int, Enum):
@@ -46,9 +46,9 @@ class BaseStreamTask:
 
     # Common stream fields
     retry_count: int = 0
-    priority: Union[int, TaskPriority] = TaskPriority.NORMAL
+    priority: int | TaskPriority = TaskPriority.NORMAL
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert to dictionary for Redis storage.
 
@@ -81,14 +81,14 @@ class BaseProducerTask:
     """
 
     # Common required fields
-    priority: Union[int, TaskPriority] = TaskPriority.NORMAL
+    priority: int | TaskPriority = TaskPriority.NORMAL
     retry_count: int = 0
 
     # Auto-generated fields
     task_id: str = field(default_factory=lambda: f"task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:4]}")
     created_at: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert to dict for Redis XADD.
 
@@ -122,9 +122,9 @@ class ProducerTaskProtocol(Protocol):
 
     task_id: str
     retry_count: int
-    priority: Union[int, TaskPriority]
+    priority: int | TaskPriority
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert task to dictionary for Redis XADD.
 
@@ -158,9 +158,9 @@ class StreamTaskProtocol(Protocol):
     task_id: str
     message_id: str
     retry_count: int
-    priority: Union[int, TaskPriority]
+    priority: int | TaskPriority
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert task to dictionary for Redis storage.
 
@@ -172,7 +172,7 @@ class StreamTaskProtocol(Protocol):
         ...
 
     @classmethod
-    def from_stream_message(cls, message_id: str, data: Dict[bytes, bytes]) -> "StreamTaskProtocol":
+    def from_stream_message(cls, message_id: str, data: dict[bytes, bytes]) -> "StreamTaskProtocol":
         """
         Create task instance from Redis stream message.
 
@@ -186,7 +186,7 @@ class StreamTaskProtocol(Protocol):
         ...
 
 
-def parse_priority(value: Union[int, TaskPriority, str]) -> int:
+def parse_priority(value: int | TaskPriority | str) -> int:
     """
     Parse priority from various formats.
 

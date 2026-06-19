@@ -5,10 +5,10 @@ Mirrors TokenBlacklistService (MongoDB) interface exactly.
 
 import hashlib
 import uuid
-from datetime import datetime, timezone
-from typing import Optional, Literal
+from datetime import UTC, datetime
+from typing import Literal
 
-from sqlalchemy import text, select, exists
+from sqlalchemy import exists, select
 from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
@@ -32,11 +32,11 @@ class PgTokenBlacklistRepository:
         user_id: str,
         expires_at: datetime,
         reason: BlacklistReason = "logout",
-        token: Optional[str] = None,
+        token: str | None = None,
     ) -> bool:
         """Add a token to the blacklist."""
         token_hash = self._hash_token(token) if token else None
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:

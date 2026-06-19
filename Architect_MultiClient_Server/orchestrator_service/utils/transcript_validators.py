@@ -5,11 +5,11 @@ Provides validation functions for all transcript-related data types.
 """
 
 import re
-from typing import Annotated, Optional
-from fastapi import HTTPException, Query, Path
+from typing import Annotated
+
+from fastapi import HTTPException, Path, Query
 
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
-
 
 # ============================================================================
 # Validation Functions
@@ -58,7 +58,9 @@ def validate_room_name(value: str) -> str:
     if len(value) > VC.MAX_ROOM_NAME_LENGTH:
         raise HTTPException(status_code=400, detail=f"Room name must not exceed {VC.MAX_ROOM_NAME_LENGTH} characters")
     if not re.match(VC.ROOM_NAME_PATTERN, value):
-        raise HTTPException(status_code=400, detail="Room name can only contain alphanumeric characters, underscores, hyphens, and dots")
+        raise HTTPException(
+            status_code=400, detail="Room name can only contain alphanumeric characters, underscores, hyphens, and dots"
+        )
     return value
 
 
@@ -100,7 +102,9 @@ def validate_egress_id(value: str) -> str:
         HTTPException: If the egress ID is invalid
     """
     if not value or len(value) < VC.MIN_EGRESS_ID_LENGTH:
-        raise HTTPException(status_code=400, detail=f"Egress ID must be at least {VC.MIN_EGRESS_ID_LENGTH} character(s)")
+        raise HTTPException(
+            status_code=400, detail=f"Egress ID must be at least {VC.MIN_EGRESS_ID_LENGTH} character(s)"
+        )
     if len(value) > VC.MAX_EGRESS_ID_LENGTH:
         raise HTTPException(status_code=400, detail=f"Egress ID must not exceed {VC.MAX_EGRESS_ID_LENGTH} characters")
     return value
@@ -178,8 +182,8 @@ TrackIdPath = Annotated[
 EgressIdPath = Annotated[
     str,
     Path(
-        min_length=VC.MIN_EGRESS_ID_LENGTH, 
-        max_length=VC.MAX_EGRESS_ID_LENGTH, 
+        min_length=VC.MIN_EGRESS_ID_LENGTH,
+        max_length=VC.MAX_EGRESS_ID_LENGTH,
         description="Egress ID",
     ),
 ]
@@ -204,7 +208,7 @@ ChunkIndexPath = Annotated[
 
 # Query parameters - DO NOT set default in Query(), use = in function signature instead
 StatusQuery = Annotated[
-    Optional[str],
+    str | None,
     Query(
         min_length=VC.MIN_STATUS_LENGTH,
         max_length=VC.MAX_STATUS_LENGTH,
@@ -214,16 +218,14 @@ StatusQuery = Annotated[
 
 LimitQuery = Annotated[
     int,
-    Query(
-        ge=VC.MIN_LIMIT, le=VC.MAX_LIMIT, 
-        description=f"Maximum number of results ({VC.MIN_LIMIT}-{VC.MAX_LIMIT})"
-    ),
+    Query(ge=VC.MIN_LIMIT, le=VC.MAX_LIMIT, description=f"Maximum number of results ({VC.MIN_LIMIT}-{VC.MAX_LIMIT})"),
 ]
 
 SkipQuery = Annotated[
-    int, 
+    int,
     Query(
-        ge=VC.MIN_SKIP, le=VC.MAX_SKIP, 
+        ge=VC.MIN_SKIP,
+        le=VC.MAX_SKIP,
         description=f"Number of records to skip ({VC.MIN_SKIP}-{VC.MAX_SKIP})",
     ),
 ]

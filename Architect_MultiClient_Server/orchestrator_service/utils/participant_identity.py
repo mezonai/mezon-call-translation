@@ -3,8 +3,9 @@ Participant identity utilities
 """
 
 import json
-from orchestrator_service.utils.logger import get_logger
 import re
+
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

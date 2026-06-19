@@ -6,18 +6,19 @@ Room API endpoints for querying room data from PostgreSQL
 """
 
 from datetime import datetime
-from typing import Optional, Any
-from fastapi import APIRouter, HTTPException, Query, Depends
+from typing import Any
 
-from orchestrator_service.auth.authorization import require_any_permission, AuthContext
-from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.room_service import RoomService, get_room_service
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
+from orchestrator_service.services.room_service import RoomService, get_room_service
+from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.transcript_validators import (
-    StatusQuery,
     LimitQuery,
     SkipQuery,
+    StatusQuery,
 )
 
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
@@ -34,13 +35,13 @@ def _serialize_room(room: dict) -> dict:
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,
-    search: Optional[str] = Query(
+    search: str | None = Query(
         default=None,
         max_length=VC.MAX_SEARCH_QUERY_LENGTH,
         description="Search by room name or participant identity",
     ),
-    from_utc: Optional[datetime] = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
-    to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
+    from_utc: datetime | None = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
+    to_utc: datetime | None = Query(default=None, description="End of time range (UTC, ISO 8601)"),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
@@ -159,5 +160,5 @@ async def get_audio_info(
         logger.error(f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}")
         return {
             "status": "error",
-            "message": f"Failed to fetch audio info for room {room_id}: {str(e)}",
+            "message": f"Failed to fetch audio info for room {room_id}: {e!s}",
         }

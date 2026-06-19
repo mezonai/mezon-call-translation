@@ -1,15 +1,12 @@
+from datetime import UTC, datetime
+from typing import Any
+
 import requests
-import re
-import requests
-from typing import Dict, Any, Optional
-from datetime import datetime, timezone
 from fastapi import HTTPException
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.jwt_utils import generate_jwt_token, get_token_expiry, get_token_jti
 from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.constants.permissions import DEFAULT_USER_PERMISSIONS, DEFAULT_BOT_PERMISSIONS
+from orchestrator_service.constants.permissions import DEFAULT_BOT_PERMISSIONS, DEFAULT_USER_PERMISSIONS
 from orchestrator_service.services.postgresql.pg_refresh_token_repository import (
     PgRefreshTokenRepository,
     get_pg_refresh_token_repository,
@@ -22,6 +19,8 @@ from orchestrator_service.services.postgresql.pg_user_permission_repository impo
     PgUserPermissionRepository,
     get_pg_user_permission_repository,
 )
+from orchestrator_service.utils.jwt_utils import generate_jwt_token, get_token_expiry, get_token_jti
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -49,12 +48,12 @@ class AuthService:
                 f"CRITICAL CONFIG MISSING: {', '.join(missing_configs)} is not set. OAuth2 authentication will fail!"
             )
 
-        logger.info(f"Mezon OAuth2 Configuration:")
-        logger.info(f"  - Client ID: configured")
-        logger.info(f"  - Client Secret: configured")
+        logger.info("Mezon OAuth2 Configuration:")
+        logger.info("  - Client ID: configured")
+        logger.info("  - Client Secret: configured")
         logger.info(f"  - Redirect URI: {self.oauth2_config.redirect_uri}")
 
-    async def exchange_code_for_token(self, code: str, state: str) -> Dict[str, Any]:
+    async def exchange_code_for_token(self, code: str, state: str) -> dict[str, Any]:
         try:
             # Exchange authorization code for access token
             # Mezon uses client_secret_post method (credentials in body, not Basic Auth)
@@ -154,7 +153,7 @@ class AuthService:
             )
 
             token_expiry = get_token_expiry(access_token)
-            expires_in = int((token_expiry - datetime.now(timezone.utc)).total_seconds())
+            expires_in = int((token_expiry - datetime.now(UTC)).total_seconds())
 
             logger.info(f"Successfully authenticated user: {user_info['username']} (ID: {user_data['user_id']})")
 
@@ -168,9 +167,9 @@ class AuthService:
 
         except requests.RequestException as e:
             logger.error(f"Network error during OAuth2 exchange: {e}")
-            raise HTTPException(status_code=500, detail=f"Network error communicating with Mezon: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Network error communicating with Mezon: {e!s}")
 
-    async def get_current_user(self, user_id: str) -> Dict[str, Any]:
+    async def get_current_user(self, user_id: str) -> dict[str, Any]:
         user_info = await self.user_repo.get_user_info(user_id)
         if not user_info:
             raise HTTPException(status_code=404, detail="User not found")
@@ -185,7 +184,7 @@ class AuthService:
             },
         }
 
-    async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
+    async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
         # Validate refresh token
         token_doc = await self.refresh_token_repo.validate_refresh_token(refresh_token)
         if not token_doc:
@@ -203,7 +202,7 @@ class AuthService:
         # We need to get the expiry of the old token - for now,assume it's expired
         # In production, you might want to store this or calculate
         await self.blacklist_repo.blacklist_token(
-            jti=old_jti, user_id=user_id, expires_at=datetime.now(timezone.utc), reason="refreshed"
+            jti=old_jti, user_id=user_id, expires_at=datetime.now(UTC), reason="refreshed"
         )
 
         # Generate new access token
@@ -221,7 +220,7 @@ class AuthService:
 
         # Calculate expiry
         token_expiry = get_token_expiry(new_access_token)
-        expires_in = int((token_expiry - datetime.now(timezone.utc)).total_seconds())
+        expires_in = int((token_expiry - datetime.now(UTC)).total_seconds())
 
         logger.info(f"Access token refreshed for user_id={user_data['user_id']}")
 
@@ -233,13 +232,13 @@ class AuthService:
         }
 
     async def logout(self, jti: str, user_id: str, exp_timestamp: int, refresh_token: str):
-        token_expiry = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
+        token_expiry = datetime.fromtimestamp(exp_timestamp, tz=UTC)
         await self.blacklist_repo.blacklist_token(jti=jti, user_id=user_id, expires_at=token_expiry, reason="logout")
 
         # Revoke the refresh token
         await self.refresh_token_repo.revoke_refresh_token(refresh_token)
 
-    async def bot_login(self, account_dict: dict) -> Dict[str, Any]:
+    async def bot_login(self, account_dict: dict) -> dict[str, Any]:
         # Authenticate account with Mezon
         auth_result = await authenticate_account(account_dict)
         if not auth_result:
@@ -297,7 +296,7 @@ class AuthService:
 
         # Calculate token expiry in seconds (for frontend)
         token_expiry = get_token_expiry(access_token)
-        expires_in = int((token_expiry - datetime.now(timezone.utc)).total_seconds())
+        expires_in = int((token_expiry - datetime.now(UTC)).total_seconds())
 
         logger.info(f"✅ Bot authenticated: user_id={user_id}, username={username}")
 

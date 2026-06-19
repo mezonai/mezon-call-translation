@@ -4,19 +4,19 @@ Gemini LLM service implementation
 
 import json
 import re
+from typing import Any
 
-from typing import Dict, Any
 from google import genai
 
+from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.prompt import build_prompt_action_items, build_prompt_summary
-from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-def extract_json_from_llm(raw_text: dict) -> Dict[str, Any]:
+def extract_json_from_llm(raw_text: dict) -> dict[str, Any]:
     """
     Safely extract JSON payload from OpenAI-compatible chat completion responses.
 

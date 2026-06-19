@@ -2,46 +2,46 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import signal
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.postgresql.database import get_engine, dispose_engine
-from orchestrator_service.config.application_config import get_config
-from contextlib import asynccontextmanager
-
 from orchestrator_service.api.dispatch_api import router as dispatch_router
-from orchestrator_service.api.sse_transcript_api import router as stream_router
+from orchestrator_service.api.queue_api import router as queue_router
+from orchestrator_service.api.room_api import router as room_router
+from orchestrator_service.api.room_registry_api import router as room_registry_router
+from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.api.sse_agent_request_api import (
+    router as sse_agent_request_router,
+)
 from orchestrator_service.api.sse_chat_external_api import (
     router as sse_chat_external_router,
 )
 from orchestrator_service.api.sse_metadata_api import router as sse_metadata_router
-from orchestrator_service.api.sse_agent_request_api import (
-    router as sse_agent_request_router,
-)
-from orchestrator_service.api.sse.sse_manager import SSEManager
-from orchestrator_service.api.webhook_api import (
-    router as webhook_router,
-    egress_service,
-)
-from orchestrator_service.api.room_api import router as room_router
-from orchestrator_service.api.room_registry_api import router as room_registry_router
-from orchestrator_service.api.queue_api import router as queue_router
-from orchestrator_service.services.livekit_client import cleanup_livekit_service
-from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.redis.connection_pool import get_connection_manager
+from orchestrator_service.api.sse_transcript_api import router as stream_router
 from orchestrator_service.api.summary_api import client_router as summary_client_router
-from orchestrator_service.services.redis.redis_save_transcription_service import (
-    RedisSaveTranscriptionService,
-)
-from orchestrator_service.services.notification_worker import NotificationWorker
-from orchestrator_service.services.summary_outbox_worker import SummaryOutboxWorker
-
 from orchestrator_service.api.v2.router import (
     api_router as api_router_v2,
 )  # Import the v2 API router
-
-import signal
+from orchestrator_service.api.webhook_api import (
+    egress_service,
+)
+from orchestrator_service.api.webhook_api import (
+    router as webhook_router,
+)
+from orchestrator_service.config.application_config import get_config
+from orchestrator_service.services.livekit_client import cleanup_livekit_service
+from orchestrator_service.services.notification_worker import NotificationWorker
+from orchestrator_service.services.postgresql.database import dispose_engine, get_engine
+from orchestrator_service.services.redis.connection_pool import get_connection_manager
+from orchestrator_service.services.redis.redis_save_transcription_service import (
+    RedisSaveTranscriptionService,
+)
+from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.summary_outbox_worker import SummaryOutboxWorker
+from orchestrator_service.utils.logger import get_logger
 
 # Load config
 config = get_config()

@@ -6,16 +6,16 @@ Supports multiple queue types through generic type parameter.
 """
 
 import logging
-from typing import Dict, Any, Optional, List, Type, TypeVar, Generic, ClassVar
+from typing import Any, ClassVar, Generic, TypeVar
 
+from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
+from orchestrator_service.models.stream_base import ProducerTaskProtocol
+from orchestrator_service.models.transcription_task import TranscriptionTask
 from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
 )
-from orchestrator_service.models.stream_base import ProducerTaskProtocol
-from orchestrator_service.models.transcription_task import TranscriptionTask
-from orchestrator_service.config.application_config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +34,11 @@ class QueueService(Generic[T]):
     """
 
     # Singleton registry per (task_class, stream_key)
-    _instances: ClassVar[Dict[str, "QueueService"]] = {}
+    _instances: ClassVar[dict[str, "QueueService"]] = {}
 
     def __init__(
         self,
-        task_class: Type[T],
+        task_class: type[T],
         stream_key: str,
         queue_name: str,
     ):
@@ -54,7 +54,7 @@ class QueueService(Generic[T]):
         self._stream_key = stream_key
         self._queue_name = queue_name or task_class.__name__.replace("Task", "").lower()
         self.config = get_config()
-        self._producer: Optional[RedisProducerService[T]] = None
+        self._producer: RedisProducerService[T] | None = None
 
         logger.info(
             f"QueueService[{self._task_class.__name__}] created - "
@@ -64,7 +64,7 @@ class QueueService(Generic[T]):
     @classmethod
     def get_instance(
         cls,
-        task_class: Type[T],
+        task_class: type[T],
         stream_key: str,
         queue_name: str,
     ) -> "QueueService[T]":
@@ -111,11 +111,11 @@ class QueueService(Generic[T]):
         return self._stream_key or self.config.redis.stream_key
 
     @property
-    def task_class(self) -> Type[T]:
+    def task_class(self) -> type[T]:
         """Get the task class."""
         return self._task_class
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         """
         Get comprehensive queue statistics.
 
@@ -153,7 +153,7 @@ class QueueService(Generic[T]):
                 "active_workers": 0,
             }
 
-    async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:
         """
         Get status of a specific task.
 
@@ -185,7 +185,7 @@ class QueueService(Generic[T]):
             logger.error(f"Failed to get task {task_id}: {e}")
             return None
 
-    async def get_pending_tasks(self) -> List[Dict[str, Any]]:
+    async def get_pending_tasks(self) -> list[dict[str, Any]]:
         """
         Get list of pending tasks.
 
@@ -225,7 +225,7 @@ class QueueService(Generic[T]):
             logger.error(f"Failed to get pending tasks: {e}")
             return []
 
-    async def get_dlq_tasks(self, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_dlq_tasks(self, limit: int = 100) -> list[dict[str, Any]]:
         """
         Get list of tasks in Dead Letter Queue.
 
@@ -325,7 +325,7 @@ class QueueService(Generic[T]):
 
 
 def create_queue_service(
-    task_class: Type[T],
+    task_class: type[T],
     stream_key: str,
     queue_name: str,
 ) -> QueueService[T]:
@@ -372,7 +372,7 @@ def get_queue_service_by_name(queue_name: str) -> QueueService:
 
     # Check if queue name is registered
     if queue_name not in _task_class_map:
-        raise ValueError(f"Queue '{queue_name}' not found. " f"Available queues: {', '.join(_task_class_map.keys())}")
+        raise ValueError(f"Queue '{queue_name}' not found. Available queues: {', '.join(_task_class_map.keys())}")
 
     # Construct stream key from queue name
     stream_key = f"{queue_name}:stream"

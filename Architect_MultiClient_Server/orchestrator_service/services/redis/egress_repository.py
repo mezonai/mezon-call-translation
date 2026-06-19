@@ -5,11 +5,9 @@ Uses per-room hash: room:{room_name}:tracks
 Each room has its own hash with track_sid -> egress_id mappings.
 """
 
-import time
-from typing import Dict, List, Optional
-
-from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.utils.logger import get_logger
+
 from .base_hash_repository import BaseHashRepository
 
 logger = get_logger(__name__)
@@ -71,7 +69,7 @@ class EgressRepository(BaseHashRepository):
 
         return result
 
-    async def get_egress_id(self, room_name: str, track_sid: str) -> Optional[str]:
+    async def get_egress_id(self, room_name: str, track_sid: str) -> str | None:
         """
         Get egress ID for a track.
 
@@ -85,7 +83,7 @@ class EgressRepository(BaseHashRepository):
         hash_key = self._build_hash_key(room_name)
         return await self.get(hash_key, track_sid)
 
-    async def pop(self, room_name: str, track_sid: str) -> Optional[str]:
+    async def pop(self, room_name: str, track_sid: str) -> str | None:
         """
         Remove an active egress and return its egress_id.
 
@@ -130,7 +128,7 @@ class EgressRepository(BaseHashRepository):
 
     # ==================== Bulk Operations ====================
 
-    async def get_all_tracks(self, room_name: str) -> Dict[str, str]:
+    async def get_all_tracks(self, room_name: str) -> dict[str, str]:
         """
         Get all active egresses in a room.
 
@@ -143,7 +141,7 @@ class EgressRepository(BaseHashRepository):
         hash_key = self._build_hash_key(room_name)
         return await self.get_all(hash_key)
 
-    async def get_track_list(self, room_name: str) -> List[str]:
+    async def get_track_list(self, room_name: str) -> list[str]:
         """
         Get list of all track_sids in a room.
 

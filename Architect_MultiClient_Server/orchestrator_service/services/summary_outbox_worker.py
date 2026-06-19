@@ -3,27 +3,28 @@ Summary Outbox Worker Service - Processes and retries failed summarization tasks
 """
 
 import asyncio
-from datetime import datetime, timezone
-from typing import Dict, Any, Callable, Awaitable, Optional
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository
 from orchestrator_service.models.summary_models import RetryType
-from orchestrator_service.services.summary_service import get_summary_service
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.services.postgresql.models import OutboxStatus, OutboxUseCase
+from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository
+from orchestrator_service.services.summary_service import get_summary_service
+from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 # Task Handler type definition
-TaskHandler = Callable[[Dict[str, Any]], Awaitable[None]]
+TaskHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class OutboxHandlerRegistry:
     """Registry for mapping use_case to task handlers."""
 
-    _registry: Dict[str, TaskHandler] = {}
+    _registry: dict[str, TaskHandler] = {}
 
     @classmethod
     def register(cls, use_case: str, handler: TaskHandler):
@@ -31,7 +32,7 @@ class OutboxHandlerRegistry:
         logger.info(f"Registered outbox task handler for use_case: {use_case}")
 
     @classmethod
-    def get_handler(cls, use_case: str) -> Optional[TaskHandler]:
+    def get_handler(cls, use_case: str) -> TaskHandler | None:
         return cls._registry.get(use_case)
 
 
@@ -40,7 +41,7 @@ class OutboxHandlerRegistry:
 # ------------------------------------------------------------------
 
 
-async def handle_retry_summarization(configs: Dict[str, Any]) -> None:
+async def handle_retry_summarization(configs: dict[str, Any]) -> None:
     room_id = configs.get("room_id")
     retry_type_str = configs.get("retry_type")
     if not room_id or not retry_type_str:
@@ -67,7 +68,7 @@ class SummaryOutboxWorker:
         outbox_cfg = get_config().outbox
         self.outbox_repo = PgOutboxRepository()
         self._running = False
-        self._worker_task: Optional[asyncio.Task] = None
+        self._worker_task: asyncio.Task | None = None
         self._last_run_hour = -1  # Prevent duplicate runs in the same hour
         self._check_interval_sec = outbox_cfg.check_interval_sec
         self._delay_between_items = outbox_cfg.delay_between_items_sec
@@ -105,7 +106,7 @@ class SummaryOutboxWorker:
         try:
             while self._running:
                 try:
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(UTC)
                     # Trigger the job strictly at 19:00, 20:00, and 21:00
                     if now.hour in self._target_hours and now.hour != self._last_run_hour:
                         self._last_run_hour = now.hour

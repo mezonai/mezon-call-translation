@@ -2,7 +2,6 @@ import asyncio
 import logging
 import time
 import traceback
-from typing import Dict
 
 
 class NotificationHandler(logging.Handler):
@@ -14,7 +13,7 @@ class NotificationHandler(logging.Handler):
         super().__init__()
 
         self._cooldown_sec = 60
-        self._last_sent: Dict[str, float] = {}
+        self._last_sent: dict[str, float] = {}
 
         self._producer = None
         self._connected = False

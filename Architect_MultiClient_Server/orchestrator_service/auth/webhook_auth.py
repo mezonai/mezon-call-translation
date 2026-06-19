@@ -17,13 +17,12 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Optional, Tuple, Any
+from typing import Any
+
+from livekit.api import TokenVerifier
+from livekit.api import WebhookReceiver as _WebhookReceiver
 
 from orchestrator_service.config.application_config import get_config
-
-
-from livekit.api import TokenVerifier, WebhookReceiver as _WebhookReceiver
-
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -33,7 +32,7 @@ _config = get_config()
 VERIFY_WEBHOOKS = _config.livekit.verify_webhooks
 
 
-def get_webhook_receiver() -> Optional[Any]:
+def get_webhook_receiver() -> Any | None:
     """
     Create a WebhookReceiver instance for verifying webhook signatures.
 
@@ -55,7 +54,7 @@ def get_webhook_receiver() -> Optional[Any]:
     return _WebhookReceiver(token_verifier=token_verifier)
 
 
-def verify_webhook(body: str, auth_header: str) -> Tuple[bool, Optional[str]]:
+def verify_webhook(body: str, auth_header: str) -> tuple[bool, str | None]:
     """
     Verify the webhook signature from LiveKit using WebhookReceiver.
 

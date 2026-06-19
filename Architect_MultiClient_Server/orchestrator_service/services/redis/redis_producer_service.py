@@ -6,17 +6,17 @@ Supports any task type implementing ProducerTaskProtocol.
 Uses the shared Redis connection pool (RedisConnectionManager).
 """
 
-from redis.asyncio import Redis
-from typing import ClassVar, Dict, Any, Generic, Optional, Type, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.decode import decode_value, decode_mapping
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.models.stream_base import (
     ProducerTaskProtocol,
     StreamTaskStatus,
 )
+from orchestrator_service.services.redis.connection_pool import get_connection_manager
+from orchestrator_service.utils.decode import decode_mapping, decode_value
+from orchestrator_service.utils.logger import get_logger
+from redis.asyncio import Redis
 
 logger = get_logger(__name__)
 
@@ -35,12 +35,12 @@ class RedisProducerService(Generic[T]):
     """
 
     # Singleton registry per (task_class, stream_key)
-    _instances: ClassVar[Dict[str, "RedisProducerService"]] = {}
+    _instances: ClassVar[dict[str, "RedisProducerService"]] = {}
 
     def __init__(
         self,
-        task_class: Type[T],
-        stream_key: Optional[str] = None,
+        task_class: type[T],
+        stream_key: str | None = None,
     ):
         """
         Initialize Redis Producer service.
@@ -51,20 +51,20 @@ class RedisProducerService(Generic[T]):
         """
         self._task_class = task_class
         self._config = get_config().redis
-        self._redis: Optional[Redis] = None
+        self._redis: Redis | None = None
 
         # Keys - use provided value or fall back to config
         self._stream_key = stream_key
         self._tasks_prefix = f"{self._stream_key}:tasks"
         self._stats_key = f"{self._stream_key}:stats"
 
-        logger.info(f"RedisProducerService[{task_class.__name__}] created - " f"stream='{self._stream_key}'")
+        logger.info(f"RedisProducerService[{task_class.__name__}] created - stream='{self._stream_key}'")
 
     @classmethod
     def get_instance(
         cls,
-        task_class: Type[T],
-        stream_key: Optional[str] = None,
+        task_class: type[T],
+        stream_key: str | None = None,
     ) -> "RedisProducerService[T]":
         """
         Get or create singleton instance for task class and stream.
@@ -173,7 +173,7 @@ class RedisProducerService(Generic[T]):
             logger.error(f"✗ Failed to enqueue task {task_id}: {e}")
             raise
 
-    async def get_queue_stats(self) -> Dict[str, Any]:
+    async def get_queue_stats(self) -> dict[str, Any]:
         """Get queue statistics including active workers count."""
         if not self._redis:
             return {}
@@ -214,7 +214,7 @@ class RedisProducerService(Generic[T]):
         return self._stream_key
 
     @property
-    def task_class(self) -> Type[T]:
+    def task_class(self) -> type[T]:
         """Get the task class."""
         return self._task_class
 
@@ -225,7 +225,7 @@ class RedisProducerService(Generic[T]):
 
 
 def create_producer_service(
-    task_class: Type[T],
+    task_class: type[T],
     stream_key: str,
 ) -> RedisProducerService[T]:
     """

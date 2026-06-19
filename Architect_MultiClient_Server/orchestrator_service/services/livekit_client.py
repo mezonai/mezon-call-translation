@@ -3,8 +3,8 @@ Centralized LiveKit API Client Service
 Singleton pattern for efficient connection management
 """
 
-from typing import Optional, Any, Dict
 from contextlib import asynccontextmanager
+from typing import Any, Optional
 
 try:
     from livekit import api
@@ -14,9 +14,9 @@ try:
 except ImportError:
     LIVEKIT_AVAILABLE = False
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.json_utils import safe_json_loads_object
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.utils.json_utils import safe_json_loads_object
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -45,7 +45,7 @@ class LiveKitClientService:
         if self._initialized:
             return
 
-        self._client: Optional[api.LiveKitAPI] = None
+        self._client: api.LiveKitAPI | None = None
         self._initialized = True
         logger.info("LiveKitClientService initialized")
 
@@ -131,7 +131,7 @@ class LiveKitClientService:
                 raise
             raise LiveKitServiceError(f"Failed to list dispatches: {e}")
 
-    async def find_agent_dispatch(self, dispatches, agent_name: Optional[str] = None) -> Optional[Any]:
+    async def find_agent_dispatch(self, dispatches, agent_name: str | None = None) -> Any | None:
         """Find dispatch by configured or provided agent name."""
         target_agent_name = agent_name or self.get_agent_name()
         for dispatch in dispatches:
@@ -139,7 +139,7 @@ class LiveKitClientService:
                 return dispatch
         return None
 
-    async def ensure_dispatch(self, room_name: str) -> Dict[str, Any]:
+    async def ensure_dispatch(self, room_name: str) -> dict[str, Any]:
         """
         Ensure a dispatch exists for the given room.
         Creates one if it doesn't exist.
@@ -161,7 +161,7 @@ class LiveKitClientService:
                 raise LiveKitServiceError(f"LiveKit server error: {e}")
             raise LiveKitServiceError(f"Failed to create dispatch: {e}")
 
-    async def cancel_dispatch(self, room_name: str) -> Dict[str, Any]:
+    async def cancel_dispatch(self, room_name: str) -> dict[str, Any]:
         """Cancel an existing dispatch for the given room."""
         client = self.get_client()
         agent_name = self.get_agent_name()
@@ -209,7 +209,7 @@ class LiveKitClientService:
                 raise
             raise LiveKitServiceError(f"Failed to list participants: {e}")
 
-    async def get_participant_detail(self, room_name: str, identity: str) -> Optional[Dict[str, Any]]:
+    async def get_participant_detail(self, room_name: str, identity: str) -> dict[str, Any] | None:
         """
         Get detailed information for a specific participant in a room.
 
@@ -325,7 +325,7 @@ class LiveKitClientService:
 
 
 # Global singleton instance
-_livekit_service: Optional[LiveKitClientService] = None
+_livekit_service: LiveKitClientService | None = None
 
 
 def get_livekit_service() -> LiveKitClientService:

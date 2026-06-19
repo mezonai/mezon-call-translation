@@ -3,20 +3,20 @@ Room Registry API - Manager active rooms for webhook processing
 """
 
 import asyncio
-from typing import Optional
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-from livekit import api
 
-from orchestrator_service.utils.participant_identity import parse_participant_identity
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.livekit_client import get_livekit_service
-from orchestrator_service.services.transcription_service import TranscriptionService
+from fastapi import APIRouter, HTTPException
+from livekit import api
+from pydantic import BaseModel, Field
+
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 
 # Import để có thể access egress_service
 from orchestrator_service.api.webhook_api import egress_service
+from orchestrator_service.services.livekit_client import get_livekit_service
+from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.participant_identity import parse_participant_identity
 
 router = APIRouter(prefix="/api/room-registry", tags=["Room Registry"])
 logger = get_logger(__name__)
@@ -49,7 +49,7 @@ class RoomStatusResponse(BaseModel):
 
     room_name: str
     registered: bool
-    room_id: Optional[str] = None
+    room_id: str | None = None
 
 
 @router.post("/register", response_description="Register a room for webhook processing")
@@ -77,13 +77,13 @@ async def register_room(
                 stt_room_id = stt_response.get("room_id")
                 logger.info(f"✅ Room '{request.room_name}' started in STT service")
         else:
-            logger.warning(f"⚠️ Failed to start room in STT service")
+            logger.warning("⚠️ Failed to start room in STT service")
     except Exception as e:
         logger.error(f"Error starting room in STT: {e}", exc_info=True)
 
     # 2. Register room in registry
     if stt_room_id is None:
-        raise HTTPException(status_code=400, detail=f"Failed to obtain room_id from STT service")
+        raise HTTPException(status_code=400, detail="Failed to obtain room_id from STT service")
     if not await registry.register_room(request.room_name, stt_room_id):
         logger.error(f"Room '{request.room_name}' is already registered")
         raise HTTPException(status_code=409, detail=f"Room '{request.room_name}' is already registered")
@@ -215,7 +215,7 @@ async def unregister_room(
         raise
     except Exception as e:
         logger.error(f"Error unregistering room: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to unregister room: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to unregister room: {e!s}")
 
 
 @router.get("/status/{room_name}", response_model=RoomStatusResponse)
@@ -236,7 +236,7 @@ async def get_room_status(
         return RoomStatusResponse(room_name=room_name, registered=is_registered, room_id=room_id)
     except Exception as e:
         logger.error(f"Error getting room status: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get room status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get room status: {e!s}")
 
 
 @router.get("/list", response_description="List all registered rooms")
@@ -253,7 +253,7 @@ async def list_registered_rooms():
         return {"status": "ok", "total": await registry.count_rooms(), "rooms": rooms}
     except Exception as e:
         logger.error(f"Error listing rooms: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list rooms: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list rooms: {e!s}")
 
 
 @router.delete("/clear-all", response_description="Clear all registered rooms")
@@ -275,4 +275,4 @@ async def clear_all_rooms():
         }
     except Exception as e:
         logger.error(f"Error clearing rooms: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to clear rooms: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear rooms: {e!s}")

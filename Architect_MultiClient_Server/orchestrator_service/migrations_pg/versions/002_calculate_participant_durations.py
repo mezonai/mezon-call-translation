@@ -6,9 +6,8 @@ Create Date: 2026-05-21 16:30:00.000000
 
 """
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "002_calc_part_durations"
@@ -24,30 +23,30 @@ def upgrade() -> None:
         sa.text(
             """
             WITH participant_durations AS (
-                SELECT 
+                SELECT
                     t.room_ref_id,
                     t.participant_identity,
                     COALESCE(SUM(tc.end_time - tc.start_time), 0.0) AS duration
-                FROM 
+                FROM
                     tracks t
-                JOIN 
+                JOIN
                     transcript_chunks tc ON t.id = tc.track_ref_id
-                GROUP BY 
+                GROUP BY
                     t.room_ref_id, t.participant_identity
             )
             UPDATE rooms r
             SET participants = (
                 SELECT jsonb_agg(
-                    CASE 
-                        WHEN pd.participant_identity IS NOT NULL THEN 
+                    CASE
+                        WHEN pd.participant_identity IS NOT NULL THEN
                             p || jsonb_build_object('duration', pd.duration)
-                        ELSE 
+                        ELSE
                             p || jsonb_build_object('duration', 0.0)
                     END
                 )
                 FROM jsonb_array_elements(r.participants) AS p
-                LEFT JOIN participant_durations pd 
-                    ON pd.room_ref_id = r.id 
+                LEFT JOIN participant_durations pd
+                    ON pd.room_ref_id = r.id
                     AND pd.participant_identity = (p->>'participant_identity')
             )
             WHERE r.participants IS NOT NULL AND jsonb_array_length(r.participants) > 0;

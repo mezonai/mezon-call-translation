@@ -5,11 +5,10 @@ Endpoints for bot to receive chat external events via SSE
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 
-from orchestrator_service.auth.verify_account import authenticate_account
-from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.chat_external_channel import ChatExternalChannel
+from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -27,7 +26,7 @@ class PushChatExternalRequest(BaseModel):
     room_id: str
     participant_identity: str
     message: str
-    time: Optional[str] = None
+    time: str | None = None
 
     class Config:
         json_schema_extra = {

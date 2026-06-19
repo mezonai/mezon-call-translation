@@ -10,14 +10,15 @@ Features:
 - Extract user information from token claims
 """
 
-from typing import Optional, Dict, Any
-from fastapi import HTTPException, Security
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import jwt
+from typing import Any
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.jwt_utils import verify_jwt_token
+import jwt
+from fastapi import HTTPException, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from orchestrator_service.services.postgresql.pg_token_blacklist_repository import PgTokenBlacklistRepository
+from orchestrator_service.utils.jwt_utils import verify_jwt_token
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -25,7 +26,7 @@ logger = get_logger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-async def verify_jwt(credentials: Optional[HTTPAuthorizationCredentials] = Security(security)) -> Dict[str, Any]:
+async def verify_jwt(credentials: HTTPAuthorizationCredentials | None = Security(security)) -> dict[str, Any]:
     """
     Verify JWT token issued by orchestrator after Mezon OAuth2 authentication.
 

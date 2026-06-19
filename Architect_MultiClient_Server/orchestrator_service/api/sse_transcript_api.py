@@ -1,10 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 
-from orchestrator_service.auth.verify_account import authenticate_account
-from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.message_channel import MessageChannel
+from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -19,7 +18,7 @@ class PushMessageRequest(BaseModel):
     room_name: str
     message: str
     message_type: str
-    participant_identity: Optional[str] = None
+    participant_identity: str | None = None
 
 
 @router.post("/push_transcript")

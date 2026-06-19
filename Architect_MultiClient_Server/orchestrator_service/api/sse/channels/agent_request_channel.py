@@ -5,13 +5,13 @@ Handles SSE connections for agents to receive requests from orchestrator
 
 import time
 import uuid
+from typing import Any
 
-from typing import Optional, Dict, Any
 from fastapi.responses import StreamingResponse
 
-from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.api.sse.sse_base import create_sse_response, event_generator
 from orchestrator_service.api.sse.sse_manager import SSEManager
-from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
+from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -70,7 +70,7 @@ class AgentRequestChannel:
         existing_disconnected = await self.manager.disconnect_existing_appid(self.CHANNEL_TYPE, context_key, agent_id)
         if existing_disconnected:
             logger.info(
-                f"[Agent Request Channel] Closed existing connection for agent {agent_id} " f"in context {context_key}"
+                f"[Agent Request Channel] Closed existing connection for agent {agent_id} in context {context_key}"
             )
 
         # Register new connection
@@ -93,10 +93,10 @@ class AgentRequestChannel:
     async def send_request(
         self,
         request_type: str,
-        payload: Dict[str, Any],
-        room_name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        payload: dict[str, Any],
+        room_name: str | None = None,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Send request to agent(s) via SSE.
 
@@ -114,9 +114,7 @@ class AgentRequestChannel:
 
         # Check if context has active connections
         if not await self.manager.has_active_connections(self.CHANNEL_TYPE, context_key):
-            logger.warning(
-                f"[Agent Request Channel] No active agents for context {context_key}, " "request may be lost"
-            )
+            logger.warning(f"[Agent Request Channel] No active agents for context {context_key}, request may be lost")
 
         # Prepare request data
         request_data = {

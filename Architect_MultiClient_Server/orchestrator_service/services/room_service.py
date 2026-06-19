@@ -1,15 +1,16 @@
-from orchestrator_service.services.livekit_client import LiveKitServiceError
 from datetime import datetime
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Any
+
 from fastapi import HTTPException
 from google.protobuf.json_format import MessageToDict
+
 from orchestrator_service.auth.authorization import AuthContext
+from orchestrator_service.services.livekit_client import LiveKitServiceError, get_livekit_service
+from orchestrator_service.services.postgresql.models import Room
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
 )
-from orchestrator_service.services.postgresql.models import Room
-from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
@@ -35,13 +36,13 @@ class RoomService:
     async def list_rooms(
         self,
         auth: AuthContext,
-        status: Optional[str],
-        search: Optional[str],
-        from_utc: Optional[datetime],
-        to_utc: Optional[datetime],
+        status: str | None,
+        search: str | None,
+        from_utc: datetime | None,
+        to_utc: datetime | None,
         limit: int,
         skip: int,
-    ) -> Tuple[List[dict], int]:
+    ) -> tuple[list[dict], int]:
         if auth.can_view_all_rooms:
             rooms = await self.pg_repo.list_rooms(status, search, from_utc, to_utc, limit, skip)
             total = await self.pg_repo.count_rooms(status, search, from_utc, to_utc)
@@ -97,7 +98,7 @@ class RoomService:
             "total_duration_sec": total_duration_sec,
         }
 
-    async def get_audio_info(self, room_id: str, auth: AuthContext) -> List[Dict[str, Any]]:
+    async def get_audio_info(self, room_id: str, auth: AuthContext) -> list[dict[str, Any]]:
         if not auth.can_view_all_rooms:
             has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:

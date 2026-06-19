@@ -1,16 +1,17 @@
-from google.protobuf.json_format import MessageToDict
-from typing import Dict, Any, Optional, List
+from typing import Any
 
-from fastapi import APIRouter, HTTPException
 import httpx
+from fastapi import APIRouter, HTTPException
+from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel
-from orchestrator_service.services.postgresql.pg_transcript_repository import (
-    PgTranscriptRepository,
-)
+
 from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.services.livekit_client import (
-    get_livekit_service,
     LiveKitServiceError,
+    get_livekit_service,
+)
+from orchestrator_service.services.postgresql.pg_transcript_repository import (
+    PgTranscriptRepository,
 )
 
 router = APIRouter()
@@ -28,8 +29,8 @@ class DispatchRequestModel(BaseModel):
 
 class DispatchActionResponseModel(BaseModel):
     status: str
-    message: Optional[str] = None
-    dispatch: Optional[Dict[str, Any]] = None
+    message: str | None = None
+    dispatch: dict[str, Any] | None = None
 
 
 class ParticipantModel(BaseModel):
@@ -42,10 +43,10 @@ class ParticipantModel(BaseModel):
 
 class ParticipantListResponseModel(BaseModel):
     status: str
-    participants: List[ParticipantModel]
+    participants: list[ParticipantModel]
 
 
-async def verify_account(account: Dict[str, str]) -> None:
+async def verify_account(account: dict[str, str]) -> None:
     """
     Verify account authentication.
     Raises HTTPException if authentication fails.

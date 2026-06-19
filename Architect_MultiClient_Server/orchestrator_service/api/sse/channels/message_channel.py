@@ -3,11 +3,12 @@ Message Channel for transcript/translation messages
 Handles SSE connections for room-based message streaming
 """
 
-from typing import Optional, Dict, Any
+from typing import Any
+
 from fastapi.responses import StreamingResponse
 
+from orchestrator_service.api.sse.sse_base import create_sse_response, event_generator
 from orchestrator_service.api.sse.sse_manager import SSEManager
-from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -84,8 +85,8 @@ class MessageChannel:
         )
 
     async def push_message(
-        self, room: str, message: str, message_type: str, participant_identity: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, room: str, message: str, message_type: str, participant_identity: str | None = None
+    ) -> dict[str, Any]:
         """
         Push message to all connections in a room.
 

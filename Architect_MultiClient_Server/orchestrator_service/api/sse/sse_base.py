@@ -2,12 +2,14 @@
 SSE Base Utilities
 Provides common functions for creating SSE endpoints"""
 
-import json
 import asyncio
-from typing import Optional, Callable, Dict
+import json
+from collections.abc import Callable
+
 from fastapi.responses import StreamingResponse
-from orchestrator_service.utils.logger import get_logger
+
 from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -18,7 +20,7 @@ async def event_generator(
     connection_id: str,
     connection_queue: asyncio.Queue,
     manager: SSEManager,
-    event_filter: Optional[Callable[[dict], bool]] = None,
+    event_filter: Callable[[dict], bool] | None = None,
     heartbeat_interval: int = 15,
 ):
     """
@@ -42,7 +44,7 @@ async def event_generator(
     - Proper cleanup on disconnect
     - Optional event filtering
     """
-    logger.info(f"[SSE] Connection started: {connection_id} " f"(channel={channel_type}, context={context_key})")
+    logger.info(f"[SSE] Connection started: {connection_id} (channel={channel_type}, context={context_key})")
 
     try:
         # Send initial event to confirm connection
@@ -74,11 +76,11 @@ async def event_generator(
                 # Send data event
                 yield f"data: {json.dumps(data)}\n\n"
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # No new message - check if heartbeat needs to be sent
                 current_time = asyncio.get_event_loop().time()
                 if current_time - last_heartbeat >= heartbeat_interval:
-                    yield f"event: heartbeat\ndata: ping\n\n"
+                    yield "event: heartbeat\ndata: ping\n\n"
                     last_heartbeat = current_time
                 continue
 
@@ -93,12 +95,11 @@ async def event_generator(
         # Cleanup when connection closes
         await manager.unregister_connection(channel_type, context_key, connection_id)
         logger.info(
-            f"[SSE] Connection closed and unregistered: {connection_id} "
-            f"(channel={channel_type}, context={context_key})"
+            f"[SSE] Connection closed and unregistered: {connection_id} (channel={channel_type}, context={context_key})"
         )
 
 
-def create_sse_response(generator, additional_headers: Optional[Dict[str, str]] = None) -> StreamingResponse:
+def create_sse_response(generator, additional_headers: dict[str, str] | None = None) -> StreamingResponse:
     """
     Create a standardized SSE StreamingResponse.
 

@@ -7,17 +7,16 @@ and saves them progressively to PostgreSQL.
 
 import asyncio
 import time
-from typing import Optional
 
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.redis.redis_stream_service import (
     RedisStreamService,
     create_stream_service,
 )
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.services.summary_service import get_summary_service
+from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -60,10 +59,10 @@ class RedisSaveTranscriptionService:
     """
 
     def __init__(self):
-        self._redis_service: Optional[RedisStreamService[SaveTranscriptionTask]] = None
-        self._pg_repo: Optional[PgTranscriptRepository] = None
-        self._consumer_task: Optional[asyncio.Task] = None
-        self._orphan_recovery_task: Optional[asyncio.Task] = None
+        self._redis_service: RedisStreamService[SaveTranscriptionTask] | None = None
+        self._pg_repo: PgTranscriptRepository | None = None
+        self._consumer_task: asyncio.Task | None = None
+        self._orphan_recovery_task: asyncio.Task | None = None
         self._running = False
 
         # Stats
@@ -228,19 +227,19 @@ class RedisSaveTranscriptionService:
             # Handle failed transcription
             if task.status == "failed":
                 logger.error(
-                    f"❌ Transcription failed for track {task.track_ref_id}, " f"updating track status to 'failed'"
+                    f"❌ Transcription failed for track {task.track_ref_id}, updating track status to 'failed'"
                 )
 
                 success_res = await self._pg_repo.update_track_status(track_ref_id=task.track_ref_id, status="failed")
 
                 if success_res and success_res.get("success"):
                     logger.info(
-                        f"\n{'='*60}\n"
+                        f"\n{'=' * 60}\n"
                         f"❌ TRANSCRIPTION FAILED\n"
-                        f"{'='*60}\n"
+                        f"{'=' * 60}\n"
                         f"Track ID: {task.track_ref_id}\n"
                         f"Status: failed\n"
-                        f"{'='*60}"
+                        f"{'=' * 60}"
                     )
                 else:
                     logger.warning(f"Failed to update status for track {task.track_ref_id}")
@@ -253,7 +252,7 @@ class RedisSaveTranscriptionService:
             # Handle completed status (final marker with no segments)
             if task.status == "completed" and task.is_final:
                 logger.info(
-                    f"🏁 Completion marker received for track {task.track_ref_id}, " f"updating status to 'completed'"
+                    f"🏁 Completion marker received for track {task.track_ref_id}, updating status to 'completed'"
                 )
 
                 success_res = await self._pg_repo.update_track_status(
@@ -267,12 +266,12 @@ class RedisSaveTranscriptionService:
 
                     # Log final summary
                     logger.info(
-                        f"\n{'='*60}\n"
+                        f"\n{'=' * 60}\n"
                         f"✅ TRANSCRIPTION SAVED COMPLETE\n"
-                        f"{'='*60}\n"
+                        f"{'=' * 60}\n"
                         f"Track ID: {task.track_ref_id}\n"
                         f"Status: completed\n"
-                        f"{'='*60}"
+                        f"{'=' * 60}"
                     )
 
                     # Check and complete room if all tracks are done
@@ -337,7 +336,7 @@ class RedisSaveTranscriptionService:
                 claimed_tasks = await self._redis_service.claim_orphaned_tasks(count=5)
 
                 if claimed_tasks:
-                    logger.info(f"🔄 Claimed {len(claimed_tasks)} orphaned task(s) " f"from crashed workers")
+                    logger.info(f"🔄 Claimed {len(claimed_tasks)} orphaned task(s) from crashed workers")
 
                     # Process claimed tasks
                     for task in claimed_tasks:

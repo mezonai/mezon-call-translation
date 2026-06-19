@@ -1,4 +1,3 @@
-from typing import Optional
 from pydantic import BaseModel
 
 
@@ -6,8 +5,8 @@ class WebhookResponse(BaseModel):
     """Response model cho webhook"""
 
     received: bool
-    action: Optional[str] = None
-    error: Optional[str] = None
+    action: str | None = None
+    error: str | None = None
 
 
 class TrackInfo(BaseModel):
@@ -35,4 +34,4 @@ class EgressInfo(BaseModel):
     duration: str
     startedAt: str
     endedAt: str
-    source: Optional[str] = None
+    source: str | None = None

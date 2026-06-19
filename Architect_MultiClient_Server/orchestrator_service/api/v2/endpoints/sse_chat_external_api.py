@@ -3,16 +3,16 @@ SSE Chat External API
 Endpoints for bot to receive chat external events via SSE
 """
 
+from typing import Any
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
 
-
-from orchestrator_service.auth.authorization import AuthContext, require_any_permission
-from orchestrator_service.constants.permissions import CHAT_EXTERNAL_VIEW_ALL
-from orchestrator_service.auth.transcript_auth import verify_api_key
-from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.chat_external_channel import ChatExternalChannel
+from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.constants.permissions import CHAT_EXTERNAL_VIEW_ALL
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,7 +30,7 @@ class PushChatExternalRequest(BaseModel):
     room_id: str
     participant_identity: str
     message: str
-    time: Optional[str] = None
+    time: str | None = None
 
     class Config:
         json_schema_extra = {
@@ -58,7 +58,7 @@ async def sse_chat_external_endpoint(auth: AuthContext = Depends(require_any_per
 
 
 @router.post("/agent_push_chat_external")
-async def push_chat_external_api(req: PushChatExternalRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
+async def push_chat_external_api(req: PushChatExternalRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     """
     Push chat external event to all connected bots via SSE.
 

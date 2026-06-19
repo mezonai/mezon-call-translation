@@ -12,13 +12,14 @@ Handles OAuth2 authentication flow with Mezon:
 """
 
 import re
-from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.auth.jwt_auth import verify_jwt
 from orchestrator_service.services.auth_service import AuthService, get_auth_service
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -37,7 +38,7 @@ class ExchangeCodeResponse(BaseModel):
     refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
     token_type: str = Field(default="Bearer", description="Token type")
     expires_in: int = Field(..., description="Access token expiry in seconds")
-    user: Dict[str, Any] = Field(..., description="User information from Mezon")
+    user: dict[str, Any] = Field(..., description="User information from Mezon")
 
 
 class OAuth2ConfigResponse(BaseModel):
@@ -81,12 +82,12 @@ async def exchange_code_for_token(request: ExchangeCodeRequest, auth_service: Au
         raise
     except Exception as e:
         logger.error(f"Unexpected error during OAuth2 exchange: {e}")
-        raise HTTPException(status_code=500, detail=f"Authentication failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Authentication failed: {e!s}")
 
 
 @router.get("/mezon/userinfo")
 async def get_current_user(
-    user: Dict[str, Any] = Depends(verify_jwt), auth_service: AuthService = Depends(get_auth_service)
+    user: dict[str, Any] = Depends(verify_jwt), auth_service: AuthService = Depends(get_auth_service)
 ):
     """
     Get information about the currently authenticated user.
@@ -168,13 +169,13 @@ async def refresh_access_token(request: RefreshTokenRequest, auth_service: AuthS
         raise
     except Exception as e:
         logger.error(f"Error refreshing token: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to refresh token: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh token: {e!s}")
 
 
 @router.post("/logout")
 async def logout(
     request: LogoutRequest,
-    user: Dict[str, Any] = Depends(verify_jwt),
+    user: dict[str, Any] = Depends(verify_jwt),
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """
@@ -207,7 +208,7 @@ async def logout(
         raise
     except Exception as e:
         logger.error(f"Error during logout: {e}")
-        raise HTTPException(status_code=500, detail=f"Logout failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Logout failed: {e!s}")
 
 
 @router.post("/mezon/bot/login", response_model=BotLoginResponse)
@@ -236,4 +237,4 @@ async def bot_login(request: BotLoginRequest, auth_service: AuthService = Depend
         raise
     except Exception as e:
         logger.error(f"❌ Bot login error: {e}")
-        raise HTTPException(status_code=500, detail=f"Bot authentication failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Bot authentication failed: {e!s}")

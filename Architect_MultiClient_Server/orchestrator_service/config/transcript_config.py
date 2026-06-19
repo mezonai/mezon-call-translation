@@ -4,8 +4,8 @@ Configuration for Transcript API
 Contains validation constants and patterns for transcript-related data.
 """
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 
 # Try to load .env file if dotenv is available
 try:

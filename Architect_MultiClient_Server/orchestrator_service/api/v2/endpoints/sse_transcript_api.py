@@ -1,12 +1,13 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Any, Dict, Optional
 
-from orchestrator_service.auth.transcript_auth import verify_api_key
-from orchestrator_service.auth.authorization import AuthContext, require_any_permission
-from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL
-from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.message_channel import MessageChannel
+from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
+from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -21,11 +22,11 @@ class PushMessageRequest(BaseModel):
     room_name: str
     message: str
     message_type: str
-    participant_identity: Optional[str] = None
+    participant_identity: str | None = None
 
 
 @router.post("/push_transcript")
-async def push_transcript_api(req: PushMessageRequest, auth: Dict[str, Any] = Depends(verify_api_key)):
+async def push_transcript_api(req: PushMessageRequest, auth: dict[str, Any] = Depends(verify_api_key)):
     """
     Push transcript to all SSE connections in a room.
 

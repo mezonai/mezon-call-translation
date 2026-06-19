@@ -5,12 +5,14 @@ Provides common CRUD operations for Redis Hash data structures.
 Subclasses define domain-specific logic.
 """
 
-from abc import ABC
-from typing import Dict, Optional, Any
 import time
-from redis.asyncio import Redis
+from abc import ABC
+from typing import Any
+
+from orchestrator_service.utils.decode import decode_mapping, decode_value
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.decode import decode_value, decode_mapping
+from redis.asyncio import Redis
+
 from .connection_pool import get_redis_connection
 
 logger = get_logger(__name__)
@@ -42,7 +44,7 @@ class BaseHashRepository(ABC):
 
     def __init__(self):
         """Initialize repository."""
-        self._redis: Optional[Redis] = None
+        self._redis: Redis | None = None
         logger.debug(f"{self.__class__.__name__} initialized")
 
     async def _get_redis(self) -> Redis:
@@ -56,7 +58,7 @@ class BaseHashRepository(ABC):
             self._redis = await get_redis_connection()
         return self._redis
 
-    async def set(self, hash_key: str, stats_key: Optional[str], key: str, value: str) -> bool:
+    async def set(self, hash_key: str, stats_key: str | None, key: str, value: str) -> bool:
         """
         Set a key-value pair in the hash.
 
@@ -91,7 +93,7 @@ class BaseHashRepository(ABC):
             logger.error(f"[{self.__class__.__name__}] Failed to set '{key}': {e}")
             raise
 
-    async def get(self, hash_key: str, key: str) -> Optional[str]:
+    async def get(self, hash_key: str, key: str) -> str | None:
         """
         Get value for a key.
 
@@ -111,7 +113,7 @@ class BaseHashRepository(ABC):
             logger.error(f"[{self.__class__.__name__}] Failed to get '{key}': {e}")
             raise
 
-    async def delete(self, hash_key: str, stats_key: Optional[str], key: str) -> bool:
+    async def delete(self, hash_key: str, stats_key: str | None, key: str) -> bool:
         """
         Delete a key from the hash.
 
@@ -140,7 +142,7 @@ class BaseHashRepository(ABC):
                     await self._increment_stat(stats_key, self.STAT_TOTAL_DELETED)
                     await self._update_stat(stats_key, self.STAT_LAST_DELETED_AT, str(time.time()))
 
-                logger.info(f"[{self.__class__.__name__}] Deleted '{key}' " f"(value: {decode_value(value)})")
+                logger.info(f"[{self.__class__.__name__}] Deleted '{key}' (value: {decode_value(value)})")
                 return True
             else:
                 return False
@@ -169,7 +171,7 @@ class BaseHashRepository(ABC):
             logger.error(f"[{self.__class__.__name__}] Failed to check '{key}': {e}")
             raise
 
-    async def get_all(self, hash_key: str) -> Dict[str, str]:
+    async def get_all(self, hash_key: str) -> dict[str, str]:
         """
         Get all key-value pairs.
 
@@ -223,7 +225,7 @@ class BaseHashRepository(ABC):
             logger.error(f"[{self.__class__.__name__}] Failed to clear: {e}")
             raise
 
-    async def get_stats(self, hash_key: str, stats_key: str) -> Dict[str, Any]:
+    async def get_stats(self, hash_key: str, stats_key: str) -> dict[str, Any]:
         """
         Get repository statistics.
 

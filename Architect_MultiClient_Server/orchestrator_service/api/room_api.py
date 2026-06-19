@@ -6,18 +6,18 @@ Room API endpoints for querying room data from MongoDB
 """
 
 from datetime import datetime
-from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query
 
-from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
 )
-from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
+from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.transcript_validators import (
-    StatusQuery,
     LimitQuery,
     SkipQuery,
+    StatusQuery,
 )
 
 router = APIRouter(prefix="/api/transcripts/rooms", tags=["Rooms"])
@@ -34,13 +34,13 @@ def _serialize_room(room: dict) -> dict:
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,
-    search: Optional[str] = Query(
+    search: str | None = Query(
         default=None,
         max_length=VC.MAX_SEARCH_QUERY_LENGTH,
         description="Search by room name or participant identity",
     ),
-    from_utc: Optional[datetime] = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
-    to_utc: Optional[datetime] = Query(default=None, description="End of time range (UTC, ISO 8601)"),
+    from_utc: datetime | None = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
+    to_utc: datetime | None = Query(default=None, description="End of time range (UTC, ISO 8601)"),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
 ):

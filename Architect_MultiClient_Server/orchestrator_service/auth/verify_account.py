@@ -1,13 +1,15 @@
+from typing import Any
+
 import httpx
 import jwt
-from typing import Optional, Dict, Any
+
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-async def authenticate_account(account: dict) -> Optional[Dict[str, Any]]:
+async def authenticate_account(account: dict) -> dict[str, Any] | None:
     """
     Authenticate account with Mezon server and return authentication details.
 

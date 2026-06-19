@@ -5,10 +5,9 @@ Endpoints for agents to receive requests from orchestrator via SSE
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from typing import Optional
 
-from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.agent_request_channel import AgentRequestChannel
+from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.models.agent_request_payloads import (
     AgentRequestPayload,
 )
@@ -31,8 +30,8 @@ class SendAgentRequestBody(BaseModel):
     payload: AgentRequestPayload = Field(
         ..., discriminator="request_type", description="Request payload with type-specific schema"
     )
-    room_name: Optional[str] = Field(None, description="Room name to target agents in specific room")
-    agent_id: Optional[str] = Field(None, description="Agent ID to target specific agent")
+    room_name: str | None = Field(None, description="Room name to target agents in specific room")
+    agent_id: str | None = Field(None, description="Agent ID to target specific agent")
 
     class Config:
         json_schema_extra = {
@@ -99,7 +98,7 @@ async def sse_agent_requests_endpoint(
     Agent connects to this endpoint to listen for real-time requests.
     ```
     """
-    logger.info(f"[SSE Agent Request API] New agent connection request: " f"agent_id={agent_id}, room_name={room_name}")
+    logger.info(f"[SSE Agent Request API] New agent connection request: agent_id={agent_id}, room_name={room_name}")
 
     return await agent_request_channel.create_connection(
         agent_id=agent_id,

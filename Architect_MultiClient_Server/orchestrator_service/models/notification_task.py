@@ -6,7 +6,7 @@ Task model for enqueueing notifications to be sent to Mezon channels via webhook
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any
 
 from orchestrator_service.models.stream_base import BaseProducerTask, TaskPriority, parse_priority
 
@@ -21,13 +21,13 @@ class NotificationTask(BaseProducerTask):
 
     # Required fields
     title: str = field(kw_only=True)  # Brief title/subject
-    message: Dict[str, Any] = field(kw_only=True, default_factory=dict)  # Message content as dict
+    message: dict[str, Any] = field(kw_only=True, default_factory=dict)  # Message content as dict
 
     # Redis stream metadata
     message_id: str = ""
     status: str = "pending"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert task to dict for Redis XADD.
 
@@ -49,7 +49,7 @@ class NotificationTask(BaseProducerTask):
         return data
 
     @classmethod
-    def from_stream_message(cls, message_id: str, data: Dict[bytes, bytes]) -> "NotificationTask":
+    def from_stream_message(cls, message_id: str, data: dict[bytes, bytes]) -> "NotificationTask":
         """
         Parse NotificationTask from Redis stream message.
 

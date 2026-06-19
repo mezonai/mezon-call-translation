@@ -1,13 +1,14 @@
-from typing import Dict, Any, Optional, List
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import AGENT_CONTROL
-from orchestrator_service.services.room_service import RoomService, get_room_service
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
 from orchestrator_service.services.livekit_client import (
     LiveKitServiceError,
 )
+from orchestrator_service.services.room_service import RoomService, get_room_service
 
 router = APIRouter()
 
@@ -21,8 +22,8 @@ class DispatchRequestModel(BaseModel):
 
 class DispatchActionResponseModel(BaseModel):
     status: str
-    message: Optional[str] = None
-    dispatch: Optional[Dict[str, Any]] = None
+    message: str | None = None
+    dispatch: dict[str, Any] | None = None
 
 
 class ParticipantModel(BaseModel):
@@ -35,13 +36,13 @@ class ParticipantModel(BaseModel):
 
 class ParticipantListResponseModel(BaseModel):
     status: str
-    participants: List[ParticipantModel]
+    participants: list[ParticipantModel]
 
 
 class DispatchActionResponseModel(BaseModel):
     status: str
-    message: Optional[str] = None
-    dispatch: Optional[Dict[str, Any]] = None
+    message: str | None = None
+    dispatch: dict[str, Any] | None = None
 
 
 class ParticipantModel(BaseModel):
@@ -54,7 +55,7 @@ class ParticipantModel(BaseModel):
 
 class ParticipantListResponseModel(BaseModel):
     status: str
-    participants: List[ParticipantModel]
+    participants: list[ParticipantModel]
 
 
 @router.post("/create_dispatch")

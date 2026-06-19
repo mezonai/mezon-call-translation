@@ -5,18 +5,17 @@ Single ConnectionPool per process for all Redis usage (hash repos, streams, prod
 Uses decode_responses=False so stream workflows keep raw Redis behavior.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
-from redis.asyncio import ConnectionPool, Redis
-
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.utils.logger import get_logger
+from redis.asyncio import ConnectionPool, Redis
 
 logger = get_logger(__name__)
 
 
-def _pool_connection_kwargs(cfg) -> Dict[str, Any]:
+def _pool_connection_kwargs(cfg) -> dict[str, Any]:
     """
     Per-connection kwargs for ConnectionPool (host, timeouts, decode_responses, etc.).
 
@@ -45,7 +44,7 @@ class RedisConnectionManager:
     def __init__(self):
         """Initialize connection manager."""
         self._config = get_config().redis
-        self._pool: Optional[ConnectionPool] = None
+        self._pool: ConnectionPool | None = None
         self._connected = False
 
         logger.info("RedisConnectionManager initialized")

@@ -97,12 +97,12 @@ class PostgreSQLConfig:
     @property
     def async_url(self) -> str:
         """SQLAlchemy async connection URL (asyncpg driver)"""
-        return f"postgresql+asyncpg://{self.username}:{self.password}" f"@{self.host}:{self.port}/{self.database}"
+        return f"postgresql+asyncpg://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
 
     @property
     def sync_url(self) -> str:
         """SQLAlchemy sync connection URL (psycopg2, for Alembic)"""
-        return f"postgresql+psycopg2://{self.username}:{self.password}" f"@{self.host}:{self.port}/{self.database}"
+        return f"postgresql+psycopg2://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
 
 
 # ============================================================================
@@ -456,7 +456,7 @@ class Config:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(Config, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 

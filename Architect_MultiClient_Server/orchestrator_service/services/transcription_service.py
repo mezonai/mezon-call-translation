@@ -1,17 +1,16 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from typing import Any
+
 from orchestrator_service.api.sse_metadata_api import metadata_channel
-from orchestrator_service.services.summary_service import get_summary_service
-from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.transcription_task import TranscriptionTask
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
 )
-from orchestrator_service.models.transcription_task import TranscriptionTask
+from orchestrator_service.services.summary_service import get_summary_service
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -25,7 +24,7 @@ class TranscriptionService:
         self.api_url = f"http://{self.config.host}:{self.config.port}/api/transcribe"
         self.timeout = 30.0
         self.pg_repo = PgTranscriptRepository()
-        self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
+        self._redis_producer: RedisProducerService[TranscriptionTask] | None = None
         self.stream_key = "transcription:stream"
 
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
@@ -38,7 +37,7 @@ class TranscriptionService:
             await self._redis_producer.connect()
         return self._redis_producer
 
-    async def enqueue(self, egress_info: Dict) -> bool:
+    async def enqueue(self, egress_info: dict) -> bool:
         """
         Send egress info directly to Redis Stream.
 
@@ -136,7 +135,7 @@ class TranscriptionService:
             logger.exception("Failed to end room transcription: %s", e)
             return False
 
-    async def start_room(self, room_name: str) -> Optional[dict]:
+    async def start_room(self, room_name: str) -> dict | None:
         """
         Notify transcription service to start room
 
@@ -180,7 +179,7 @@ class TranscriptionService:
             logger.exception(f"Failed to save participant: {e}")
             return False
 
-    async def save_participants_batch(self, room_id: str, participants: List[Dict[str, Any]]) -> Dict[str, int]:
+    async def save_participants_batch(self, room_id: str, participants: list[dict[str, Any]]) -> dict[str, int]:
         """
         Save batch of participants to PostgreSQL
         """

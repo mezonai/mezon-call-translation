@@ -4,9 +4,11 @@ Agent Request Payload Models
 Pydantic models for different request type payloads with discriminated union.
 """
 
-from typing import Literal, Union
 from enum import Enum
+from typing import Literal, Union
+
 from pydantic import BaseModel, Field
+
 from orchestrator_service.models.agent_request_type import AgentRequestType
 
 

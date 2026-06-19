@@ -6,14 +6,14 @@ Automatically discovers available queues from Redis.
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, status, Path, Depends
+
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from pydantic import BaseModel, Field
-from typing import Optional, List
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import QUEUES_VIEW_STATS
-from orchestrator_service.services.queue_service import get_queue_service_by_name
 from orchestrator_service.services.queue_discovery import QueueDiscovery
+from orchestrator_service.services.queue_service import get_queue_service_by_name
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +27,17 @@ class TaskStatusResponse(BaseModel):
     status: str
     filename: str
     created_at: float
-    started_processing_at: Optional[float] = None
-    completed_at: Optional[float] = None
-    result: Optional[str] = None
-    error: Optional[str] = None
+    started_processing_at: float | None = None
+    completed_at: float | None = None
+    result: str | None = None
+    error: str | None = None
 
 
 class QueueStatsResponse(BaseModel):
     """Response model for queue statistics."""
 
-    queue_name: Optional[str] = Field(None, description="Queue identifier")
-    stream_key: Optional[str] = Field(None, description="Redis stream key")
+    queue_name: str | None = Field(None, description="Queue identifier")
+    stream_key: str | None = Field(None, description="Redis stream key")
     stream_length: int = Field(..., description="Current queue length")
     total_enqueued: int = Field(..., description="Total tasks enqueued")
     total_processed: int = Field(..., description="Total tasks processed")
@@ -59,7 +59,7 @@ class QueueInfoResponse(BaseModel):
 class QueueListResponse(BaseModel):
     """Response model for list of queues."""
 
-    queues: List[QueueInfoResponse]
+    queues: list[QueueInfoResponse]
     count: int
 
 
@@ -68,7 +68,7 @@ class DLQTaskResponse(BaseModel):
 
     message_id: str = Field(..., description="Redis stream message ID")
     task_id: str = Field(..., description="Task identifier")
-    filename: Optional[str] = Field(None, description="Task filename (if applicable)")
+    filename: str | None = Field(None, description="Task filename (if applicable)")
     created_at: float = Field(..., description="Timestamp when task was created")
     dead_letter_at: float = Field(..., description="Timestamp when task was moved to DLQ")
     final_error: str = Field(..., description="Error message that caused task to fail")
@@ -81,7 +81,7 @@ class DLQListResponse(BaseModel):
 
     queue_name: str = Field(..., description="Queue identifier")
     dlq_stream_key: str = Field(..., description="Redis DLQ stream key")
-    tasks: List[DLQTaskResponse]
+    tasks: list[DLQTaskResponse]
     count: int = Field(..., description="Number of tasks in DLQ")
 
 
@@ -89,7 +89,7 @@ class DLQRetryResponse(BaseModel):
     """Response model for DLQ retry operation."""
 
     queue_name: str
-    retried_tasks: List[str] = Field(..., description="List of task IDs that were retried")
+    retried_tasks: list[str] = Field(..., description="List of task IDs that were retried")
     success_count: int
     failed_count: int
     total: int
@@ -130,9 +130,7 @@ async def list_available_queues(auth: AuthContext = Depends(require_any_permissi
 
     except Exception as e:
         logger.error(f"Error listing queues: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list queues: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list queues: {e!s}")
 
 
 @router.get("/{queue_name}/stats", response_model=QueueStatsResponse)
@@ -162,7 +160,7 @@ async def get_queue_stats_by_name(
     except Exception as e:
         logger.error(f"Error getting stats for queue '{queue_name}': {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get queue stats: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get queue stats: {e!s}"
         )
 
 
@@ -212,7 +210,7 @@ async def get_task_status_by_queue(
     except Exception as e:
         logger.error(f"Error getting task {task_id} from queue '{queue_name}': {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get task status: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get task status: {e!s}"
         )
 
 
@@ -248,7 +246,7 @@ async def get_pending_tasks_by_queue(
     except Exception as e:
         logger.error(f"Error getting pending tasks for queue '{queue_name}': {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get pending tasks: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get pending tasks: {e!s}"
         )
 
 
@@ -295,7 +293,7 @@ async def get_all_queues_overview(auth: AuthContext = Depends(require_any_permis
     except Exception as e:
         logger.error(f"Error getting queue overview: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get queue overview: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get queue overview: {e!s}"
         )
 
 
@@ -341,9 +339,7 @@ async def get_dlq_tasks(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         logger.error(f"Error getting DLQ tasks for queue '{queue_name}': {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get DLQ tasks: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get DLQ tasks: {e!s}")
 
 
 @router.post("/{queue_name}/dlq/retry", response_model=DLQRetryAllResponse)
@@ -384,5 +380,5 @@ async def retry_dlq_tasks(
     except Exception as e:
         logger.error(f"Error retrying DLQ tasks for queue '{queue_name}': {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retry DLQ tasks: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retry DLQ tasks: {e!s}"
         )

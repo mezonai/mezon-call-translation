@@ -1,16 +1,14 @@
-from typing import Optional, Dict
-
 from livekit import api
 
-from orchestrator_service.models.agent_request_type import AgentRequestType
 from orchestrator_service.api.sse.channels.agent_request_channel import AgentRequestChannel
 from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.agent_request_type import AgentRequestType
+from orchestrator_service.services.livekit_client import get_livekit_service
+from orchestrator_service.services.redis.egress_repository import EgressRepository
+from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.utils.filepath import Filepath
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.livekit_client import get_livekit_service
-from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.redis.egress_repository import EgressRepository
 
 logger = get_logger(__name__)
 
@@ -19,8 +17,8 @@ class EgressService:
     """LiveKit egress operations management Service"""
 
     def __init__(self):
-        self._s3_upload: Optional[api.S3Upload] = None
-        self._repo: Optional[EgressRepository] = None
+        self._s3_upload: api.S3Upload | None = None
+        self._repo: EgressRepository | None = None
         self.config = get_config()
 
     def _get_client(self) -> api.LiveKitAPI:
@@ -57,7 +55,7 @@ class EgressService:
         source: str,
         identity: str,
         force_update: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         start recording a track
 
@@ -142,7 +140,7 @@ class EgressService:
             logger.error(f"✗ Failed to stop egress: {e}")
             return False
 
-    async def stop_all_by_room(self, room_name: str) -> Dict[str, int]:
+    async def stop_all_by_room(self, room_name: str) -> dict[str, int]:
         """
         Stop all active egresses for a specific room.
 
@@ -182,7 +180,7 @@ class EgressService:
         repo = self._get_repo()
         return await repo.get_active_count(room_name)
 
-    async def get_all_active_by_room(self, room_name: str) -> Dict[str, str]:
+    async def get_all_active_by_room(self, room_name: str) -> dict[str, str]:
         """Get all active egresses in a room"""
         repo = self._get_repo()
         return await repo.get_all_tracks(room_name)

@@ -1,18 +1,17 @@
 import json
-from fastapi import APIRouter, Request, HTTPException
 from datetime import datetime
+from typing import Any
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.auth.webhook_auth import verify_webhook, is_verification_enabled
-from orchestrator_service.services.egress_service import EgressService
-from orchestrator_service.services.transcription_service import TranscriptionService
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.auth.webhook_auth import is_verification_enabled, verify_webhook
 from orchestrator_service.controller.webhook_handler import WebhookHandler
 from orchestrator_service.models.webhook_models import WebhookResponse
+from orchestrator_service.services.egress_service import EgressService
 from orchestrator_service.services.redis.egress_repository import EgressRepository
-from typing import Dict, Any
-from orchestrator_service.auth.transcript_auth import verify_api_key
-from fastapi import Depends
-
+from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.utils.logger import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -80,7 +79,7 @@ async def handle_webhook(request: Request):
 
 
 @router.post("/internal", response_model=WebhookResponse)
-async def handle_internal_webhook(request: Request, auth: Dict[str, Any] = Depends(verify_api_key)):
+async def handle_internal_webhook(request: Request, auth: dict[str, Any] = Depends(verify_api_key)):
     """
     Handle webhook events từ LiveKit
 

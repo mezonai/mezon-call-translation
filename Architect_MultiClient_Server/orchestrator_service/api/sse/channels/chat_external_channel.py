@@ -3,12 +3,13 @@ Chat External Channel for bot notifications
 Handles SSE connections for chat external events (global, not room-specific)
 """
 
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Any
+
 from fastapi.responses import StreamingResponse
 
+from orchestrator_service.api.sse.sse_base import create_sse_response, event_generator
 from orchestrator_service.api.sse.sse_manager import SSEManager
-from orchestrator_service.api.sse.sse_base import event_generator, create_sse_response
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -76,8 +77,8 @@ class ChatExternalChannel:
         )
 
     async def push_chat_event(
-        self, room_name: str, room_id: str, participant_identity: str, message: str, time: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, room_name: str, room_id: str, participant_identity: str, message: str, time: str | None = None
+    ) -> dict[str, Any]:
         """
         Push chat external event to all connected bots.
 
@@ -99,7 +100,7 @@ class ChatExternalChannel:
 
         # Check if any bots are connected
         if not await self.manager.has_active_connections(self.CHANNEL_TYPE, context_key):
-            logger.warning(f"[Chat External Channel] No active bot connections, event may be lost")
+            logger.warning("[Chat External Channel] No active bot connections, event may be lost")
 
         # Prepare event data
         event_data = {
@@ -114,7 +115,7 @@ class ChatExternalChannel:
         # Broadcast event
         broadcast_count = await self.manager.broadcast_message(self.CHANNEL_TYPE, context_key, event_data)
 
-        logger.info(f"[Chat External Channel] Pushed event to {broadcast_count} bots " f"(room={room_name})")
+        logger.info(f"[Chat External Channel] Pushed event to {broadcast_count} bots (room={room_name})")
 
         return {
             "status": "ok",

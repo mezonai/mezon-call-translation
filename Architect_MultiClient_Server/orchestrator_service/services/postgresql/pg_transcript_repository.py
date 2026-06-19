@@ -3,15 +3,15 @@ PostgreSQL repository for transcripts (replaces MongoDBService).
 Handles rooms, tracks, chunks, summary, and metadata events.
 """
 
-import json
-from datetime import datetime, timezone
-from typing import Optional, Dict, List, Any, Tuple, Set
 import uuid
+from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import text, select, update, exists, func, Select, or_
+from sqlalchemy import Select, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
+
 from orchestrator_service.services.postgresql.database import get_session_factory
-from orchestrator_service.services.postgresql.models import Room, Track, RoomSummary, MetadataEvent, TranscriptChunk
+from orchestrator_service.services.postgresql.models import MetadataEvent, Room, RoomSummary, Track, TranscriptChunk
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -46,10 +46,10 @@ class PgTranscriptRepository:
     def _build_list_rooms_condition_query(
         self,
         stmt: Select,
-        status: Optional[str] = None,
-        search: Optional[str] = None,
-        from_utc: Optional[datetime] = None,
-        to_utc: Optional[datetime] = None,
+        status: str | None = None,
+        search: str | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
     ) -> Select:
         if status:
             stmt = stmt.where(Room.status == status)
@@ -68,13 +68,13 @@ class PgTranscriptRepository:
 
     async def list_rooms(
         self,
-        status: Optional[str] = None,
-        search: Optional[str] = None,
-        from_utc: Optional[datetime] = None,
-        to_utc: Optional[datetime] = None,
+        status: str | None = None,
+        search: str | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
         limit: int = 10,
         skip: int = 0,
-    ) -> List[Room]:
+    ) -> list[Room]:
         session_factory = get_session_factory()
         stmt = select(Room)
         stmt = self._build_list_rooms_condition_query(
@@ -91,10 +91,10 @@ class PgTranscriptRepository:
 
     async def count_rooms(
         self,
-        status: Optional[str] = None,
-        search: Optional[str] = None,
-        from_utc: Optional[datetime] = None,
-        to_utc: Optional[datetime] = None,
+        status: str | None = None,
+        search: str | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
     ) -> int:
         session_factory = get_session_factory()
         stmt = select(func.count()).select_from(Room)
@@ -109,7 +109,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to count rooms: {e}")
             return 0
 
-    async def get_room_by_id(self, room_id: str) -> Optional[Room]:
+    async def get_room_by_id(self, room_id: str) -> Room | None:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -118,9 +118,9 @@ class PgTranscriptRepository:
             logger.error(f"Failed to get room by id: {e}")
             return None
 
-    async def create_room_session(self, room_name: str, status: str = "pending") -> Optional[str]:
+    async def create_room_session(self, room_name: str, status: str = "pending") -> str | None:
         session_factory = get_session_factory()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         uid = uuid.uuid4()
         try:
             async with session_factory() as session:
@@ -134,7 +134,7 @@ class PgTranscriptRepository:
 
     async def final_room_status(self, room_name: str, room_id: str) -> bool:
         session_factory = get_session_factory()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             async with session_factory() as session:
                 stmt = (
@@ -151,10 +151,10 @@ class PgTranscriptRepository:
             return False
 
     async def save_participant(
-        self, room_id: str, participant_identity: str, timestamp: Optional[datetime] = None
+        self, room_id: str, participant_identity: str, timestamp: datetime | None = None
     ) -> bool:
         session_factory = get_session_factory()
-        ts = timestamp or datetime.now(timezone.utc)
+        ts = timestamp or datetime.now(UTC)
 
         new_participant = [{"participant_identity": participant_identity, "timestamp": ts.isoformat()}]
 
@@ -175,7 +175,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to save participant: {e}")
             return False
 
-    async def save_batch_participants(self, room_id: str, participants: List[Dict[str, Any]]) -> Dict[str, int]:
+    async def save_batch_participants(self, room_id: str, participants: list[dict[str, Any]]) -> dict[str, int]:
         if not participants:
             return {"success": True, "added_count": 0, "skipped_count": 0}
 
@@ -189,7 +189,7 @@ class PgTranscriptRepository:
                     return {"success": False, "added_count": 0, "skipped_count": 0}
 
                 existing_participants = room.participants or []
-                existing_identities: Set[str] = {
+                existing_identities: set[str] = {
                     p.get("participant_identity") for p in existing_participants if p.get("participant_identity")
                 }
 
@@ -207,7 +207,7 @@ class PgTranscriptRepository:
                         skipped_count += 1
                         continue
 
-                    ts = p.get("timestamp") or datetime.now(timezone.utc)
+                    ts = p.get("timestamp") or datetime.now(UTC)
                     if isinstance(ts, datetime):
                         ts = ts.isoformat()
 
@@ -244,7 +244,7 @@ class PgTranscriptRepository:
             logger.error(f"❌ Error in save_batch_participants: {e}")
             return {"success": False, "added_count": 0, "skipped_count": 0}
 
-    async def update_room_participants(self, room_id: str, participants: List[Dict[str, Any]]) -> bool:
+    async def update_room_participants(self, room_id: str, participants: list[dict[str, Any]]) -> bool:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -260,11 +260,11 @@ class PgTranscriptRepository:
     # TRACKS
     # ------------------------------------------------------------------
 
-    async def get_tracks_by_room(self, room_id: str, status: Optional[str] = None) -> List[Track]:
+    async def get_tracks_by_room(self, room_id: str, status: str | None = None) -> list[Track]:
         try:
             uid = str(uuid.UUID(str(room_id)))
         except (ValueError, AttributeError):
-            logger.warning(f"get_tracks_by_room: invalid UUID format repr={repr(room_id)}, returning empty")
+            logger.warning(f"get_tracks_by_room: invalid UUID format repr={room_id!r}, returning empty")
             return []
         session_factory = get_session_factory()
         try:
@@ -277,7 +277,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to get tracks by room: {e}")
             return []
 
-    async def get_track_by_id(self, track_id: str) -> Optional[Track]:
+    async def get_track_by_id(self, track_id: str) -> Track | None:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -293,7 +293,7 @@ class PgTranscriptRepository:
                 stmt = (
                     update(Track)
                     .where(Track.id == track_ref_id)
-                    .values(status=status, updated_at=datetime.now(timezone.utc))
+                    .values(status=status, updated_at=datetime.now(UTC))
                     .returning(Track)
                 )
                 result = await session.execute(stmt)
@@ -307,7 +307,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to update track status: {e}")
             return {"success": False, "error": str(e)}
 
-    async def check_event_record_done(self, room_ref_id: str) -> Optional[Room]:
+    async def check_event_record_done(self, room_ref_id: str) -> Room | None:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -349,7 +349,7 @@ class PgTranscriptRepository:
                 stmt_update = (
                     update(Room)
                     .where(Room.id == room_ref_id, Room.status == "final_room")
-                    .values(status="completed", completed_at=datetime.now(timezone.utc))
+                    .values(status="completed", completed_at=datetime.now(UTC))
                     .returning(Room)
                 )
                 result = await session.execute(stmt_update)
@@ -379,13 +379,13 @@ class PgTranscriptRepository:
     async def list_rooms_by_user(
         self,
         user_id: str,
-        status: Optional[str] = None,
-        search: Optional[str] = None,
-        from_utc: Optional[datetime] = None,
-        to_utc: Optional[datetime] = None,
+        status: str | None = None,
+        search: str | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
         limit: int = 10,
         skip: int = 0,
-    ) -> List[Room]:
+    ) -> list[Room]:
         session_factory = get_session_factory()
         stmt = select(Room)
         stmt = self._build_list_rooms_condition_query(
@@ -404,10 +404,10 @@ class PgTranscriptRepository:
     async def count_rooms_by_user(
         self,
         user_id: str,
-        status: Optional[str] = None,
-        search: Optional[str] = None,
-        from_utc: Optional[datetime] = None,
-        to_utc: Optional[datetime] = None,
+        status: str | None = None,
+        search: str | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
     ) -> int:
         session_factory = get_session_factory()
         stmt = select(func.count()).select_from(Room)
@@ -427,7 +427,7 @@ class PgTranscriptRepository:
     # SUMMARY
     # ------------------------------------------------------------------
 
-    async def save_room_summary(self, summary_data: Dict[str, Any]) -> Optional[str]:
+    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:
         session_factory = get_session_factory()
         room_uid = summary_data.get("room_id")
         try:
@@ -440,7 +440,7 @@ class PgTranscriptRepository:
                     summary_data=summary_data.get("summary_data", {}),
                     messages=summary_data.get("messages", []),
                     total_segments=summary_data.get("total_segments", 0),
-                    created_at=summary_data.get("created_at", datetime.now(timezone.utc)),
+                    created_at=summary_data.get("created_at", datetime.now(UTC)),
                 )
                 session.add(new_summary)
                 await session.commit()
@@ -449,7 +449,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to save room summary: {e}")
             return None
 
-    async def update_room_summary(self, room_id: str, summary_data: Dict[str, Any]) -> bool:
+    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -468,7 +468,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to update summary: {e}")
             return False
 
-    async def get_summary_by_room_id(self, room_id: str) -> Tuple[Optional[RoomSummary], Optional[Room]]:
+    async def get_summary_by_room_id(self, room_id: str) -> tuple[RoomSummary | None, Room | None]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -491,10 +491,10 @@ class PgTranscriptRepository:
     async def get_summary_by_room_name(
         self,
         room_name: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        user_id: Optional[str] = None,
-    ) -> Tuple[List[RoomSummary], List[Room]]:
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        user_id: str | None = None,
+    ) -> tuple[list[RoomSummary], list[Room]]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -528,7 +528,7 @@ class PgTranscriptRepository:
     # METADATA EVENTS
     # ------------------------------------------------------------------
 
-    async def save_metadata_event(self, event_data: Dict[str, Any]) -> Optional[str]:
+    async def save_metadata_event(self, event_data: dict[str, Any]) -> str | None:
         session_factory = get_session_factory()
         uid = uuid.uuid4()
         room_uid = event_data.get("room_id")
@@ -542,7 +542,7 @@ class PgTranscriptRepository:
                     room_name=event_data.get("room_name"),
                     event_metadata=event_data.get("metadata", {}),
                     timestamp=str(event_data.get("timestamp")),
-                    created_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
                 )
                 stmt = stmt.on_conflict_do_nothing(index_elements=[MetadataEvent.event_id])
                 await session.execute(stmt)
@@ -552,7 +552,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to save event: {e}")
             return None
 
-    async def get_metadata_event_by_event_id(self, event_id: str) -> Optional[MetadataEvent]:
+    async def get_metadata_event_by_event_id(self, event_id: str) -> MetadataEvent | None:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -562,7 +562,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to get event by id: {e}")
             return None
 
-    async def append_transcript_chunk(self, track_ref_id: str, new_segments: List[Dict[str, Any]]) -> bool:
+    async def append_transcript_chunk(self, track_ref_id: str, new_segments: list[dict[str, Any]]) -> bool:
         """Append new segments as additional chunks"""
         if not new_segments:
             return True
@@ -622,10 +622,10 @@ class PgTranscriptRepository:
     def _build_metadata_events_condition_query(
         self,
         stmt: Select,
-        event_type: Optional[str] = None,
-        room_id: Optional[str] = None,
-        from_utc: Optional[datetime] = None,
-        to_utc: Optional[datetime] = None,
+        event_type: str | None = None,
+        room_id: str | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
     ) -> Select:
         if room_id:
             stmt = stmt.where(MetadataEvent.room_id == room_id)
@@ -640,14 +640,14 @@ class PgTranscriptRepository:
 
     async def get_metadata_events(
         self,
-        event_type: Optional[str] = None,
-        room_id: Optional[str] = None,
-        from_utc: Optional[datetime] = None,
-        to_utc: Optional[datetime] = None,
+        event_type: str | None = None,
+        room_id: str | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
         limit: int = 100,
         skip: int = 0,
         sort_order: str = "desc",
-    ) -> List[MetadataEvent]:
+    ) -> list[MetadataEvent]:
         session_factory = get_session_factory()
         stmt = select(MetadataEvent)
         stmt = self._build_metadata_events_condition_query(
@@ -670,10 +670,10 @@ class PgTranscriptRepository:
 
     async def count_metadata_events(
         self,
-        event_type: Optional[str] = None,
-        room_id: Optional[str] = None,
-        from_utc: Optional[datetime] = None,
-        to_utc: Optional[datetime] = None,
+        event_type: str | None = None,
+        room_id: str | None = None,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
     ) -> int:
         session_factory = get_session_factory()
         stmt = select(func.count()).select_from(MetadataEvent)
@@ -694,7 +694,7 @@ class PgTranscriptRepository:
         sorted_by_index: bool = True,
         limit: int = None,
         skip: int = 0,
-    ) -> List[TranscriptChunk]:
+    ) -> list[TranscriptChunk]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -712,9 +712,9 @@ class PgTranscriptRepository:
 
     async def get_chunks_by_track_ids(
         self,
-        track_ids: List[str],
+        track_ids: list[str],
         sorted_by_index: bool = True,
-    ) -> List[TranscriptChunk]:
+    ) -> list[TranscriptChunk]:
         if not track_ids:
             return []
 
@@ -733,19 +733,19 @@ class PgTranscriptRepository:
         self,
         *,
         egress_id: str = None,
-        track_id: Optional[str] = None,
-        room_ref_id: Optional[str] = None,
-        participant_identity: Optional[str] = None,
-        audio_info: Optional[Dict[str, Any]] = None,
+        track_id: str | None = None,
+        room_ref_id: str | None = None,
+        participant_identity: str | None = None,
+        audio_info: dict[str, Any] | None = None,
         status: str = "pending",
-        error: Optional[str] = None,
-    ) -> Optional[Track]:
+        error: str | None = None,
+    ) -> Track | None:
         if not egress_id:
             logger.error("egress_id is required")
             return None
 
         session_factory = get_session_factory()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         try:
             async with session_factory() as session:

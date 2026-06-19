@@ -3,21 +3,22 @@ Service for generating room summaries
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Any
+
 from fastapi import HTTPException
-from orchestrator_service.auth.authorization import AuthContext
+
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
+from orchestrator_service.auth.authorization import AuthContext
+from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
+from orchestrator_service.services.llm.factory import create_llm_service
 from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository, get_pg_outbox_repository
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
 )
-from orchestrator_service.services.llm.factory import create_llm_service
-from orchestrator_service.config.application_config import get_config
-from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
-from orchestrator_service.utils.time_convert import convert_to_iso_8601
-
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
 
@@ -33,7 +34,7 @@ class SummaryService:
         self.llm_service = create_llm_service(self.config.llm)
         logger.info(f"SummaryService initialized with LLM provider: {self.config.llm.provider}")
 
-    async def generate_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
+    async def generate_summary(self, room_id: str) -> dict[str, Any] | None:
         """
         Generate a summary for the given room_id.
 
@@ -152,7 +153,7 @@ class SummaryService:
         # full_text is used for LLM summarization. It can be a long string, but we keep it as is for now since it's needed for the summary generation step. In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
         full_text = "\n".join(f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in turns)
 
-        draft_summary: Dict[str, Any] = {
+        draft_summary: dict[str, Any] = {
             "room_id": room_id,
             "room_name": room_doc.room_name or "Unknown",
             "participants": list(unique_participants),
@@ -227,7 +228,7 @@ class SummaryService:
 
     async def retry_summary_from_full_text(
         self, room_id: str, retry_type: RetryType = RetryType.ALL
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Hotfix: re-run LLM summarization by rebuilding full_text from messages stored in rooms_summary.
         Used when LLM service fails in the first run and summary_data is missing.
@@ -336,8 +337,8 @@ class SummaryService:
             return None
 
     async def get_summary_by_room_name(
-        self, room_name: str, start_time: Optional[datetime], end_time: Optional[datetime], auth: AuthContext
-    ) -> Tuple[List[RoomSummaryResponse], int]:
+        self, room_name: str, start_time: datetime | None, end_time: datetime | None, auth: AuthContext
+    ) -> tuple[list[RoomSummaryResponse], int]:
         if not self.pg_repo.connected:
             await self.pg_repo.connect()
 

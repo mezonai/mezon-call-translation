@@ -4,10 +4,9 @@ Room Registry Repository - Domain-specific repository for room management
 Extends BaseHashRepository with room-specific business logic.
 """
 
-from typing import Dict, Optional
-
-from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.utils.logger import get_logger
+
 from .base_hash_repository import BaseHashRepository
 
 logger = get_logger(__name__)
@@ -106,7 +105,7 @@ class RoomRegistryRepository(BaseHashRepository):
         """
         return await self.exists(self.HASH_KEY, room_name)
 
-    async def get_room_id(self, room_name: str) -> Optional[str]:
+    async def get_room_id(self, room_name: str) -> str | None:
         """
         Get the room ID for a registered room.
 
@@ -118,7 +117,7 @@ class RoomRegistryRepository(BaseHashRepository):
         """
         return await self.get(self.HASH_KEY, room_name)
 
-    async def list_rooms(self) -> Dict[str, str]:
+    async def list_rooms(self) -> dict[str, str]:
         """
         List all registered rooms.
 
@@ -149,7 +148,7 @@ class RoomRegistryRepository(BaseHashRepository):
         logger.warning(f"🗑️ Cleared all {count} rooms from registry")
         return count
 
-    async def get_registry_stats(self) -> Dict:
+    async def get_registry_stats(self) -> dict:
         """
         Get room registry statistics.
 

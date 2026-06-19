@@ -9,13 +9,14 @@ This worker:
 """
 
 import asyncio
+
 import httpx
-from typing import Optional
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.decorator import singleton
+
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.redis.redis_stream_service import RedisStreamService
 from orchestrator_service.models.notification_task import NotificationTask
+from orchestrator_service.services.redis.redis_stream_service import RedisStreamService
+from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -38,7 +39,7 @@ class NotificationWorker:
         await worker.stop()     # Graceful shutdown
     """
 
-    def __init__(self, worker_id: Optional[str] = None):
+    def __init__(self, worker_id: str | None = None):
         """
         Initialize notification worker.
 
@@ -46,16 +47,14 @@ class NotificationWorker:
             worker_id: Optional custom worker ID (default: auto-generated)
         """
         self._config = get_config().notification
-        self._stream_service: Optional[RedisStreamService[NotificationTask]] = None
+        self._stream_service: RedisStreamService[NotificationTask] | None = None
         self._worker_id = worker_id
         self._running = False
-        self._http_client: Optional[httpx.AsyncClient] = None
-        self._consumer_task: Optional[asyncio.Task] = None
+        self._http_client: httpx.AsyncClient | None = None
+        self._consumer_task: asyncio.Task | None = None
 
         logger.info(
-            f"NotificationWorker initialized - "
-            f"stream='{self._config.stream_key}', "
-            f"group='{self._config.group_name}'"
+            f"NotificationWorker initialized - stream='{self._config.stream_key}', group='{self._config.group_name}'"
         )
 
     async def connect(self) -> None:
@@ -81,7 +80,7 @@ class NotificationWorker:
             # Initialize HTTP client
             self._http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
 
-            logger.info(f"✅ NotificationWorker connected to Redis stream")
+            logger.info("✅ NotificationWorker connected to Redis stream")
         except Exception as e:
             logger.error(f"❌ Failed to connect notification worker: {e}", exc_info=True)
             raise

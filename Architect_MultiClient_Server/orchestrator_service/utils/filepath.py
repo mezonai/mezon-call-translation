@@ -1,7 +1,5 @@
 import re
 import secrets
-from typing import Dict
-from datetime import datetime
 
 
 class Filepath:
@@ -28,7 +26,7 @@ class Filepath:
         return f"{room_id}/{identity}-{source}-{track_type.lower()}-{random_id}.{ext}"
 
     @classmethod
-    def parse(cls, filepath: str) -> Dict[str, str]:
+    def parse(cls, filepath: str) -> dict[str, str]:
         """
         Parse filepath into components using regex.
 

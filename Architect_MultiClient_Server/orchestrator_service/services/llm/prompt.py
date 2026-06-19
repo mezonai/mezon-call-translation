@@ -191,7 +191,7 @@ Rules:
 
 Each action item must include:
 
-OWNER → participant_identity OR "unknown"  
+OWNER → participant_identity OR "unknown"
 TASK → clear, executable action description
 
 Task description:

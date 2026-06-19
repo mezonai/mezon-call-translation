@@ -1,13 +1,13 @@
-from typing import Optional, Dict, Any, Tuple, List
 from datetime import datetime
+from typing import Any
+
 from fastapi import HTTPException
 
+from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
 )
-from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-from orchestrator_service.models.metadata_event_models import MetadataEventType
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -24,7 +24,7 @@ class SseMetadataService:
     async def push_room_started(self, room_id: str, room_name: str):
         return await self.metadata_channel.push_room_started(room_id=room_id, room_name=room_name)
 
-    async def push_room_ended(self, room_id: str, room_name: str, duration_seconds: Optional[int]):
+    async def push_room_ended(self, room_id: str, room_name: str, duration_seconds: int | None):
         return await self.metadata_channel.push_room_ended(
             room_id=room_id, room_name=room_name, duration_seconds=duration_seconds
         )
@@ -37,14 +37,14 @@ class SseMetadataService:
 
     async def list_metadata_events(
         self,
-        event_type: Optional[str],
-        room_id: Optional[str],
-        from_utc: Optional[datetime],
-        to_utc: Optional[datetime],
+        event_type: str | None,
+        room_id: str | None,
+        from_utc: datetime | None,
+        to_utc: datetime | None,
         limit: int,
         skip: int,
         sort_order: str,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+    ) -> tuple[list[dict[str, Any]], int]:
         raw_events = await self.pg_repo.get_metadata_events(
             event_type=event_type,
             room_id=room_id,
@@ -79,7 +79,7 @@ class SseMetadataService:
 
         return events, total
 
-    async def get_metadata_event_by_id(self, event_id: str) -> Dict[str, Any]:
+    async def get_metadata_event_by_id(self, event_id: str) -> dict[str, Any]:
         event_obj = await self.pg_repo.get_metadata_event_by_event_id(event_id)
         if not event_obj:
             raise HTTPException(status_code=404, detail=f"Event not found: {event_id}")

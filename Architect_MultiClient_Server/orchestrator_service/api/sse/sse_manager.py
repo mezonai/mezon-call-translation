@@ -3,12 +3,12 @@ Generic SSE Manager for all event channels
 Manages connections, queues, and broadcasting for multiple channel types
 """
 
-import threading
 import asyncio
+import threading
 import time
-from typing import Dict
-from orchestrator_service.utils.logger import get_logger
+
 from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -36,10 +36,10 @@ class SSEManager:
 
     def __init__(self):
         # channel_type -> context_key -> connection_id -> asyncio.Queue
-        self.connection_queues: Dict[str, Dict[str, Dict[str, asyncio.Queue]]] = {}
+        self.connection_queues: dict[str, dict[str, dict[str, asyncio.Queue]]] = {}
 
         # channel_type -> context_key -> connection_id -> appid
-        self.connection_appids: Dict[str, Dict[str, Dict[str, str]]] = {}
+        self.connection_appids: dict[str, dict[str, dict[str, str]]] = {}
 
         # Use asyncio.Lock() for async context instead of threading.Lock()
         # This prevents blocking the event loop during concurrent operations
@@ -160,8 +160,7 @@ class SSEManager:
                     except asyncio.QueueFull:
                         # Queue full, will be disconnected anyway when we remove the queue
                         logger.warning(
-                            f"[SSE Manager] Queue full while disconnecting {existing_connection_id}, "
-                            "forcing disconnect"
+                            f"[SSE Manager] Queue full while disconnecting {existing_connection_id}, forcing disconnect"
                         )
                     except Exception as e:
                         logger.warning(f"[SSE Manager] Error sending disconnect to {existing_connection_id}: {e}")
@@ -250,8 +249,7 @@ class SSEManager:
             except asyncio.QueueFull:
                 # Skip slow consumers to prevent blocking others
                 logger.warning(
-                    f"[SSE Manager] Queue full, skipping slow consumer "
-                    f"(channel={channel_type}, context={context_key})"
+                    f"[SSE Manager] Queue full, skipping slow consumer (channel={channel_type}, context={context_key})"
                 )
                 pass
             except Exception as e:
@@ -302,7 +300,7 @@ class SSEManager:
                 return 0
             return len(self.connection_queues[channel_type][context_key])
 
-    async def get_stats(self) -> Dict[str, Dict[str, int]]:
+    async def get_stats(self) -> dict[str, dict[str, int]]:
         """
         Get statistics about all channels and contexts.
 

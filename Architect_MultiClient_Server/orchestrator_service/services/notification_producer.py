@@ -4,12 +4,13 @@ Notification Producer Service - Sends notification tasks to Redis Stream
 Helper service to easily send notifications to Mezon channels.
 """
 
-from typing import Any, Dict, Optional
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.decorator import singleton
+from typing import Any
+
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.redis.redis_producer_service import RedisProducerService
 from orchestrator_service.models.notification_task import NotificationTask
+from orchestrator_service.services.redis.redis_producer_service import RedisProducerService
+from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -26,7 +27,7 @@ class NotificationProducerService:
     def __init__(self):
         """Initialize notification producer service"""
         self._config = get_config().notification
-        self._producer: Optional[RedisProducerService[NotificationTask]] = None
+        self._producer: RedisProducerService[NotificationTask] | None = None
 
     async def connect(self) -> None:
         """
@@ -56,7 +57,7 @@ class NotificationProducerService:
     async def send(
         self,
         title: str,
-        message: Dict[str, Any],
+        message: dict[str, Any],
     ) -> bool:
         """
         Send a notification with title and message dict.
@@ -99,7 +100,7 @@ class NotificationProducerService:
         try:
             message_id = await self._producer.enqueue(task)
 
-            logger.info(f"📤 Notification task enqueued: {task.title} " f"(message_id: {message_id})")
+            logger.info(f"📤 Notification task enqueued: {task.title} (message_id: {message_id})")
 
             return True
         except Exception as e:

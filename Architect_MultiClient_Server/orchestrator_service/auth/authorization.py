@@ -9,12 +9,13 @@ Features:
 - Easy to grant/revoke permissions per user
 """
 
-from typing import Dict, Any, Set, Optional
-from fastapi import Depends, HTTPException
-from orchestrator_service.auth.jwt_auth import verify_jwt
-from orchestrator_service.services.postgresql.pg_user_permission_repository import PgUserPermissionRepository
-from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL
+from typing import Any
 
+from fastapi import Depends, HTTPException
+
+from orchestrator_service.auth.jwt_auth import verify_jwt
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL
+from orchestrator_service.services.postgresql.pg_user_permission_repository import PgUserPermissionRepository
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -26,7 +27,7 @@ class AuthContext:
     Extracted from JWT token - permissions loaded from users collection.
     """
 
-    def __init__(self, user: Dict[str, Any], permissions: Set[str]):
+    def __init__(self, user: dict[str, Any], permissions: set[str]):
         """
         Initialize authorization context.
 
@@ -67,7 +68,7 @@ class AuthContext:
         """
         if not self.has_permission(permission):
             logger.warning(
-                f"Permission denied: user_id={self.user_id} (username={self.username}) " f"requires '{permission}'"
+                f"Permission denied: user_id={self.user_id} (username={self.username}) requires '{permission}'"
             )
             raise HTTPException(status_code=403, detail=f"Permission required: {permission}")
 
@@ -105,7 +106,7 @@ class AuthContext:
         return f"AuthContext(user_id={self.user_id}, username={self.username}, permissions={len(self.permissions)})"
 
 
-async def get_auth_context(user: Dict[str, Any] = Depends(verify_jwt)) -> AuthContext:
+async def get_auth_context(user: dict[str, Any] = Depends(verify_jwt)) -> AuthContext:
     """
     Extract authorization context from JWT token.
     Loads flat permissions from users collection in database.
@@ -119,7 +120,7 @@ async def get_auth_context(user: Dict[str, Any] = Depends(verify_jwt)) -> AuthCo
     user_id = user.get("user_id")
 
     # Try to load permissions from database
-    permissions: Set[str] = set()
+    permissions: set[str] = set()
     permission_repo = PgUserPermissionRepository()
 
     if user_id:

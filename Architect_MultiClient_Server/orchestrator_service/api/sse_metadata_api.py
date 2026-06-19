@@ -3,18 +3,17 @@ SSE Metadata API
 Endpoints for bot to receive agent metadata events via SSE
 """
 
-from fastapi import APIRouter, HTTPException, Query
-from uuid import UUID
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional
 from datetime import datetime
+from uuid import UUID
 
-from orchestrator_service.auth.verify_account import authenticate_account
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field, field_validator
+
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.models.metadata_event_models import MetadataEventType
-
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -55,7 +54,7 @@ class SessionStartedRequest(RoomInfo):
 class SessionEndedRequest(RoomInfo):
     """Request model for session_ended event"""
 
-    duration_seconds: Optional[int] = Field(None, description="Duration of room session in seconds")
+    duration_seconds: int | None = Field(None, description="Duration of room session in seconds")
 
     class Config:
         json_schema_extra = {
@@ -191,12 +190,12 @@ async def push_session_summary_done_api(req: SessionSummaryDoneRequest):
 
 @router.get("/metadata", response_description="List metadata events")
 async def list_metadata_events(
-    event_type: Optional[str] = Query(
+    event_type: str | None = Query(
         None, description="Filter by event type (room_started, room_ended, room_record_done, room_summary_done)"
     ),
-    room_id: Optional[str] = Query(None, description="Filter by room ID"),
-    from_utc: Optional[datetime] = Query(None, description="Start of time range (UTC, ISO 8601)"),
-    to_utc: Optional[datetime] = Query(None, description="End of time range (UTC, ISO 8601)"),
+    room_id: str | None = Query(None, description="Filter by room ID"),
+    from_utc: datetime | None = Query(None, description="Start of time range (UTC, ISO 8601)"),
+    to_utc: datetime | None = Query(None, description="End of time range (UTC, ISO 8601)"),
     limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     sort_order: str = Query(
@@ -262,7 +261,7 @@ async def list_metadata_events(
 
     except Exception as e:
         logger.error(f"Failed to list metadata events: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list metadata events: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list metadata events: {e!s}")
 
 
 @router.get("/metadata/{event_id}", response_description="Get metadata event by event_id")
@@ -290,4 +289,4 @@ async def get_metadata_event_by_id(
         raise
     except Exception as e:
         logger.error(f"Failed to get metadata event: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get metadata event: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get metadata event: {e!s}")

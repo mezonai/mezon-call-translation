@@ -16,11 +16,13 @@ Usage:
         pass
 """
 
-from typing import Optional, Dict, Any
+from typing import Any
+
 from fastapi import HTTPException, Security
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from orchestrator_service.utils.logger import get_logger
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -33,7 +35,7 @@ API_SECRET = auth_config.internal_api_secret
 
 # Validate configuration on startup
 if not API_SECRET:
-    logger.warning("⚠️INTERNAL_API_SECRET is not set. " "Authentication will fail for all requests!")
+    logger.warning("⚠️INTERNAL_API_SECRET is not set. Authentication will fail for all requests!")
 
 
 def verify_simple_secret(credentials: HTTPAuthorizationCredentials) -> bool:
@@ -50,7 +52,7 @@ def verify_simple_secret(credentials: HTTPAuthorizationCredentials) -> bool:
     return credentials.credentials == API_SECRET
 
 
-async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = Security(security)) -> Dict[str, Any]:
+async def verify_api_key(credentials: HTTPAuthorizationCredentials | None = Security(security)) -> dict[str, Any]:
     """
     Verify API authentication credentials.
     Args:

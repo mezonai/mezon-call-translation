@@ -5,11 +5,9 @@ Scans Redis to find existing streams and provides queue information.
 No manual registration required - automatically discovers queues.
 """
 
-from orchestrator_service.utils.logger import get_logger
-from typing import Dict, List, Optional
-
 from orchestrator_service.services.redis.connection_pool import get_redis_connection
-from orchestrator_service.utils.decode import decode_value, decode_mapping
+from orchestrator_service.utils.decode import decode_mapping, decode_value
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -23,7 +21,7 @@ class QueueDiscovery:
     """
 
     @staticmethod
-    async def discover_streams() -> List[str]:
+    async def discover_streams() -> list[str]:
         """
         Discover all Redis streams.
 
@@ -69,7 +67,7 @@ class QueueDiscovery:
                 await redis_client.close()
 
     @staticmethod
-    async def get_stream_info(stream_key: str) -> Optional[Dict]:
+    async def get_stream_info(stream_key: str) -> dict | None:
         """
         Get information about a specific stream.
 
@@ -123,7 +121,7 @@ class QueueDiscovery:
                 await redis_client.close()
 
     @staticmethod
-    async def list_queues() -> List[Dict]:
+    async def list_queues() -> list[dict]:
         """
         List all available queues with their info.
 

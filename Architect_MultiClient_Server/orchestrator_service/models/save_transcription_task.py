@@ -7,7 +7,7 @@ Multiple tasks are sent for a single transcription (batched approach).
 
 import json
 from dataclasses import dataclass, field
-from typing import Dict, List, Any
+from typing import Any
 
 from .stream_base import BaseProducerTask, TaskPriority, parse_priority
 
@@ -34,7 +34,7 @@ class SaveTranscriptionTask(BaseProducerTask):
 
     # Required fields (kw_only allows them after parent's default fields)
     track_ref_id: str = field(kw_only=True)
-    segments: List[Dict[str, Any]] = field(kw_only=True)
+    segments: list[dict[str, Any]] = field(kw_only=True)
     chunk_index: int = field(kw_only=True)
     start_time: float = field(kw_only=True)
     end_time: float = field(kw_only=True)
@@ -47,7 +47,7 @@ class SaveTranscriptionTask(BaseProducerTask):
     # Redis stream metadata (set when consumed from Redis)
     message_id: str = ""  # Redis stream message ID (e.g., "1234567890-0")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert task to dict for Redis XADD.
 
@@ -74,7 +74,7 @@ class SaveTranscriptionTask(BaseProducerTask):
         return base_dict
 
     @classmethod
-    def from_stream_message(cls, message_id: str, data: Dict[bytes, bytes]) -> "SaveTranscriptionTask":
+    def from_stream_message(cls, message_id: str, data: dict[bytes, bytes]) -> "SaveTranscriptionTask":
         """
         Parse SaveTranscriptionTask from Redis stream message.
 
