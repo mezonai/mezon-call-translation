@@ -2,10 +2,11 @@ import asyncio
 import logging
 import time
 import traceback
+from typing import Any
 
 # Set containing strong references to tasks - prevents them from being garbage collected
 # Add task when create it - remove when task is done
-_active_recording_tasks = set()
+_active_recording_tasks: set[asyncio.Task[Any]] = set()
 
 class NotificationHandler(logging.Handler):
     """
@@ -18,8 +19,8 @@ class NotificationHandler(logging.Handler):
         self._cooldown_sec = 60
         self._last_sent: dict[str, float] = {}
 
-        self._producer = None
-        self._connected = False
+        self._producer: Any | None = None
+        self._connected: bool = False
 
     def emit(self, record: logging.LogRecord):
         try:
@@ -45,7 +46,7 @@ class NotificationHandler(logging.Handler):
             error_key = f"{record.name}:{record.getMessage()}"
 
             now = time.time()
-            last_sent = self._last_sent.get(error_key, 0)
+            last_sent = self._last_sent.get(error_key, 0.0)
 
             if now - last_sent < self._cooldown_sec:
                 return

@@ -10,10 +10,12 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
+from orchestrator_service.services.postgresql.models import Room
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
 )
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.time_convert import convert_to_iso_8601
 from orchestrator_service.utils.transcript_validators import (
     LimitQuery,
     SkipQuery,
@@ -24,10 +26,16 @@ router = APIRouter(prefix="/api/transcripts/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
 
-def _serialize_room(room: dict) -> dict:
-    serialized_room = dict(room)
-    if serialized_room.get("_id") is not None:
-        serialized_room["_id"] = str(serialized_room["_id"])
+def _serialize_room(room: Room) -> dict:
+    serialized_room = {
+        "id": room.id,
+        "room_name": room.room_name,
+        "status": room.status,
+        "participants": room.participants,
+        "created_at": room.created_at,
+        "finalized_at": room.finalized_at,
+        "completed_at": room.completed_at,
+    }
     return serialized_room
 
 
@@ -135,9 +143,31 @@ async def get_room_statistics_by_id(
         if not pg_repo.connected:
             await pg_repo.connect()
 
-        stats = await pg_repo.get_room_statistics_by_id(room_id)
-        if not stats:
+        summary, room = await pg_repo.get_summary_by_room_id(room_id)
+        tracks = await pg_repo.get_tracks_by_room(room_id)
+        if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+
+        total_segments = summary.total_segments if summary else 0
+        total_tracks = len(tracks)
+        completed_tracks = sum(1 for t in tracks if t.status == "completed")
+
+        total_duration_sec: float = 0.0
+        if room.finalized_at and room.created_at:
+            total_duration_sec = (room.finalized_at - room.created_at).total_seconds()
+
+        stats = {
+            "room_id": room.id,
+            "room_name": room.room_name,
+            "status": room.status,
+            "total_tracks": total_tracks,
+            "completed_tracks": completed_tracks,
+            "remaining_tracks": total_tracks - completed_tracks,
+            "total_segments": total_segments,
+            "created_at": convert_to_iso_8601(room.created_at) if room.created_at else None,
+            "finalized_at": convert_to_iso_8601(room.finalized_at) if room.finalized_at else None,
+            "total_duration_sec": total_duration_sec,
+        }
 
         return {"status": "ok", "statistics": stats}
     except HTTPException:

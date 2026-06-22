@@ -107,6 +107,11 @@ class NotificationWorker:
         Returns:
             True if processed successfully, False otherwise
         """
+        http_client = self._http_client
+        if not http_client:
+            logger.error("❌ HTTP Client is not initialized. Call connect() first.")
+            return False
+        
         try:
             logger.info(f"📨 Processing notification: {task.title}")
 
@@ -125,7 +130,7 @@ class NotificationWorker:
             payload = {"type": "hook", "message": task.message}
 
             # Send webhook
-            response = await self._http_client.post(
+            response = await http_client.post(
                 webhook_url, json=payload, headers={"Content-Type": "application/json"}
             )
 
@@ -155,6 +160,11 @@ class NotificationWorker:
 
         # Ensure connected
         await self.connect()
+
+        stream_service = self._stream_service
+        if not stream_service:
+            logger.error("❌ Stream service failed to initialize.")
+            return
 
         self._running = True
 
@@ -199,11 +209,16 @@ class NotificationWorker:
         """
         logger.info("🚀 NotificationWorker consumer loop started")
 
+        stream_service = self._stream_service
+        if not stream_service:
+            logger.error("❌ Cannot start consumer loop: Stream service is not initialized.")
+            return
+
         try:
             while self._running:
                 try:
                     # Read next batch of tasks
-                    tasks = await self._stream_service.read_tasks(count=10, block_ms=5000)
+                    tasks = await stream_service.read_tasks(count=10, block_ms=5000)
 
                     if not tasks:
                         # No tasks available, continue waiting
@@ -215,12 +230,12 @@ class NotificationWorker:
 
                         if success:
                             # Acknowledge successful task
-                            await self._stream_service.acknowledge(task)
+                            await stream_service.acknowledge(task)
                             logger.info(f"✅ Task acknowledged: {task.task_id}")
                         else:
                             # Reject task - will retry or move to DLQ automatically
                             error_msg = f"Webhook delivery failed for notification: {task.title}"
-                            await self._stream_service.reject(task, error=error_msg, retry=True)
+                            await stream_service.reject(task, error=error_msg, retry=True)
                             # Brief pause before processing next task
                             await asyncio.sleep(self._config.retry_delay_sec)
 

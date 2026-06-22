@@ -97,7 +97,7 @@ class SummaryOutboxWorker:
             self._worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._worker_task
-        
+
         logger.info("✅ SummaryOutboxWorker stopped")
 
     async def _worker_loop(self) -> None:

@@ -103,7 +103,7 @@ class RedisProducerService(Generic[T]):
             if not manager.is_connected:
                 await manager.connect()
             self._redis = Redis(connection_pool=manager.get_pool())
-            await self._redis.ping()
+            await self._redis.ping() # type: ignore[misc]
             logger.info(f"✅ Redis producer using shared pool at {self._config.host}:{self._config.port}")
 
         except Exception as e:
@@ -134,23 +134,27 @@ class RedisProducerService(Generic[T]):
         if not self._redis:
             await self.connect()
 
+        redis_client = self._redis
+        if not redis_client:
+            raise ConnectionError("Redis client is not initialized")
+
         # Get task data from object
-        task_data = task.to_dict()
-        task_id = task.task_id
+        task_data = task.to_dict()  # type: ignore[misc]
+        task_id = task.task_id      # type: ignore[misc]
 
         try:
             # XADD to stream
-            message_id = await self._redis.xadd(
-                self._stream_key,
-                task_data,
-                maxlen=100000,  # Limit stream size
+            message_id = await redis_client.xadd(
+                self._stream_key,           # type: ignore[arg-type]
+                task_data,                  # type: ignore[arg-type]
+                maxlen=100000,              # Limit stream size
                 approximate=True,
             )
 
             message_id_str = decode_value(message_id)
 
             # Store task metadata for quick lookup
-            await self._redis.hset(
+            await redis_client.hset( # type: ignore[misc]
                 f"{self._tasks_prefix}:{task_id}",
                 mapping={
                     **task_data,
@@ -160,10 +164,10 @@ class RedisProducerService(Generic[T]):
             )
 
             # Set expiry for task metadata (7 days)
-            await self._redis.expire(f"{self._tasks_prefix}:{task_id}", 7 * 24 * 3600)
+            await redis_client.expire(f"{self._tasks_prefix}:{task_id}", 7 * 24 * 3600)
 
             # Update stats
-            await self._redis.hincrby(self._stats_key, "total_enqueued", 1)
+            await redis_client.hincrby(self._stats_key, "total_enqueued", 1) # type: ignore[misc]
 
             logger.info(f"📥 Enqueued task {task_id} → message_id={message_id_str}")
 
@@ -180,15 +184,15 @@ class RedisProducerService(Generic[T]):
 
         try:
             # Get stream length
-            stream_len = await self._redis.xlen(self._stream_key)
+            stream_len = await self._redis.xlen(self._stream_key) # type: ignore[arg-type]
 
             # Get stats
-            stats_data = await self._redis.hgetall(self._stats_key)
+            stats_data = await self._redis.hgetall(self._stats_key) # type: ignore[misc]
             stats = decode_mapping(stats_data) if stats_data else {}
 
             # Count active workers
             workers_key = f"{self._stream_key}:workers"
-            active_workers_count = await self._redis.hlen(workers_key)
+            active_workers_count = await self._redis.hlen(workers_key) # type: ignore[misc]
 
             return {
                 "stream_key": self._stream_key,
@@ -209,7 +213,7 @@ class RedisProducerService(Generic[T]):
         return self._redis is not None
 
     @property
-    def stream_key(self) -> str:
+    def stream_key(self) -> str | None:
         """Get the stream key."""
         return self._stream_key
 

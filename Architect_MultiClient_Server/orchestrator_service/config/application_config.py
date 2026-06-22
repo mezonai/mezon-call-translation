@@ -281,7 +281,7 @@ class LLMConfig:
     provider: str = LLMProvider.LOCAL  # LLMProvider.GEMINI | LLMProvider.LOCAL
     api_key: str = ""
     model: str = "Qwen3.5-35B-A3B"
-    base_url: str = None
+    base_url: str | None = None
     timeout: int = 120
     language: str = "Vietnamese"
     # Fallback to a Gemini-family model when primary LLM fails

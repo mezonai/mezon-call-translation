@@ -166,9 +166,14 @@ class QueueService(Generic[T]):
         try:
             producer = await self._get_producer()
 
+            redis_client = producer._redis
+            if not redis_client:
+                logger.error("Producer Redis client is not initialized")
+                return None
+
             # Get task metadata from Redis hash
             task_key = f"{producer._config.tasks_prefix}:{task_id}"
-            task_data_raw = await producer._redis.hgetall(task_key)
+            task_data_raw = await redis_client.hgetall(task_key)     # type: ignore[misc]
 
             if not task_data_raw:
                 return None
@@ -198,8 +203,12 @@ class QueueService(Generic[T]):
         try:
             producer = await self._get_producer()
 
+            redis_client = producer._redis
+            if not redis_client:
+                return []
+
             # Read pending messages from stream (last 100)
-            messages = await producer._redis.xrange(producer.stream_key, count=100)
+            messages = await redis_client.xrange(producer.stream_key, count=100)     # type: ignore[misc]
 
             pending_tasks = []
             for message_id, data in messages:
@@ -237,10 +246,15 @@ class QueueService(Generic[T]):
         """
         try:
             producer = await self._get_producer()
+
+            redis_client = producer._redis
+            if not redis_client:
+                return []
+            
             dlq_stream_key = f"{producer.stream_key}:dlq"
 
             # Read messages from DLQ stream
-            messages = await producer._redis.xrange(dlq_stream_key, count=limit)
+            messages = await redis_client.xrange(dlq_stream_key, count=limit)     # type: ignore[misc]
 
             dlq_tasks = []
             for message_id, data in messages:
@@ -283,10 +297,15 @@ class QueueService(Generic[T]):
         """
         try:
             producer = await self._get_producer()
+
+            redis_client = producer._redis
+            if not redis_client:
+                return False
+            
             dlq_stream_key = f"{producer.stream_key}:dlq"
 
             # Find the task in DLQ
-            messages = await producer._redis.xrange(dlq_stream_key)
+            messages = await redis_client.xrange(dlq_stream_key)
 
             for message_id, data in messages:
                 task_data = {
@@ -303,10 +322,10 @@ class QueueService(Generic[T]):
                     task_data.pop("dead_letter_at", None)
 
                     # Re-enqueue to main stream
-                    await producer._redis.xadd(producer.stream_key, task_data)
+                    await redis_client.xadd(producer.stream_key, task_data)     # type: ignore[arg-type]
 
                     # Remove from DLQ
-                    await producer._redis.xdel(dlq_stream_key, message_id)
+                    await redis_client.xdel(dlq_stream_key, message_id)         # type: ignore[arg-type]
 
                     logger.info(f"Retried DLQ task: {task_id}")
                     return True

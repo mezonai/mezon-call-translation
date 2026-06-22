@@ -29,6 +29,7 @@ class RoomRegistry:
     """
 
     _instance: Optional["RoomRegistry"] = None
+    _initialized: bool = False
 
     def __new__(cls):
         if cls._instance is None:

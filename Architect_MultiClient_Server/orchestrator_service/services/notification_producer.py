@@ -52,6 +52,7 @@ class NotificationProducerService:
         """Disconnect producer"""
         if self._producer:
             await self._producer.close()
+            self._producer = None
             logger.info("NotificationProducerService disconnected")
 
     async def send(
@@ -97,8 +98,13 @@ class NotificationProducerService:
         if not self._producer:
             await self.connect()
 
+        producer = self._producer
+        if not producer:
+            logger.error("❌ Producer is not initialized even after connect()")
+            return False
+
         try:
-            message_id = await self._producer.enqueue(task)
+            message_id = await producer.enqueue(task)
 
             logger.info(f"📤 Notification task enqueued: {task.title} (message_id: {message_id})")
 

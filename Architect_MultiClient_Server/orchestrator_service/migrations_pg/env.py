@@ -27,7 +27,7 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def get_url():
+def get_url() -> str:
     cfg = get_config().postgresql
     return cfg.async_url
 
@@ -58,10 +58,13 @@ async def run_async_migrations() -> None:
     and associate a connection with the context.
     """
     configuration = config.get_section(config.config_ini_section)
+    if configuration is None:
+        configuration = {}
+
     configuration["sqlalchemy.url"] = get_url()
 
     connectable = async_engine_from_config(
-        configuration,
+        configuration,          # type: ignore[arg-type]
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

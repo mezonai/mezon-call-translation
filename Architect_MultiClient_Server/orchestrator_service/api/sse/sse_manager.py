@@ -7,6 +7,8 @@ import asyncio
 import threading
 import time
 
+from typing import Any
+
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
@@ -36,7 +38,7 @@ class SSEManager:
 
     def __init__(self):
         # channel_type -> context_key -> connection_id -> asyncio.Queue
-        self.connection_queues: dict[str, dict[str, dict[str, asyncio.Queue]]] = {}
+        self.connection_queues: dict[str, dict[str, dict[str, asyncio.Queue[Any]]]] = {}
 
         # channel_type -> context_key -> connection_id -> appid
         self.connection_appids: dict[str, dict[str, dict[str, str]]] = {}
@@ -109,7 +111,7 @@ class SSEManager:
             self._ensure_context_exists(channel_type, context_key)
 
             # Create asyncio.Queue for this connection
-            conn_queue = asyncio.Queue(maxsize=100)  # Limit to prevent memory issues
+            conn_queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=100)  # Limit to prevent memory issues
             self.connection_queues[channel_type][context_key][connection_id] = conn_queue
 
             return conn_queue
@@ -308,7 +310,7 @@ class SSEManager:
             Dictionary with connection counts per channel and context
         """
         async with self._lock:
-            stats = {}
+            stats: dict[str, dict[str, int]] = {}
             for channel_type, contexts in self.connection_queues.items():
                 stats[channel_type] = {}
                 for context_key, connections in contexts.items():
