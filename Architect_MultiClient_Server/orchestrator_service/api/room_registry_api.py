@@ -7,7 +7,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from livekit import api
 from pydantic import BaseModel, Field
-from typing import ClassVar
+from typing import ClassVar, Any
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 
@@ -27,7 +27,7 @@ transcription_service = TranscriptionService()
 
 # Set containing strong references to tasks - prevents them from being garbage collected
 # Add task when create it - remove when task is done
-_active_recording_tasks = set()
+_active_recording_tasks: set[asyncio.Task[Any]] = set()
 
 
 class RoomRegisterRequest(BaseModel):

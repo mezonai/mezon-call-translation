@@ -30,6 +30,7 @@ from typing import (
     ClassVar,
     Generic,
     TypeVar,
+    cast
 )
 
 from orchestrator_service.config.application_config import get_config
@@ -318,6 +319,9 @@ class RedisStreamService(Generic[T]):
             for entry in result:
                 message_id = decode_value(entry["message_id"])
 
+                if message_id is None:
+                    continue
+
                 # Re-add the task to stream (effectively release it)
                 # We do this by setting the idle time in PEL very high so it can be auto-claimed
                 # Or we can delete from PEL without ACK using XCLAIM to a dummy consumer
@@ -395,7 +399,7 @@ class RedisStreamService(Generic[T]):
                 for message_id, data in messages:
                     message_id_str = decode_value(message_id)
                     # Use injected task_class to parse the message
-                    task = self._task_class.from_stream_message(message_id_str, data)   # type: ignore[arg-type]
+                    task = cast(T, self._task_class.from_stream_message(message_id_str, data))   # type: ignore[arg-type]
                     tasks.append(task)
 
                     # Update task status in metadata
@@ -727,7 +731,7 @@ class RedisStreamService(Generic[T]):
 
                 message_id_str = decode_value(message_id)
                 # Use injected task_class to parse the message
-                task = self._task_class.from_stream_message(message_id_str, data)       # type: ignore[arg-type]
+                task = cast(T, self._task_class.from_stream_message(message_id_str, data))       # type: ignore[arg-type]
                 tasks.append(task)
 
                 # Update task metadata

@@ -79,7 +79,7 @@ async def list_rooms(
             limit=limit,
             skip=skip,
         )
-        rooms = [_serialize_room(room) for room in rooms]
+        serialized_rooms = [_serialize_room(room) for room in rooms]
         total = await pg_repo.count_rooms(
             status=status,
             search=search_trimmed,
@@ -91,7 +91,7 @@ async def list_rooms(
             "total": total,
             "limit": limit,
             "skip": skip,
-            "rooms": rooms,
+            "rooms": serialized_rooms,
         }
     except HTTPException:
         raise
@@ -116,9 +116,9 @@ async def get_room_by_id(
         if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
 
-        room = _serialize_room(room)
+        serialized_room = _serialize_room(room)
 
-        return {"status": "ok", "room": room}
+        return {"status": "ok", "room": serialized_room}
     except HTTPException:
         raise
     except Exception as e:

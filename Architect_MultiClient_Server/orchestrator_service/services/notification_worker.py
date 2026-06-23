@@ -173,7 +173,7 @@ class NotificationWorker:
 
         logger.info(
             f"✅ NotificationWorker started\n"
-            f"   Consumer ID: {self._stream_service._consumer_id}\n"
+            f"   Consumer ID: {stream_service._consumer_id}\n"
             f"   Stream: {self._config.stream_key}\n"
             f"   Group: {self._config.group_name}"
         )

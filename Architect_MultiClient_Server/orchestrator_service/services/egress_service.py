@@ -103,7 +103,7 @@ class EgressService:
                 start_recording_payload = {"track_id": track_sid, "file_output_path": filepath}
 
                 agent_request_channel = self._get_agent_request_channel()
-                result = await agent_request_channel.send_request(
+                fallback_result = await agent_request_channel.send_request(
                     request_type=AgentRequestType.START_AUDIO_RECORDING,
                     payload=start_recording_payload,
                     room_name=room_name,
@@ -111,9 +111,9 @@ class EgressService:
                 )
                 logger.info(
                     f"Fallback START_AUDIO_RECORDING dispatched for track={track_sid}, "
-                    f"request_id={result.get('request_id')}"
+                    f"request_id={fallback_result.get('request_id')}"
                 )
-                return result.get("request_id")
+                return fallback_result.get("request_id")
 
         except Exception as e:
             logger.error(f"✗ Failed to start egress: {e}")

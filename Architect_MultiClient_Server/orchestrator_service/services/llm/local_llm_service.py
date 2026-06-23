@@ -4,7 +4,7 @@ Local LLM service (OpenAI-compatible API)
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, cast, TypeVar, Type
 
 from openai import APIConnectionError, APIError, AsyncOpenAI, LengthFinishReasonError, RateLimitError
 from pydantic import BaseModel, ValidationError
@@ -25,6 +25,7 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+TModel = TypeVar('TModel', bound=BaseModel)
 
 class LocalLLMService(BaseLLMService):
     """Local LLM service for OpenAI-compatible API"""
@@ -67,7 +68,7 @@ class LocalLLMService(BaseLLMService):
             except Exception as e:
                 logger.warning(f"Failed to initialize LLM fallback service: {e}")
 
-    async def _call_local_llm(self, prompt: str, response_model: type[BaseModel]) -> dict[str, Any]:
+    async def _call_local_llm(self, prompt: str, response_model: Type[TModel]) -> TModel:
         response = await self.client.beta.chat.completions.parse(
             model=self.config.model,
             messages=[{"role": "user", "content": prompt}],
@@ -180,16 +181,17 @@ class LocalLLMService(BaseLLMService):
             logger.error(f"Failed to generate summary (all attempts exhausted) with room_id: {room_id}: {summary_res}")
             summary = ""
         else:
+            valid_summary = cast(SummaryResult, summary_res)
             summary_parts = [
-                f"Context\n{summary_res.context}",
-                f"Key Discussions\n{summary_res.key_discussions}",
+                f"Context\n{valid_summary.context}",
+                f"Key Discussions\n{valid_summary.key_discussions}",
             ]
-            if summary_res.decisions and summary_res.decisions.strip():
-                summary_parts.append(f"Decisions\n{summary_res.decisions}")
-            if summary_res.unresolved_issues and summary_res.unresolved_issues.strip():
-                summary_parts.append(f"Unresolved Issues\n{summary_res.unresolved_issues}")
-            if summary_res.next_focus and summary_res.next_focus.strip():
-                summary_parts.append(f"Next Focus\n{summary_res.next_focus}")
+            if valid_summary.decisions and valid_summary.decisions.strip():
+                summary_parts.append(f"Decisions\n{valid_summary.decisions}")
+            if valid_summary.unresolved_issues and valid_summary.unresolved_issues.strip():
+                summary_parts.append(f"Unresolved Issues\n{valid_summary.unresolved_issues}")
+            if valid_summary.next_focus and valid_summary.next_focus.strip():
+                summary_parts.append(f"Next Focus\n{valid_summary.next_focus}")
             summary = "\n\n".join(summary_parts)
 
         if action_items_failed:
@@ -198,7 +200,8 @@ class LocalLLMService(BaseLLMService):
             )
             action_items = []
         else:
-            action_items = action_items_res.action_items
+            valid_action_items= cast(ActionItemsResult, action_items_res)
+            action_items = valid_action_items.action_items
 
         if not summary_failed and not action_items_failed:
             logger.info(f"Successfully generated summary and action items with room_id: {room_id}")

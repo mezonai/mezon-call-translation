@@ -104,9 +104,14 @@ async def list_participants(room_id: str) -> ParticipantListResponseModel:
     room = await pg_repo.get_room_by_id(room_id)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
+
+    room_name = room.room_name
+    if not room_name:
+        raise HTTPException(status_code=400, detail=f"Room with ID {room_id} has no assigned room_name")
+
     try:
         livekit_service = get_livekit_service()
-        participants = await livekit_service.list_participants(room.get("room_name"))
+        participants = await livekit_service.list_participants(room_name)
         return ParticipantListResponseModel(
             status="ok",
             participants=[ParticipantModel(**participant) for participant in participants],

@@ -12,6 +12,7 @@ from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
 from orchestrator_service.services.llm.factory import create_llm_service
+from orchestrator_service.services.postgresql.models import TranscriptChunk
 from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository, get_pg_outbox_repository
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
@@ -65,13 +66,13 @@ class SummaryService:
             return None
 
         # 3. Collect all segments with absolute timestamps in one pass
-        all_segments = []
-        participant_durations = {}
+        all_segments: list[dict[str, Any]] = []
+        participant_durations: dict[str, float] = {}
 
         track_ids = [str(track.id) for track in tracks]
         all_chunks = await self.pg_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
 
-        chunks_by_track = {tid: [] for tid in track_ids}
+        chunks_by_track: dict[str, list[TranscriptChunk]] = {tid: [] for tid in track_ids}
         for chunk in all_chunks:
             tid = str(chunk.track_ref_id)
             if tid in chunks_by_track:
@@ -80,7 +81,8 @@ class SummaryService:
         for track in tracks:
             try:
                 participant = track.participant_identity or "Unknown"
-                track_start_ns = int(track.audio_info.get("started_at_ns", 0) or 0)
+                audio_info = track.audio_info or {}
+                track_start_ns = int(audio_info.get("started_at_ns", 0) or 0)
                 chunks = chunks_by_track[str(track.id)]
 
                 # Calculate duration for this track/participant using start_time and end_time of chunks
@@ -90,6 +92,9 @@ class SummaryService:
 
                 for chunk in chunks:
                     for seg in chunk.segments or []:
+                        if not isinstance(seg, dict):
+                            continue
+                        
                         text = seg.get("text", "").strip()
                         if not text:
                             continue
@@ -139,7 +144,11 @@ class SummaryService:
             turns.append(current_turn)
 
         # Update room participants list in-place with their calculated speech durations and save
-        room_participants = room_doc.participants or []
+        room_participants_raw = room_doc.participants
+        room_participants: list[dict[str, Any]] = (
+            room_participants_raw if isinstance(room_participants_raw, list) else []
+        )
+
         for p in room_participants:
             user_id = p.get("participant_identity")
             if user_id:
@@ -264,25 +273,25 @@ class SummaryService:
         is_success = False
         try:
             if retry_type == RetryType.SUMMARY:
-                result = await self.llm_service.summarize_summary(
+                summary_result = await self.llm_service.summarize_summary(
                     conversation_text=full_text,
                     language=self.config.llm.language,
                 )
 
                 # Format summary with only non-empty fields
                 summary_parts = [
-                    f"Context\n{result.context}",
-                    f"Key Discussions\n{result.key_discussions}",
+                    f"Context\n{summary_result.context}",
+                    f"Key Discussions\n{summary_result.key_discussions}",
                 ]
 
-                if result.decisions and result.decisions.strip():
-                    summary_parts.append(f"Decisions\n{result.decisions}")
+                if summary_result.decisions and summary_result.decisions.strip():
+                    summary_parts.append(f"Decisions\n{summary_result.decisions}")
 
-                if result.unresolved_issues and result.unresolved_issues.strip():
-                    summary_parts.append(f"Unresolved Issues\n{result.unresolved_issues}")
+                if summary_result.unresolved_issues and summary_result.unresolved_issues.strip():
+                    summary_parts.append(f"Unresolved Issues\n{summary_result.unresolved_issues}")
 
-                if result.next_focus and result.next_focus.strip():
-                    summary_parts.append(f"Next Focus\n{result.next_focus}")
+                if summary_result.next_focus and summary_result.next_focus.strip():
+                    summary_parts.append(f"Next Focus\n{summary_result.next_focus}")
 
                 summary_data = {
                     "summary": "\n\n".join(summary_parts),
@@ -292,7 +301,7 @@ class SummaryService:
                 is_success = True
 
             elif retry_type == RetryType.ACTION_ITEMS:
-                result = await self.llm_service.summarize_action_items(
+                action_result = await self.llm_service.summarize_action_items(
                     conversation_text=full_text,
                     language=self.config.llm.language,
                 )
@@ -300,22 +309,22 @@ class SummaryService:
                 summary_data = {
                     "summary": existing_summary,
                     "action_items": {
-                        item.participant_identity: item.participant_actions for item in result.action_items
+                        item.participant_identity: item.participant_actions for item in action_result.action_items
                     },
                 }
 
                 is_success = True
 
             else:  # RetryType.ALL
-                result = await self.llm_service.summarize_conversation(
+                both_result = await self.llm_service.summarize_conversation(
                     conversation_text=full_text, room_id=room_id, language=self.config.llm.language
                 )
-                is_success = result.summary_success and result.action_items_success
+                is_success = both_result.summary_success and both_result.action_items_success
 
                 summary_data = {
-                    "summary": result.summary,
+                    "summary": both_result.summary,
                     "action_items": {
-                        item.participant_identity: item.participant_actions for item in result.action_items
+                        item.participant_identity: item.participant_actions for item in both_result.action_items
                     },
                 }
 
@@ -400,7 +409,11 @@ class SummaryService:
             summary_dict["completed_at"] = convert_to_iso_8601(summary_dict["completed_at"])
 
         speech_durations = []
-        room_participants = room.participants or []
+        room_participants_raw = room.participants
+        room_participants: list[dict[str, Any]] = (
+            room_participants_raw if isinstance(room_participants_raw, list) else []
+        )
+
         for p in room_participants:
             user_id = p.get("participant_identity")
             if user_id and not user_id.startswith("EG_"):

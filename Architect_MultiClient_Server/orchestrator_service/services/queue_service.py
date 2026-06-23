@@ -106,9 +106,8 @@ class QueueService(Generic[T]):
     def stream_key(self) -> str:
         """Get the stream key."""
         producer = self._producer
-        if producer:
-            return producer.stream_key
-        return self._stream_key or self.config.redis.stream_key
+        key_from_producer = producer.stream_key if producer else None
+        return key_from_producer or self._stream_key or self.config.redis.stream_key
 
     @property
     def task_class(self) -> type[T]:
@@ -207,8 +206,13 @@ class QueueService(Generic[T]):
             if not redis_client:
                 return []
 
+            current_stream_key = producer.stream_key
+            if not current_stream_key:
+                logger.error("Cannot get pending tasks: stream_key is not defined")
+                return []
+
             # Read pending messages from stream (last 100)
-            messages = await redis_client.xrange(producer.stream_key, count=100)     # type: ignore[misc]
+            messages = await redis_client.xrange(current_stream_key, count=100)     # type: ignore[misc]
 
             pending_tasks = []
             for message_id, data in messages:

@@ -86,8 +86,14 @@ class NotificationHandler(logging.Handler):
     ):
         try:
             await self._ensure_connected()
+
+            producer = self._producer
+            if not producer:
+                return
+
             title = f"🚫 {record.levelname} in {record.name}"
-            await self._producer.send(
+
+            await producer.send(
                 title=title,
                 message={
                     "t": f"{title}{message}",

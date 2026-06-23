@@ -27,7 +27,7 @@ transcription_service = TranscriptionService()
 
 # Set containing strong references to tasks - prevents them from being garbage collected
 # Add task when create it - remove when task is done
-_active_recording_tasks = set()
+_active_recording_tasks: set[asyncio.Task[Any]] = set()
 
 class RoomRegisterRequest(BaseModel):
     """Request model for room registration"""
