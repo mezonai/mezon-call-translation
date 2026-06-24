@@ -139,14 +139,14 @@ class RedisProducerService(Generic[T]):
             raise ConnectionError("Redis client is not initialized")
 
         # Get task data from object
-        task_data = task.to_dict()  # type: ignore[misc]
-        task_id = task.task_id      # type: ignore[misc]
+        task_data = task.to_dict()
+        task_id = task.task_id
 
         try:
             # XADD to stream
             message_id = await redis_client.xadd(
                 self._stream_key,           # type: ignore[arg-type]
-                task_data,                  # type: ignore[arg-type]
+                task_data,
                 maxlen=100000,              # Limit stream size
                 approximate=True,
             )

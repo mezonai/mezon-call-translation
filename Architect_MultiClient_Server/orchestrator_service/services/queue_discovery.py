@@ -94,12 +94,12 @@ class QueueDiscovery:
 
             # Get stats if available
             stats_key = f"{stream_key}:stats"
-            stats_data = await redis_client.hgetall(stats_key)      # type: ignore[misc]
+            stats_data = await redis_client.hgetall(stats_key)
             stats = decode_mapping(stats_data) if stats_data else {}
 
             # Count workers
             workers_key = f"{stream_key}:workers"
-            workers_count = await redis_client.hlen(workers_key)    # type: ignore[misc]
+            workers_count = await redis_client.hlen(workers_key)
 
             # Extract queue name from stream key
             queue_name = stream_key.replace(":stream", "")

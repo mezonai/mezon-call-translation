@@ -172,7 +172,7 @@ class QueueService(Generic[T]):
 
             # Get task metadata from Redis hash
             task_key = f"{producer._config.tasks_prefix}:{task_id}"
-            task_data_raw = await redis_client.hgetall(task_key)     # type: ignore[misc]
+            task_data_raw = await redis_client.hgetall(task_key)
 
             if not task_data_raw:
                 return None
@@ -212,7 +212,7 @@ class QueueService(Generic[T]):
                 return []
 
             # Read pending messages from stream (last 100)
-            messages = await redis_client.xrange(current_stream_key, count=100)     # type: ignore[misc]
+            messages = await redis_client.xrange(current_stream_key, count=100)
 
             pending_tasks = []
             for message_id, data in messages:
@@ -258,7 +258,7 @@ class QueueService(Generic[T]):
             dlq_stream_key = f"{producer.stream_key}:dlq"
 
             # Read messages from DLQ stream
-            messages = await redis_client.xrange(dlq_stream_key, count=limit)     # type: ignore[misc]
+            messages = await redis_client.xrange(dlq_stream_key, count=limit)
 
             dlq_tasks = []
             for message_id, data in messages:
@@ -326,10 +326,10 @@ class QueueService(Generic[T]):
                     task_data.pop("dead_letter_at", None)
 
                     # Re-enqueue to main stream
-                    await redis_client.xadd(producer.stream_key, task_data)     # type: ignore[arg-type]
+                    await redis_client.xadd(producer.stream_key, task_data)
 
                     # Remove from DLQ
-                    await redis_client.xdel(dlq_stream_key, message_id)         # type: ignore[arg-type]
+                    await redis_client.xdel(dlq_stream_key, message_id)
 
                     logger.info(f"Retried DLQ task: {task_id}")
                     return True

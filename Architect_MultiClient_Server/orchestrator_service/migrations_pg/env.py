@@ -64,7 +64,7 @@ async def run_async_migrations() -> None:
     configuration["sqlalchemy.url"] = get_url()
 
     connectable = async_engine_from_config(
-        configuration,          # type: ignore[arg-type]
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

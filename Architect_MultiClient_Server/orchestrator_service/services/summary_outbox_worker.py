@@ -2,7 +2,6 @@
 Summary Outbox Worker Service - Processes and retries failed summarization tasks.
 """
 
-import contextlib
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable

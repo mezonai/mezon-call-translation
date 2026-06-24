@@ -5,7 +5,6 @@ Consumer service that receives SaveTranscriptionTask batches from Redis
 and saves them progressively to PostgreSQL.
 """
 
-import contextlib
 import asyncio
 import contextlib
 import time
