@@ -4,7 +4,7 @@ Local LLM service (OpenAI-compatible API)
 
 import asyncio
 import logging
-from typing import Any, cast, TypeVar, Type
+from typing import TypeVar, cast
 
 from openai import APIConnectionError, APIError, AsyncOpenAI, LengthFinishReasonError, RateLimitError
 from pydantic import BaseModel, ValidationError
@@ -68,7 +68,7 @@ class LocalLLMService(BaseLLMService):
             except Exception as e:
                 logger.warning(f"Failed to initialize LLM fallback service: {e}")
 
-    async def _call_local_llm(self, prompt: str, response_model: Type[TModel]) -> TModel:
+    async def _call_local_llm(self, prompt: str, response_model: type[TModel]) -> TModel:
         response = await self.client.beta.chat.completions.parse(
             model=self.config.model,
             messages=[{"role": "user", "content": prompt}],

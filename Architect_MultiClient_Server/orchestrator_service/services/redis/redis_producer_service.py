@@ -146,7 +146,7 @@ class RedisProducerService(Generic[T]):
             # XADD to stream
             message_id = await redis_client.xadd(
                 self._stream_key,           # type: ignore[arg-type]
-                task_data,
+                task_data,                  # type: ignore[arg-type]
                 maxlen=100000,              # Limit stream size
                 approximate=True,
             )

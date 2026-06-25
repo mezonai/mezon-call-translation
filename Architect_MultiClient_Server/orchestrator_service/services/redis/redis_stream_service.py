@@ -25,13 +25,7 @@ import socket
 import time
 import uuid
 from dataclasses import dataclass
-from typing import (
-    Any,
-    ClassVar,
-    Generic,
-    TypeVar,
-    cast
-)
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.stream_base import (
@@ -209,7 +203,7 @@ class RedisStreamService(Generic[T]):
 
             redis_client = Redis(connection_pool=manager.get_pool())
             await redis_client.ping()   # type: ignore[misc]
-            
+
             self._redis = redis_client
             logger.info(f"✅ Redis stream service using shared pool at {self._config.host}:{self._config.port}")
 
@@ -592,7 +586,7 @@ class RedisStreamService(Generic[T]):
             )
 
             # Handle empty or None result
-            if not result or (isinstance(result, (list, tuple)) and len(result) == 0):
+            if not result or (isinstance(result, list | tuple) and len(result) == 0):
                 return {"pending_count": 0, "consumers": {}}
 
             # Handle dict format (some redis-py versions return dict)
@@ -602,7 +596,7 @@ class RedisStreamService(Generic[T]):
                 max_id = result.get("max", None)
                 consumers = result.get("consumers", [])
             # Handle tuple/list format [pending_count, min_id, max_id, consumers]
-            elif isinstance(result, (list, tuple)) and len(result) >= 4:
+            elif isinstance(result, list | tuple) and len(result) >= 4:
                 pending_count, min_id, max_id, consumers = result[:4]
             else:
                 logger.warning(f"Unexpected xpending result format: {type(result)} - {result}")
@@ -612,7 +606,7 @@ class RedisStreamService(Generic[T]):
             consumer_info = {}
             if consumers:
                 for consumer_data in consumers:
-                    if isinstance(consumer_data, (list, tuple)) and len(consumer_data) >= 2:
+                    if isinstance(consumer_data, list | tuple) and len(consumer_data) >= 2:
                         name = decode_value(consumer_data[0])
                         count = int(consumer_data[1]) if consumer_data[1] else 0
                         consumer_info[name] = count

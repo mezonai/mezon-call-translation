@@ -3,9 +3,10 @@ SSE Agent Request API
 Endpoints for agents to receive requests from orchestrator via SSE
 """
 
+from typing import ClassVar
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from typing import ClassVar
 
 from orchestrator_service.api.sse.channels.agent_request_channel import AgentRequestChannel
 from orchestrator_service.api.sse.sse_manager import SSEManager

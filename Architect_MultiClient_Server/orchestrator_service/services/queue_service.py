@@ -172,7 +172,7 @@ class QueueService(Generic[T]):
 
             # Get task metadata from Redis hash
             task_key = f"{producer._config.tasks_prefix}:{task_id}"
-            task_data_raw = await redis_client.hgetall(task_key)
+            task_data_raw = await redis_client.hgetall(task_key)        # type: ignore[misc]
 
             if not task_data_raw:
                 return None
@@ -254,7 +254,7 @@ class QueueService(Generic[T]):
             redis_client = producer._redis
             if not redis_client:
                 return []
-            
+
             dlq_stream_key = f"{producer.stream_key}:dlq"
 
             # Read messages from DLQ stream
@@ -303,9 +303,9 @@ class QueueService(Generic[T]):
             producer = await self._get_producer()
 
             redis_client = producer._redis
-            if not redis_client:
+            if not redis_client or not producer.stream_key:
                 return False
-            
+
             dlq_stream_key = f"{producer.stream_key}:dlq"
 
             # Find the task in DLQ

@@ -1,4 +1,3 @@
-import asyncio
 from typing import Any
 
 from orchestrator_service.models.webhook_models import (
@@ -10,15 +9,12 @@ from orchestrator_service.services.egress_service import EgressService
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
 from orchestrator_service.utils.filepath import Filepath
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import parse_participant_identity
 
 logger = get_logger(__name__)
-
-# Set containing strong references to tasks - prevents them from being garbage collected
-# Add task when create it - remove when task is done
-_active_recording_tasks: set[asyncio.Task[Any]] = set()
 
 class WebhookHandler:
     """Webhook event handler from LiveKit"""
@@ -103,13 +99,9 @@ class WebhookHandler:
         if track.is_audio:
             safe_identity = identity if identity is not None else "unknown"
 
-            recording_task = asyncio.create_task(
+            asyncio_create_task_safety(
                 self.egress_service.start_recording(str(room_name), track.sid, track.track_type, track.source, safe_identity)
             )
-            _active_recording_tasks.add(recording_task)
-
-            # Add done callback to remove task from set when it completes
-            recording_task.add_done_callback(_active_recording_tasks.discard)
             return WebhookResponse(received=True, action="recording_started")
 
         logger.info(f"  ⏭ Skipping {track.track_type}")
@@ -164,7 +156,7 @@ class WebhookHandler:
             room_ref_id = await self.room_registry.get_room_id(str(room_name))
 
             # Save track metadata (filename will be updated later when egress ends)
-            track_metadata_task = asyncio.create_task(
+            asyncio_create_task_safety(
                 self.transcription_service.save_track_metadata(
                     egress_id=str(egress_id),
                     track_id=str(track_id),
@@ -172,9 +164,6 @@ class WebhookHandler:
                     participant_identity=participant_identity,
                 )
             )
-
-            _active_recording_tasks.add(track_metadata_task)
-            track_metadata_task.add_done_callback(_active_recording_tasks.discard)
 
             return WebhookResponse(received=True, action="track_metadata_saved")
 
@@ -204,9 +193,7 @@ class WebhookHandler:
                 error = egress.get("error", "no error info")
                 logger.error(f"Egress failed: {error}")
 
-                recovery_task = asyncio.create_task(self._attempt_egress_recovery(room_name, egress_id, error))
-                _active_recording_tasks.add(recovery_task)
-                recovery_task.add_done_callback(_active_recording_tasks.discard)
+                asyncio_create_task_safety(self._attempt_egress_recovery(room_name, egress_id, error))
 
                 return WebhookResponse(received=True, action="egress_ended_failed")
             logger.info(f"Egress not completed: {status}, egress_ended full event: {event}")
@@ -218,9 +205,7 @@ class WebhookHandler:
         self._log_egress_info(egress_info)
 
         # Enqueue for transcription
-        enqueue_task = asyncio.create_task(self.transcription_service.enqueue(egress_info.dict()))
-        _active_recording_tasks.add(enqueue_task)
-        enqueue_task.add_done_callback(_active_recording_tasks.discard)
+        asyncio_create_task_safety(self.transcription_service.enqueue(egress_info.dict()))
 
         return WebhookResponse(received=True, action="egress_ending_logged")
 
@@ -307,8 +292,8 @@ class WebhookHandler:
 
                 raw_identity = participant_detail.get("identity")
                 safe_identity = str(raw_identity) if raw_identity is not None else "unknown"
-                
-                recording_task = asyncio.create_task(
+
+                asyncio_create_task_safety(
                     self.egress_service.start_recording(
                         room_name=room_name,
                         track_sid=track_info.get("sid"),
@@ -318,9 +303,6 @@ class WebhookHandler:
                         force_update=True,
                     )
                 )
-
-                _active_recording_tasks.add(recording_task)
-                recording_task.add_done_callback(_active_recording_tasks.discard)
             else:
                 logger.error(
                     f"[Recovery] Track {track_id} not found in participant's tracks. "

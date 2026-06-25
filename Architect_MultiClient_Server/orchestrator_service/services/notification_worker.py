@@ -10,6 +10,7 @@ This worker:
 
 import asyncio
 import contextlib
+
 import httpx
 
 from orchestrator_service.config.application_config import get_config
@@ -111,7 +112,7 @@ class NotificationWorker:
         if not http_client:
             logger.error("❌ HTTP Client is not initialized. Call connect() first.")
             return False
-        
+
         try:
             logger.info(f"📨 Processing notification: {task.title}")
 

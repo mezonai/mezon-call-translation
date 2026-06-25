@@ -4,11 +4,11 @@ Endpoints for bot to receive agent metadata events via SSE
 """
 
 from datetime import datetime
+from typing import ClassVar
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
-from typing import ClassVar
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.auth.verify_account import authenticate_account

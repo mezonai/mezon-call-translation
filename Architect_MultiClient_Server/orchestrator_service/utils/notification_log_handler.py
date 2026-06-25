@@ -1,12 +1,11 @@
-import asyncio
+import contextlib
 import logging
 import time
 import traceback
 from typing import Any
 
-# Set containing strong references to tasks - prevents them from being garbage collected
-# Add task when create it - remove when task is done
-_active_recording_tasks: set[asyncio.Task[Any]] = set()
+from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
+
 
 class NotificationHandler(logging.Handler):
     """
@@ -54,15 +53,8 @@ class NotificationHandler(logging.Handler):
             self._last_sent[error_key] = now
 
             # Fire async task
-            try:
-                loop = asyncio.get_running_loop()
-                notification_task = loop.create_task(self._send_notification(record, message))
-                _active_recording_tasks.add(notification_task)
-
-                # Request Python to automatically remove task when done
-                notification_task.add_done_callback(_active_recording_tasks.discard)
-            except RuntimeError:
-                pass
+            with contextlib.suppress(RuntimeError):
+                asyncio_create_task_safety(self._send_notification(record, message))
 
         except Exception:
             pass

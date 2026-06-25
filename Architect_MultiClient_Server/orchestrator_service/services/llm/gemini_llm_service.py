@@ -111,7 +111,7 @@ class GeminiLLMService(BaseLLMService):
         raw_text = response.text
         if not raw_text:
             raise ValueError("Empty response text from Gemini API")
-        
+
         return SummaryResult.model_validate(extract_json_from_llm(raw_text))
 
     async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
@@ -128,7 +128,7 @@ class GeminiLLMService(BaseLLMService):
         raw_text = response.text
         if not raw_text:
             raise ValueError("Empty response text from Gemini API")
-        
+
         return ActionItemsResult.model_validate(extract_json_from_llm(raw_text))
 
     async def summarize_conversation(

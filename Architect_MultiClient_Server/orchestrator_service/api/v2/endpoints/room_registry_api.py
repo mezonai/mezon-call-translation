@@ -2,7 +2,6 @@
 Room Registry API - Manager active rooms for webhook processing
 """
 
-import asyncio
 from datetime import datetime
 from typing import Any, ClassVar
 
@@ -16,6 +15,7 @@ from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import parse_participant_identity
 
@@ -24,10 +24,6 @@ logger = get_logger(__name__)
 
 # Initialize transcription service
 transcription_service = TranscriptionService()
-
-# Set containing strong references to tasks - prevents them from being garbage collected
-# Add task when create it - remove when task is done
-_active_recording_tasks: set[asyncio.Task[Any]] = set()
 
 class RoomRegisterRequest(BaseModel):
     """Request model for room registration"""
@@ -122,7 +118,7 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Dep
                             f"participant={participant_identity}, source={source_str}"
                         )
 
-                        recording_task = asyncio.create_task(
+                        asyncio_create_task_safety(
                             egress_service.start_recording(
                                 request.room_name,
                                 track.sid,
@@ -131,11 +127,6 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Dep
                                 participant_identity,
                             )
                         )
-
-                        _active_recording_tasks.add(recording_task)
-
-                        # Request Python to automatically remove task when done
-                        recording_task.add_done_callback(_active_recording_tasks.discard)
 
                         tracks_started += 1
 
@@ -152,9 +143,7 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Dep
         # Continue - room is already registered
 
     metadata_channel = MetadataChannel()
-    started_room_task = asyncio.create_task(metadata_channel.push_room_started(str(room_id), request.room_name))
-    _active_recording_tasks.add(started_room_task)
-    started_room_task.add_done_callback(_active_recording_tasks.discard)
+    asyncio_create_task_safety(metadata_channel.push_room_started(str(room_id), request.room_name))
 
     return {
         "status": "ok",
@@ -212,17 +201,13 @@ async def unregister_room(request: RoomUnregisterRequest, auth: dict[str, Any] =
             # Don't fail unregistration if egress stopping fails
 
         try:
-            final_room_task = asyncio.create_task(transcription_service.final_room(request.room_name, room_id))
-            _active_recording_tasks.add(final_room_task)
-            final_room_task.add_done_callback(_active_recording_tasks.discard)
+            asyncio_create_task_safety(transcription_service.final_room(request.room_name, room_id))
         except Exception as e:
             logger.error(f"Error finalizing room '{request.room_name}': {e}", exc_info=True)
             # Don't fail unregistration if finalization fails
 
         metadata_channel = MetadataChannel()
-        ended_room_task = asyncio.create_task(metadata_channel.push_room_ended(str(room_id), request.room_name))
-        _active_recording_tasks.add(ended_room_task)
-        ended_room_task.add_done_callback(_active_recording_tasks.discard)
+        asyncio_create_task_safety(metadata_channel.push_room_ended(str(room_id), request.room_name))
 
         return {
             "status": "ok",

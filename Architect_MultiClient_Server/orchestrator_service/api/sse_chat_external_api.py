@@ -3,9 +3,10 @@ SSE Chat External API
 Endpoints for bot to receive chat external events via SSE
 """
 
+from typing import ClassVar
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import ClassVar
 
 from orchestrator_service.api.sse.channels.chat_external_channel import ChatExternalChannel
 from orchestrator_service.api.sse.sse_manager import SSEManager

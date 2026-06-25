@@ -5,7 +5,7 @@ Pydantic models for different request type payloads with discriminated union.
 """
 
 from enum import StrEnum
-from typing import Literal, ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 

@@ -1,5 +1,6 @@
 import signal
 from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -91,6 +92,10 @@ async def lifespan(app: FastAPI):
         redis_manager = get_connection_manager()
         await redis_manager.connect()
         logger.info("✅ Redis connection pool created")
+
+        # Initialize Room Registry (auto-connects to Redis pool)
+        _ = get_room_registry()
+        logger.info("✅ Room Registry initialized")
 
         # Initialize Save Transcription consumer service
         save_transcription_service = RedisSaveTranscriptionService()
