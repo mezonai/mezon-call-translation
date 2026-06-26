@@ -132,13 +132,13 @@ class GeminiLLMService(BaseLLMService):
         return ActionItemsResult.model_validate(extract_json_from_llm(raw_text))
 
     async def summarize_conversation(
-        self, conversation_text: str, room_id: str, language: str = "Vietnamese"
+        self, conversation_text: str, language: str = "Vietnamese"
     ) -> SummaryActionItemsResult:
         """Run 2 Gemini requests: one for summary and one for action items."""
         try:
             summary_result = await self.summarize_summary(conversation_text, language)
             action_items_result = await self.summarize_action_items(conversation_text, language)
-            logger.info(f"Successfully generated summary and action items using Gemini (2 requests) for room: {room_id}")
+            logger.info("Successfully generated summary and action items using Gemini (2 requests)")
 
             # Build summary with only non-empty fields
             summary_parts = [
@@ -162,7 +162,7 @@ class GeminiLLMService(BaseLLMService):
                 action_items_success=True,
             )
         except Exception as e:
-            logger.error(f"Gemini summarization error for room {room_id}: {e}")
+            logger.error(f"Gemini summarization error: {e}")
             return SummaryActionItemsResult(
                 summary=f"An error occurred during summarization: {e}",
                 action_items=[],

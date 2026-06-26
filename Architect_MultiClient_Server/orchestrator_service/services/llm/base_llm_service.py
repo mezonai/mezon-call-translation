@@ -5,7 +5,7 @@ Base abstract class for all LLM service providers
 from abc import ABC, abstractmethod
 
 from orchestrator_service.config.application_config import LLMConfig
-from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
+from orchestrator_service.models.summary_models import ActionItemsResult, SummaryResult
 
 
 class BaseLLMService(ABC):
@@ -45,26 +45,6 @@ class BaseLLMService(ABC):
         Args:
             conversation_text: Formatted conversation with timestamps and participants
                               Format: [time] participant_identity: transcript_text
-
-        Returns:
-            ActionItemsResult containing only action items
-
-        Raises:
-            Exception: If extraction fails
-        """
-        pass
-
-    @abstractmethod
-    async def summarize_conversation(
-        self, conversation_text: str, room_id: str, language: str = "Vietnamese"
-    ) -> SummaryActionItemsResult:
-        """
-        Generate both summary and action items from conversation transcript
-
-        Args:
-            conversation_text: Formatted conversation with timestamps and participants
-                              Format: [time] participant_identity: transcript_text
-            room_id: Identifier for the room being summarized (used for logging and fallback logic)
 
         Returns:
             ActionItemsResult containing only action items
