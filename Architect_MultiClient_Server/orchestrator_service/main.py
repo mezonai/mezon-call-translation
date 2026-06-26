@@ -92,6 +92,10 @@ async def lifespan(app: FastAPI):
         await redis_manager.connect()
         logger.info("✅ Redis connection pool created")
 
+        # Initialize Room Registry (auto-connects to Redis pool)
+        _ = get_room_registry()
+        logger.info("✅ Room Registry initialized")
+
         # Initialize Save Transcription consumer service
         save_transcription_service = RedisSaveTranscriptionService()
         await save_transcription_service.start()
