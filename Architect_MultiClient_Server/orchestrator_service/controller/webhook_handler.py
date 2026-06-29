@@ -97,10 +97,8 @@ class WebhookHandler:
         logger.info(f"  Track: {track.sid} (mime: {track.mime_type}, source: {track.source})")
 
         if track.is_audio:
-            safe_identity = identity if identity is not None else "unknown"
-
             asyncio_create_task_safety(
-                self.egress_service.start_recording(str(room_name), track.sid, track.track_type, track.source, safe_identity)
+                self.egress_service.start_recording(room_name, track.sid, track.track_type, track.source, identity)
             )
             return WebhookResponse(received=True, action="recording_started")
 
@@ -289,10 +287,7 @@ class WebhookHandler:
                     f"sid={track_info.get('sid')}, type={track_info.get('type')}, "
                     f"source={track_info.get('source')}"
                 )
-
-                raw_identity = participant_detail.get("identity")
-                safe_identity = str(raw_identity) if raw_identity is not None else "unknown"
-
+                
                 asyncio_create_task_safety(
                     self.egress_service.start_recording(
                         room_name=room_name,

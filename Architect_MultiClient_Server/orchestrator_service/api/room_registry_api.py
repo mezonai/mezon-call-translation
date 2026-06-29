@@ -2,8 +2,6 @@
 Room Registry API - Manager active rooms for webhook processing
 """
 
-from typing import ClassVar
-
 from fastapi import APIRouter, HTTPException
 from livekit import api
 from pydantic import BaseModel, Field
