@@ -16,10 +16,6 @@ from orchestrator_service.utils.participant_identity import parse_participant_id
 
 logger = get_logger(__name__)
 
-# Set containing strong references to tasks - prevents them from being garbage collected
-# Add task when create it - remove when task is done
-_active_recording_tasks = set()
-
 class WebhookHandler:
     """Webhook event handler from LiveKit"""
 
