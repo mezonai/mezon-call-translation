@@ -28,6 +28,8 @@ class TrackInfo(BaseModel):
 class EgressInfo(BaseModel):
     """Egress information để gửi đi (simplified to match TranscriptionRequest)"""
 
+    model_config = {"populate_by_name": True}
+
     egress_id: str = Field(alias="egressId")
     filename: str
     location: str

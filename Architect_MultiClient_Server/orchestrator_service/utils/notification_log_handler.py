@@ -6,6 +6,7 @@ from typing import Any
 
 from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
 
+
 class NotificationHandler(logging.Handler):
     """
     Automatically send ERROR logs to notification system.
