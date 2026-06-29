@@ -287,6 +287,9 @@ class WebhookHandler:
                     f"sid={track_info.get('sid')}, type={track_info.get('type')}, "
                     f"source={track_info.get('source')}"
                 )
+
+                raw_identity = participant_detail.get("identity")
+                safe_identity = str(raw_identity) if raw_identity is not None else "unknown"
                 
                 asyncio_create_task_safety(
                     self.egress_service.start_recording(
