@@ -1,17 +1,16 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from typing import Any
+
 from orchestrator_service.api.sse_metadata_api import metadata_channel
-from orchestrator_service.services.summary_service import get_summary_service
-from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.transcription_task import TranscriptionTask
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
 )
-from orchestrator_service.models.transcription_task import TranscriptionTask
+from orchestrator_service.services.summary_service import get_summary_service
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -25,7 +24,7 @@ class TranscriptionService:
         self.api_url = f"http://{self.config.host}:{self.config.port}/api/transcribe"
         self.timeout = 30.0
         self.pg_repo = PgTranscriptRepository()
-        self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
+        self._redis_producer: RedisProducerService[TranscriptionTask] | None = None
         self.stream_key = "transcription:stream"
 
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
@@ -38,7 +37,7 @@ class TranscriptionService:
             await self._redis_producer.connect()
         return self._redis_producer
 
-    async def enqueue(self, egress_info: Dict) -> bool:
+    async def enqueue(self, egress_info: dict) -> bool:
         """
         Send egress info directly to Redis Stream.
 
@@ -67,26 +66,18 @@ class TranscriptionService:
                 )
 
                 if track_result and track_result.room_ref_id:
-                    room = await self.pg_repo.check_event_record_done(
-                        track_result.room_ref_id
-                    )
+                    room = await self.pg_repo.check_event_record_done(track_result.room_ref_id)
                     if room:
                         await metadata_channel.push_room_record_done(
                             room_id=str(room.id),
                             room_name=room.room_name,
                         )
                 elif track_result:
-                    logger.warning(
-                        f"Track metadata saved but no room_ref_id found: {track_result}"
-                    )
+                    logger.warning(f"Track metadata saved but no room_ref_id found: {track_result}")
                 else:
-                    logger.warning(
-                        "Failed to save track metadata: track_result is None"
-                    )
+                    logger.warning("Failed to save track metadata: track_result is None")
 
-                logger.info(
-                    f"✅ Track metadata updated: egress={egress_info.get('egressId')}"
-                )
+                logger.info(f"✅ Track metadata updated: egress={egress_info.get('egressId')}")
             except Exception as e:
                 logger.warning(f"Failed to update track metadata: {e}")
                 # Continue processing even if metadata update fails
@@ -127,17 +118,13 @@ class TranscriptionService:
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-            updated = await self.pg_repo.final_room_status(
-                room_name=room_name, room_id=room_id
-            )
+            updated = await self.pg_repo.final_room_status(room_name=room_name, room_id=room_id)
 
             if not updated:
                 return False
 
             if await self.pg_repo.check_event_record_done(room_id):
-                await metadata_channel.push_room_record_done(
-                    room_id=str(room_id), room_name=room_name
-                )
+                await metadata_channel.push_room_record_done(room_id=str(room_id), room_name=room_name)
 
             if await self.pg_repo.check_and_complete_room(room_id):
                 service = get_summary_service()
@@ -148,7 +135,7 @@ class TranscriptionService:
             logger.exception("Failed to end room transcription: %s", e)
             return False
 
-    async def start_room(self, room_name: str) -> Optional[dict]:
+    async def start_room(self, room_name: str) -> dict | None:
         """
         Notify transcription service to start room
 
@@ -158,9 +145,7 @@ class TranscriptionService:
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-            room_id = await self.pg_repo.create_room_session(
-                room_name=room_name
-            )
+            room_id = await self.pg_repo.create_room_session(room_name=room_name)
             return {
                 "success": True,
                 "message": f"Room {room_name} started successfully",
@@ -171,9 +156,7 @@ class TranscriptionService:
 
         return None
 
-    async def save_participant(
-        self, room_id: str, participant_identity: str, timestamp: datetime = None
-    ) -> bool:
+    async def save_participant(self, room_id: str, participant_identity: str, timestamp: datetime | None = None) -> bool:
         """
         Save participant info to PostgreSQL
 
@@ -196,18 +179,14 @@ class TranscriptionService:
             logger.exception(f"Failed to save participant: {e}")
             return False
 
-    async def save_participants_batch(
-        self, room_id: str, participants: List[Dict[str, Any]]
-    ) -> Dict[str, int]:
+    async def save_participants_batch(self, room_id: str, participants: list[dict[str, Any]]) -> dict[str, int]:
         """
         Save batch of participants to PostgreSQL
         """
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-            result = await self.pg_repo.save_batch_participants(
-                room_id=room_id, participants=participants
-            )
+            result = await self.pg_repo.save_batch_participants(room_id=room_id, participants=participants)
             return result
         except Exception as e:
             logger.exception(f"Failed to save batch participants: {e}")
@@ -253,9 +232,7 @@ class TranscriptionService:
             )
 
             if not track_result:
-                logger.error(
-                    f"Failed to save track metadata for egress_id '{egress_id}'"
-                )
+                logger.error(f"Failed to save track metadata for egress_id '{egress_id}'")
                 return False
 
             return True

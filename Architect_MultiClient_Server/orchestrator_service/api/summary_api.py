@@ -2,13 +2,14 @@
 Internal API endpoints for room summary
 """
 
-from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime
-from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
+
+from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
 )
-from orchestrator_service.models.summary_models import RoomSummaryResponse, RetryType
 from orchestrator_service.services.summary_service import get_summary_service
 
 client_router = APIRouter(prefix="/api/summary", tags=["Summary"])
@@ -17,13 +18,11 @@ client_router = APIRouter(prefix="/api/summary", tags=["Summary"])
 @client_router.get("/room/{room_name}", response_description="Get summary by room ID")
 async def get_summary_by_room_name(
     room_name: str,
-    start_time: Optional[datetime] = Query(
+    start_time: datetime | None = Query(
         None,
         description="Start time for room summary (ISO format: 2024-01-01T00:00:00)",
     ),
-    end_time: Optional[datetime] = Query(
-        None, description="End time for room summary (ISO format: 2024-01-31T23:59:59)"
-    ),
+    end_time: datetime | None = Query(None, description="End time for room summary (ISO format: 2024-01-31T23:59:59)"),
 ):
     """
     Get summary by room name.
@@ -67,11 +66,9 @@ async def retry_summary(
     type: RetryType = Query(RetryType.ALL, description="Type of retry: 'summary', 'action_items', or 'all'"),
 ):
     try:
-        summary_data = await get_summary_service().retry_summary_from_full_text(
-            room_id, retry_type=type
-        )
+        summary_data = await get_summary_service().retry_summary_from_full_text(room_id, retry_type=type)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
     if summary_data is None:
         raise HTTPException(status_code=500, detail="Update summary_data to DB failed")

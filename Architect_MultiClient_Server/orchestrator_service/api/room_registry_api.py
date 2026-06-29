@@ -2,21 +2,21 @@
 Room Registry API - Manager active rooms for webhook processing
 """
 
-import asyncio
-from typing import Optional
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 from livekit import api
+from pydantic import BaseModel, Field
+from typing import ClassVar
 
-from orchestrator_service.utils.participant_identity import parse_participant_identity
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.livekit_client import get_livekit_service
-from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 
 # Import để có thể access egress_service
 from orchestrator_service.api.webhook_api import egress_service
+from orchestrator_service.services.livekit_client import get_livekit_service
+from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
+from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.participant_identity import parse_participant_identity
 
 router = APIRouter(prefix="/api/room-registry", tags=["Room Registry"])
 logger = get_logger(__name__)
@@ -24,14 +24,13 @@ logger = get_logger(__name__)
 # Initialize transcription service
 transcription_service = TranscriptionService()
 
-
 class RoomRegisterRequest(BaseModel):
     """Request model for room registration"""
 
     room_name: str = Field(..., description="Room name to register")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "room_name": "my-room-123",
             }
@@ -49,7 +48,7 @@ class RoomStatusResponse(BaseModel):
 
     room_name: str
     registered: bool
-    room_id: Optional[str] = None
+    room_id: str | None = None
 
 
 @router.post("/register", response_description="Register a room for webhook processing")
@@ -77,20 +76,16 @@ async def register_room(
                 stt_room_id = stt_response.get("room_id")
                 logger.info(f"✅ Room '{request.room_name}' started in STT service")
         else:
-            logger.warning(f"⚠️ Failed to start room in STT service")
+            logger.warning("⚠️ Failed to start room in STT service")
     except Exception as e:
         logger.error(f"Error starting room in STT: {e}", exc_info=True)
 
     # 2. Register room in registry
     if stt_room_id is None:
-        raise HTTPException(
-            status_code=400, detail=f"Failed to obtain room_id from STT service"
-        )
+        raise HTTPException(status_code=400, detail="Failed to obtain room_id from STT service")
     if not await registry.register_room(request.room_name, stt_room_id):
         logger.error(f"Room '{request.room_name}' is already registered")
-        raise HTTPException(
-            status_code=409, detail=f"Room '{request.room_name}' is already registered"
-        )
+        raise HTTPException(status_code=409, detail=f"Room '{request.room_name}' is already registered")
 
     # 3. Start recording for existing tracks
     try:
@@ -110,20 +105,17 @@ async def register_room(
                     is_audio = track.type == 0 or track.source == 4
 
                     if is_audio:
-                        source_str = {4: "SCREEN_SHARE_AUDIO", 2: "MICROPHONE"}.get(
-                            track.source, "UNKNOWN"
-                        )
+                        source_str = {4: "SCREEN_SHARE_AUDIO", 2: "MICROPHONE"}.get(track.source, "UNKNOWN")
 
-                        participant_identity = parse_participant_identity(
-                            participant.identity
-                        )
+                        participant_identity = parse_participant_identity(participant.identity)
 
                         logger.info(
                             f"Starting recording: track={track.sid}, "
                             f"participant={participant_identity}, source={source_str}"
                         )
 
-                        asyncio.create_task(
+                        # Create task and add to set
+                        asyncio_create_task_safety(
                             egress_service.start_recording(
                                 request.room_name,
                                 track.sid,
@@ -132,6 +124,7 @@ async def register_room(
                                 participant_identity,
                             )
                         )
+
                         tracks_started += 1
 
             logger.info(f"Started {tracks_started} audio track recordings")
@@ -143,9 +136,7 @@ async def register_room(
         # Continue - room is already registered
 
     metadata_channel = MetadataChannel()
-    asyncio.create_task(
-        metadata_channel.push_room_started(str(stt_room_id), request.room_name)
-    )
+    asyncio_create_task_safety(metadata_channel.push_room_started(str(stt_room_id), request.room_name))
 
     return {
         "status": "ok",
@@ -205,19 +196,13 @@ async def unregister_room(
             # Don't fail unregistration if egress stopping fails
 
         try:
-            asyncio.create_task(
-                transcription_service.final_room(request.room_name, room_id)
-            )
+            asyncio_create_task_safety(transcription_service.final_room(request.room_name, room_id))
         except Exception as e:
-            logger.error(
-                f"Error finalizing room '{request.room_name}': {e}", exc_info=True
-            )
+            logger.error(f"Error finalizing room '{request.room_name}': {e}", exc_info=True)
             # Don't fail unregistration if finalization fails
 
         metadata_channel = MetadataChannel()
-        asyncio.create_task(
-            metadata_channel.push_room_ended(str(room_id), request.room_name)
-        )
+        asyncio_create_task_safety(metadata_channel.push_room_ended(str(room_id), request.room_name))
 
         return {
             "status": "ok",
@@ -231,9 +216,7 @@ async def unregister_room(
         raise
     except Exception as e:
         logger.error(f"Error unregistering room: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to unregister room: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to unregister room: {e!s}") from e
 
 
 @router.get("/status/{room_name}", response_model=RoomStatusResponse)
@@ -251,14 +234,10 @@ async def get_room_status(
         is_registered = await registry.is_registered(room_name)
         room_id = await registry.get_room_id(room_name) if is_registered else None
 
-        return RoomStatusResponse(
-            room_name=room_name, registered=is_registered, room_id=room_id
-        )
+        return RoomStatusResponse(room_name=room_name, registered=is_registered, room_id=room_id)
     except Exception as e:
         logger.error(f"Error getting room status: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get room status: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to get room status: {e!s}") from e
 
 
 @router.get("/list", response_description="List all registered rooms")
@@ -275,7 +254,7 @@ async def list_registered_rooms():
         return {"status": "ok", "total": await registry.count_rooms(), "rooms": rooms}
     except Exception as e:
         logger.error(f"Error listing rooms: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list rooms: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list rooms: {e!s}") from e
 
 
 @router.delete("/clear-all", response_description="Clear all registered rooms")
@@ -287,7 +266,6 @@ async def clear_all_rooms():
     """
     try:
         registry = get_room_registry()
-        count = await registry.count_rooms()
         cleared = await registry.clear_all()
 
         return {
@@ -297,4 +275,4 @@ async def clear_all_rooms():
         }
     except Exception as e:
         logger.error(f"Error clearing rooms: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to clear rooms: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear rooms: {e!s}") from e

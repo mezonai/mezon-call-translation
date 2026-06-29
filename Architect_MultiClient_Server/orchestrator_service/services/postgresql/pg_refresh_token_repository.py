@@ -6,14 +6,13 @@ Mirrors RefreshTokenService (MongoDB) interface exactly.
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import text, select, update
+from sqlalchemy import select, update
 
+from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.postgresql.database import get_session_factory
 from orchestrator_service.services.postgresql.models import RefreshToken
-from orchestrator_service.config.application_config import get_config
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -33,16 +32,16 @@ class PgRefreshTokenRepository:
         self,
         user_id: str,
         access_token_jti: str,
-        device_info: Optional[str] = None,
-        expiry_days: Optional[int] = None,
+        device_info: str | None = None,
+        expiry_days: int | None = None,
     ) -> str:
         """Create and store a new refresh token. Returns the raw token."""
         refresh_token = self.generate_refresh_token()
         token_hash = self._hash_token(refresh_token)
         auth_config = get_config().auth
         expiry = expiry_days if expiry_days is not None else auth_config.refresh_token_expiry_days
-        expires_at = datetime.now(timezone.utc) + timedelta(days=expiry)
-        now = datetime.now(timezone.utc)
+        expires_at = datetime.now(UTC) + timedelta(days=expiry)
+        now = datetime.now(UTC)
         token_id = uuid.uuid4()
 
         session_factory = get_session_factory()
@@ -66,10 +65,10 @@ class PgRefreshTokenRepository:
             logger.error(f"Failed to create refresh token: {e}")
             raise
 
-    async def validate_refresh_token(self, refresh_token: str) -> Optional[RefreshToken]:
+    async def validate_refresh_token(self, refresh_token: str) -> RefreshToken | None:
         """Validate token; return token doc dict or None."""
         token_hash = self._hash_token(refresh_token)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -77,7 +76,7 @@ class PgRefreshTokenRepository:
                     select(RefreshToken)
                     .where(
                         RefreshToken.refresh_token_hash == token_hash,
-                        RefreshToken.is_revoked == False,
+                        RefreshToken.is_revoked.is_(False),
                         RefreshToken.expires_at > now,
                     )
                     .limit(1)
@@ -97,25 +96,22 @@ class PgRefreshTokenRepository:
         self,
         token_id: str,
         new_access_token_jti: str,
-        expiry_days: Optional[int] = None,
-    ) -> Optional[str]:
+        expiry_days: int | None = None,
+    ) -> str | None:
         """Rotate a refresh token in-place. Returns new raw token or None."""
         new_refresh_token = self.generate_refresh_token()
         token_hash = self._hash_token(new_refresh_token)
         auth_config = get_config().auth
         expiry = expiry_days if expiry_days is not None else auth_config.refresh_token_expiry_days
-        expires_at = datetime.now(timezone.utc) + timedelta(days=expiry)
-        now = datetime.now(timezone.utc)
+        expires_at = datetime.now(UTC) + timedelta(days=expiry)
+        now = datetime.now(UTC)
 
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
                 stmt = (
                     update(RefreshToken)
-                    .where(
-                        RefreshToken.id == token_id,
-                        RefreshToken.is_revoked == False
-                    )
+                    .where(RefreshToken.id == token_id, RefreshToken.is_revoked.is_(False))
                     .values(
                         refresh_token_hash=token_hash,
                         access_token_jti=new_access_token_jti,
@@ -160,8 +156,10 @@ class PgRefreshTokenRepository:
             logger.error(f"Failed to revoke refresh token: {e}")
             return False
 
+
 # --------------- Singleton ---------------
 _pg_refresh_token_repository: PgRefreshTokenRepository | None = None
+
 
 def get_pg_refresh_token_repository() -> PgRefreshTokenRepository:
     global _pg_refresh_token_repository

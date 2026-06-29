@@ -101,7 +101,6 @@ Return ONLY valid JSON that matches this schema:
 """
 
 
-
 def build_prompt_action_items(conversation_text: str, language: str) -> str:
     return f"""
 # ROLE
@@ -192,7 +191,7 @@ Rules:
 
 Each action item must include:
 
-OWNER → participant_identity OR "unknown"  
+OWNER → participant_identity OR "unknown"
 TASK → clear, executable action description
 
 Task description:

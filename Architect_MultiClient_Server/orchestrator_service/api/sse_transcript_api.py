@@ -1,10 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 
-from orchestrator_service.auth.verify_account import authenticate_account
-from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse.channels.message_channel import MessageChannel
+from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -14,21 +13,22 @@ router = APIRouter()
 sse_manager = SSEManager()
 message_channel = MessageChannel(sse_manager)
 
+
 class PushMessageRequest(BaseModel):
     room_name: str
     message: str
     message_type: str
-    participant_identity: Optional[str] = None
+    participant_identity: str | None = None
 
 
 @router.post("/push_transcript")
 async def push_transcript_api(req: PushMessageRequest):
     """
     Push transcript to all SSE connections in a room.
-    
+
     Args:
         req: Push transcript request
-    
+
     Returns:
         Status and statistics
     """
@@ -36,7 +36,7 @@ async def push_transcript_api(req: PushMessageRequest):
         room=req.room_name,
         message=req.message,
         message_type=req.message_type,
-        participant_identity=req.participant_identity
+        participant_identity=req.participant_identity,
     )
     return result
 
@@ -45,12 +45,12 @@ async def push_transcript_api(req: PushMessageRequest):
 async def sse_endpoint(appid: str, token: str, room: str):
     """
     SSE endpoint for real-time message streaming.
-    
+
     Args:
         appid: Application ID for authentication and connection management
         token: Authentication token
         room: Room name to subscribe to
-    
+
     Returns:
         StreamingResponse with SSE events
     """

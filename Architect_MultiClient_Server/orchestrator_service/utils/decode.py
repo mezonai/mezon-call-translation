@@ -6,10 +6,10 @@ strings.  Used by hash repositories, queue discovery, and any other layer
 that operates with decode_responses=False.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 
-def decode_value(value: Any) -> Optional[str]:
+def decode_value(value: Any) -> str | None:
     """
     Decode a single Redis value to string.
 
@@ -26,7 +26,7 @@ def decode_value(value: Any) -> Optional[str]:
     return str(value)
 
 
-def decode_mapping(data: Dict[Any, Any]) -> Dict[str, str]:
+def decode_mapping(data: dict[Any, Any]) -> dict[str, str]:
     """
     Decode a Redis hash mapping (keys and values) to plain Python strings.
 
@@ -38,7 +38,7 @@ def decode_mapping(data: Dict[Any, Any]) -> Dict[str, str]:
     Returns:
         Dict with all keys and values as strings
     """
-    result: Dict[str, str] = {}
+    result: dict[str, str] = {}
     for key, value in data.items():
         key_str = decode_value(key)
         value_str = decode_value(value)

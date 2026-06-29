@@ -4,11 +4,12 @@ Uses SQLAlchemy 2.0 async with asyncpg driver.
 """
 
 from sqlalchemy.ext.asyncio import (
-    create_async_engine,
-    async_sessionmaker,
-    AsyncSession,
     AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
 )
+
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.utils.logger import get_logger
 
@@ -27,12 +28,11 @@ def get_engine() -> AsyncEngine:
             cfg.async_url,
             pool_size=cfg.pool_size,
             max_overflow=cfg.max_overflow,
-            pool_pre_ping=True,   # reconnect on stale connections
+            pool_pre_ping=True,  # reconnect on stale connections
             echo=False,
         )
         logger.info(
-            f"PostgreSQL engine created: host={cfg.host}:{cfg.port} "
-            f"db={cfg.database} pool_size={cfg.pool_size}"
+            f"PostgreSQL engine created: host={cfg.host}:{cfg.port} db={cfg.database} pool_size={cfg.pool_size}"
         )
     return _engine
 

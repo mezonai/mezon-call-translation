@@ -5,13 +5,14 @@ Handles creating, fetching, and updating asynchronous outbox tasks.
 
 import json
 import uuid
-from datetime import datetime, timezone
-from typing import Optional, Dict, List, Any
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import text
+
 from orchestrator_service.services.postgresql.database import get_session_factory
+from orchestrator_service.services.postgresql.models import OutboxStatus, OutboxUseCase
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.postgresql.models import OutboxUseCase, OutboxStatus
 
 logger = get_logger(__name__)
 
@@ -29,7 +30,7 @@ class PgOutboxRepository:
         error_msg: str,
     ) -> bool:
         session_factory = get_session_factory()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         configs = {"room_id": room_id, "retry_type": retry_type}
         configs_json = json.dumps(configs)
 
@@ -48,10 +49,10 @@ class PgOutboxRepository:
                     text(check_query),
                     {
                         "use_case": OutboxUseCase.RETRY_SUMMARIZATION.value,
-                        "room_id": room_id, 
+                        "room_id": room_id,
                         "retry_type": retry_type,
-                        "status": OutboxStatus.PENDING.value
-                    }
+                        "status": OutboxStatus.PENDING.value,
+                    },
                 )
                 existing = res.fetchone()
 
@@ -59,7 +60,7 @@ class PgOutboxRepository:
                     # Update existing pending task's error and timestamp
                     task_id = existing[0]
                     update_query = """
-                        UPDATE outbox_tasks 
+                        UPDATE outbox_tasks
                         SET last_error = :error_msg,
                             updated_at = :now
                         WHERE id = :id
@@ -70,7 +71,7 @@ class PgOutboxRepository:
                             "id": task_id,
                             "error_msg": error_msg,
                             "now": now,
-                        }
+                        },
                     )
                 else:
                     # Insert new outbox task
@@ -79,7 +80,8 @@ class PgOutboxRepository:
                         INSERT INTO outbox_tasks
                             (id, use_case, status, configs, last_error, created_at, updated_at)
                         VALUES
-                            (:id, CAST(:use_case AS outboxusecase), CAST(:status AS outboxstatus), CAST(:configs AS jsonb), :error_msg, :now, :now)
+                            (:id, CAST(:use_case AS outboxusecase), CAST(:status AS outboxstatus),
+                            CAST(:configs AS jsonb), :error_msg, :now, :now)
                     """
                     await session.execute(
                         text(insert_query),
@@ -90,7 +92,7 @@ class PgOutboxRepository:
                             "configs": configs_json,
                             "error_msg": error_msg,
                             "now": now,
-                        }
+                        },
                     )
                 await session.commit()
                 return True
@@ -98,7 +100,7 @@ class PgOutboxRepository:
             logger.error(f"Failed to add task to outbox: {e}", exc_info=True)
             return False
 
-    async def fetch_pending_outbox_tasks(self, limit: int = 5, use_case: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def fetch_pending_outbox_tasks(self, limit: int = 5, use_case: str | None = None) -> list[dict[str, Any]]:
         session_factory = get_session_factory()
 
         query = """
@@ -112,17 +114,14 @@ class PgOutboxRepository:
             params["use_case"] = use_case
 
         query += """
-            ORDER BY created_at ASC 
-            LIMIT :limit 
+            ORDER BY created_at ASC
+            LIMIT :limit
             FOR UPDATE SKIP LOCKED
         """
 
         try:
             async with session_factory() as session:
-                res = await session.execute(
-                    text(query),
-                    params
-                )
+                res = await session.execute(text(query), params)
                 rows = res.fetchall()
                 tasks = []
                 for row in rows:
@@ -138,10 +137,10 @@ class PgOutboxRepository:
         self,
         task_id: str,
         status: str,
-        error_msg: Optional[str] = None,
+        error_msg: str | None = None,
     ) -> bool:
         session_factory = get_session_factory()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         query = "UPDATE outbox_tasks SET status = CAST(:status AS outboxstatus), updated_at = :now"
         params = {"id": task_id, "status": status, "now": now}

@@ -1,30 +1,30 @@
 """
 Local LLM service (OpenAI-compatible API)
 """
+
 import asyncio
-import json
 import logging
-import re
-from typing import Any, Dict, Optional
-from openai import AsyncOpenAI, APIError, APIConnectionError, RateLimitError, LengthFinishReasonError
-import httpx
-from pydantic import ValidationError, BaseModel
+from typing import Any
+
+from openai import APIConnectionError, APIError, AsyncOpenAI, LengthFinishReasonError, RateLimitError
+from pydantic import BaseModel, ValidationError
 from tenacity import (
+    before_sleep_log,
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
 )
 
 from orchestrator_service.config.application_config import LLMConfig, LLMProvider
+from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.gemini_llm_service import GeminiLLMService
-from orchestrator_service.services.llm.prompt import build_simple_prompt_action_items, build_prompt_summary
-from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
+from orchestrator_service.services.llm.prompt import build_prompt_summary, build_simple_prompt_action_items
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
 
 class LocalLLMService(BaseLLMService):
     """Local LLM service for OpenAI-compatible API"""
@@ -53,7 +53,7 @@ class LocalLLMService(BaseLLMService):
 
         logger.info(f"Initialized Local LLM service: {config.base_url}, model: {config.model}")
 
-        self._fallback_service: Optional[GeminiLLMService] = None
+        self._fallback_service: GeminiLLMService | None = None
         if config.fallback_enabled and config.fallback_api_key:
             fallback_config = LLMConfig(
                 provider=LLMProvider.GEMINI,
@@ -67,7 +67,7 @@ class LocalLLMService(BaseLLMService):
             except Exception as e:
                 logger.warning(f"Failed to initialize LLM fallback service: {e}")
 
-    async def _call_local_llm(self, prompt: str, response_model: type[BaseModel]) -> Dict[str, Any]:
+    async def _call_local_llm(self, prompt: str, response_model: type[BaseModel]) -> dict[str, Any]:
         response = await self.client.beta.chat.completions.parse(
             model=self.config.model,
             messages=[{"role": "user", "content": prompt}],
@@ -83,7 +83,17 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, LengthFinishReasonError, ValueError, ValidationError, RuntimeError)),
+        retry=retry_if_exception_type(
+            (
+                APIError,
+                APIConnectionError,
+                RateLimitError,
+                LengthFinishReasonError,
+                ValueError,
+                ValidationError,
+                RuntimeError,
+            )
+        ),
         before_sleep=before_sleep_log(logger, logging.ERROR),
         reraise=True,
     )
@@ -97,7 +107,17 @@ class LocalLLMService(BaseLLMService):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=10, max=60),
-        retry=retry_if_exception_type((APIError, APIConnectionError, RateLimitError, LengthFinishReasonError, ValueError, ValidationError, RuntimeError)),
+        retry=retry_if_exception_type(
+            (
+                APIError,
+                APIConnectionError,
+                RateLimitError,
+                LengthFinishReasonError,
+                ValueError,
+                ValidationError,
+                RuntimeError,
+            )
+        ),
         before_sleep=before_sleep_log(logger, logging.ERROR),
         reraise=True,
     )
@@ -130,7 +150,9 @@ class LocalLLMService(BaseLLMService):
                 return result
             raise
 
-    async def summarize_conversation(self, conversation_text: str, room_id: str, language: str = "Vietnamese") -> SummaryActionItemsResult:
+    async def summarize_conversation(
+        self, conversation_text: str, room_id: str, language: str = "Vietnamese"
+    ) -> SummaryActionItemsResult:
         """
         Summarize conversation by running 2 focused LLM requests concurrently.
         Each sub-task retries 3 times on local LLM then falls back to Gemini once.
@@ -171,7 +193,9 @@ class LocalLLMService(BaseLLMService):
             summary = "\n\n".join(summary_parts)
 
         if action_items_failed:
-            logger.error(f"Failed to generate action items (all attempts exhausted) with room_id: {room_id}: {action_items_res}")
+            logger.error(
+                f"Failed to generate action items (all attempts exhausted) with room_id: {room_id}: {action_items_res}"
+            )
             action_items = []
         else:
             action_items = action_items_res.action_items

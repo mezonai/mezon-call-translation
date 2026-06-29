@@ -5,21 +5,20 @@ All configuration is loaded from a single source
 
 from .application_config import (
     Config,
-    get_config,
     LiveKitConfig,
-    ServerConfig,
     LoggerConfig,
     MinIOConfig,
+    ServerConfig,
     STTServiceConfig,
+    get_config,
 )
 
 __all__ = [
+    "Config",
     "LiveKitConfig",
-    "ServerConfig",
     "LoggerConfig",
     "MinIOConfig",
-    "config",
-    "get_config",
+    "ServerConfig",
     "STTServiceConfig",
+    "get_config",
 ]
-

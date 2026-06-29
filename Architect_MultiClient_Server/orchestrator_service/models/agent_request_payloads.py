@@ -4,30 +4,28 @@ Agent Request Payload Models
 Pydantic models for different request type payloads with discriminated union.
 """
 
-from typing import Literal, Union
-from enum import Enum
+from enum import StrEnum
+from typing import Literal, ClassVar
+
 from pydantic import BaseModel, Field
+
 from orchestrator_service.models.agent_request_type import AgentRequestType
 
 
 class TranscriptControlPayload(BaseModel):
     """Payload for transcript_control request"""
+
     request_type: Literal[AgentRequestType.TRANSCRIPT_CONTROL]
     action: Literal["enable", "disable"] = Field(..., description="Action to perform: enable or disable transcription")
-    
+
     class Config:
-        json_schema_extra = {
-            "example": {
-                "request_type": "transcript_control",
-                "action": "enable"
-            }
-        }
+        json_schema_extra: ClassVar[dict] = {"example": {"request_type": "transcript_control", "action": "enable"}}
 
 
 class TtsPlayPayload(BaseModel):
     """Payload for tts_play request"""
 
-    class VoiceEnum(str, Enum):
+    class VoiceEnum(StrEnum):
         """Supported Kokoro voices for TTS requests."""
 
         AF_HEART = "af_heart"
@@ -45,54 +43,56 @@ class TtsPlayPayload(BaseModel):
     sender_identity: str = Field(default="orchestrator", description="Identity of the sender")
     voice: VoiceEnum | None = Field(default=None, description="Optional voice name (e.g., af_heart)")
     speed: float | None = Field(default=None, description="Optional speech speed multiplier (0.5-2.0)")
-    
+
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "request_type": "tts_play",
                 "text": "Hello from orchestrator",
                 "sender_identity": "orchestrator",
                 "voice": "af_heart",
-                "speed": 1.0
+                "speed": 1.0,
             }
         }
 
 
 class SendChatMessagePayload(BaseModel):
     """Payload for send_chat_message request"""
+
     request_type: Literal[AgentRequestType.SEND_CHAT_MESSAGE]
     message: str = Field(..., description="Chat message to send", min_length=1)
     sender_name: str = Field(default="Agent", description="Display name of the sender")
-    
+
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "request_type": "send_chat_message",
                 "message": "Hello from orchestrator!",
-                "sender_name": "System Bot"
+                "sender_name": "System Bot",
             }
         }
 
+
 class StartAudioRecordingPayload(BaseModel):
     """Payload for start_audio_recording request"""
+
     request_type: Literal[AgentRequestType.START_AUDIO_RECORDING]
     track_id: str = Field(..., description="LiveKit track ID to record (e.g., from a TrackPublished event)")
-    file_output_path: str = Field(..., description="File path to save the recorded audio (e.g., s3://bucket/recordings/agent123_track456.wav)")
+    file_output_path: str = Field(
+        ..., description="File path to save the recorded audio (e.g., s3://bucket/recordings/agent123_track456.wav)"
+    )
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict] = {
             "example": {
                 "request_type": "start_audio_recording",
                 "track_id": "livekit_track_id_123",
-                "file_output_path": "s3://my-bucket/recordings/agent123_track456.wav"
+                "file_output_path": "s3://my-bucket/recordings/agent123_track456.wav",
             }
         }
 
 
 # Discriminated Union of all payload types
-AgentRequestPayload = Union[
-    TranscriptControlPayload,
-    TtsPlayPayload,
-    SendChatMessagePayload,
-    StartAudioRecordingPayload
-]
+AgentRequestPayload = (
+    TranscriptControlPayload | TtsPlayPayload | SendChatMessagePayload | StartAudioRecordingPayload
+)

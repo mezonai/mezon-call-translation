@@ -5,11 +5,8 @@ In-memory cache preserved for performance.
 permissions stored as JSONB array of strings.
 """
 
-import uuid
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any, Set
+from datetime import UTC, datetime
 
-from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
@@ -24,13 +21,13 @@ class PgUserPermissionRepository:
 
     def __init__(self):
         # In-memory cache: user_id -> Set[str]
-        self._cache: Dict[str, Set[str]] = {}
+        self._cache: dict[str, set[str]] = {}
 
     # ------------------------------------------------------------------
     # Permission queries
     # ------------------------------------------------------------------
 
-    async def get_user_permissions(self, user_id: str) -> Set[str]:
+    async def get_user_permissions(self, user_id: str) -> set[str]:
         """Return flat permission set for a user (uses cache)."""
         if user_id in self._cache:
             return self._cache[user_id]
@@ -61,12 +58,12 @@ class PgUserPermissionRepository:
         self,
         user_id: str,
         username: str,
-        display_name: Optional[str] = None,
-        permissions: Optional[List[str]] = None,
-        avatar_url: Optional[str] = None,
+        display_name: str | None = None,
+        permissions: list[str] | None = None,
+        avatar_url: str | None = None,
     ) -> bool:
         """Upsert a user record."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session_factory = get_session_factory()
 
         insert_values = {
@@ -76,29 +73,23 @@ class PgUserPermissionRepository:
             "avatar_url": avatar_url,
             "permissions": permissions if permissions is not None else [],
             "created_at": now,
-            "updated_at": now
+            "updated_at": now,
         }
 
         try:
             async with session_factory() as session:
                 stmt = insert(User).values(**insert_values)
-                update_dict = {
-                    "username": stmt.excluded.username,
-                    "updated_at": stmt.excluded.updated_at
-                }
+                update_dict = {"username": stmt.excluded.username, "updated_at": stmt.excluded.updated_at}
                 if display_name is not None:
                     update_dict["display_name"] = stmt.excluded.display_name
                 if avatar_url is not None:
                     update_dict["avatar_url"] = stmt.excluded.avatar_url
                 if permissions is not None:
                     update_dict["permissions"] = stmt.excluded.permissions
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=[User.id],
-                    set_=update_dict
-                )
+                stmt = stmt.on_conflict_do_update(index_elements=[User.id], set_=update_dict)
                 await session.execute(stmt)
                 await session.commit()
-                
+
             logger.info(f"Created/updated user user_id={user_id}, username={username}")
             self._cache.pop(user_id, None)
             return True
@@ -106,7 +97,7 @@ class PgUserPermissionRepository:
             logger.error(f"Failed to create/update user: {e}")
             return False
 
-    async def get_user_info(self, user_id: str) -> Optional[User]:
+    async def get_user_info(self, user_id: str) -> User | None:
         """Return full user document or None."""
         session_factory = get_session_factory()
         try:
@@ -117,8 +108,10 @@ class PgUserPermissionRepository:
             logger.error(f"Failed to get user info: {e}")
             return None
 
+
 # --------------- Singleton ---------------
 _pg_user_permission_repository: PgUserPermissionRepository | None = None
+
 
 def get_pg_user_permission_repository() -> PgUserPermissionRepository:
     global _pg_user_permission_repository

@@ -5,13 +5,13 @@ Now backed by Redis via Repository pattern.
 Delegates all operations to RoomRegistryRepository.
 """
 
-from typing import Optional, Dict
+from typing import Optional
 
-from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.services.redis.room_registry_repository import (
     RoomRegistryRepository,
 )
-from orchestrator_service.services.redis.connection_pool import get_connection_manager
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -66,14 +66,10 @@ class RoomRegistry:
         try:
             room_id_str = str(room_id)
             if not room_id_str or room_id_str == "None":
-                logger.error(
-                    f"Cannot register room '{room_name}': room_id converts to invalid string '{room_id_str}'"
-                )
+                logger.error(f"Cannot register room '{room_name}': room_id converts to invalid string '{room_id_str}'")
                 return False
         except Exception as e:
-            logger.error(
-                f"Cannot register room '{room_name}': failed to convert room_id to string: {e}"
-            )
+            logger.error(f"Cannot register room '{room_name}': failed to convert room_id to string: {e}")
             return False
 
         repository = self._get_repository()
@@ -111,7 +107,7 @@ class RoomRegistry:
         repository = self._get_repository()
         return await repository.is_registered(room_name)
 
-    async def get_room_id(self, room_name: str) -> Optional[str]:
+    async def get_room_id(self, room_name: str) -> str | None:
         """
         Get the room_id of a room.
 
@@ -133,14 +129,12 @@ class RoomRegistry:
 
         # Validate the string format before converting
         if room_id_str == "None" or room_id_str == "null":
-            logger.error(
-                f"Room '{room_name}' has invalid room_id in Redis: '{room_id_str}'"
-            )
+            logger.error(f"Room '{room_name}' has invalid room_id in Redis: '{room_id_str}'")
             return None
 
         return room_id_str
 
-    async def list_rooms(self) -> Dict[str, str]:
+    async def list_rooms(self) -> dict[str, str]:
         """
         Get a list of all active rooms.
 
@@ -179,7 +173,7 @@ class RoomRegistry:
         repository = self._get_repository()
         return await repository.clear_all_rooms()
 
-    async def get_stats(self) -> Dict:
+    async def get_stats(self) -> dict:
         """
         Get registry statistics.
 
@@ -204,7 +198,7 @@ class RoomRegistry:
 
 
 # Global singleton instance
-_room_registry: Optional[RoomRegistry] = None
+_room_registry: RoomRegistry | None = None
 
 
 def get_room_registry() -> RoomRegistry:
