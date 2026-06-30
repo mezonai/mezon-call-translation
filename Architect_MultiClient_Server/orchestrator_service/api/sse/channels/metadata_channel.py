@@ -258,39 +258,12 @@ class MetadataChannel:
         if not await self.manager.has_active_connections(self.CHANNEL_TYPE, context_key):
             logger.warning("[Metadata Channel] No active bot connections, room_record_done event may be lost")
 
-        # Fetch tracks from PostgreSQL and build file_results
-        file_results = []
-        try:
-            tracks = await self.pg_repo.get_tracks_by_room(room_id)
-
-            for track in tracks:
-                audio_info = track.audio_info
-
-                started_at_ns = audio_info.get("started_at_ns")
-                ended_at_ns = audio_info.get("ended_at_ns")
-
-                file_result = {
-                    "participant_identity": track.participant_identity,
-                    "filename": audio_info.get("filename", ""),
-                    "started_at_ns": started_at_ns,
-                    "ended_at_ns": ended_at_ns,
-                }
-                file_results.append(file_result)
-
-            logger.info(f"[Metadata Channel] Built file_results from {len(tracks)} tracks for room {room_id}")
-        except Exception as e:
-            logger.error(f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}")
-            # Continue with empty file_results
-
-        # Prepare metadata
-        metadata = {"file_results": file_results}
-
         # Prepare event data
         event_data = self._create_base_event(
             event_type=MetadataEventType.ROOM_RECORD_DONE,
             room_id=room_id,
             room_name=room_name,
-            metadata=metadata,
+            metadata={},
         )
 
         # Broadcast event
@@ -298,7 +271,7 @@ class MetadataChannel:
 
         logger.info(
             f"[Metadata Channel] Pushed room_record_done event to {broadcast_count} bots "
-            f"(room_id={room_id}, room_name={room_name}, files={len(file_results)})"
+            f"(room_id={room_id}, room_name={room_name})"
         )
 
         # Save event to PostgreSQL with TTL
@@ -310,7 +283,6 @@ class MetadataChannel:
             "event_id": event_data["event_id"],
             "room_id": room_id,
             "room_name": room_name,
-            "file_count": len(file_results),
             "timestamp": event_data["timestamp"],
             "active_connections": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),
             "broadcast_to": broadcast_count,
