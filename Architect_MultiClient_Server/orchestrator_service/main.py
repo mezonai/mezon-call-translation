@@ -7,10 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
-from orchestrator_service.api.dispatch_api import router as dispatch_router
-from orchestrator_service.api.queue_api import router as queue_router
-from orchestrator_service.api.room_api import router as room_router
-from orchestrator_service.api.room_registry_api import router as room_registry_router
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse_agent_request_api import (
     router as sse_agent_request_router,
@@ -195,15 +191,11 @@ app.add_middleware(
 
 
 # Include routers
-app.include_router(dispatch_router, prefix="/api")
 app.include_router(stream_router, prefix="/api", tags=["sse transcript"])
 app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat external"])
 app.include_router(sse_metadata_router, prefix="/api", tags=["sse metadata"])
 app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent requests"])
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
-app.include_router(queue_router)  # Has prefix="/api/queue"
-app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
-app.include_router(room_registry_router)  # Has prefix="/api/room-registry"
 app.include_router(summary_client_router)
 
 
