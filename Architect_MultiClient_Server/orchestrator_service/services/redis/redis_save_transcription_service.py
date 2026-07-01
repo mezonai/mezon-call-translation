@@ -5,7 +5,6 @@ Consumer service that receives SaveTranscriptionTask batches from Redis
 and saves them progressively to PostgreSQL.
 """
 
-import contextlib
 import asyncio
 import contextlib
 import time
@@ -61,8 +60,8 @@ class RedisSaveTranscriptionService:
     """
 
     def __init__(self):
-        self._redis_service: RedisStreamService[SaveTranscriptionTask] | None = None
-        self._pg_repo: PgTranscriptRepository | None = None
+        self._redis_service: RedisStreamService[SaveTranscriptionTask] = get_save_stream_service()
+        self._pg_repo: PgTranscriptRepository = PgTranscriptRepository()
         self._consumer_task: asyncio.Task | None = None
         self._orphan_recovery_task: asyncio.Task | None = None
         self._running = False
@@ -72,23 +71,18 @@ class RedisSaveTranscriptionService:
             "batches_processed": 0,
             "batches_failed": 0,
             "total_segments_saved": 0,
-            "started_at": None,
+            "started_at": 0.0,
         }
 
         logger.info("RedisSaveTranscriptionService initialized")
 
     async def connect(self) -> None:
         """Connect to Redis and PostgreSQL."""
-        if self._redis_service is not None:
-            return
-
         # Connect to Redis
-        self._redis_service = get_save_stream_service()
         await self._redis_service.connect()
         logger.info("✅ RedisSaveTranscriptionService connected to Redis")
 
         # Connect to PostgreSQL
-        self._pg_repo = PgTranscriptRepository()
         if not self._pg_repo.connected:
             await self._pg_repo.connect()
         logger.info("✅ RedisSaveTranscriptionService connected to PostgreSQL")
@@ -108,7 +102,6 @@ class RedisSaveTranscriptionService:
 
         # Ensure connected
         await self.connect()
-
         self._running = True
         self._local_stats["started_at"] = time.time()
 
@@ -145,14 +138,9 @@ class RedisSaveTranscriptionService:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._orphan_recovery_task
 
-        # Stop background tasks
-        if self._redis_service:
-            await self._redis_service.stop_background_tasks()
-            await self._redis_service.disconnect()
-
-        # Disconnect PostgreSQL
-        if self._pg_repo:
-            await self._pg_repo.disconnect()
+        await self._redis_service.stop_background_tasks()
+        await self._redis_service.disconnect()
+        await self._pg_repo.disconnect()
 
         logger.info("✅ RedisSaveTranscriptionService stopped")
 

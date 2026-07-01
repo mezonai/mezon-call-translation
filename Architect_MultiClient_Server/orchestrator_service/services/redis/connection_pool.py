@@ -15,7 +15,7 @@ from redis.asyncio import ConnectionPool, Redis
 logger = get_logger(__name__)
 
 
-def _pool_connection_kwargs(cfg) -> dict[str, Any]:
+def _pool_connection_kwargs(cfg: Any) -> dict[str, Any]:
     """
     Per-connection kwargs for ConnectionPool (host, timeouts, decode_responses, etc.).
 
@@ -67,7 +67,7 @@ class RedisConnectionManager:
             )
 
             redis_client = Redis(connection_pool=self._pool)
-            await redis_client.ping()
+            await redis_client.ping() # type: ignore[misc]
             await redis_client.close()
 
             self._connected = True
@@ -128,7 +128,7 @@ class RedisConnectionManager:
 
         try:
             client = self.get_client()
-            await client.ping()
+            await client.ping() # type: ignore[misc]
             await client.close()
             return True
         except Exception as e:

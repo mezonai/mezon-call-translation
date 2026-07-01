@@ -15,8 +15,8 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_engine: AsyncEngine = None
-_session_factory: async_sessionmaker = None
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker | None = None
 
 
 def get_engine() -> AsyncEngine:

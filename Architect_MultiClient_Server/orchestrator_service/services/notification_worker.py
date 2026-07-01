@@ -10,11 +10,12 @@ This worker:
 
 import asyncio
 import contextlib
+
 import httpx
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.notification_task import NotificationTask
-from orchestrator_service.services.redis.redis_stream_service import RedisStreamService
+from orchestrator_service.services.redis.redis_stream_service import RedisStreamService, create_stream_service
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
@@ -47,11 +48,20 @@ class NotificationWorker:
             worker_id: Optional custom worker ID (default: auto-generated)
         """
         self._config = get_config().notification
-        self._stream_service: RedisStreamService[NotificationTask] | None = None
         self._worker_id = worker_id
         self._running = False
-        self._http_client: httpx.AsyncClient | None = None
         self._consumer_task: asyncio.Task | None = None
+
+        self._stream_service: RedisStreamService[NotificationTask] = create_stream_service(
+            task_class=NotificationTask,
+            stream_key=self._config.stream_key,
+            group_name=self._config.group_name,
+        )
+
+        if self._worker_id:
+            self._stream_service._consumer_id = self._worker_id
+
+        self._http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
 
         logger.info(
             f"NotificationWorker initialized - stream='{self._config.stream_key}', group='{self._config.group_name}'"
@@ -65,21 +75,7 @@ class NotificationWorker:
             ConnectionError: If cannot connect to Redis
         """
         try:
-            # Initialize Redis stream service
-            self._stream_service = RedisStreamService(
-                task_class=NotificationTask,
-                stream_key=self._config.stream_key,
-                group_name=self._config.group_name,
-            )
-
-            if self._worker_id:
-                self._stream_service._consumer_id = self._worker_id
-
             await self._stream_service.connect()
-
-            # Initialize HTTP client
-            self._http_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-
             logger.info("✅ NotificationWorker connected to Redis stream")
         except Exception as e:
             logger.error(f"❌ Failed to connect notification worker: {e}", exc_info=True)
@@ -87,12 +83,8 @@ class NotificationWorker:
 
     async def disconnect(self) -> None:
         """Disconnect worker and cleanup resources"""
-        if self._stream_service:
-            await self._stream_service.disconnect()
-
-        if self._http_client:
-            await self._http_client.aclose()
-
+        await self._stream_service.disconnect()
+        await self._http_client.aclose()
         logger.info("NotificationWorker disconnected")
 
     async def process_task(self, task: NotificationTask) -> bool:
@@ -198,7 +190,6 @@ class NotificationWorker:
         Continuously reads and processes notification tasks from Redis Stream.
         """
         logger.info("🚀 NotificationWorker consumer loop started")
-
         try:
             while self._running:
                 try:

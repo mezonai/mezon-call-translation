@@ -16,12 +16,12 @@ from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def extract_json_from_llm(raw_text: dict) -> dict[str, Any]:
+def extract_json_from_llm(raw_text: str) -> dict[str, Any]:
     """
     Safely extract JSON payload from OpenAI-compatible chat completion responses.
 
     Args:
-        raw_text: Raw API response dictionary
+        raw_text: Raw API response string
 
     Returns:
         Extracted JSON dictionary
@@ -42,9 +42,9 @@ def extract_json_from_llm(raw_text: dict) -> dict[str, Any]:
         pass
 
     # 2) Extract balanced JSON object candidates
-    stack = []
+    stack: list[str] = []
     start = None
-    candidates = []
+    candidates: list[str] = []
     for i, ch in enumerate(raw):
         if ch == "{":
             if not stack:
@@ -107,7 +107,12 @@ class GeminiLLMService(BaseLLMService):
                 "response_json_schema": SummaryResult.model_json_schema(),
             },
         )
-        return SummaryResult.model_validate(extract_json_from_llm(response.text))
+
+        raw_text = response.text
+        if not raw_text:
+            raise ValueError("Empty response text from Gemini API")
+
+        return SummaryResult.model_validate(extract_json_from_llm(raw_text))
 
     async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
         prompt = build_prompt_action_items(conversation_text, language)
@@ -119,16 +124,21 @@ class GeminiLLMService(BaseLLMService):
                 "response_json_schema": ActionItemsResult.model_json_schema(),
             },
         )
-        return ActionItemsResult.model_validate(extract_json_from_llm(response.text))
+
+        raw_text = response.text
+        if not raw_text:
+            raise ValueError("Empty response text from Gemini API")
+
+        return ActionItemsResult.model_validate(extract_json_from_llm(raw_text))
 
     async def summarize_conversation(
-        self, conversation_text: str, language: str = "Vietnamese"
+        self, conversation_text: str, room_id: str, language: str = "Vietnamese"
     ) -> SummaryActionItemsResult:
         """Run 2 Gemini requests: one for summary and one for action items."""
         try:
             summary_result = await self.summarize_summary(conversation_text, language)
             action_items_result = await self.summarize_action_items(conversation_text, language)
-            logger.info("Successfully generated summary and action items using Gemini (2 requests)")
+            logger.info(f"Successfully generated summary and action items using Gemini (2 requests) for room: {room_id}")
 
             # Build summary with only non-empty fields
             summary_parts = [
@@ -152,7 +162,7 @@ class GeminiLLMService(BaseLLMService):
                 action_items_success=True,
             )
         except Exception as e:
-            logger.error(f"Gemini summarization error: {e}")
+            logger.error(f"Gemini summarization error for room {room_id}: {e}")
             return SummaryActionItemsResult(
                 summary=f"An error occurred during summarization: {e}",
                 action_items=[],

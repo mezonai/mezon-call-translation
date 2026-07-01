@@ -28,10 +28,10 @@ class TrackInfo(BaseModel):
 class EgressInfo(BaseModel):
     """Egress information để gửi đi (simplified to match TranscriptionRequest)"""
 
-    egress_id: str = Field(alias="egressId")
+    egress_id: str
     filename: str
     location: str
     duration: str
-    started_at: str = Field(alias="startedAt")
-    ended_at: str = Field(alias="endedAt")
+    started_at: str
+    ended_at: str
     source: str | None = None

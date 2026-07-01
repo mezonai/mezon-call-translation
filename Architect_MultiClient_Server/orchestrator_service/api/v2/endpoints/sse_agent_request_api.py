@@ -35,8 +35,8 @@ class SendAgentRequestBody(BaseModel):
     payload: AgentRequestPayload = Field(
         ..., discriminator="request_type", description="Request payload with type-specific schema"
     )
-    room_name: str | None = Field(None, description="Room name to target agents in specific room")
-    agent_id: str | None = Field(None, description="Agent ID to target specific agent")
+    room_name: str = Field(..., description="Room name to target agents in specific room")
+    agent_id: str = Field(..., description="Agent ID to target specific agent")
 
     class Config:
         json_schema_extra: ClassVar[dict] = {

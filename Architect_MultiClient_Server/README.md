@@ -30,33 +30,37 @@ ruff check --fix agents/ orchestrator_service/ stt_service/ tts_service/
 
 # Format code
 ruff format agents/ orchestrator_service/ stt_service/ tts_service/
+
+# Check for specific rules (e.g., SIM for flake8-simplify)
+ruff check --select SIM agents/ orchestrator_service/ stt_service/ tts_service/ > ruff_sim_errors.txt
 ```
 
 #### Running locally (within a specific service):
 You can also run Ruff directly inside any service directory. It will automatically detect its local `pyproject.toml`:
 ```bash
 cd agents
-ruff check . > ruff_errors.txt        # Check (Recommended: redirect output to a file)
-ruff check --fix .                     # Fix
-ruff format .                          # Format
+ruff check . > ruff_errors.txt                              # Check (Recommended: redirect output to a file)
+ruff check --fix .                                          # Fix
+ruff format .                                               # Format
+ruff check --select SIM . > ruff_sim_errors.txt             # Check for specific rules (e.g., SIM)
 ```
 
 ---
 
 ### 2. Static Type Checking with MyPy
 
-MyPy verifies type hints across the services. Because each service has specific library dependencies and type overrides, it is recommended to run MyPy from within the respective service directory, or target the directory from the root.
+MyPy verifies type hints across the services. To prevent namespace collisions (e.g., shadowing external libraries) and `[import-not-found]` errors, you must **ALWAYS run MyPy from the root directory** (`Architect_MultiClient_Server`).
 
-#### Running globally (from the root directory):
+#### Check a specific service or module (Recommended approach):
+To ensure MyPy correctly understands the package structure and resolves absolute imports, use the -p (package) or -m (module) flag. Do not change directories.
 ```bash
-# Check types (Recommended: redirect output to a file)
-mypy agents/ orchestrator_service/ stt_service/ tts_service/ > mypy_errors.txt
-```
+# Make sure you are in the root directory: Architect_MultiClient_Server/
 
-#### Running locally (within a specific service):
-```bash
-cd orchestrator_service
-mypy . > mypy_errors.txt               # Check (Recommended: redirect output to a file)
+# Check an ENTIRE service package recursively (Use -p for package)
+mypy -p orchestrator_service > mypy_errors.txt
+
+# Check a SPECIFIC sub-module precisely (Use -m for module)
+mypy -m orchestrator_service.services.room_registry
 ```
 
 ---

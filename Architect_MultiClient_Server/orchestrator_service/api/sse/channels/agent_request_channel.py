@@ -94,8 +94,8 @@ class AgentRequestChannel:
         self,
         request_type: str,
         payload: dict[str, Any],
-        room_name: str | None = None,
-        agent_id: str | None = None,
+        room_name: str,
+        agent_id: str,
     ) -> dict[str, Any]:
         """
         Send request to agent(s) via SSE.

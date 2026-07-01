@@ -16,6 +16,7 @@ from orchestrator_service.utils.participant_identity import parse_participant_id
 
 logger = get_logger(__name__)
 
+
 class WebhookHandler:
     """Webhook event handler from LiveKit"""
 
@@ -70,8 +71,10 @@ class WebhookHandler:
         """Handle when a participant joins - currently just logs the event"""
         room_name = event.get("room", {}).get("name", "unknown")
         identity = event.get("participant", {}).get("identity", "unknown")
-        room_id = await self.room_registry.get_room_id(room_name)
-        await self.transcription_service.save_participant(room_id, identity)
+        safe_identity = str(identity) if identity is not None else "unknown"
+        room_id = await self.room_registry.get_room_id(str(room_name))
+        if room_id:
+            await self.transcription_service.save_participant(room_id, safe_identity)
 
         logger.info(f"  Room: {room_name}")
         logger.info(f"  Participant joined: {identity}")
@@ -117,23 +120,26 @@ class WebhookHandler:
     async def _handle_egress_started(self, event: dict) -> WebhookResponse:
         """Handle when an egress starts - create track metadata"""
         egress_info = event.get("egressInfo")
+        if not egress_info:
+            return WebhookResponse(received=True, action="ignored_no_egress_info")
 
         egress_id = egress_info.get("egressId")
         room_name = egress_info.get("roomName")
 
         # Get trackId from nested track object
         track_data = egress_info.get("track")
-        track_id = track_data.get("trackId")
+        track_id = track_data.get("trackId") if isinstance(track_data, dict) else None
 
         # Parse participant identity from filepath
         # Format: "room_name/identity__source-type-timestamp.ext"
-        filepath = track_data.get("file").get("filepath")
-        participant_identity = "unknown"
+        file_data = track_data.get("file") if isinstance(track_data, dict) else None
+        filepath = file_data.get("filepath") if isinstance(file_data, dict) else None
+        participant_identity: str = "unknown"
 
         if filepath:
             try:
-                parsed = Filepath.parse(filepath)
-                participant_identity = parsed.get("identity")
+                parsed = Filepath.parse(str(filepath))
+                participant_identity = parsed.get("identity", "")
                 logger.debug(f"Parsed participant identity '{participant_identity}' from filepath: {filepath}")
             except ValueError as e:
                 logger.warning(f"Failed to parse filepath '{filepath}': {e}")
@@ -146,14 +152,14 @@ class WebhookHandler:
 
         # Get or create room to obtain room_ref_id
         try:
-            room_ref_id = await self.room_registry.get_room_id(room_name)
+            room_ref_id = await self.room_registry.get_room_id(str(room_name))
 
             # Save track metadata (filename will be updated later when egress ends)
             asyncio_create_task_safety(
                 self.transcription_service.save_track_metadata(
-                    egress_id=egress_id,
-                    track_id=track_id,
-                    room_ref_id=room_ref_id,
+                    egress_id=str(egress_id),
+                    track_id=str(track_id),
+                    room_ref_id=str(room_ref_id),
                     participant_identity=participant_identity,
                 )
             )
@@ -198,7 +204,7 @@ class WebhookHandler:
         self._log_egress_info(egress_info)
 
         # Enqueue for transcription
-        asyncio_create_task_safety(self.transcription_service.enqueue(egress_info.dict()))
+        asyncio_create_task_safety(self.transcription_service.enqueue(egress_info))
 
         return WebhookResponse(received=True, action="egress_ending_logged")
 
@@ -282,14 +288,17 @@ class WebhookHandler:
                     f"sid={track_info.get('sid')}, type={track_info.get('type')}, "
                     f"source={track_info.get('source')}"
                 )
-                
+
+                raw_identity = participant_detail.get("identity")
+                safe_identity = str(raw_identity) if raw_identity is not None else "unknown"
+
                 asyncio_create_task_safety(
                     self.egress_service.start_recording(
                         room_name=room_name,
                         track_sid=track_info.get("sid"),
                         track_type=track_info.get("type"),
                         source=track_info.get("source"),
-                        identity=participant_detail.get("identity"),
+                        identity=safe_identity,
                         force_update=True,
                     )
                 )
@@ -309,23 +318,23 @@ class WebhookHandler:
 
     def _build_egress_info(self, egress: dict, file_data: dict) -> EgressInfo:
         """Build EgressInfo object from event data (simplified)"""
-        filepath = file_data.get("filename")
+        filepath = file_data.get("filename", "")
         parsed = Filepath.parse(filepath)
         return EgressInfo(
-            egress_id=egress.get("egressId"),
-            filename=file_data.get("filename"),
+            egress_id=str(egress.get("egressId", "")),
+            filename=str(filepath),
             source=parsed.get("source", ""),
-            location=file_data.get("location", ""),
-            duration=file_data.get("duration", 0),
-            started_at=file_data.get("startedAt"),
-            ended_at=file_data.get("endedAt"),
+            location=str(file_data.get("location", "")),
+            duration=str(file_data.get("duration", 0)),
+            started_at=str(file_data.get("startedAt", "")),
+            ended_at=str(file_data.get("endedAt", "")),
         )
 
     def _log_egress_info(self, info: EgressInfo):
         """Log egress information"""
-        logger.info(f"  Egress: {info.egressId}")
+        logger.info(f"  Egress: {info.egress_id}")
         logger.info(f"  File: {info.filename}")
         logger.info(f"  Location: {info.location}")
         logger.info(f"  Duration: {info.duration}ns")
-        logger.info(f"  Started At: {info.startedAt}")
-        logger.info(f"  Ended At: {info.endedAt}")
+        logger.info(f"  Started At: {info.started_at}")
+        logger.info(f"  Ended At: {info.ended_at}")

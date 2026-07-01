@@ -191,13 +191,13 @@ class AuthService:
             raise HTTPException(status_code=401, detail="Invalid or expired refresh token. Please login again.")
 
         # Get user_id from refresh token
-        user_id = token_doc.user_id
+        user_id = str(token_doc.user_id)
 
         # Get user data from token (permissions will be loaded from DB on each request)
         user_data = {"user_id": user_id}
 
         # Blacklist the old access token (if not already expired/blacklisted)
-        old_jti = token_doc.access_token_jti
+        old_jti = str(token_doc.access_token_jti)
 
         # We need to get the expiry of the old token - for now,assume it's expired
         # In production, you might want to store this or calculate
@@ -213,7 +213,7 @@ class AuthService:
             raise HTTPException(status_code=500, detail="Failed to generate new token")
 
         # Rotate refresh token with new access token JTI and expiry
-        new_refresh_token = await self.refresh_token_repo.rotate_refresh_token(token_doc.id, new_jti)
+        new_refresh_token = await self.refresh_token_repo.rotate_refresh_token(str(token_doc.id), new_jti)
 
         if not new_refresh_token:
             raise HTTPException(status_code=500, detail="Failed to rotate refresh token")

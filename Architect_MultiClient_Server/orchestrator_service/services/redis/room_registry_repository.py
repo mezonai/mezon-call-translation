@@ -159,7 +159,7 @@ class RoomRegistryRepository(BaseHashRepository):
 
         # Add domain-specific fields
         redis = await self._get_redis()
-        registry_stats = await redis.hgetall(self.STATS_KEY)
+        registry_stats = await redis.hgetall(self.STATS_KEY)        # type: ignore[misc]
 
         return {
             "active_rooms": base_stats.get("total_items", 0),

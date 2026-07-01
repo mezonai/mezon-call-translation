@@ -51,7 +51,7 @@ class RedisProducerService(Generic[T]):
         """
         self._task_class = task_class
         self._config = get_config().redis
-        self._redis: Redis | None = None
+        self._redis: Redis = get_connection_manager().get_client()
 
         # Keys - use provided value or fall back to config
         self._stream_key = stream_key
@@ -64,7 +64,7 @@ class RedisProducerService(Generic[T]):
     def get_instance(
         cls,
         task_class: type[T],
-        stream_key: str | None = None,
+        stream_key: str | None = None
     ) -> "RedisProducerService[T]":
         """
         Get or create singleton instance for task class and stream.
@@ -87,37 +87,6 @@ class RedisProducerService(Generic[T]):
 
         return cls._instances[instance_key]
 
-    async def connect(self) -> None:
-        """
-        Establish connection to Redis using connection pool.
-
-        Raises:
-            ConnectionError: If cannot connect to Redis
-        """
-        if self._redis is not None:
-            logger.debug("Redis already connected")
-            return
-
-        try:
-            manager = get_connection_manager()
-            if not manager.is_connected:
-                await manager.connect()
-            self._redis = Redis(connection_pool=manager.get_pool())
-            await self._redis.ping()
-            logger.info(f"✅ Redis producer using shared pool at {self._config.host}:{self._config.port}")
-
-        except Exception as e:
-            logger.error(f"✗ Failed to connect to Redis: {e}")
-            self._redis = None
-            raise ConnectionError(f"Redis connection failed: {e}") from e
-
-    async def close(self) -> None:
-        """Release this client's connections back to the shared pool (does not tear down the pool)."""
-        if self._redis:
-            await self._redis.close()
-            self._redis = None
-        logger.debug("Redis producer client released to shared pool")
-
     async def enqueue(self, task: T) -> str:
         """
         Add a task to the Redis Stream.
@@ -131,9 +100,6 @@ class RedisProducerService(Generic[T]):
         Raises:
             ConnectionError: If not connected to Redis
         """
-        if not self._redis:
-            await self.connect()
-
         # Get task data from object
         task_data = task.to_dict()
         task_id = task.task_id
@@ -141,8 +107,8 @@ class RedisProducerService(Generic[T]):
         try:
             # XADD to stream
             message_id = await self._redis.xadd(
-                self._stream_key,
-                task_data,
+                self._stream_key,  # type: ignore[arg-type]
+                task_data,  # type: ignore[arg-type]
                 maxlen=100000,  # Limit stream size
                 approximate=True,
             )
@@ -150,7 +116,7 @@ class RedisProducerService(Generic[T]):
             message_id_str = decode_value(message_id)
 
             # Store task metadata for quick lookup
-            await self._redis.hset(
+            await self._redis.hset(  # type: ignore[misc]
                 f"{self._tasks_prefix}:{task_id}",
                 mapping={
                     **task_data,
@@ -163,7 +129,7 @@ class RedisProducerService(Generic[T]):
             await self._redis.expire(f"{self._tasks_prefix}:{task_id}", 7 * 24 * 3600)
 
             # Update stats
-            await self._redis.hincrby(self._stats_key, "total_enqueued", 1)
+            await self._redis.hincrby(self._stats_key, "total_enqueued", 1)  # type: ignore[misc]
 
             logger.info(f"📥 Enqueued task {task_id} → message_id={message_id_str}")
 
@@ -175,20 +141,17 @@ class RedisProducerService(Generic[T]):
 
     async def get_queue_stats(self) -> dict[str, Any]:
         """Get queue statistics including active workers count."""
-        if not self._redis:
-            return {}
-
         try:
             # Get stream length
-            stream_len = await self._redis.xlen(self._stream_key)
+            stream_len = await self._redis.xlen(self._stream_key)  # type: ignore[arg-type]
 
             # Get stats
-            stats_data = await self._redis.hgetall(self._stats_key)
+            stats_data = await self._redis.hgetall(self._stats_key)  # type: ignore[misc]
             stats = decode_mapping(stats_data) if stats_data else {}
 
             # Count active workers
             workers_key = f"{self._stream_key}:workers"
-            active_workers_count = await self._redis.hlen(workers_key)
+            active_workers_count = await self._redis.hlen(workers_key)  # type: ignore[misc]
 
             return {
                 "stream_key": self._stream_key,
@@ -209,7 +172,7 @@ class RedisProducerService(Generic[T]):
         return self._redis is not None
 
     @property
-    def stream_key(self) -> str:
+    def stream_key(self) -> str | None:
         """Get the stream key."""
         return self._stream_key
 
@@ -238,7 +201,4 @@ def create_producer_service(
     Returns:
         RedisProducerService singleton instance
     """
-    return RedisProducerService.get_instance(
-        task_class=task_class,
-        stream_key=stream_key,
-    )
+    return RedisProducerService.get_instance(task_class=task_class, stream_key=stream_key)

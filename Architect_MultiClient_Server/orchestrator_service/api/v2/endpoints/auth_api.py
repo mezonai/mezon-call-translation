@@ -101,8 +101,11 @@ async def get_current_user(
     Requires:
         Authorization: Bearer <jwt_token>
     """
+    user_id = user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: missing user_id")
     try:
-        return await auth_service.get_current_user(user.get("user_id"))
+        return await auth_service.get_current_user(str(user_id))
     except HTTPException:
         raise
     except Exception as e:
@@ -195,12 +198,18 @@ async def logout(
         Authorization: Bearer <access_token>
     """
     jti = user.get("jti")
-    if not jti:
-        raise HTTPException(status_code=400, detail="Invalid token format")
+    user_id = user.get("user_id")
+    exp = user.get("exp")
+
+    if not jti or not user_id or exp is None:
+        raise HTTPException(status_code=400, detail="Invalid token format: missing required claims")
 
     try:
         await auth_service.logout(
-            jti=jti, user_id=user.get("user_id"), exp_timestamp=user.get("exp"), refresh_token=request.refresh_token
+            jti=str(jti),
+            user_id=str(user_id),
+            exp_timestamp=int(exp),
+            refresh_token=request.refresh_token
         )
 
         return {"status": "ok", "message": "Logged out successfully"}

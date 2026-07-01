@@ -582,7 +582,7 @@ class PgTranscriptRepository:
                 # Assume self._split_into_chunks exists or just dump everything if not available
                 # Actually, Mongo implementation has self._split_into_chunks and self._create_chunk_document.
                 # I'll replicate the logic or just insert them directly.
-                # In Mongo, chunks are split. We'll implement a basic splitter here if needed, 
+                # In Mongo, chunks are split. We'll implement a basic splitter here if needed,
                 # or just insert as one chunk for now.
                 # To match exactly:
                 chunk_size = 50

@@ -2,8 +2,10 @@ import contextlib
 import logging
 import time
 import traceback
+from typing import Any
 
 from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
+
 
 class NotificationHandler(logging.Handler):
     """
@@ -16,8 +18,7 @@ class NotificationHandler(logging.Handler):
         self._cooldown_sec = 60
         self._last_sent: dict[str, float] = {}
 
-        self._producer = None
-        self._connected = False
+        self._producer: Any | None = None
 
     def emit(self, record: logging.LogRecord):
         try:
@@ -43,7 +44,7 @@ class NotificationHandler(logging.Handler):
             error_key = f"{record.name}:{record.getMessage()}"
 
             now = time.time()
-            last_sent = self._last_sent.get(error_key, 0)
+            last_sent = self._last_sent.get(error_key, 0.0)
 
             if now - last_sent < self._cooldown_sec:
                 return
@@ -57,17 +58,24 @@ class NotificationHandler(logging.Handler):
         except Exception:
             pass
 
-    async def _ensure_connected(self):
+    def _get_producer(self) -> Any | None:
+        """
+        Lazy load producer synchronously.
+
+        This is required because Loggers are instantiated at module import time,
+        before the Redis Connection Pool is ready.
+        """
         if self._producer is None:
             from orchestrator_service.services.notification_producer import (
                 NotificationProducerService,
             )
 
-            self._producer = NotificationProducerService()
+            try:
+                self._producer = NotificationProducerService()
+            except RuntimeError:
+                return None
 
-        if not self._connected:
-            await self._producer.connect()
-            self._connected = True
+        return self._producer
 
     async def _send_notification(
         self,
@@ -75,9 +83,13 @@ class NotificationHandler(logging.Handler):
         message: str,
     ):
         try:
-            await self._ensure_connected()
+            producer = self._get_producer()
+            if not producer:
+                return
+
             title = f"🚫 {record.levelname} in {record.name}"
-            await self._producer.send(
+
+            await producer.send(
                 title=title,
                 message={
                     "t": f"{title}{message}",
