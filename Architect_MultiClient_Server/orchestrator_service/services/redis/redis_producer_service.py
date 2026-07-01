@@ -41,7 +41,6 @@ class RedisProducerService(Generic[T]):
         self,
         task_class: type[T],
         stream_key: str | None = None,
-        redis_client: Redis | None = None,
     ):
         """
         Initialize Redis Producer service.
@@ -49,11 +48,10 @@ class RedisProducerService(Generic[T]):
         Args:
             task_class: Task class implementing ProducerTaskProtocol
             stream_key: Redis stream key (default: from config)
-            redis_client: Explicit Redis client dependency (optional, falls back to shared pool manager)
         """
         self._task_class = task_class
         self._config = get_config().redis
-        self._redis: Redis = redis_client or get_connection_manager().get_client()
+        self._redis: Redis = get_connection_manager().get_client()
 
         # Keys - use provided value or fall back to config
         self._stream_key = stream_key
@@ -66,8 +64,7 @@ class RedisProducerService(Generic[T]):
     def get_instance(
         cls,
         task_class: type[T],
-        stream_key: str | None = None,
-        redis_client: Redis | None = None,
+        stream_key: str | None = None
     ) -> "RedisProducerService[T]":
         """
         Get or create singleton instance for task class and stream.
@@ -75,7 +72,6 @@ class RedisProducerService(Generic[T]):
         Args:
             task_class: Task class implementing ProducerTaskProtocol
             stream_key: Redis stream key (default: from config)
-            redis_client: Redis client (optional, falls back to shared pool manager)
 
         Returns:
             RedisProducerService instance for the specified configuration
@@ -87,7 +83,6 @@ class RedisProducerService(Generic[T]):
             cls._instances[instance_key] = cls(
                 task_class=task_class,
                 stream_key=stream_key,
-                redis_client=redis_client,
             )
 
         return cls._instances[instance_key]
@@ -195,7 +190,6 @@ class RedisProducerService(Generic[T]):
 def create_producer_service(
     task_class: type[T],
     stream_key: str,
-    redis_client: Redis | None = None,
 ) -> RedisProducerService[T]:
     """
     Factory function to create or get producer service instance.
@@ -207,4 +201,4 @@ def create_producer_service(
     Returns:
         RedisProducerService singleton instance
     """
-    return RedisProducerService.get_instance(task_class=task_class, stream_key=stream_key, redis_client=redis_client)
+    return RedisProducerService.get_instance(task_class=task_class, stream_key=stream_key)

@@ -98,7 +98,6 @@ class RedisStreamService(Generic[T]):
         task_class: type[T],
         stream_key: str | None = None,
         group_name: str | None = None,
-        redis_client: Redis | None = None,
     ):
         """
         Initialize Redis Stream service.
@@ -107,11 +106,10 @@ class RedisStreamService(Generic[T]):
             task_class: Class used to parse tasks (must implement StreamTaskProtocol)
             stream_key: Redis stream key (default: from config)
             group_name: Consumer group name (default: from config)
-            redis_client: Explicit Redis client dependency (optional, falls back to shared pool manager)
         """
         self._task_class: type[T] = task_class
         self._config = get_config().redis
-        self._redis: Redis = redis_client or get_connection_manager().get_client()
+        self._redis: Redis = get_connection_manager().get_client()
         self._consumer_id: str = self._generate_consumer_id()
         self._running = False
         self._is_setup = False
@@ -149,7 +147,6 @@ class RedisStreamService(Generic[T]):
         task_class: type[T],
         stream_key: str | None = None,
         group_name: str | None = None,
-        redis_client: Redis | None = None,
     ) -> "RedisStreamService[T]":
         """
         Get or create singleton instance for the given task class and stream.
@@ -158,7 +155,6 @@ class RedisStreamService(Generic[T]):
             task_class: Class used to parse tasks
             stream_key: Redis stream key (default: from config)
             group_name: Consumer group name (default: from config)
-            redis_client: Redis client (optional, falls back to shared pool manager)
 
         Returns:
             RedisStreamService instance for the specified configuration
@@ -171,7 +167,6 @@ class RedisStreamService(Generic[T]):
                 task_class=task_class,
                 stream_key=stream_key,
                 group_name=group_name,
-                redis_client=redis_client,
             )
 
         return cls._instances[instance_key]
@@ -933,7 +928,6 @@ def create_stream_service(
     task_class: type[T],
     stream_key: str,
     group_name: str,
-    redis_client: Redis | None = None,
 ) -> "RedisStreamService[T]":
     """
     Create or get a RedisStreamService for a specific task type.
@@ -950,5 +944,5 @@ def create_stream_service(
         RedisStreamService instance for the specified task type
     """
     return RedisStreamService.get_instance(
-        task_class=task_class, stream_key=stream_key, group_name=group_name, redis_client=redis_client
+        task_class=task_class, stream_key=stream_key, group_name=group_name,
     )
