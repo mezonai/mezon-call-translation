@@ -19,7 +19,6 @@ class NotificationHandler(logging.Handler):
         self._last_sent: dict[str, float] = {}
 
         self._producer: Any | None = None
-        self._connected: bool = False
 
     def emit(self, record: logging.LogRecord):
         try:
@@ -59,17 +58,24 @@ class NotificationHandler(logging.Handler):
         except Exception:
             pass
 
-    async def _ensure_connected(self):
+    def _get_producer(self) -> Any | None:
+        """
+        Lazy load producer synchronously.
+
+        This is required because Loggers are instantiated at module import time,
+        before the Redis Connection Pool is ready.
+        """
         if self._producer is None:
             from orchestrator_service.services.notification_producer import (
                 NotificationProducerService,
             )
 
-            self._producer = NotificationProducerService()
+            try:
+                self._producer = NotificationProducerService()
+            except RuntimeError:
+                return None
 
-        if not self._connected:
-            await self._producer.connect()
-            self._connected = True
+        return self._producer
 
     async def _send_notification(
         self,
@@ -77,9 +83,7 @@ class NotificationHandler(logging.Handler):
         message: str,
     ):
         try:
-            await self._ensure_connected()
-
-            producer = self._producer
+            producer = self._get_producer()
             if not producer:
                 return
 

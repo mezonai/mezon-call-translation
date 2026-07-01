@@ -60,8 +60,8 @@ class RedisSaveTranscriptionService:
     """
 
     def __init__(self):
-        self._redis_service: RedisStreamService[SaveTranscriptionTask] | None = None
-        self._pg_repo: PgTranscriptRepository | None = None
+        self._redis_service: RedisStreamService[SaveTranscriptionTask] = get_save_stream_service()
+        self._pg_repo: PgTranscriptRepository = PgTranscriptRepository()
         self._consumer_task: asyncio.Task | None = None
         self._orphan_recovery_task: asyncio.Task | None = None
         self._running = False
@@ -78,16 +78,11 @@ class RedisSaveTranscriptionService:
 
     async def connect(self) -> None:
         """Connect to Redis and PostgreSQL."""
-        if self._redis_service is not None:
-            return
-
         # Connect to Redis
-        self._redis_service = get_save_stream_service()
         await self._redis_service.connect()
         logger.info("✅ RedisSaveTranscriptionService connected to Redis")
 
         # Connect to PostgreSQL
-        self._pg_repo = PgTranscriptRepository()
         if not self._pg_repo.connected:
             await self._pg_repo.connect()
         logger.info("✅ RedisSaveTranscriptionService connected to PostgreSQL")
@@ -107,17 +102,11 @@ class RedisSaveTranscriptionService:
 
         # Ensure connected
         await self.connect()
-
-        redis_service = self._redis_service
-        if not redis_service:
-            logger.error("❌ Redis service failed to initialize. Cannot start worker.")
-            return
-
         self._running = True
         self._local_stats["started_at"] = time.time()
 
         # Start Redis background tasks
-        await redis_service.start_background_tasks()
+        await self._redis_service.start_background_tasks()
 
         # Start consumer loop
         self._consumer_task = asyncio.create_task(self._consumer_loop(), name=CONSUMER_TASK_NAME)
@@ -127,9 +116,9 @@ class RedisSaveTranscriptionService:
 
         logger.info(
             f"✅ RedisSaveTranscriptionService started\n"
-            f"   Consumer ID: {redis_service._consumer_id}\n"
-            f"   Stream: {redis_service._stream_key}\n"
-            f"   Group: {redis_service._group_name}"
+            f"   Consumer ID: {self._redis_service._consumer_id}\n"
+            f"   Stream: {self._redis_service._stream_key}\n"
+            f"   Group: {self._redis_service._group_name}"
         )
 
     async def stop(self) -> None:
@@ -149,14 +138,9 @@ class RedisSaveTranscriptionService:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._orphan_recovery_task
 
-        # Stop background tasks
-        if self._redis_service:
-            await self._redis_service.stop_background_tasks()
-            await self._redis_service.disconnect()
-
-        # Disconnect PostgreSQL
-        if self._pg_repo:
-            await self._pg_repo.disconnect()
+        await self._redis_service.stop_background_tasks()
+        await self._redis_service.disconnect()
+        await self._pg_repo.disconnect()
 
         logger.info("✅ RedisSaveTranscriptionService stopped")
 
@@ -168,18 +152,12 @@ class RedisSaveTranscriptionService:
 
         while self._running:
             try:
-                redis_service = self._redis_service
-                if not redis_service:
-                    logger.error("Redis service not initialized. Waiting...")
-                    await asyncio.sleep(5)
-                    return
-
                 # Update heartbeat
-                await redis_service.update_heartbeat(current_task_id=None)
+                await self._redis_service.update_heartbeat(current_task_id=None)
 
                 # Read tasks from Redis (blocking)
-                tasks = await redis_service.read_tasks(
-                    count=1, block_ms=redis_service._config.block_timeout_ms
+                tasks = await self._redis_service.read_tasks(
+                    count=1, block_ms=self._redis_service._config.block_timeout_ms
                 )
 
                 if not tasks:
@@ -187,16 +165,16 @@ class RedisSaveTranscriptionService:
 
                 for task in tasks:
                     # Update heartbeat with current task
-                    await redis_service.update_heartbeat(current_task_id=task.task_id)
+                    await self._redis_service.update_heartbeat(current_task_id=task.task_id)
 
                     # Process the save task
                     success = await self._process_save_task(task)
 
                     # Update worker stats
                     if success:
-                        await redis_service.increment_worker_stats(processed=1)
+                        await self._redis_service.increment_worker_stats(processed=1)
                     else:
-                        await redis_service.increment_worker_stats(failed=1)
+                        await self._redis_service.increment_worker_stats(failed=1)
 
             except asyncio.CancelledError:
                 logger.info("Save consumer loop cancelled")
@@ -231,12 +209,6 @@ class RedisSaveTranscriptionService:
             f"chunk={task.chunk_index}, segments={task.item_count}, final={task.is_final}"
         )
 
-        redis_service = self._redis_service
-        pg_repo = self._pg_repo
-        if not redis_service or not pg_repo:
-            logger.error("❌ Services not initialized. Cannot process save task.")
-            return False
-
         try:
             # Handle failed transcription
             if task.status == "failed":
@@ -244,7 +216,7 @@ class RedisSaveTranscriptionService:
                     f"❌ Transcription failed for track {task.track_ref_id}, updating track status to 'failed'"
                 )
 
-                success_res = await pg_repo.update_track_status(track_ref_id=task.track_ref_id, status="failed")
+                success_res = await self._pg_repo.update_track_status(track_ref_id=task.track_ref_id, status="failed")
 
                 if success_res and success_res.get("success"):
                     logger.info(
@@ -259,7 +231,7 @@ class RedisSaveTranscriptionService:
                     logger.warning(f"Failed to update status for track {task.track_ref_id}")
 
                 # ACK the task
-                await redis_service.acknowledge(task)
+                await self._redis_service.acknowledge(task)
                 self._local_stats["batches_failed"] += 1
                 return True
 
@@ -269,7 +241,7 @@ class RedisSaveTranscriptionService:
                     f"🏁 Completion marker received for track {task.track_ref_id}, updating status to 'completed'"
                 )
 
-                success_res = await pg_repo.update_track_status(
+                success_res = await self._pg_repo.update_track_status(
                     track_ref_id=task.track_ref_id, status="completed"
                 )
 
@@ -289,21 +261,21 @@ class RedisSaveTranscriptionService:
                     )
 
                     # Check and complete room if all tracks are done
-                    if room_ref_id and await pg_repo.check_and_complete_room(room_ref_id):
+                    if room_ref_id and await self._pg_repo.check_and_complete_room(room_ref_id):
                         service = get_summary_service()
                         await service.generate_summary(room_ref_id)
                 else:
                     logger.warning(f"Failed to update status for track {task.track_ref_id}")
 
                 # ACK the task
-                await redis_service.acknowledge(task)
+                await self._redis_service.acknowledge(task)
                 self._local_stats["batches_processed"] += 1
                 return True
 
             # Handle normal pending batch with segments
             if task.segments and len(task.segments) > 0:
                 # Save segments to PostgreSQL
-                await pg_repo.append_transcript_chunk(track_ref_id=task.track_ref_id, new_segments=task.segments)
+                await self._pg_repo.append_transcript_chunk(track_ref_id=task.track_ref_id, new_segments=task.segments)
 
                 logger.info(
                     f"💾 Saved {task.item_count} segments for track {task.track_ref_id} "
@@ -314,7 +286,7 @@ class RedisSaveTranscriptionService:
                 self._local_stats["total_segments_saved"] += task.item_count
 
             # ACK the task
-            await redis_service.acknowledge(task)
+            await self._redis_service.acknowledge(task)
 
             # Update local stats
             self._local_stats["batches_processed"] += 1
@@ -325,7 +297,7 @@ class RedisSaveTranscriptionService:
             logger.error(f"❌ Failed to save batch for track {task.track_ref_id}: {e}", exc_info=True)
 
             # Reject with retry
-            await redis_service.reject(task, error=str(e))
+            await self._redis_service.reject(task, error=str(e))
 
             self._local_stats["batches_failed"] += 1
             return False
@@ -346,13 +318,8 @@ class RedisSaveTranscriptionService:
                 if not self._running:
                     break
 
-                redis_service = self._redis_service
-                if not redis_service:
-                    logger.error("Redis service not initialized. Skipping orphan recovery tick.")
-                    continue
-
                 # Claim orphaned tasks
-                claimed_tasks = await redis_service.claim_orphaned_tasks(count=5)
+                claimed_tasks = await self._redis_service.claim_orphaned_tasks(count=5)
 
                 if claimed_tasks:
                     logger.info(f"🔄 Claimed {len(claimed_tasks)} orphaned task(s) from crashed workers")
@@ -361,14 +328,14 @@ class RedisSaveTranscriptionService:
                     for task in claimed_tasks:
                         task.retry_count += 1
 
-                        await redis_service.update_heartbeat(current_task_id=task.task_id)
+                        await self._redis_service.update_heartbeat(current_task_id=task.task_id)
 
                         success = await self._process_save_task(task)
 
                         if success:
-                            await redis_service.increment_worker_stats(processed=1)
+                            await self._redis_service.increment_worker_stats(processed=1)
                         else:
-                            await redis_service.increment_worker_stats(failed=1)
+                            await self._redis_service.increment_worker_stats(failed=1)
 
             except asyncio.CancelledError:
                 break

@@ -4,6 +4,7 @@ from typing import Any
 from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.transcription_task import TranscriptionTask
+from orchestrator_service.models.webhook_models import EgressInfo
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
@@ -37,7 +38,7 @@ class TranscriptionService:
             await self._redis_producer.connect()
         return self._redis_producer
 
-    async def enqueue(self, egress_info: dict) -> bool:
+    async def enqueue(self, egress_info: EgressInfo) -> bool:
         """
         Send egress info directly to Redis Stream.
 
@@ -53,14 +54,14 @@ class TranscriptionService:
                 if not self.pg_repo.connected:
                     await self.pg_repo.connect()
                 track_result = await self.pg_repo.save_track_metadata(
-                    egress_id=egress_info.get("egressId"),
+                    egress_id=egress_info.egress_id,
                     audio_info={
-                        "filename": egress_info.get("filename"),
-                        "duration_sec": egress_info.get("duration"),
-                        "started_at_ns": egress_info.get("startedAt"),
-                        "ended_at_ns": egress_info.get("endedAt"),
-                        "location": egress_info.get("location"),
-                        "source": egress_info.get("source"),
+                        "filename": egress_info.filename,
+                        "duration_sec": egress_info.duration,
+                        "started_at_ns": egress_info.started_at,
+                        "ended_at_ns": egress_info.ended_at,
+                        "location": egress_info.location,
+                        "source": egress_info.source,
                     },
                     status="wait_process",
                 )
@@ -77,7 +78,7 @@ class TranscriptionService:
                 else:
                     logger.warning("Failed to save track metadata: track_result is None")
 
-                logger.info(f"✅ Track metadata updated: egress={egress_info.get('egressId')}")
+                logger.info(f"✅ Track metadata updated: egress={egress_info.egress_id}")
             except Exception as e:
                 logger.warning(f"Failed to update track metadata: {e}")
                 # Continue processing even if metadata update fails
@@ -86,18 +87,18 @@ class TranscriptionService:
 
             # Create task object
             task = TranscriptionTask(
-                egress_id=egress_info["egressId"],
-                filename=egress_info["filename"],
-                location=egress_info["location"],
-                duration=egress_info["duration"],
-                started_at=egress_info["startedAt"],
-                ended_at=egress_info["endedAt"],
-                source=egress_info.get("source", ""),
+                egress_id=egress_info.egress_id,
+                filename=egress_info.filename,
+                location=egress_info.location,
+                duration=egress_info.duration,
+                started_at=egress_info.started_at,
+                ended_at=egress_info.ended_at,
+                source=egress_info.source or "",
             )
 
             task_id = await producer.enqueue(task)
 
-            logger.info(f"✓ Queued to Redis: {egress_info['egressId']} → {task_id}")
+            logger.info(f"✓ Queued to Redis: {egress_info.egress_id} → {task_id}")
             return True
 
         except Exception as e:
@@ -124,7 +125,7 @@ class TranscriptionService:
                 return False
 
             if await self.pg_repo.check_event_record_done(room_id):
-                await metadata_channel.push_room_record_done(room_id=str(room_id), room_name=room_name)
+                await metadata_channel.push_room_record_done(room_id=room_id, room_name=room_name)
 
             if await self.pg_repo.check_and_complete_room(room_id):
                 service = get_summary_service()
@@ -156,7 +157,9 @@ class TranscriptionService:
 
         return None
 
-    async def save_participant(self, room_id: str, participant_identity: str, timestamp: datetime | None = None) -> bool:
+    async def save_participant(
+        self, room_id: str, participant_identity: str, timestamp: datetime | None = None
+    ) -> bool:
         """
         Save participant info to PostgreSQL
 

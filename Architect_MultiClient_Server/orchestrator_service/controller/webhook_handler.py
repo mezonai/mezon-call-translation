@@ -16,6 +16,7 @@ from orchestrator_service.utils.participant_identity import parse_participant_id
 
 logger = get_logger(__name__)
 
+
 class WebhookHandler:
     """Webhook event handler from LiveKit"""
 
@@ -203,7 +204,7 @@ class WebhookHandler:
         self._log_egress_info(egress_info)
 
         # Enqueue for transcription
-        asyncio_create_task_safety(self.transcription_service.enqueue(egress_info.dict()))
+        asyncio_create_task_safety(self.transcription_service.enqueue(egress_info))
 
         return WebhookResponse(received=True, action="egress_ending_logged")
 
@@ -290,7 +291,7 @@ class WebhookHandler:
 
                 raw_identity = participant_detail.get("identity")
                 safe_identity = str(raw_identity) if raw_identity is not None else "unknown"
-                
+
                 asyncio_create_task_safety(
                     self.egress_service.start_recording(
                         room_name=room_name,
@@ -320,13 +321,13 @@ class WebhookHandler:
         filepath = file_data.get("filename", "")
         parsed = Filepath.parse(filepath)
         return EgressInfo(
-            egressId=str(egress.get("egressId", "")),
+            egress_id=str(egress.get("egressId", "")),
             filename=str(filepath),
             source=parsed.get("source", ""),
             location=str(file_data.get("location", "")),
             duration=str(file_data.get("duration", 0)),
-            startedAt=str(file_data.get("startedAt", "")),
-            endedAt=str(file_data.get("endedAt", "")),
+            started_at=str(file_data.get("startedAt", "")),
+            ended_at=str(file_data.get("endedAt", "")),
         )
 
     def _log_egress_info(self, info: EgressInfo):

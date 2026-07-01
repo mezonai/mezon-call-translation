@@ -35,7 +35,7 @@ class AgentRequestChannel:
         self.manager = manager
 
     @staticmethod
-    def get_context_key(room_name: str | None, agent_id: str | None) -> str:
+    def get_context_key(room_name: str, agent_id: str) -> str:
         """
         Get context key for agent request channel.
 
@@ -46,9 +46,7 @@ class AgentRequestChannel:
         Returns:
             Context key in format "{room_name}:{agent_id}"
         """
-        safe_room_name = room_name if room_name is not None else ""
-        safe_agent_id = agent_id if agent_id is not None else ""
-        return f"{safe_room_name}:{safe_agent_id}"
+        return f"{room_name}:{agent_id}"
 
     async def create_connection(
         self,
@@ -96,8 +94,8 @@ class AgentRequestChannel:
         self,
         request_type: str,
         payload: dict[str, Any],
-        room_name: str | None = None,
-        agent_id: str | None = None,
+        room_name: str,
+        agent_id: str,
     ) -> dict[str, Any]:
         """
         Send request to agent(s) via SSE.
