@@ -696,6 +696,7 @@ class PgTranscriptRepository:
                     s = dict(row._mapping)
                     s["room_id"] = str(s["room_id"])
                     s["created_at"] = room.get("created_at")
+                    s["finalized_at"] = room.get("finalized_at")
                     s["completed_at"] = room.get("completed_at")
 
                     # Read speech durations directly from the rooms table participants column

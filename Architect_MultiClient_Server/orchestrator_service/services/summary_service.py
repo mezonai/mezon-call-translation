@@ -417,6 +417,8 @@ class SummaryService:
             summary["room_id"] = str(summary["room_id"])
         if summary.get("created_at") is not None:
             summary["created_at"] = convert_to_iso_8601(summary["created_at"])
+        if summary.get("finalized_at") is not None:
+            summary["finalized_at"] = convert_to_iso_8601(summary["finalized_at"])
         if summary.get("completed_at") is not None:
             summary["completed_at"] = convert_to_iso_8601(summary["completed_at"])
 
