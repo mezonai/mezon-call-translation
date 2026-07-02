@@ -101,7 +101,7 @@ class QueueService(Generic[T]):
     def stream_key(self) -> str:
         """Get the stream key."""
         producer = self._producer
-        key_from_producer = producer.stream_key if producer else None
+        key_from_producer = producer.stream_key
         return key_from_producer or self._stream_key or self.config.redis.stream_key
 
     @property
@@ -188,7 +188,7 @@ class QueueService(Generic[T]):
         """
         try:
             # Read pending messages from stream (last 100)
-            messages = await self._producer._redis.xrange(self._producer.stream_key, count=100)
+            messages = await self._producer._redis.xrange(self.stream_key, count=100)
 
             pending_tasks = []
             for message_id, data in messages:
@@ -290,7 +290,7 @@ class QueueService(Generic[T]):
                     task_data.pop("dead_letter_at", None)
 
                     # Re-enqueue to main stream
-                    await self._producer._redis.xadd(self._producer.stream_key, task_data)
+                    await self._producer._redis.xadd(self.stream_key, task_data)
 
                     # Remove from DLQ
                     await self._producer._redis.xdel(dlq_stream_key, message_id)

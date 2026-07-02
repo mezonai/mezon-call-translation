@@ -1,3 +1,6 @@
+[tool.pyrefly]
+search-path = [".."]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 120                     
@@ -14,6 +17,7 @@ select = [
     "B",    # Bugbear: Warn against bad patterns that easily cause hidden bugs
     "SIM",  # Simplify: Make code more concise and readable
     "RUF",  # Ruff-specific: Exclusive rules for best performance and code quality
+    "ANN",  # Annotations: Enforce type annotations
 ]
 ignore = ["E501"]   # Ignore "line too long" (E501) for unbreakable strings/URLs
 
@@ -43,6 +47,8 @@ check_untyped_defs = true               # Still type-check function bodies even 
 ignore_missing_imports = false          # Require stubs or config for all imports by default
 strict_optional = true                  # Distinguish between Optional[X] and X (None safety)
 warn_unreachable = true                 # Warn about unreachable code after return/raise
+disallow_any_explicit = true            # Disallow explicit usage of Any
+disallow_any_generics = true            # Disallow generic types without passing type parameters
 
 [[tool.mypy.overrides]]
 module = [

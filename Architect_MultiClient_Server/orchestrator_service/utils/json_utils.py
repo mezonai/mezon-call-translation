@@ -3,10 +3,10 @@ JSON utilities shared across orchestrator services.
 """
 
 import json
-from typing import Any
 
+from orchestrator_service.models.common_types import JsonObject, JsonValue
 
-def safe_json_loads_object(payload: str) -> dict[str, Any]:
+def safe_json_loads_object(payload: str) -> JsonObject:
     """Parse JSON string and return an object dict; fallback to empty dict."""
     if not payload:
         return {}

@@ -25,18 +25,12 @@ class TranscriptionService:
         self.api_url = f"http://{self.config.host}:{self.config.port}/api/transcribe"
         self.timeout = 30.0
         self.pg_repo = PgTranscriptRepository()
-        self._redis_producer: RedisProducerService[TranscriptionTask] | None = None
         self.stream_key = "transcription:stream"
 
-    async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
-        """Get or create Redis producer (lazy initialization)."""
-        if not self._redis_producer:
-            self._redis_producer = create_producer_service(
-                task_class=TranscriptionTask,
-                stream_key=self.stream_key,
-            )
-            await self._redis_producer.connect()
-        return self._redis_producer
+        self._redis_producer: RedisProducerService[TranscriptionTask] = create_producer_service(
+            task_class=TranscriptionTask,
+            stream_key=self.stream_key,
+        )
 
     async def enqueue(self, egress_info: EgressInfo) -> bool:
         """
@@ -83,7 +77,7 @@ class TranscriptionService:
                 logger.warning(f"Failed to update track metadata: {e}")
                 # Continue processing even if metadata update fails
 
-            producer = await self._get_producer()
+            producer = self._redis_producer
 
             # Create task object
             task = TranscriptionTask(
