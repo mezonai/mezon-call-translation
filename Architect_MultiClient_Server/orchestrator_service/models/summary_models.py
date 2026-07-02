@@ -52,6 +52,7 @@ class RoomSummaryResponse(BaseModel):
     summary_data: Dict[str, Any] = Field(description="Summary Data", default={})
     messages: List[Dict[str, Any]] = Field(description="Messages array", default=[])
     created_at: str = Field(description="Created At", default="")
+    finalized_at: str = Field(description="Finalized At", default="")
     completed_at: str = Field(description="Completed At", default="")
     total_segments: int = Field(description="Total Segments", default=0)
     speech_durations: List[Dict[str, Any]] = Field(description="Speech Durations of each participant", default=[])
