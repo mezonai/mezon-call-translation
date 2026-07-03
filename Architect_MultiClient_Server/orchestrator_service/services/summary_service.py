@@ -18,6 +18,9 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
 )
+from orchestrator_service.utils.time_convert import convert_to_iso_8601
+from orchestrator_service.services.light_summary_service import LightSummaryService
+from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
@@ -185,58 +188,105 @@ class SummaryService:
             logger.error(f"Failed to save summary to DB: {e}")
             return None
 
-        try:
-            # 7. Generate Summary via LLM (uses configured provider)
-            summary_data_result = await self.llm_service.summarize_conversation(
-                conversation_text=full_text, room_id=room_id, language=self.config.llm.language
-            )
-            action_items = summary_data_result.action_items
-            action_items_dict = {
-                action_item.participant_identity: action_item.participant_actions for action_item in action_items
-            }
-            summary_data = {
-                "summary": summary_data_result.summary,
-                "action_items": action_items_dict,
-            }
+        total_duration = 0.0
+        if len(turns) >= 2:
+            start_time = parse_timestamp_to_seconds(turns[0]["timestamp"])
+            end_time = parse_timestamp_to_seconds(turns[-1]["timestamp"])
+            total_duration = end_time - start_time
 
-            final_summary = dict(draft_summary)
-            final_summary["summary_data"] = summary_data
+        if total_duration > self.config.light_summary.threshold_min * 60:
+            logger.info(f"Room duration ({total_duration:.1f}s) > 20 mins. Using LightSummaryService.")
+            
+            try:
+                # Light summary flow
+                light_summary = LightSummaryService(self.pg_repo, self.llm_service)
+                summary_data = await light_summary.process_room_by_id(room_id, language=self.config.llm.language)
 
-            # 8. Update only summary_data in DB; full_text remains from the draft save
-            updated = await self.pg_repo.update_room_summary(room_id, summary_data)
-            if not updated:
-                logger.error(f"Failed to update generated summary for room {room_id}")
-                return {**draft_summary, "id": saved_id}
+                final_summary = dict(draft_summary)
+                final_summary["summary_data"] = summary_data
 
-            logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
-            result = dict(final_summary)
-            result["id"] = saved_id
+                logger.info(f"Generated light summary for room {room_id} (ID: {saved_id})")
 
-            # 9. Notify clients via SSE if summary generation is successful
-            if summary_data_result.summary_success and summary_data_result.action_items_success:
+                result = dict(final_summary)
+                result["id"] = saved_id
+                
                 metadata_channel = MetadataChannel()
-                await metadata_channel.push_room_summary_done(
-                    room_id=room_id, room_name=room_doc.room_name or "Unknown"
-                )
-            else:
-                if not summary_data_result.summary_success and not summary_data_result.action_items_success:
-                    retry_type = RetryType.ALL
-                elif not summary_data_result.summary_success:
-                    retry_type = RetryType.SUMMARY
-                else:
-                    retry_type = RetryType.ACTION_ITEMS
+                await metadata_channel.push_room_summary_done(room_id=str(room_id), room_name=(room_doc.room_name or "Unknown"))
 
-                error_msg = f"{retry_type} summarization task failed in initial run."
+                return result
+            
+            except Exception as e:
+                logger.error(f"Failed to generate light summary for room {room_id}: {e}")
+                logger.warning(f"Light summary task failed for room {room_id}. Creating outbox task.")
 
-                logger.warning(f"{retry_type} task failed for room {room_id}. Creating outbox task.")
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=room_id, retry_type=retry_type, error_msg=error_msg
+                    room_id=str(room_id),
+                    retry_type=RetryType.ALL,
+                    error_msg=str(e)
                 )
+                return {**draft_summary, "id": saved_id}
+        else:
+            # Nomal summary flow
+            logger.info(f"Room duration ({total_duration:.1f}s) <= 20 mins. Using normal summary flow.")
+            try:
+                # 7. Generate Summary via LLM (uses configured provider)
+                summary_data_result = await self.llm_service.summarize_conversation(
+                    conversation_text=full_text, room_id=room_id, language=self.config.llm.language
+                )
+                action_items = summary_data_result.action_items
+                action_items_dict = {
+                    action_item.participant_identity: action_item.participant_actions
+                    for action_item in action_items
+                }
+                summary_data = {
+                    "summary": summary_data_result.summary,
+                    "action_items": action_items_dict,
+                }
 
-            return result
-        except Exception as e:
-            logger.error(f"Failed to generate summary for room {room_id}: {e}")
-            return {**draft_summary, "id": saved_id}
+                final_summary = dict(draft_summary)
+                final_summary["summary_data"] = summary_data
+
+                # 8. Update only summary_data in DB; full_text remains from the draft save
+                updated = await self.pg_repo.update_room_summary(
+                    room_id, summary_data
+                )
+                if not updated:
+                    logger.error(f"Failed to update generated summary for room {room_id}")
+                    return {**draft_summary, "id": saved_id}
+
+                logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
+                result = dict(final_summary)
+                result["id"] = saved_id
+
+                # 9. Notify clients via SSE if summary generation is successful
+                if summary_data_result.summary_success and summary_data_result.action_items_success:
+                    metadata_channel = MetadataChannel()
+                    await metadata_channel.push_room_summary_done(
+                        room_id=str(room_id), room_name=room_doc.room_name or "Unknown"
+                    )
+                else:
+                    if not summary_data_result.summary_success and not summary_data_result.action_items_success:
+                        retry_type = RetryType.ALL
+                    elif not summary_data_result.summary_success:
+                        retry_type = RetryType.SUMMARY
+                    else:
+                        retry_type = RetryType.ACTION_ITEMS
+
+                    error_msg = f"{retry_type} summarization task failed in initial run."
+
+                    logger.warning(
+                        f"{retry_type} task failed for room {room_id}. Creating outbox task."
+                    )
+                    await self.outbox_repo.add_retry_summarization_task_to_outbox(
+                        room_id=str(room_id),
+                        retry_type=retry_type,
+                        error_msg=error_msg
+                        )
+
+                return result
+            except Exception as e:
+                logger.error(f"Failed to generate summary for room {room_id}: {e}")
+                return {**draft_summary, "id": saved_id}
 
     # TODO: Use `Any` type because `summary_data` response from this function has complex type
     async def retry_summary_from_full_text(  # type: ignore[explicit-any]
@@ -265,89 +315,113 @@ class SummaryService:
 
         full_text = "\n".join(f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in messages)
 
-        # Extract existing summary_data to preserve fields that aren't being retried
-        existing_summary_data = summary_doc.summary_data or {}
-        existing_summary = existing_summary_data.get("summary", "")
-        existing_action_items = existing_summary_data.get("action_items", {})
+        total_duration = 0.0
+        if len(messages) >= 2:
+            start_time = parse_timestamp_to_seconds(messages[0]["timestamp"])
+            end_time = parse_timestamp_to_seconds(messages[-1]["timestamp"])
+            total_duration = end_time - start_time
 
-        logger.info(f"Retrying LLM with type '{retry_type.value}' for room {room_id} ({len(full_text)} chars)")
+        if total_duration >= self.config.light_summary.threshold_min * 60:
+            logger.info(f"Retrying room ({total_duration:.1f}s) > 20 mins. Using LightSummaryService.")
 
-        is_success = False
-        try:
-            if retry_type == RetryType.SUMMARY:
-                summary_result = await self.llm_service.summarize_summary(
-                    conversation_text=full_text,
-                    language=self.config.llm.language,
-                )
+            try:
+                light_summary = LightSummaryService(self.pg_repo, self.llm_service)
+                summary_data = await light_summary.process_room_by_id(room_id, language=self.config.llm.language)
 
-                # Format summary with only non-empty fields
-                summary_parts = [
-                    f"Context\n{summary_result.context}",
-                    f"Key Discussions\n{summary_result.key_discussions}",
-                ]
-
-                if summary_result.decisions and summary_result.decisions.strip():
-                    summary_parts.append(f"Decisions\n{summary_result.decisions}")
-
-                if summary_result.unresolved_issues and summary_result.unresolved_issues.strip():
-                    summary_parts.append(f"Unresolved Issues\n{summary_result.unresolved_issues}")
-
-                if summary_result.next_focus and summary_result.next_focus.strip():
-                    summary_parts.append(f"Next Focus\n{summary_result.next_focus}")
-
-                summary_data = {
-                    "summary": "\n\n".join(summary_parts),
-                    "action_items": existing_action_items,
-                }
-
-                is_success = True
-
-            elif retry_type == RetryType.ACTION_ITEMS:
-                action_result = await self.llm_service.summarize_action_items(
-                    conversation_text=full_text,
-                    language=self.config.llm.language,
-                )
-
-                summary_data = {
-                    "summary": existing_summary,
-                    "action_items": {
-                        item.participant_identity: item.participant_actions for item in action_result.action_items
-                    },
-                }
-
-                is_success = True
-
-            else:  # RetryType.ALL
-                both_result = await self.llm_service.summarize_conversation(
-                    conversation_text=full_text, room_id=room_id, language=self.config.llm.language
-                )
-                is_success = both_result.summary_success and both_result.action_items_success
-
-                summary_data = {
-                    "summary": both_result.summary,
-                    "action_items": {
-                        item.participant_identity: item.participant_actions for item in both_result.action_items
-                    },
-                }
-
-            updated = await self.pg_repo.update_room_summary(room_id, summary_data)
-            logger.info(f"Updated summary for room {room_id}")
-            if not updated:
-                logger.error(f"Failed to update summary for room {room_id}")
-                return None
-
-            # Notify clients via SSE if summary generation is successful
-            if is_success:
                 metadata_channel = MetadataChannel()
-                await metadata_channel.push_room_summary_done(
-                    room_id=room_id, room_name=summary_doc.room_name or "Unknown"
-                )
+                await metadata_channel.push_room_summary_done(room_id=room_id, room_name=summary_doc.room_name or "Unknown")
 
-            logger.info(f"Successfully updated summary for room {room_id} and notified clients (success={is_success})")
-            return summary_data
-        except Exception as e:
-            logger.error(f"Failed to retry summary for room {room_id} with type '{retry_type.value}': {e}")
-            return None
+                return summary_data
+            except Exception as e:
+                logger.error(f"Failed to retry light summary for room {room_id}: {e}")
+                return None
+        else:
+            # Extract existing summary_data to preserve fields that aren't being retried
+            existing_summary_data = summary_doc.summary_data or {}
+            existing_summary = existing_summary_data.get("summary", "")
+            existing_action_items = existing_summary_data.get("action_items", {})
+
+            logger.info(f"Retrying LLM with type '{retry_type.value}' for room {room_id} ({len(full_text)} chars)")
+
+            is_success = False
+            try:
+                if retry_type == RetryType.SUMMARY:
+                    result = await self.llm_service.summarize_summary(
+                        conversation_text=full_text,
+                        language=self.config.llm.language,
+                    )
+
+                    # Format summary with only non-empty fields
+                    summary_parts = [f"Context\n{result.context}"]
+
+                    if result.key_discussions:
+                        summary_parts.append("Key Discussions\n" + "\n".join(result.key_discussions))
+
+                    if result.next_focus:
+                        summary_parts.append("Next Focus\n" + "\n".join(result.next_focus))
+
+                    if result.detail:
+                        summary_parts.append("Detail\n" + "\n".join(result.detail))
+
+                    summary_data = {
+                        "summary": "\n\n".join(summary_parts),
+                        "action_items": existing_action_items,
+                    }
+
+                    is_success = True
+
+                elif retry_type == RetryType.ACTION_ITEMS:
+                    result = await self.llm_service.summarize_action_items(
+                        conversation_text=full_text,
+                        language=self.config.llm.language,
+                    )
+
+                    summary_data = {
+                        "summary": existing_summary,
+                        "action_items": {
+                            item.participant_identity: item.participant_actions
+                            for item in result.action_items
+                        },
+                    }
+
+                    is_success = True
+
+                else:  # RetryType.ALL
+                    result = await self.llm_service.summarize_conversation(
+                        conversation_text=full_text,
+                        room_id=room_id,
+                        language=self.config.llm.language
+                    )
+                    is_success = result.summary_success and result.action_items_success
+
+                    summary_data = {
+                        "summary": result.summary,
+                        "action_items": {
+                            item.participant_identity: item.participant_actions
+                            for item in result.action_items
+                        },
+                    }
+
+                updated = await self.pg_repo.update_room_summary(room_id, summary_data)
+                logger.info(f"Updated summary for room {room_id}")
+                if not updated:
+                    logger.error(f"Failed to update summary for room {room_id}")
+                    return None
+
+                # Notify clients via SSE if summary generation is successful
+                if is_success:
+                    metadata_channel = MetadataChannel()
+                    await metadata_channel.push_room_summary_done(
+                        room_id=room_id, room_name=summary_doc.room_name or "Unknown"
+                    )
+
+                logger.info(
+                    f"Successfully updated summary for room {room_id} and notified clients (success={is_success})"
+                )
+                return summary_data
+            except Exception as e:
+                logger.error(f"Failed to retry summary for room {room_id} with type '{retry_type.value}': {e}")
+                return None
 
     async def get_summary_by_room_name(
         self, room_name: str, start_time: datetime | None, end_time: datetime | None, auth: AuthContext

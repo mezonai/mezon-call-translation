@@ -7,11 +7,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, TypeVar, cast
 
-from sqlalchemy import Select, exists, func, or_, select, text, update
+from sqlalchemy import text, select, update, exists, func, Select, or_, delete
 from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
-from orchestrator_service.services.postgresql.models import MetadataEvent, Room, RoomSummary, Track, TranscriptChunk
+from orchestrator_service.services.postgresql.models import Room, Track, RoomSummary, RoomSectionSummary, MetadataEvent, TranscriptChunk
 from orchestrator_service.utils.logger import get_logger
 
 _T = TypeVar("_T")
@@ -539,6 +539,108 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to get summary by room name: {e}")
             return [], []
+    
+    # ------------------------------------------------------------------
+    # LIGHT SUMMARY
+    # ------------------------------------------------------------------
+
+    async def upsert_room_section_summary(self, record: Dict[str, Any]) -> bool:
+        session_factory = get_session_factory()
+
+        try:
+            room_uid = uuid.UUID(str(record["room_id"]))
+            section_index = record["section_index"]
+            summary_data = record.get("summary_data", {})
+
+            async with session_factory() as session:
+                stmt = insert(RoomSectionSummary).values(
+                    id=record.get("id") or uuid.uuid4(),
+                    room_id=room_uid,
+                    room_name=record.get("room_name"),
+                    section_index=section_index,
+                    messages=record.get("messages", []),
+                    summary_data=summary_data,
+                    start_time=record.get("start_time"),
+                    end_time=record.get("end_time")
+                )
+
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[RoomSectionSummary.room_id, RoomSectionSummary.section_index],
+                        set_={
+                        "room_name": record.get("room_name"),
+                        "messages": record.get("messages", []),
+                        "summary_data": summary_data,
+                        "start_time": record.get("start_time"),
+                        "end_time": record.get("end_time")
+                    }
+                )
+
+                await session.execute(stmt)
+                await session.commit()
+                return True
+        
+        except Exception as e:
+            logger.error(f"Failed to upsert room section summary: {e}")
+            return False
+
+    async def get_section_summaries_by_room_id(self, room_id: str) -> List[Dict[str, Any]]:
+        session_factory = get_session_factory()
+
+        try:
+            room_uid = uuid.UUID(str(room_id))
+
+            async with session_factory() as session:
+                stmt = (
+                    select(RoomSectionSummary)
+                    .where(RoomSectionSummary.room_id == room_uid)
+                    .order_by(RoomSectionSummary.section_index.asc())
+                )
+                sections = list((await session.scalars(stmt)).all())
+
+                return [
+                    {
+                        "section_index": section.section_index,
+                        "messages": section.messages or [],
+                        "summary_data": section.summary_data or {},
+                        "start_time": section.start_time,
+                        "end_time": section.end_time
+
+                    }
+                    for section in sections
+                ]
+    
+        except Exception as e:
+            logger.error(f"Failed to get section summaries by room id: {e}")
+            return []
+
+    async def get_room_summary_payload(self, room_id: str) -> Optional[Dict[str, any]]:
+        summary, _room = await self.get_summary_by_room_id(room_id)
+        if not summary:
+            return None
+        
+        return {
+            "id": str(summary.id),
+            "room_id": str(summary.room_id) if summary.room_id else "",
+            "room_name": summary.room_name,
+            "messages": summary.messages or []
+        }
+    
+    async def update_room_summary_data(self, room_id: str, summary_data: Dict[str, any]) -> bool:
+        return await self.update_room_summary(room_id, summary_data)
+    
+    async def delete_section_summaries_by_room_id(self, room_id: str) -> bool:
+        session_factory = get_session_factory()
+        
+        try:
+            room_uid = uuid.UUID(str(room_id))
+            async with session_factory() as session:
+                stmt = delete(RoomSectionSummary).where(RoomSectionSummary.room_id == room_uid)
+                await session.execute(stmt)
+                await session.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete section summaries for room {room_id}: {e}")
+            return False
 
     # ------------------------------------------------------------------
     # METADATA EVENTS

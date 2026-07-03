@@ -451,6 +451,27 @@ class OutboxConfig:
 
 
 # ============================================================================
+# Light Summary Configuration
+# ============================================================================
+
+@dataclass
+class LightSummaryConfig:
+    threshold_min: int = 20
+    target_duration_min: int = 15
+    extend_min: int = 5
+    max_duration_min: int = 30
+
+    @classmethod
+    def from_env(cls) -> 'LightSummaryConfig':
+        return cls(
+            threshold_min=int(os.getenv("LIGHT_SUMMARY_THRESHOLD_MIN", "20")),
+            target_duration_min=int(os.getenv("LIGHT_SUMMARY_TARGET_DURATION_MIN", "15")),
+            extend_min=int(os.getenv("LIGHT_SUMMARY_EXTEND_MIN", "5")),
+            max_duration_min=int(os.getenv("LIGHT_SUMMARY_MAX_DURATION_MIN", "30"))
+        )
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -493,6 +514,7 @@ class Config:
         self.notification = NotificationConfig.from_env()
         self.oauth2 = OAuth2Config.from_env()
         self.outbox = OutboxConfig.from_env()
+        self.light_summary = LightSummaryConfig.from_env()
 
         self._initialized = True
         self._validate_all()

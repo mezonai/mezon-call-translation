@@ -11,7 +11,19 @@ from google import genai
 from orchestrator_service.config.application_config import LLMConfig
 from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
-from orchestrator_service.services.llm.prompt import build_prompt_action_items, build_prompt_summary
+from orchestrator_service.services.llm.prompt import (
+    build_light_summary_prompt,
+    build_overall_context_prompt,
+    build_prompt_action_items,
+    build_prompt_summary
+)
+from orchestrator_service.models.summary_models import (
+    ActionItemsResult,
+    SummaryActionItemsResult,
+    SummaryResult,
+    LightSummaryResult,
+    OverallContextResult
+)
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -127,15 +139,7 @@ class GeminiLLMService(BaseLLMService):
             },
         )
 
-        raw_text = response.text
-        if not raw_text:
-            raise ValueError("Empty response text from Gemini API")
-
-        return ActionItemsResult.model_validate(extract_json_from_llm(raw_text))
-
-    async def summarize_conversation(
-        self, conversation_text: str, room_id: str, language: str = "Vietnamese"
-    ) -> SummaryActionItemsResult:
+    async def summarize_conversation(self, conversation_text: str, room_id: str = "", language: str = "Vietnamese") -> SummaryActionItemsResult:
         """Run 2 Gemini requests: one for summary and one for action items."""
         try:
             summary_result = await self.summarize_summary(conversation_text, language)
@@ -145,19 +149,16 @@ class GeminiLLMService(BaseLLMService):
             )
 
             # Build summary with only non-empty fields
-            summary_parts = [
-                f"Context\n{summary_result.context}",
-                f"Key Discussions\n{summary_result.key_discussions}",
-            ]
+            summary_parts = [f"Context\n{summary_result.context}"]
 
-            if summary_result.decisions and summary_result.decisions.strip():
-                summary_parts.append(f"Decisions\n{summary_result.decisions}")
+            if summary_result.key_discussions:
+                summary_parts.append("Key Discussions\n" + "\n".join(summary_result.key_discussions))
 
-            if summary_result.unresolved_issues and summary_result.unresolved_issues.strip():
-                summary_parts.append(f"Unresolved Issues\n{summary_result.unresolved_issues}")
+            if summary_result.next_focus:
+                summary_parts.append("Next Focus\n" + "\n".join(summary_result.next_focus))
 
-            if summary_result.next_focus and summary_result.next_focus.strip():
-                summary_parts.append(f"Next Focus\n{summary_result.next_focus}")
+            if summary_result.detail:
+                summary_parts.append("Detail\n" + "\n".join(summary_result.detail))
 
             return SummaryActionItemsResult(
                 summary="\n\n".join(summary_parts),
@@ -173,3 +174,27 @@ class GeminiLLMService(BaseLLMService):
                 summary_success=False,
                 action_items_success=False,
             )
+        
+    async def summarize_light_section(self, conversation_str, previous_context, language) -> LightSummaryResult:
+        prompt = build_light_summary_prompt(conversation_str, previous_context, language)
+        response = await self.client.aio.models.generate_content(
+            model=self.config.model,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_json_schema": LightSummaryResult.model_json_schema(),
+            },
+        )
+        return LightSummaryResult.model_validate(extract_json_from_llm(response.text))
+    
+    async def summarize_overall_context(self, section_context_str, language) -> OverallContextResult:
+        prompt = build_overall_context_prompt(section_context_str, language)
+        response = await self.client.aio.models.generate_content(
+            model=self.config.model,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_json_schema": OverallContextResult.model_json_schema(),
+            },
+        )
+        return OverallContextResult.model_validate(extract_json_from_llm(response.text))

@@ -161,6 +161,32 @@ class RoomSummary(Base):
 
 
 # ---------------------------------------------------------------------------
+# rooms_section_summary
+# ---------------------------------------------------------------------------
+class RoomSectionSummary(Base):
+    """
+    Corresponds to PostgreSQL 'rooms_section_summary' table.
+    summary_data and messages stored as JSONB.
+    """
+    __tablename__ = "rooms_section_summary"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    room_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)
+    room_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    section_index: Mapped[int] = mapped_column(Integer, nullable=True)
+    messages: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    summary_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    start_time: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    end_time: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_rooms_section_summary_room_id", "room_id"),
+        Index("ix_rooms_section_summary_room_name", "room_name"),
+        Index("ix_rooms_section_summary_room_id_section_index", "room_id", "section_index", unique=True)
+    )
+
+
+# ---------------------------------------------------------------------------
 # metadata_events
 # ---------------------------------------------------------------------------
 class MetadataEvent(Base):
