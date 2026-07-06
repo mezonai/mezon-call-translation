@@ -5,6 +5,7 @@ Task model for enqueueing transcription jobs to Redis Stream.
 """
 
 from dataclasses import dataclass
+
 from orchestrator_service.models.stream_base import BaseProducerTask
 
 

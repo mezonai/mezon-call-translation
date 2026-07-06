@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 from fastapi.responses import StreamingResponse
 
-from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.api.sse.sse_manager import SSEManager, SSEMessage
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,9 +18,9 @@ async def event_generator(
     channel_type: str,
     context_key: str,
     connection_id: str,
-    connection_queue: asyncio.Queue,
+    connection_queue: asyncio.Queue[SSEMessage],
     manager: SSEManager,
-    event_filter: Callable[[dict], bool] | None = None,
+    event_filter: Callable[[SSEMessage], bool] | None = None,
     heartbeat_interval: int = 15,
 ):
     """

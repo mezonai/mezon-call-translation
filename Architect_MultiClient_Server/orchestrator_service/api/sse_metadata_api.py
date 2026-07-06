@@ -4,7 +4,7 @@ Endpoints for bot to receive agent metadata events via SSE
 """
 
 from datetime import datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -26,7 +26,7 @@ metadata_channel = MetadataChannel()
 # ==================== Pydantic Models ====================
 
 
-class RoomInfo(BaseModel):
+class RoomInfo(BaseModel):                                      # type: ignore[explicit-any]
     """Room information"""
 
     room_id: str = Field(..., description="Room identifier")
@@ -42,14 +42,14 @@ class RoomInfo(BaseModel):
         return v
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
+        json_schema_extra: ClassVar[dict[str, Any]] = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
 
 
 class SessionStartedRequest(RoomInfo):
     """Request model for session_started event"""
 
-    class Config:
-        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
+    class Config(RoomInfo.Config):
+        json_schema_extra: ClassVar[dict[str, Any]] = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
 
 
 class SessionEndedRequest(RoomInfo):
@@ -57,13 +57,13 @@ class SessionEndedRequest(RoomInfo):
 
     duration_seconds: int | None = Field(None, description="Duration of room session in seconds")
 
-    class Config:
-        json_schema_extra: ClassVar[dict] = {
+    class Config(RoomInfo.Config):
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {"room_id": "abc123", "room_name": "Interview Room 1", "duration_seconds": 3600}
         }
 
 
-class FileResult(BaseModel):
+class FileResult(BaseModel):                                      # type: ignore[explicit-any]
     """Recording file result"""
 
     participant_identity: str = Field(..., description="Identity of participant")
@@ -72,7 +72,7 @@ class FileResult(BaseModel):
     end_time: str = Field(..., description="Recording end time (ISO 8601)")
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "participant_identity": "user_1",
                 "filename": "user_1_audio.mp3",
@@ -85,15 +85,15 @@ class FileResult(BaseModel):
 class SessionRecordDoneRequest(RoomInfo):
     """Request model for room_record_done event"""
 
-    class Config:
-        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "abc123", "room_name": "Room_1"}}
+    class Config(RoomInfo.Config):
+        json_schema_extra: ClassVar[dict[str, Any]] = {"example": {"room_id": "abc123", "room_name": "Room_1"}}
 
 
 class SessionSummaryDoneRequest(RoomInfo):
     """Request model for room_summary_done event"""
 
-    class Config:
-        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "69a66008cfc00881f1d7b382", "room_name": "H3U-EXdDg"}}
+    class Config(RoomInfo.Config):
+        json_schema_extra: ClassVar[dict[str, Any]] = {"example": {"room_id": "69a66008cfc00881f1d7b382", "room_name": "H3U-EXdDg"}}
 
 
 # ==================== SSE Endpoint ====================

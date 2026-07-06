@@ -4,33 +4,12 @@ Shared Redis Connection Pool
 Single ConnectionPool per process for all Redis usage (hash repos, streams, producer).
 Uses decode_responses=False so stream workflows keep raw Redis behavior.
 """
-
-from typing import Any
-
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 from redis.asyncio import ConnectionPool, Redis
 
 logger = get_logger(__name__)
-
-
-def _pool_connection_kwargs(cfg: Any) -> dict[str, Any]:
-    """
-    Per-connection kwargs for ConnectionPool (host, timeouts, decode_responses, etc.).
-
-    ``max_connections`` is passed separately at the ``ConnectionPool(...)`` call site
-    so pool sizing stays visible next to pool construction.
-    """
-    return {
-        "host": cfg.host,
-        "port": cfg.port,
-        "password": cfg.password or None,
-        "db": cfg.db,
-        "socket_timeout": cfg.socket_timeout,
-        "socket_connect_timeout": cfg.socket_connect_timeout,
-        "decode_responses": False,
-    }
 
 
 @singleton
@@ -62,8 +41,14 @@ class RedisConnectionManager:
 
         try:
             self._pool = ConnectionPool(
+                host=self._config.host,
+                port=self._config.port,
+                password=self._config.password or None,
+                db=self._config.db,
+                socket_timeout=self._config.socket_timeout,
+                socket_connect_timeout=self._config.socket_connect_timeout,
+                decode_responses=False,
                 max_connections=self._config.max_connections,
-                **_pool_connection_kwargs(self._config),
             )
 
             redis_client = Redis(connection_pool=self._pool)

@@ -5,12 +5,12 @@ Scans Redis to find existing streams and provides queue information.
 No manual registration required - automatically discovers queues.
 """
 
+from orchestrator_service.models.queue_models import QueueInfo
 from orchestrator_service.services.redis.connection_pool import get_redis_connection
 from orchestrator_service.utils.decode import decode_mapping, decode_value
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
 
 class QueueDiscovery:
     """
@@ -69,7 +69,7 @@ class QueueDiscovery:
                 await redis_client.close()
 
     @staticmethod
-    async def get_stream_info(stream_key: str) -> dict | None:
+    async def get_stream_info(stream_key: str) -> QueueInfo | None:
         """
         Get information about a specific stream.
 
@@ -104,16 +104,16 @@ class QueueDiscovery:
             # Extract queue name from stream key
             queue_name = stream_key.replace(":stream", "")
 
-            return {
-                "queue_name": queue_name,
-                "stream_key": stream_key,
-                "stream_length": stream_length,
-                "total_enqueued": int(stats.get("total_enqueued", 0)),
-                "total_processed": int(stats.get("total_processed", 0)),
-                "total_failed": int(stats.get("total_failed", 0)),
-                "active_workers": workers_count,
-                "exists": True,
-            }
+            return QueueInfo(
+                queue_name=queue_name,
+                stream_key=stream_key,
+                stream_length=stream_length,
+                total_enqueued=int(stats.get("total_enqueued", 0)),
+                total_processed=int(stats.get("total_processed", 0)),
+                total_failed=int(stats.get("total_failed", 0)),
+                active_workers=workers_count,
+                exists=True,
+            )
 
         except Exception as e:
             logger.error(f"Error getting stream info for {stream_key}: {e}")
@@ -123,7 +123,7 @@ class QueueDiscovery:
                 await redis_client.close()
 
     @staticmethod
-    async def list_queues() -> list[dict]:
+    async def list_queues() -> list[QueueInfo]:
         """
         List all available queues with their info.
 

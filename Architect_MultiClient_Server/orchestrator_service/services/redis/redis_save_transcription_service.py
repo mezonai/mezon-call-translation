@@ -62,8 +62,8 @@ class RedisSaveTranscriptionService:
     def __init__(self):
         self._redis_service: RedisStreamService[SaveTranscriptionTask] = get_save_stream_service()
         self._pg_repo: PgTranscriptRepository = PgTranscriptRepository()
-        self._consumer_task: asyncio.Task | None = None
-        self._orphan_recovery_task: asyncio.Task | None = None
+        self._consumer_task: asyncio.Task[None] | None = None
+        self._orphan_recovery_task: asyncio.Task[None] | None = None
         self._running = False
 
         # Stats
@@ -246,9 +246,9 @@ class RedisSaveTranscriptionService:
                 )
 
                 if success_res and success_res.get("success"):
-                    track_data = success_res.get("track", {})
                     # Get room_ref_id from updated track
-                    room_ref_id = track_data.room_ref_id if track_data else None
+                    track_data = success_res.get("track")
+                    room_ref_id = getattr(track_data, "room_ref_id", None)
 
                     # Log final summary
                     logger.info(
@@ -315,9 +315,6 @@ class RedisSaveTranscriptionService:
             try:
                 await asyncio.sleep(60)  # Check every minute
 
-                if not self._running:
-                    break
-
                 # Claim orphaned tasks
                 claimed_tasks = await self._redis_service.claim_orphaned_tasks(count=5)
 
@@ -345,7 +342,7 @@ class RedisSaveTranscriptionService:
 
         logger.info("Orphan recovery loop ended")
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, bool | float | int | None]:
         """Get local statistics."""
         uptime = None
         if self._local_stats["started_at"]:

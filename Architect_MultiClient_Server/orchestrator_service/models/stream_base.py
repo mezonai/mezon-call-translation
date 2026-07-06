@@ -196,10 +196,10 @@ def parse_priority(value: int | TaskPriority | str) -> int:
     Returns:
         Integer priority value
     """
-    if isinstance(value, int):
-        return value
     if isinstance(value, TaskPriority):
         return int(value)
+    if isinstance(value, int):
+        return value
     if isinstance(value, str):
         try:
             return int(value)

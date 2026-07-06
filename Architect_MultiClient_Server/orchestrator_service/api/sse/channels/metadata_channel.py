@@ -5,12 +5,12 @@ Handles SSE connections for room lifecycle and recording events (global, not roo
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import cast
 
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_base import create_sse_response, event_generator
-from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.api.sse.sse_manager import SSEManager, SSEMessage
 from orchestrator_service.models.metadata_event_models import MetadataEventType
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
@@ -85,8 +85,8 @@ class MetadataChannel:
         )
 
     def _create_base_event(
-        self, event_type: str, room_id: str, room_name: str, metadata: dict[str, Any]
-    ) -> dict[str, Any]:
+        self, event_type: str, room_id: str, room_name: str, metadata: dict[str, int]
+    ) -> SSEMessage:
         """
         Create base event structure with unified format.
 
@@ -107,7 +107,7 @@ class MetadataChannel:
             "metadata": metadata,
         }
 
-    async def _save_event_to_db(self, event_data: dict[str, Any]) -> str | None:
+    async def _save_event_to_db(self, event_data: SSEMessage) -> str | None:
         """
         Save metadata event to PostgreSQL with TTL.
         Events will be automatically deleted after 3 days.
@@ -119,12 +119,14 @@ class MetadataChannel:
             Database _id as string if successful, None if failed
         """
         try:
+            room_info = cast(dict[str, str], event_data["room"])
+
             # Prepare document with event_id as _id and created_at for TTL
             doc = {
                 "event_id": event_data["event_id"],  # Use event_id as document _id
                 "event_type": event_data["event_type"],
-                "room_id": event_data["room"]["room_id"],
-                "room_name": event_data["room"]["room_name"],
+                "room_id": room_info["room_id"],
+                "room_name": room_info["room_name"],
                 "metadata": event_data["metadata"],
                 "created_at": datetime.utcnow(),
                 "timestamp": event_data["timestamp"],
@@ -137,7 +139,7 @@ class MetadataChannel:
             logger.error(f"[Metadata Channel] Failed to save event to DB: {e}")
             return None
 
-    async def push_room_started(self, room_id: str, room_name: str) -> dict[str, Any]:
+    async def push_room_started(self, room_id: str, room_name: str) -> SSEMessage:
         """
         Push room_started event to all connected bots.
 
@@ -186,7 +188,7 @@ class MetadataChannel:
 
     async def push_room_ended(
         self, room_id: str, room_name: str, duration_seconds: int | None = None
-    ) -> dict[str, Any]:
+    ) -> dict[str, MetadataEventType | dict[str, int] | dict[str, str] | int | str | None]:
         """
         Push room_ended event to all connected bots.
 
@@ -240,7 +242,7 @@ class MetadataChannel:
             "broadcast_to": broadcast_count,
         }
 
-    async def push_room_record_done(self, room_id: str, room_name: str) -> dict[str, Any]:
+    async def push_room_record_done(self, room_id: str, room_name: str) -> SSEMessage:
         """
         Push room_record_done event to all connected bots.
         Automatically fetches tracks from PostgreSQL and builds file_results.
@@ -292,7 +294,7 @@ class MetadataChannel:
         self,
         room_id: str,
         room_name: str,
-    ) -> dict[str, Any]:
+    ) -> SSEMessage:
         """
         Push room_summary_done event to all connected bots.
         Notifies that room summary/analysis has been completed.

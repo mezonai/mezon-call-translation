@@ -6,9 +6,7 @@ strings.  Used by hash repositories, queue discovery, and any other layer
 that operates with decode_responses=False.
 """
 
-from orchestrator_service.models.common_types import RedisMapping, RedisValue
-
-def decode_value(value: RedisValue) -> str | None:
+def decode_value(value: bytes | str | int | float | None) -> str | None:
     """
     Decode a single Redis value to string.
 
@@ -25,7 +23,7 @@ def decode_value(value: RedisValue) -> str | None:
     return str(value)
 
 
-def decode_mapping(data: RedisMapping) -> dict[str, str]:
+def decode_mapping(data: dict[bytes | str | int | float, bytes | str | int | float]) -> dict[str, str]:
     """
     Decode a Redis hash mapping (keys and values) to plain Python strings.
 

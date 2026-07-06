@@ -13,20 +13,20 @@ from orchestrator_service.services.room_service import RoomService, get_room_ser
 router = APIRouter()
 
 
-class DispatchRequestModel(BaseModel):
+class DispatchRequestModel(BaseModel):                                  # type: ignore[explicit-any]
     room_name: str = Field(..., description="Room name")
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {"example": {"room_name": "Interview Room 1"}}
+        json_schema_extra: ClassVar[dict[str, Any]] = {"example": {"room_name": "Interview Room 1"}}
 
 
-class DispatchActionResponseModel(BaseModel):
+class DispatchActionResponseModel(BaseModel):                           # type: ignore[explicit-any]
     status: str
     message: str | None = None
     dispatch: dict[str, Any] | None = None
 
 
-class ParticipantModel(BaseModel):
+class ParticipantModel(BaseModel):                                      # type: ignore[explicit-any]
     identity: str
     name: str
     state: str
@@ -34,7 +34,7 @@ class ParticipantModel(BaseModel):
     metadata: dict[str, Any]
 
 
-class ParticipantListResponseModel(BaseModel):
+class ParticipantListResponseModel(BaseModel):                          # type: ignore[explicit-any]
     status: str
     participants: list[ParticipantModel]
 
@@ -81,7 +81,7 @@ async def list_participants(
     try:
         participants_data = await room_service.list_participants(room_id)
         return ParticipantListResponseModel(
-            status="ok", participants=[ParticipantModel(**participant) for participant in participants_data]
+            status="ok", participants=[ParticipantModel(**participant.model_dump()) for participant in participants_data]
         )
     except HTTPException:
         raise

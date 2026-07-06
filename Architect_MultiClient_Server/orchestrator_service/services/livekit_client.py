@@ -4,11 +4,14 @@ Singleton pattern for efficient connection management
 """
 
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, ClassVar
+
+from pydantic import BaseModel, Field
 
 try:
     from livekit import api
     from livekit.api import twirp_client
+    from livekit.protocol.agent_dispatch import AgentDispatch
 
     LIVEKIT_AVAILABLE = True
 except ImportError:
@@ -19,6 +22,57 @@ from orchestrator_service.utils.json_utils import safe_json_loads_object
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class ParticipantBasicInfo(BaseModel):
+    identity: str = Field(..., description="Identity of the participant")
+    name: str = Field(..., description="Name of the participant")
+    state: str = Field(..., description="State of the participant")
+    joined_at: int = Field(..., description="Timestamp when participant joined")
+    metadata: dict[str, Any] = Field(..., description="Metadata of the participant")
+
+class AudioTrackInfo(BaseModel):
+    """Model represent audio track information"""
+    participant_identity: str = Field(..., description="Participant identity")
+    filename: str = Field(..., description="Audio track filename")
+    started_at_ns: int | str | None = Field(default=None, description="Audio track started at (nanoseconds)")
+    ended_at_ns: int | str | None = Field(default=None, description="Audio track ended at (nanoseconds)")
+
+class TrackInfo(BaseModel):
+    sid: str = Field(..., description="SID of the track")
+    type: str = Field(..., description="Type of the track")
+    name: str = Field(..., description="Name of the track")
+    muted: bool = Field(..., description="Muted state of the track")
+    width: int = Field(..., description="Width of the track")
+    height: int = Field(..., description="Height of the track")
+    source: str = Field(..., description="Source of the track")
+    mime_type: str = Field(..., description="MIME type of the track")
+
+class ParticipantPermission(BaseModel):
+    can_subscribe: bool = Field(..., description="Can subscribe permission")
+    can_publish: bool = Field(..., description="Can publish permission")
+    can_publish_data: bool = Field(..., description="Can publish data permission")
+    hidden: bool = Field(..., description="Hidden permission")
+    recorder: bool = Field(..., description="Recorder permission")
+
+class ParticipantDetail(BaseModel):
+    identity: str = Field(..., description="Identity of the participant")
+    found: bool = Field(..., description="Found status")
+    message: str | None = Field(default=None, description="Message")
+    sid: str | None = Field(default=None, description="SID of the participant")
+    state: str | None = Field(default=None, description="State of the participant")
+    name: str | None = Field(default=None, description="Name of the participant")
+    metadata: dict[str, Any] | None = Field(default=None, description="Metadata of the participant")
+    joined_at: int | None = Field(default=None, description="Timestamp when participant joined")
+    joined_at_ms: int | None = Field(default=None, description="Timestamp in milliseconds when participant joined")
+    version: int | None = Field(default=None, description="Version of the participant")
+    region: str | None = Field(default=None, description="Region of the participant")
+    is_publisher: bool | None = Field(default=None, description="Is publisher")
+    kind: str | None = Field(default=None, description="Kind of the participant")
+    attributes: dict[str, str] | None = Field(default=None, description="Attributes of the participant")
+    disconnect_reason: int | None = Field(default=None, description="Reason for disconnection")
+    tracks: list[TrackInfo] = Field(default_factory=list, description="Tracks of the participant")
+    permission: ParticipantPermission | None = Field(default=None, description="Permission of the participant")
 
 
 class LiveKitServiceError(Exception):
@@ -33,7 +87,8 @@ class LiveKitClientService:
     Provides efficient connection reuse across the application.
     """
 
-    _instance: Optional["LiveKitClientService"] = None
+    _instance: ClassVar["LiveKitClientService | None"] = None
+    _initialized: bool
 
     def __new__(cls):
         if cls._instance is None:
@@ -131,7 +186,9 @@ class LiveKitClientService:
                 raise
             raise LiveKitServiceError(f"Failed to list dispatches: {e}") from e
 
-    async def find_agent_dispatch(self, dispatches, agent_name: str | None = None) -> Any | None:
+    async def find_agent_dispatch(
+        self, dispatches: list[AgentDispatch], agent_name: str | None = None
+    ) -> AgentDispatch | None:
         """Find dispatch by configured or provided agent name."""
         target_agent_name = agent_name or self.get_agent_name()
         for dispatch in dispatches:
@@ -187,19 +244,19 @@ class LiveKitClientService:
                 raise LiveKitServiceError(f"Failed to cancel dispatch: {e}") from e
             raise LiveKitServiceError(f"Failed to cancel dispatch: {e}") from e
 
-    async def list_participants(self, room_name: str):
+    async def list_participants(self, room_name: str) -> list[ParticipantBasicInfo]:
         """List participants in a room."""
         client = self.get_client()
         try:
             response = await client.room.list_participants(api.ListParticipantsRequest(room=room_name))
             return [
-                {
-                    "identity": p.identity,
-                    "name": p.name,
-                    "state": api.ParticipantInfo.State.Name(p.state),
-                    "joined_at": p.joined_at,
-                    "metadata": safe_json_loads_object(p.metadata),
-                }
+                ParticipantBasicInfo(
+                    identity=p.identity,
+                    name=p.name,
+                    state=api.ParticipantInfo.State.Name(p.state),
+                    joined_at=p.joined_at,
+                    metadata=safe_json_loads_object(p.metadata),
+                )
                 for p in response.participants
             ]
         except Exception as e:
@@ -209,7 +266,7 @@ class LiveKitClientService:
                 raise
             raise LiveKitServiceError(f"Failed to list participants: {e}") from e
 
-    async def get_participant_detail(self, room_name: str, identity: str) -> dict[str, Any] | None:
+    async def get_participant_detail(self, room_name: str, identity: str) -> ParticipantDetail | None:
         """
         Get detailed information for a specific participant in a room.
 
@@ -227,53 +284,54 @@ class LiveKitClientService:
             # Find the specific participant
             for p in response.participants:
                 if p.identity == identity:
-                    return {
-                        "sid": p.sid,
-                        "identity": p.identity,
-                        "state": api.ParticipantInfo.State.Name(p.state),
-                        "name": p.name,
-                        "metadata": safe_json_loads_object(p.metadata),
-                        "joined_at": p.joined_at,
-                        "joined_at_ms": p.joined_at_ms,
-                        "version": p.version,
-                        "region": p.region,
-                        "is_publisher": p.is_publisher,
-                        "kind": api.ParticipantInfo.Kind.Name(p.kind) if p.kind else None,
-                        "attributes": dict(p.attributes) if p.attributes else {},
-                        "disconnect_reason": p.disconnect_reason if p.disconnect_reason else None,
-                        "found": True,
-                        "tracks": [
-                            {
-                                "sid": track.sid,
-                                "type": api.TrackType.Name(track.type),
-                                "name": track.name,
-                                "muted": track.muted,
-                                "width": track.width,
-                                "height": track.height,
-                                "source": api.TrackSource.Name(track.source),
-                                "mime_type": track.mime_type,
-                            }
-                            for track in p.tracks
-                        ]
-                        if p.tracks
-                        else [],
-                        "permission": {
-                            "can_subscribe": p.permission.can_subscribe if p.permission else False,
-                            "can_publish": p.permission.can_publish if p.permission else False,
-                            "can_publish_data": p.permission.can_publish_data if p.permission else False,
-                            "hidden": p.permission.hidden if p.permission else False,
-                            "recorder": p.permission.recorder if p.permission else False,
-                        }
-                        if p.permission
-                        else None,
-                    }
+
+                    tracks = [
+                        TrackInfo(
+                            sid=track.sid,
+                            type=api.TrackType.Name(track.type),
+                            name=track.name,
+                            muted=track.muted,
+                            width=track.width,
+                            height=track.height,
+                            source=api.TrackSource.Name(track.source),
+                            mime_type=track.mime_type,
+                        )
+                        for track in p.tracks
+                    ] if p.tracks else []
+
+                    permission = ParticipantPermission(
+                        can_subscribe=p.permission.can_subscribe if p.permission else False,
+                        can_publish=p.permission.can_publish if p.permission else False,
+                        can_publish_data=p.permission.can_publish_data if p.permission else False,
+                        hidden=p.permission.hidden if p.permission else False,
+                        recorder=p.permission.recorder if p.permission else False,
+                    ) if p.permission else None
+
+                    return ParticipantDetail(
+                        found=True,
+                        identity=p.identity,
+                        sid=p.sid,
+                        state=api.ParticipantInfo.State.Name(p.state),
+                        name=p.name,
+                        metadata=safe_json_loads_object(p.metadata),
+                        joined_at=p.joined_at,
+                        joined_at_ms=p.joined_at_ms,
+                        version=p.version,
+                        region=p.region,
+                        is_publisher=p.is_publisher,
+                        kind=api.ParticipantInfo.Kind.Name(p.kind) if p.kind else None,
+                        attributes=dict(p.attributes) if p.attributes else {},
+                        disconnect_reason=p.disconnect_reason if p.disconnect_reason else None,
+                        tracks=tracks,
+                        permission=permission,
+                    )
 
             # Participant not found
-            return {
-                "identity": identity,
-                "found": False,
-                "message": f"Participant '{identity}' not found in room '{room_name}'",
-            }
+            return ParticipantDetail(
+                identity=identity,
+                found=False,
+                message=f"Participant '{identity}' not found in room '{room_name}'",
+            )
         except Exception as e:
             if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
                 raise LiveKitServiceError(f"Failed to get participant detail: {e}") from e
@@ -292,7 +350,7 @@ class LiveKitClientService:
             finally:
                 self._client = None
 
-    async def health_check(self) -> dict:
+    async def health_check(self) -> dict[str, str | bool]:
         """
         Check LiveKit service health and configuration.
 

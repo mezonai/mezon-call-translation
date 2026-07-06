@@ -10,14 +10,12 @@ Features:
 - Extract user information from token claims
 """
 
-from typing import Any
-
 import jwt
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from orchestrator_service.services.postgresql.pg_token_blacklist_repository import PgTokenBlacklistRepository
-from orchestrator_service.utils.jwt_utils import verify_jwt_token
+from orchestrator_service.utils.jwt_utils import JWTPayload, verify_jwt_token
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -26,7 +24,7 @@ logger = get_logger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-async def verify_jwt(credentials: HTTPAuthorizationCredentials | None = Security(security)) -> dict[str, Any]:
+async def verify_jwt(credentials: HTTPAuthorizationCredentials | None = Security(security)) -> JWTPayload:
     """
     Verify JWT token issued by orchestrator after Mezon OAuth2 authentication.
 
@@ -66,7 +64,7 @@ async def verify_jwt(credentials: HTTPAuthorizationCredentials | None = Security
         payload = verify_jwt_token(token)
 
         # Extract JTI for blacklist check
-        jti = payload.get("jti")
+        jti = payload.jti
 
         if not jti:
             logger.warning("JWT token missing JTI claim")
@@ -77,14 +75,14 @@ async def verify_jwt(credentials: HTTPAuthorizationCredentials | None = Security
         is_blacklisted = await blacklist_repo.is_blacklisted(jti)
 
         if is_blacklisted:
-            logger.warning(f"Blacklisted token used: jti={jti}, user_id={payload.get('user_id')}")
+            logger.warning(f"Blacklisted token used: jti={jti}, user_id={payload.user_id}")
             raise HTTPException(
                 status_code=401,
                 detail="Token has been revoked. Please login again.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        logger.debug(f"JWT authentication successful for user_id={payload.get('user_id')}, jti={jti}")
+        logger.debug(f"JWT authentication successful for user_id={payload.user_id}, jti={jti}")
 
         return payload
 

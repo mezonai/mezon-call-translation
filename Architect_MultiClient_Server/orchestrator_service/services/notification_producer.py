@@ -3,7 +3,6 @@ Notification Producer Service - Sends notification tasks to Redis Stream
 
 Helper service to easily send notifications to Mezon channels.
 """
-
 from typing import Any
 
 from orchestrator_service.config.application_config import get_config

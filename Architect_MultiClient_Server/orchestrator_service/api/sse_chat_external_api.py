@@ -3,7 +3,7 @@ SSE Chat External API
 Endpoints for bot to receive chat external events via SSE
 """
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -21,7 +21,7 @@ sse_manager = SSEManager()
 chat_external_channel = ChatExternalChannel(sse_manager)
 
 
-class PushChatExternalRequest(BaseModel):
+class PushChatExternalRequest(BaseModel):                               # type: ignore[explicit-any]
     """Request model for pushing chat external events"""
 
     room_name: str
@@ -31,7 +31,7 @@ class PushChatExternalRequest(BaseModel):
     time: str | None = None
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "room_name": "my-room",
                 "room_id": "room-12345",

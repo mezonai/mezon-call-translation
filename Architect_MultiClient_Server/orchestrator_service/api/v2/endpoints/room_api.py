@@ -25,7 +25,7 @@ router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
 
-def _serialize_room(room: dict) -> dict:
+def _serialize_room(room: dict) -> dict[str, Any]:
     serialized_room = dict(room)
     if serialized_room.get("id") is not None:
         serialized_room["id"] = str(serialized_room["id"])

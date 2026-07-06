@@ -14,11 +14,11 @@ sse_manager = SSEManager()
 message_channel = MessageChannel(sse_manager)
 
 
-class PushMessageRequest(BaseModel):
+class PushMessageRequest(BaseModel):                        # type: ignore[explicit-any]
     room_name: str
     message: str
     message_type: str
-    participant_identity: str | None = None
+    participant_identity: str
 
 
 @router.post("/push_transcript")

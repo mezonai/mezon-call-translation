@@ -5,12 +5,12 @@ Handles SSE connections for agents to receive requests from orchestrator
 
 import time
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_base import create_sse_response, event_generator
-from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.api.sse.sse_manager import SSEManager, SSEMessage
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
@@ -117,7 +117,7 @@ class AgentRequestChannel:
             logger.warning(f"[Agent Request Channel] No active agents for context {context_key}, request may be lost")
 
         # Prepare request data
-        request_data = {
+        request_data: SSEMessage = {
             "request_id": str(uuid.uuid4()),
             "request_type": request_type,
             "timestamp": int(time.time()),
@@ -134,7 +134,7 @@ class AgentRequestChannel:
 
         return {
             "status": "ok",
-            "request_id": request_data["request_id"],
+            "request_id": cast(str, request_data["request_id"]),
             "request_type": request_type,
             "context": context_key,
             "active_agents": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),

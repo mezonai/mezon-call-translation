@@ -25,26 +25,26 @@ logger = get_logger(__name__)
 # Initialize transcription service
 transcription_service = TranscriptionService()
 
-class RoomRegisterRequest(BaseModel):
+class RoomRegisterRequest(BaseModel):                               # type: ignore[explicit-any]
     """Request model for room registration"""
 
     room_name: str = Field(..., description="Room name to register")
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "room_name": "my-room-123",
             }
         }
 
 
-class RoomUnregisterRequest(BaseModel):
+class RoomUnregisterRequest(BaseModel):                             # type: ignore[explicit-any]
     """Request model for room unregistration"""
 
     room_name: str = Field(..., description="Room name to unregister")
 
 
-class RoomStatusResponse(BaseModel):
+class RoomStatusResponse(BaseModel):                                # type: ignore[explicit-any]
     """Response model for room status"""
 
     room_name: str
@@ -83,7 +83,7 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Dep
     if room_id is None:
         raise HTTPException(status_code=400, detail="Failed to obtain room_id from STT service")
 
-    if not await registry.register_room(request.room_name, room_id):
+    if not await registry.register_room(request.room_name, str(room_id)):
         raise HTTPException(status_code=409, detail=f"Room '{request.room_name}' is already registered")
 
     # 3. Start recording for existing tracks (best effort)
@@ -132,7 +132,7 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Dep
 
             # Save all participants at once
             if participants_data:
-                await transcription_service.save_participants_batch(room_id, participants_data)
+                await transcription_service.save_participants_batch(str(room_id), participants_data)
 
             logger.info(f"Started {tracks_started} audio track recordings")
         else:

@@ -1,5 +1,3 @@
-from typing import Any
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -18,15 +16,15 @@ sse_manager = SSEManager()
 message_channel = MessageChannel(sse_manager)
 
 
-class PushMessageRequest(BaseModel):
+class PushMessageRequest(BaseModel):                            # type: ignore[explicit-any]
     room_name: str
     message: str
     message_type: str
-    participant_identity: str | None = None
+    participant_identity: str
 
 
 @router.post("/push_transcript")
-async def push_transcript_api(req: PushMessageRequest, auth: dict[str, Any] = Depends(verify_api_key)):
+async def push_transcript_api(req: PushMessageRequest, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     Push transcript to all SSE connections in a room.
 
@@ -58,4 +56,4 @@ async def sse_endpoint(room: str, auth: AuthContext = Depends(require_any_permis
     Returns:
         StreamingResponse with SSE events
     """
-    return await message_channel.create_connection(auth.user_id, room)
+    return await message_channel.create_connection(str(auth.user_id), room)

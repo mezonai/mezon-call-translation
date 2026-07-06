@@ -2,7 +2,10 @@ import contextlib
 import logging
 import time
 import traceback
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from orchestrator_service.services.notification_producer import NotificationProducerService
 
 from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
 
@@ -18,7 +21,7 @@ class NotificationHandler(logging.Handler):
         self._cooldown_sec = 60
         self._last_sent: dict[str, float] = {}
 
-        self._producer: Any | None = None
+        self._producer: NotificationProducerService | None = None
 
     def emit(self, record: logging.LogRecord):
         try:
@@ -58,7 +61,7 @@ class NotificationHandler(logging.Handler):
         except Exception:
             pass
 
-    def _get_producer(self) -> Any | None:
+    def _get_producer(self) -> "NotificationProducerService | None":
         """
         Lazy load producer synchronously.
 

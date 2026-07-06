@@ -14,7 +14,7 @@ from pydantic import BaseModel
 # ============================================================================
 
 
-class RoomResponse(BaseModel):
+class RoomResponse(BaseModel):              # type: ignore[explicit-any]
     """Response model for room data"""
 
     room_name: str
@@ -26,7 +26,7 @@ class RoomResponse(BaseModel):
     completed_at: datetime | None = None
 
 
-class TrackResponse(BaseModel):
+class TrackResponse(BaseModel):             # type: ignore[explicit-any]
     """Response model for track data"""
 
     egress_id: str
@@ -36,7 +36,7 @@ class TrackResponse(BaseModel):
     created_at: datetime | None = None
 
 
-class TranscriptSegment(BaseModel):
+class TranscriptSegment(BaseModel):         # type: ignore[explicit-any]
     """Model for a transcript segment"""
 
     start: float | None = None
@@ -45,7 +45,7 @@ class TranscriptSegment(BaseModel):
     confidence: float | None = None
 
 
-class ChunkResponse(BaseModel):
+class ChunkResponse(BaseModel):             # type: ignore[explicit-any]
     """Response model for transcript chunk"""
 
     chunk_index: int
@@ -55,7 +55,7 @@ class ChunkResponse(BaseModel):
     segments: list[dict[str, Any]] | None = None
 
 
-class RoomStatisticsResponse(BaseModel):
+class RoomStatisticsResponse(BaseModel):    # type: ignore[explicit-any]
     """Response model for room statistics"""
 
     room_name: str
@@ -69,7 +69,7 @@ class RoomStatisticsResponse(BaseModel):
     completed_at: datetime | None = None
 
 
-class ParticipantStatisticsResponse(BaseModel):
+class ParticipantStatisticsResponse(BaseModel):  # type: ignore[explicit-any]
     """Response model for participant statistics"""
 
     participant_identity: str
@@ -79,14 +79,14 @@ class ParticipantStatisticsResponse(BaseModel):
     total_segments: int = 0
 
 
-class SearchResultResponse(BaseModel):
+class SearchResultResponse(BaseModel):      # type: ignore[explicit-any]
     """Response model for transcript search results"""
 
     chunk_index: int
     segment: dict[str, Any]
 
 
-class PaginatedResponse(BaseModel):
+class PaginatedResponse(BaseModel):         # type: ignore[explicit-any]
     """Base model for paginated responses"""
 
     status: str = "ok"
@@ -95,21 +95,21 @@ class PaginatedResponse(BaseModel):
     skip: int
 
 
-class RoomListResponse(PaginatedResponse):
+class RoomListResponse(PaginatedResponse):  # type: ignore[explicit-any]
     """Response model for room list"""
 
     rooms: list[dict[str, Any]]
     date_range: dict[str, str] | None = None
 
 
-class TrackListResponse(PaginatedResponse):
+class TrackListResponse(PaginatedResponse): # type: ignore[explicit-any]
     """Response model for track list"""
 
     tracks: list[dict[str, Any]]
     date_range: dict[str, str] | None = None
 
 
-class ChunkListResponse(BaseModel):
+class ChunkListResponse(BaseModel):         # type: ignore[explicit-any]
     """Response model for chunk list"""
 
     status: str = "ok"
@@ -118,7 +118,7 @@ class ChunkListResponse(BaseModel):
     chunks: list[dict[str, Any]]
 
 
-class FullTranscriptResponse(BaseModel):
+class FullTranscriptResponse(BaseModel):    # type: ignore[explicit-any]
     """Response model for full transcript"""
 
     status: str = "ok"
@@ -127,7 +127,7 @@ class FullTranscriptResponse(BaseModel):
     transcript: list[dict[str, Any]]
 
 
-class SearchResponse(BaseModel):
+class SearchResponse(BaseModel):            # type: ignore[explicit-any]
     """Response model for search results"""
 
     status: str = "ok"
@@ -137,7 +137,7 @@ class SearchResponse(BaseModel):
     results: list[dict[str, Any]]
 
 
-class ConfidenceFilterResponse(BaseModel):
+class ConfidenceFilterResponse(BaseModel):  # type: ignore[explicit-any]
     """Response model for confidence filtered segments"""
 
     status: str = "ok"
@@ -147,7 +147,7 @@ class ConfidenceFilterResponse(BaseModel):
     segments: list[dict[str, Any]]
 
 
-class HealthCheckResponse(BaseModel):
+class HealthCheckResponse(BaseModel):       # type: ignore[explicit-any]
     """Response model for health check"""
 
     status: str

@@ -69,7 +69,7 @@ class SummaryService:
         all_segments: list[dict[str, Any]] = []
         participant_durations: dict[str, float] = {}
 
-        track_ids = [str(track.id) for track in tracks]
+        track_ids = [track.id for track in tracks]
         all_chunks = await self.pg_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
 
         chunks_by_track: dict[str, list[TranscriptChunk]] = {tid: [] for tid in track_ids}
@@ -83,7 +83,7 @@ class SummaryService:
                 participant = track.participant_identity or "Unknown"
                 audio_info = track.audio_info or {}
                 track_start_ns = int(audio_info.get("started_at_ns", 0) or 0)
-                chunks = chunks_by_track[str(track.id)]
+                chunks = chunks_by_track[track.id]
 
                 # Calculate duration for this track/participant using start_time and end_time of chunks
                 track_duration = sum((c.end_time or 0.0) - (c.start_time or 0.0) for c in chunks)
@@ -215,7 +215,7 @@ class SummaryService:
             if summary_data_result.summary_success and summary_data_result.action_items_success:
                 metadata_channel = MetadataChannel()
                 await metadata_channel.push_room_summary_done(
-                    room_id=str(room_id), room_name=room_doc.room_name or "Unknown"
+                    room_id=room_id, room_name=room_doc.room_name or "Unknown"
                 )
             else:
                 if not summary_data_result.summary_success and not summary_data_result.action_items_success:
@@ -229,7 +229,7 @@ class SummaryService:
 
                 logger.warning(f"{retry_type} task failed for room {room_id}. Creating outbox task.")
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id), retry_type=retry_type, error_msg=error_msg
+                    room_id=room_id, retry_type=retry_type, error_msg=error_msg
                 )
 
             return result

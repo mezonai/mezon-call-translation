@@ -44,8 +44,6 @@ class PgUserPermissionRepository:
                 self._cache[user_id] = permissions
                 logger.debug(f"Loaded {len(permissions)} permissions for user_id={user_id}")
                 return permissions
-            logger.debug(f"No user found for user_id={user_id}")
-            return set()
         except Exception as e:
             logger.error(f"Failed to get user permissions: {e}")
             return set()

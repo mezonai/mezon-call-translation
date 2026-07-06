@@ -16,8 +16,6 @@ Usage:
         pass
 """
 
-from typing import Any
-
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -52,7 +50,7 @@ def verify_simple_secret(credentials: HTTPAuthorizationCredentials) -> bool:
     return credentials.credentials == API_SECRET
 
 
-async def verify_api_key(credentials: HTTPAuthorizationCredentials | None = Security(security)) -> dict[str, Any]:
+async def verify_api_key(credentials: HTTPAuthorizationCredentials | None = Security(security)) -> dict[str, str | bool]:
     """
     Verify API authentication credentials.
     Args:

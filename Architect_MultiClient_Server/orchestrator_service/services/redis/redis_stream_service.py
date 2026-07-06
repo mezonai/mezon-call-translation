@@ -24,8 +24,8 @@ import os
 import socket
 import time
 import uuid
-from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from dataclasses import dataclass, field
+from typing import ClassVar, Generic, TypeVar, cast
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.stream_base import (
@@ -63,6 +63,22 @@ class WorkerInfo:
     tasks_processed: int = 0
     tasks_failed: int = 0
 
+@dataclass
+class PendingSummary:
+    """Model for summary of pending tasks"""
+    pending_count: int = 0
+    min_message_id: str | None = None
+    max_message_id: str | None = None
+    consumers: dict[str, int] = field(default_factory=dict)
+
+@dataclass
+class PendingTask:
+    """Model for detail of pending tasks"""
+    message_id: str | None
+    consumer: str | None
+    idle_time_ms: int
+    delivery_count: int
+
 
 # ========================================
 # Service Class
@@ -91,7 +107,7 @@ class RedisStreamService(Generic[T]):
     """
 
     # Registry for singleton instances per (task_class, stream_key)
-    _instances: ClassVar[dict[str, "RedisStreamService"]] = {}
+    _instances: ClassVar[dict[str, "RedisStreamService[StreamTaskProtocol]"]] = {}
 
     def __init__(
         self,
@@ -113,20 +129,8 @@ class RedisStreamService(Generic[T]):
         self._consumer_id: str = self._generate_consumer_id()
         self._running = False
         self._is_setup = False
-        self._heartbeat_task: asyncio.Task | None = None
-        self._recovery_task: asyncio.Task | None = None
-
-        # Set defaults for missing config fields
-        if not hasattr(self._config, "block_timeout_ms"):
-            self._config.block_timeout_ms = 5000
-        if not hasattr(self._config, "max_retries"):
-            self._config.max_retries = 3
-        if not hasattr(self._config, "claim_min_idle_time_ms"):
-            self._config.claim_min_idle_time_ms = 60000
-        if not hasattr(self._config, "heartbeat_interval_sec"):
-            self._config.heartbeat_interval_sec = 10
-        if not hasattr(self._config, "worker_timeout_sec"):
-            self._config.worker_timeout_sec = 60
+        self._heartbeat_task: asyncio.Task[None] | None = None
+        self._recovery_task: asyncio.Task[None] | None = None
 
         # Keys - use provided values or fall back to config
         self._stream_key = stream_key
@@ -163,13 +167,17 @@ class RedisStreamService(Generic[T]):
         instance_key = f"{task_class.__name__}:{effective_stream_key}"
 
         if instance_key not in cls._instances:
-            cls._instances[instance_key] = cls(
+            new_instance = cls(
                 task_class=task_class,
                 stream_key=stream_key,
                 group_name=group_name,
             )
+            cls._instances[instance_key] = cast(
+                "RedisStreamService[StreamTaskProtocol]",
+                new_instance
+            )
 
-        return cls._instances[instance_key]
+        return cast("RedisStreamService[T]", cls._instances[instance_key])
 
     def _generate_consumer_id(self) -> str:
         """Generate unique consumer ID for this worker.
@@ -538,7 +546,7 @@ class RedisStreamService(Generic[T]):
     # Pending Tasks & Recovery (XPENDING, XCLAIM)
     # ========================================
 
-    async def get_pending_summary(self) -> dict[str, Any]:
+    async def get_pending_summary(self) -> PendingSummary:
         """
         Get summary of pending (in-progress) tasks.
 
@@ -554,7 +562,7 @@ class RedisStreamService(Generic[T]):
 
             # Handle empty or None result
             if not result or (isinstance(result, list | tuple) and len(result) == 0):
-                return {"pending_count": 0, "consumers": {}}
+                return PendingSummary()
 
             # Handle dict format (some redis-py versions return dict)
             if isinstance(result, dict):
@@ -567,29 +575,30 @@ class RedisStreamService(Generic[T]):
                 pending_count, min_id, max_id, consumers = result[:4]
             else:
                 logger.warning(f"Unexpected xpending result format: {type(result)} - {result}")
-                return {"pending_count": 0, "consumers": {}}
+                return PendingSummary()
 
             # Decode consumer info
-            consumer_info = {}
+            consumer_info: dict[str, int] = {}
             if consumers:
                 for consumer_data in consumers:
                     if isinstance(consumer_data, list | tuple) and len(consumer_data) >= 2:
                         name = decode_value(consumer_data[0])
-                        count = int(consumer_data[1]) if consumer_data[1] else 0
-                        consumer_info[name] = count
+                        if name is not None:
+                            count = int(consumer_data[1]) if consumer_data[1] else 0
+                            consumer_info[name] = count
 
-            return {
-                "pending_count": pending_count if isinstance(pending_count, int) else 0,
-                "min_message_id": decode_value(min_id),
-                "max_message_id": decode_value(max_id),
-                "consumers": consumer_info,
-            }
+            return PendingSummary(
+                pending_count=pending_count if isinstance(pending_count, int) else 0,
+                min_message_id=decode_value(min_id),
+                max_message_id=decode_value(max_id),
+                consumers=consumer_info,
+            )
 
         except Exception as e:
             logger.error(f"Error getting pending summary: {e}")
             raise
 
-    async def get_pending_tasks(self, count: int = 100, min_idle_time_ms: int | None = None) -> list[dict[str, Any]]:
+    async def get_pending_tasks(self, count: int = 100, min_idle_time_ms: int | None = None) -> list[PendingTask]:
         """
         Get detailed info about pending tasks.
 
@@ -623,12 +632,12 @@ class RedisStreamService(Generic[T]):
                     continue
 
                 pending_tasks.append(
-                    {
-                        "message_id": message_id,
-                        "consumer": consumer,
-                        "idle_time_ms": idle_time_ms,
-                        "delivery_count": delivery_count,
-                    }
+                    PendingTask(
+                        message_id=message_id,
+                        consumer=consumer,
+                        idle_time_ms=idle_time_ms,
+                        delivery_count=delivery_count,
+                    )
                 )
 
             return pending_tasks

@@ -6,9 +6,9 @@ Task model for enqueueing notifications to be sent to Mezon channels via webhook
 
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 from orchestrator_service.models.stream_base import BaseProducerTask, TaskPriority, parse_priority
-from orchestrator_service.models.common_types import JsonObject
 
 
 @dataclass
@@ -21,7 +21,7 @@ class NotificationTask(BaseProducerTask):
 
     # Required fields
     title: str = field(kw_only=True)  # Brief title/subject
-    message: JsonObject = field(kw_only=True, default_factory=dict)  # Message content as dict
+    message: dict[str, Any] = field(kw_only=True, default_factory=dict)  # Message content as dict
 
     # Redis stream metadata
     message_id: str = ""
