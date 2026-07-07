@@ -5,7 +5,7 @@ Pydantic models for different request type payloads with discriminated union.
 """
 
 from enum import StrEnum
-from typing import Any, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -19,7 +19,7 @@ class TranscriptControlPayload(BaseModel):                      # type: ignore[e
     action: Literal["enable", "disable"] = Field(..., description="Action to perform: enable or disable transcription")
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {"example": {"request_type": "transcript_control", "action": "enable"}}
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {"example": {"request_type": "transcript_control", "action": "enable"}}
 
 
 class TtsPlayPayload(BaseModel):                                # type: ignore[explicit-any]
@@ -45,7 +45,7 @@ class TtsPlayPayload(BaseModel):                                # type: ignore[e
     speed: float | None = Field(default=None, description="Optional speech speed multiplier (0.5-2.0)")
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str | float]]] = {
             "example": {
                 "request_type": "tts_play",
                 "text": "Hello from orchestrator",
@@ -64,7 +64,7 @@ class SendChatMessagePayload(BaseModel):                       # type: ignore[ex
     sender_name: str = Field(default="Agent", description="Display name of the sender")
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "request_type": "send_chat_message",
                 "message": "Hello from orchestrator!",
@@ -83,7 +83,7 @@ class StartAudioRecordingPayload(BaseModel):                    # type: ignore[e
     )
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "request_type": "start_audio_recording",
                 "track_id": "livekit_track_id_123",

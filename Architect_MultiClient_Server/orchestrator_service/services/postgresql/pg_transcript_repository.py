@@ -288,7 +288,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to get track: {e}")
             return None
 
-    async def update_track_status(self, track_ref_id: str, status: str) -> dict[str, str | Track | bool | None]:
+    async def update_track_status(self, track_ref_id: str, status: str) -> dict[str, str | Track | bool]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:

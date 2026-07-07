@@ -72,7 +72,7 @@ class FileResult(BaseModel):                                      # type: ignore
     end_time: str = Field(..., description="Recording end time (ISO 8601)")
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "participant_identity": "user_1",
                 "filename": "user_1_audio.mp3",

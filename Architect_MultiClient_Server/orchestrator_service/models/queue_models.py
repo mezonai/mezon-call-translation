@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 
-
 # ========================================
 # Base Models
 # ========================================
@@ -57,18 +56,18 @@ class QueueStatsResponse(QueueStatsBase):                       # type: ignore[e
 class QueueInfoResponse(BaseModel):                             # type: ignore[explicit-any]
     """Response model for basic queue information."""
 
-    queue_name: str
-    stream_key: str
-    stream_length: int
-    active_workers: int
-    exists: bool
+    queue_name: str = Field(..., description="Queue identifier")
+    stream_key: str = Field(..., description="Redis stream key")
+    stream_length: int = Field(..., description="Number of tasks in the queue")
+    active_workers: int = Field(..., description="Number of active workers")
+    exists: bool = Field(..., description="Whether the queue exists")
 
 
 class QueueListResponse(BaseModel):                             # type: ignore[explicit-any]
     """Response model for list of queues."""
 
-    queues: list[QueueInfoResponse]
-    count: int
+    queues: list[QueueInfoResponse] = Field(..., description="List of queues")
+    count: int = Field(..., description="Number of queues")
 
 
 # ========================================
@@ -79,14 +78,14 @@ class QueueListResponse(BaseModel):                             # type: ignore[e
 class TaskStatusResponse(BaseModel):                            # type: ignore[explicit-any]
     """Response model for task status."""
 
-    task_id: str
-    status: str
-    filename: str
-    created_at: float
-    started_processing_at: float | None = None
-    completed_at: float | None = None
-    result: str | None = None
-    error: str | None = None
+    task_id: str = Field(..., description="Task identifier")
+    status: str = Field(..., description="Task status")
+    filename: str = Field(..., description="Task filename")
+    created_at: float = Field(..., description="Timestamp when task was created")
+    started_processing_at: float | None = Field(default=None, description="Timestamp when task started processing")
+    completed_at: float | None = Field(default=None, description="Timestamp when task completed")
+    result: str | None = Field(default=None, description="Result of the task")
+    error: str | None = Field(default=None, description="Error message if any")
 
 
 # ========================================

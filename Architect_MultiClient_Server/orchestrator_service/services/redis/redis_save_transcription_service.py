@@ -10,6 +10,7 @@ import contextlib
 import time
 
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
+from orchestrator_service.services.postgresql.models import Track
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.redis.redis_stream_service import (
     RedisStreamService,
@@ -248,7 +249,7 @@ class RedisSaveTranscriptionService:
                 if success_res and success_res.get("success"):
                     # Get room_ref_id from updated track
                     track_data = success_res.get("track")
-                    room_ref_id = getattr(track_data, "room_ref_id", None)
+                    room_ref_id = track_data.room_ref_id if isinstance(track_data, Track) else None
 
                     # Log final summary
                     logger.info(
@@ -261,9 +262,9 @@ class RedisSaveTranscriptionService:
                     )
 
                     # Check and complete room if all tracks are done
-                    if room_ref_id and await self._pg_repo.check_and_complete_room(room_ref_id):
+                    if room_ref_id and await self._pg_repo.check_and_complete_room(str(room_ref_id)):
                         service = get_summary_service()
-                        await service.generate_summary(room_ref_id)
+                        await service.generate_summary(str(room_ref_id))
                 else:
                     logger.warning(f"Failed to update status for track {task.track_ref_id}")
 

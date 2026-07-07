@@ -70,7 +70,7 @@ class FileResult(BaseModel):
     end_time: str = Field(..., description="Recording end time (ISO 8601)")
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "participant_identity": "user_1",
                 "filename": "user_1_audio.mp3",
@@ -126,7 +126,7 @@ async def sse_metadata_endpoint(
 @router.post("/push_metadata/session_started")
 async def push_session_started_api(
     req: SessionStartedRequest,
-    auth: dict[str, Any] = Depends(verify_api_key),
+    auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
 ):
     """
@@ -145,7 +145,7 @@ async def push_session_started_api(
 @router.post("/push_metadata/session_ended")
 async def push_session_ended_api(
     req: SessionEndedRequest,
-    auth: dict[str, Any] = Depends(verify_api_key),
+    auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
 ):
     """
@@ -166,7 +166,7 @@ async def push_session_ended_api(
 @router.post("/push_metadata/session_record_done")
 async def push_session_record_done_api(
     req: SessionRecordDoneRequest,
-    auth: dict[str, Any] = Depends(verify_api_key),
+    auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
 ):
     """
@@ -186,7 +186,7 @@ async def push_session_record_done_api(
 @router.post("/push_metadata/session_summary_done")
 async def push_session_summary_done_api(
     req: SessionSummaryDoneRequest,
-    auth: dict[str, Any] = Depends(verify_api_key),
+    auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
 ):
     """

@@ -17,7 +17,7 @@ class DispatchRequestModel(BaseModel):                                  # type: 
     room_name: str = Field(..., description="Room name")
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {"example": {"room_name": "Interview Room 1"}}
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {"example": {"room_name": "Interview Room 1"}}
 
 
 class DispatchActionResponseModel(BaseModel):                           # type: ignore[explicit-any]

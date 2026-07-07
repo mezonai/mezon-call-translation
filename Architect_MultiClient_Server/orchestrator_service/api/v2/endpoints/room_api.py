@@ -24,14 +24,6 @@ from orchestrator_service.utils.transcript_validators import (
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
-
-def _serialize_room(room: dict) -> dict[str, Any]:
-    serialized_room = dict(room)
-    if serialized_room.get("id") is not None:
-        serialized_room["id"] = str(serialized_room["id"])
-    return serialized_room
-
-
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,

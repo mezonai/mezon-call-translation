@@ -93,7 +93,7 @@ class AgentStatusResponse(BaseModel):                           # type: ignore[e
 
 
 @router.get("/sse/agent-requests")
-async def sse_agent_requests_endpoint(agent_id: str, room_name: str, auth: dict[str, Any] = Depends(verify_api_key)):
+async def sse_agent_requests_endpoint(agent_id: str, room_name: str, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     SSE endpoint for agents to receive requests from orchestrator.
 

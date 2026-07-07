@@ -3,7 +3,7 @@ Room Registry API - Manager active rooms for webhook processing
 """
 
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from fastapi import APIRouter, Depends, HTTPException
 from livekit import api
@@ -31,7 +31,7 @@ class RoomRegisterRequest(BaseModel):                               # type: igno
     room_name: str = Field(..., description="Room name to register")
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "room_name": "my-room-123",
             }
@@ -53,7 +53,7 @@ class RoomStatusResponse(BaseModel):                                # type: igno
 
 
 @router.post("/register", response_description="Register a room for webhook processing")
-async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Depends(verify_api_key)):
+async def register_room(request: RoomRegisterRequest, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """Register a room in the registry so that webhooks can handle events for that room.
     **Example:**
     ```json
@@ -155,7 +155,7 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, Any] = Dep
 
 
 @router.post("/unregister", response_description="Unregister a room")
-async def unregister_room(request: RoomUnregisterRequest, auth: dict[str, Any] = Depends(verify_api_key)):
+async def unregister_room(request: RoomUnregisterRequest, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     Unregister a room from the registry.
 
@@ -207,7 +207,7 @@ async def unregister_room(request: RoomUnregisterRequest, auth: dict[str, Any] =
             # Don't fail unregistration if finalization fails
 
         metadata_channel = MetadataChannel()
-        asyncio_create_task_safety(metadata_channel.push_room_ended(str(room_id), request.room_name))
+        asyncio_create_task_safety(metadata_channel.push_room_ended(room_id, request.room_name))
 
         return {
             "status": "ok",
@@ -225,7 +225,7 @@ async def unregister_room(request: RoomUnregisterRequest, auth: dict[str, Any] =
 
 
 @router.get("/status/{room_name}", response_model=RoomStatusResponse)
-async def get_room_status(room_name: str, auth: dict[str, Any] = Depends(verify_api_key)):
+async def get_room_status(room_name: str, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     Check status registration for a room.
 
@@ -244,7 +244,7 @@ async def get_room_status(room_name: str, auth: dict[str, Any] = Depends(verify_
 
 
 @router.get("/list", response_description="List all registered rooms")
-async def list_registered_rooms(auth: dict[str, Any] = Depends(verify_api_key)):
+async def list_registered_rooms(auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     Get a list of all currently registered rooms.
 
@@ -261,7 +261,7 @@ async def list_registered_rooms(auth: dict[str, Any] = Depends(verify_api_key)):
 
 
 @router.delete("/clear-all", response_description="Clear all registered rooms")
-async def clear_all_rooms(auth: dict[str, Any] = Depends(verify_api_key)):
+async def clear_all_rooms(auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     clear all registered rooms from the registry.
 

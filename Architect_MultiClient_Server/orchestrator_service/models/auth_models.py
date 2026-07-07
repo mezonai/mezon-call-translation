@@ -14,7 +14,7 @@ class JWTPayload(BaseModel):                                # type: ignore[expli
     avatar_url: str | None = Field(default=None, description="Avatar URL")
 
 
-class MezonAuthResponse(BaseModel):
+class MezonAuthResponse(BaseModel):                         # type: ignore[explicit-any]
     token: str = Field(..., description="JWT access token for bot session")
     refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
     user_id: str = Field(..., description="User ID from Mezon")
@@ -71,8 +71,8 @@ class LogoutRequest(BaseModel):                             # type: ignore[expli
 
 
 class AccountModel(BaseModel):                              # type: ignore[explicit-any]
-    appid: str
-    token: str
+    appid: str = Field(..., description="App ID from Mezon")
+    token: str = Field(..., description="Token from Mezon")
 
 
 class BotLoginRequest(BaseModel):                           # type: ignore[explicit-any]

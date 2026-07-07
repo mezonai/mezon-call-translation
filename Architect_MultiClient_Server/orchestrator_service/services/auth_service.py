@@ -142,12 +142,7 @@ class AuthService:
                 )
                 logger.debug(f"Updated user info for user_id={user_id}")
 
-            user_data = UserProfile(
-                user_id=user_id,
-                username=user_info.get("username"),
-                display_name=user_info.get("display_name"),
-                avatar=user_info.get("avatar")
-            )
+            user_data = UserProfile(user_id=user_id)
 
             # Generate JWT access token
             access_token = generate_jwt_token(user_data)
@@ -284,11 +279,7 @@ class AuthService:
             )
             logger.debug(f"Updated bot info for user_id={user_id}")
 
-        user_data = UserProfile(
-            user_id=user_id,
-            username=username,
-            display_name=username
-        )
+        user_data = UserProfile(user_id=user_id)
 
         # Generate our JWT access token for the bot
         access_token = generate_jwt_token(user_data)

@@ -5,7 +5,7 @@ Handles SSE connections for agents to receive requests from orchestrator
 
 import time
 import uuid
-from typing import Any, cast
+from typing import Any
 
 from fastapi.responses import StreamingResponse
 
@@ -134,7 +134,7 @@ class AgentRequestChannel:
 
         return {
             "status": "ok",
-            "request_id": cast(str, request_data["request_id"]),
+            "request_id": request_data["request_id"],
             "request_type": request_type,
             "context": context_key,
             "active_agents": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),

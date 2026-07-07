@@ -56,4 +56,4 @@ async def sse_endpoint(room: str, auth: AuthContext = Depends(require_any_permis
     Returns:
         StreamingResponse with SSE events
     """
-    return await message_channel.create_connection(str(auth.user_id), room)
+    return await message_channel.create_connection(auth.user_id, room)
