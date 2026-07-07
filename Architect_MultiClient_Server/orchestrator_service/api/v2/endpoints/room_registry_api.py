@@ -97,7 +97,7 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, str | bool
             )
 
             logger.info(f"Found {len(participants_response.participants)} participants")
-            participants_data = []
+            participants_data: list[dict[str, datetime | str]] = []
             for participant in participants_response.participants:
                 participants_data.append(
                     {

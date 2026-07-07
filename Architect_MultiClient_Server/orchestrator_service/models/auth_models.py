@@ -20,7 +20,8 @@ class MezonAuthResponse(BaseModel):                         # type: ignore[expli
     user_id: str = Field(..., description="User ID from Mezon")
     api_url: str | None = Field(default=None, description="API URL")
     ws_url: str | None = Field(default=None, description="WebSocket URL")
-    payload: dict[str, Any] = Field(..., description="User information from Mezon")
+    # TODO: Use `Any` because the payload returned from jwt.decode() has dict[str, Any] type
+    payload: dict[str, Any] = Field(..., description="User information from Mezon")                 # type: ignore[explicit-any]
 
 
 class ExchangeCodeRequest(BaseModel):                       # type: ignore[explicit-any]
@@ -36,7 +37,8 @@ class TokenResponseBase(BaseModel):                         # type: ignore[expli
 
 
 class ExchangeCodeResponse(TokenResponseBase):              # type: ignore[explicit-any]
-    user: dict[str, Any] = Field(..., description="User information from Mezon")
+    # TODO: Use `Any` because the return result from auth_service.exchange_code_for_token() has dict[str, Any] type
+    user: dict[str, Any] = Field(..., description="User information from Mezon")                    # type: ignore[explicit-any]
 
 
 class OAuth2ConfigResponse(BaseModel):                      # type: ignore[explicit-any]
@@ -79,7 +81,17 @@ class BotLoginRequest(BaseModel):                           # type: ignore[expli
     account: AccountModel = Field(..., description="Bot account credentials")
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {"examples": [{"account": {"appid": "string", "token": "string"}}]}
+        # TODO: Use `Any` instead of complex dict[str, dict[str, dict[str, str]]]
+        json_schema_extra: ClassVar[dict[str, Any]] = {     # type: ignore[explicit-any]
+            "examples": [
+                {
+                    "account": {
+                        "appid": "string",
+                        "token": "string"
+                    }
+                }
+            ]
+        }
 
 
 class BotLoginResponse(TokenResponseBase):                  # type: ignore[explicit-any]

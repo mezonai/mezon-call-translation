@@ -19,7 +19,7 @@ from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Task Handler type definition
-TaskHandler = Callable[[dict[str, Any]], Awaitable[None]]
+TaskHandler = Callable[[dict[str, Any]], Awaitable[None]]                   # type: ignore[explicit-any]
 
 
 class OutboxHandlerRegistry:
@@ -42,7 +42,7 @@ class OutboxHandlerRegistry:
 # ------------------------------------------------------------------
 
 
-async def handle_retry_summarization(configs: dict[str, Any]) -> None:
+async def handle_retry_summarization(configs: dict[str, Any]) -> None:      # type: ignore[explicit-any]
     room_id = configs.get("room_id")
     retry_type_str = configs.get("retry_type")
     if not room_id or not retry_type_str:

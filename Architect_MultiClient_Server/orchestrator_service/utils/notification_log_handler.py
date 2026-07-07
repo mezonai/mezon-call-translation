@@ -63,10 +63,11 @@ class NotificationHandler(logging.Handler):
 
     def _get_producer(self) -> "NotificationProducerService | None":
         """
-        Lazy load producer synchronously.
+        Lazy-load producer to avoid circular import at module init time.
 
-        This is required because Loggers are instantiated at module import time,
-        before the Redis Connection Pool is ready.
+        Import chain without lazy loading:
+            logger → notification_log_handler → notification_producer
+            → redis/__init__ → base_hash_repository → logger  (circular!)
         """
         if self._producer is None:
             from orchestrator_service.services.notification_producer import (
@@ -101,3 +102,4 @@ class NotificationHandler(logging.Handler):
             )
         except Exception:
             pass
+

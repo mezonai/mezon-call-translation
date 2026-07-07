@@ -61,8 +61,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest, auth_service: Au
         raise HTTPException(status_code=400, detail="Invalid state parameter. Must be 11 alphanumeric characters.")
 
     try:
-        result = await auth_service.exchange_code_for_token(request.code, request.state)
-        return ExchangeCodeResponse(**result)
+        return await auth_service.exchange_code_for_token(request.code, request.state)
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise

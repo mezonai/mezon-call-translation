@@ -90,7 +90,8 @@ class AgentRequestChannel:
             event_generator(self.CHANNEL_TYPE, context_key, connection_id, connection_queue, self.manager)
         )
 
-    async def send_request(
+    # TODO: Use `Any` type for the payload type because the request payload has a complex structure
+    async def send_request(                                 # type: ignore[explicit-any]
         self,
         request_type: str,
         payload: dict[str, Any],

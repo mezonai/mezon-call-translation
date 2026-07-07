@@ -27,7 +27,11 @@ class WebhookHandler:
         self.transcription_service = transcription_service
         self.room_registry = get_room_registry()
 
-    async def handle_event(self, event_payload: dict[str, Any] | LiveKitWebhookEvent) -> WebhookResponse:
+    # TODO: Use `Any` type because `event_payload` input in this function is defined by complex types
+    async def handle_event(                                     # type: ignore[explicit-any]
+        self,
+        event_payload: dict[str, Any] | LiveKitWebhookEvent
+    ) -> WebhookResponse:
         """
         Route event to appropriate handler
 

@@ -149,7 +149,8 @@ class QueueService(Generic[T]):
                 active_workers=0,
             )
 
-    async def get_task(self, task_id: str) -> dict[str, Any] | None:
+    # TODO: Return type uses `Any` because `task_data` field has type dict[str | Unknown, str | Unknown]
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:                    # type: ignore[explicit-any]
         """
         Get status of a specific task.
 
@@ -179,7 +180,8 @@ class QueueService(Generic[T]):
             logger.error(f"Failed to get task {task_id}: {e}")
             return None
 
-    async def get_pending_tasks(self) -> list[dict[str, Any]]:
+    # TODO: Return type uses `Any` because `pending_tasks` field has complex type list[dict[str, float | str | Unknown | None]]
+    async def get_pending_tasks(self) -> list[dict[str, Any]]:                  # type: ignore[explicit-any]
         """
         Get list of pending tasks.
 
@@ -217,7 +219,8 @@ class QueueService(Generic[T]):
             logger.error(f"Failed to get pending tasks: {e}")
             return []
 
-    async def get_dlq_tasks(self, limit: int = 100) -> list[dict[str, Any]]:
+    # TODO: Return type uses `Any` because `dlq_tasks` field has complex type list[dict[str, float | int | str | Unknown | None]]
+    async def get_dlq_tasks(self, limit: int = 100) -> list[dict[str, Any]]:    # type: ignore[explicit-any]
         """
         Get list of tasks in Dead Letter Queue.
 

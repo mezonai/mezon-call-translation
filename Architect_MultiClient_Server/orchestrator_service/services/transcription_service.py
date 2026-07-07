@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Any
 
 from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.config.application_config import get_config
@@ -135,7 +134,7 @@ class TranscriptionService:
             logger.exception("Failed to end room transcription: %s", e)
             return False
 
-    async def start_room(self, room_name: str) -> dict | None:
+    async def start_room(self, room_name: str) -> dict[str, bool | str | None] | None:
         """
         Notify transcription service to start room
 
@@ -181,15 +180,18 @@ class TranscriptionService:
             logger.exception(f"Failed to save participant: {e}")
             return False
 
-    async def save_participants_batch(self, room_id: str, participants: list[dict[str, Any]]) -> dict[str, int]:
+    async def save_participants_batch(
+        self,
+        room_id: str,
+        participants: list[dict[str, datetime | str]]
+    ) -> dict[str, int]:
         """
         Save batch of participants to PostgreSQL
         """
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-            result = await self.pg_repo.save_batch_participants(room_id=room_id, participants=participants)
-            return result
+            return await self.pg_repo.save_batch_participants(room_id=room_id, participants=participants)
         except Exception as e:
             logger.exception(f"Failed to save batch participants: {e}")
             return {"success": False, "added_count": 0, "skipped_count": 0}

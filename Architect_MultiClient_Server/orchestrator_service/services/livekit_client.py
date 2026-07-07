@@ -6,6 +6,7 @@ Singleton pattern for efficient connection management
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar
 
+from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, Field
 
 try:
@@ -24,21 +25,26 @@ from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class ParticipantBasicInfo(BaseModel):
+class ParticipantBasicInfo(BaseModel):                                  # type: ignore[explicit-any]
     identity: str = Field(..., description="Identity of the participant")
     name: str = Field(..., description="Name of the participant")
     state: str = Field(..., description="State of the participant")
     joined_at: int = Field(..., description="Timestamp when participant joined")
-    metadata: dict[str, Any] = Field(..., description="Metadata of the participant")
 
-class AudioTrackInfo(BaseModel):
+    # TODO: Use `Any` type because metadata can have dynamic structures
+    metadata: dict[str, Any] = Field(                                   # type: ignore[explicit-any]
+        ...,
+        description="Metadata of the participant"
+    )
+
+class AudioTrackInfo(BaseModel):                                        # type: ignore[explicit-any]
     """Model represent audio track information"""
     participant_identity: str = Field(..., description="Participant identity")
     filename: str = Field(..., description="Audio track filename")
     started_at_ns: int | str | None = Field(default=None, description="Audio track started at (nanoseconds)")
     ended_at_ns: int | str | None = Field(default=None, description="Audio track ended at (nanoseconds)")
 
-class TrackInfo(BaseModel):
+class TrackInfo(BaseModel):                                             # type: ignore[explicit-any]
     sid: str = Field(..., description="SID of the track")
     type: str = Field(..., description="Type of the track")
     name: str = Field(..., description="Name of the track")
@@ -48,21 +54,27 @@ class TrackInfo(BaseModel):
     source: str = Field(..., description="Source of the track")
     mime_type: str = Field(..., description="MIME type of the track")
 
-class ParticipantPermission(BaseModel):
+class ParticipantPermission(BaseModel):                                 # type: ignore[explicit-any]
     can_subscribe: bool = Field(..., description="Can subscribe permission")
     can_publish: bool = Field(..., description="Can publish permission")
     can_publish_data: bool = Field(..., description="Can publish data permission")
     hidden: bool = Field(..., description="Hidden permission")
     recorder: bool = Field(..., description="Recorder permission")
 
-class ParticipantDetail(BaseModel):
+class ParticipantDetail(BaseModel):                                     # type: ignore[explicit-any]
     identity: str = Field(..., description="Identity of the participant")
     found: bool = Field(..., description="Found status")
     message: str | None = Field(default=None, description="Message")
     sid: str | None = Field(default=None, description="SID of the participant")
     state: str | None = Field(default=None, description="State of the participant")
     name: str | None = Field(default=None, description="Name of the participant")
-    metadata: dict[str, Any] | None = Field(default=None, description="Metadata of the participant")
+
+    # TODO: Use `Any` type because metadata can have dynamic structures
+    metadata: dict[str, Any] | None = Field(                            # type: ignore[explicit-any]
+        default=None,
+        description="Metadata of the participant"
+    )
+
     joined_at: int | None = Field(default=None, description="Timestamp when participant joined")
     joined_at_ms: int | None = Field(default=None, description="Timestamp in milliseconds when participant joined")
     version: int | None = Field(default=None, description="Version of the participant")
@@ -73,6 +85,30 @@ class ParticipantDetail(BaseModel):
     disconnect_reason: int | None = Field(default=None, description="Reason for disconnection")
     tracks: list[TrackInfo] = Field(default_factory=list, description="Tracks of the participant")
     permission: ParticipantPermission | None = Field(default=None, description="Permission of the participant")
+
+class DispatchActionResponseModel(BaseModel):                           # type: ignore[explicit-any]
+    status: str = Field(..., description="Status of the operation")
+    message: str | None = Field(default=None, description="Message")
+    # TODO: Use `Any` type because `dispatch` is converted from `AgentDispatch` protobuf to dict
+    dispatch: dict[str, Any] | None = Field(default=None, description="Dispatch information")   # type: ignore[explicit-any]
+
+
+class ParticipantModel(BaseModel):                                      # type: ignore[explicit-any]
+    identity: str = Field(..., description="Identity of the participant")
+    name: str = Field(..., description="Name of the participant")
+    state: str = Field(..., description="State of the participant")
+    joined_at: int = Field(..., description="Timestamp when participant joined")
+
+    # TODO: Use `Any` type because metadata can have dynamic structures
+    metadata: dict[str, Any] = Field(                                   # type: ignore[explicit-any]
+        ...,
+        description="Metadata of the participant"
+    )
+
+
+class ParticipantListResponseModel(BaseModel):                          # type: ignore[explicit-any]
+    status: str = Field(..., description="Status of the operation")
+    participants: list[ParticipantModel] = Field(default_factory=list, description="List of participants")
 
 
 class LiveKitServiceError(Exception):
@@ -196,7 +232,7 @@ class LiveKitClientService:
                 return dispatch
         return None
 
-    async def ensure_dispatch(self, room_name: str) -> dict[str, Any]:
+    async def ensure_dispatch(self, room_name: str) -> DispatchActionResponseModel:
         """
         Ensure a dispatch exists for the given room.
         Creates one if it doesn't exist.
@@ -206,19 +242,25 @@ class LiveKitClientService:
 
         dispatches = await self.list_dispatches(room_name)
         if await self.find_agent_dispatch(dispatches, agent_name):
-            return {"status": "exists", "message": "Dispatch already exists"}
+            return DispatchActionResponseModel(
+                status="exists",
+                message="Dispatch already exists"
+            )
 
         try:
             dispatch = await client.agent_dispatch.create_dispatch(
                 api.CreateAgentDispatchRequest(agent_name=agent_name, room=room_name)
             )
-            return {"status": "created", "dispatch": dispatch}
+            return DispatchActionResponseModel(
+                status="created",
+                dispatch=MessageToDict(dispatch, preserving_proto_field_name=True)  # type: ignore[explicit-any]
+            )
         except Exception as e:
             if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
                 raise LiveKitServiceError(f"LiveKit server error: {e}") from e
             raise LiveKitServiceError(f"Failed to create dispatch: {e}") from e
 
-    async def cancel_dispatch(self, room_name: str) -> dict[str, Any]:
+    async def cancel_dispatch(self, room_name: str) -> DispatchActionResponseModel:
         """Cancel an existing dispatch for the given room."""
         client = self.get_client()
         agent_name = self.get_agent_name()
@@ -227,18 +269,21 @@ class LiveKitClientService:
         target_dispatch = await self.find_agent_dispatch(dispatches, agent_name)
 
         if not target_dispatch:
-            return {"status": "not_found", "message": f"No active dispatch found for agent '{agent_name}'"}
+            return DispatchActionResponseModel(
+                status="not_found",
+                message=f"No active dispatch found for agent '{agent_name}'"
+            )
 
         try:
             await client.agent_dispatch.delete_dispatch(
                 target_dispatch.id,
                 target_dispatch.room,
             )
-            return {
-                "status": "cancelled",
-                "message": f"Dispatch for agent '{target_dispatch.agent_name}' has been cancelled.",
-                "dispatch": target_dispatch,
-            }
+            return DispatchActionResponseModel(
+                status="cancelled",
+                message=f"Dispatch for agent '{target_dispatch.agent_name}' has been cancelled.",
+                dispatch=MessageToDict(target_dispatch, preserving_proto_field_name=True),  # type: ignore[explicit-any]
+            )
         except Exception as e:
             if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
                 raise LiveKitServiceError(f"Failed to cancel dispatch: {e}") from e

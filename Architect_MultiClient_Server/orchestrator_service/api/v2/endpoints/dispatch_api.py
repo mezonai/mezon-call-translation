@@ -1,4 +1,4 @@
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -6,7 +6,10 @@ from pydantic import BaseModel, Field
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import AGENT_CONTROL
 from orchestrator_service.services.livekit_client import (
+    DispatchActionResponseModel,
     LiveKitServiceError,
+    ParticipantListResponseModel,
+    ParticipantModel,
 )
 from orchestrator_service.services.room_service import RoomService, get_room_service
 
@@ -19,26 +22,6 @@ class DispatchRequestModel(BaseModel):                                  # type: 
     class Config:
         json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {"example": {"room_name": "Interview Room 1"}}
 
-
-class DispatchActionResponseModel(BaseModel):                           # type: ignore[explicit-any]
-    status: str
-    message: str | None = None
-    dispatch: dict[str, Any] | None = None
-
-
-class ParticipantModel(BaseModel):                                      # type: ignore[explicit-any]
-    identity: str
-    name: str
-    state: str
-    joined_at: int
-    metadata: dict[str, Any]
-
-
-class ParticipantListResponseModel(BaseModel):                          # type: ignore[explicit-any]
-    status: str
-    participants: list[ParticipantModel]
-
-
 @router.post("/create_dispatch")
 async def api_create_dispatch(
     body: DispatchRequestModel,
@@ -47,8 +30,7 @@ async def api_create_dispatch(
 ) -> DispatchActionResponseModel:
     """Create a dispatch for the specified room."""
     try:
-        result = await room_service.create_dispatch(body.room_name)
-        return DispatchActionResponseModel(**result)
+        return await room_service.create_dispatch(body.room_name)
     except HTTPException:
         raise
     except LiveKitServiceError as e:
@@ -63,8 +45,7 @@ async def api_cancel_dispatch(
 ) -> DispatchActionResponseModel:
     """Cancel a dispatch for the specified room."""
     try:
-        result = await room_service.cancel_dispatch(body.room_name)
-        return DispatchActionResponseModel(**result)
+        return await room_service.cancel_dispatch(body.room_name)
     except HTTPException:
         raise
     except LiveKitServiceError as e:

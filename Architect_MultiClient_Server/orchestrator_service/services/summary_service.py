@@ -35,7 +35,8 @@ class SummaryService:
         self.llm_service = create_llm_service(self.config.llm)
         logger.info(f"SummaryService initialized with LLM provider: {self.config.llm.provider}")
 
-    async def generate_summary(self, room_id: str) -> dict[str, Any] | None:
+    # TODO: Use `Any` type because `draft_summary` response has complex structure
+    async def generate_summary(self, room_id: str) -> dict[str, Any] | None:        # type: ignore[explicit-any]
         """
         Generate a summary for the given room_id.
 
@@ -66,7 +67,8 @@ class SummaryService:
             return None
 
         # 3. Collect all segments with absolute timestamps in one pass
-        all_segments: list[dict[str, Any]] = []
+        # TODO: Use `Any` type because the `type` data to insert into `all_segments` has unknown type
+        all_segments: list[dict[str, Any]] = []                                     # type: ignore[explicit-any]
         participant_durations: dict[str, float] = {}
 
         track_ids = [track.id for track in tracks]
@@ -145,7 +147,9 @@ class SummaryService:
 
         # Update room participants list in-place with their calculated speech durations and save
         room_participants_raw = room_doc.participants
-        room_participants: list[dict[str, Any]] = (
+
+        # TODO: Use `Any` type because the `room_participant_raw` data to insert into `room_participants` has complex type
+        room_participants: list[dict[str, Any]] = (                                 # type: ignore[explicit-any]
             room_participants_raw if isinstance(room_participants_raw, list) else []
         )
 
@@ -164,7 +168,7 @@ class SummaryService:
         # In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
         full_text = "\n".join(f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in turns)
 
-        draft_summary: dict[str, Any] = {
+        draft_summary: dict[str, Any] = {                                       # type: ignore[explicit-any]
             "room_id": room_id,
             "room_name": room_doc.room_name or "Unknown",
             "participants": list(unique_participants),
@@ -237,7 +241,8 @@ class SummaryService:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
             return {**draft_summary, "id": saved_id}
 
-    async def retry_summary_from_full_text(
+    # TODO: Use `Any` type because `summary_data` response from this function has complex type
+    async def retry_summary_from_full_text(                                 # type: ignore[explicit-any]
         self, room_id: str, retry_type: RetryType = RetryType.ALL
     ) -> dict[str, Any] | None:
         """
@@ -410,7 +415,9 @@ class SummaryService:
 
         speech_durations = []
         room_participants_raw = room.participants
-        room_participants: list[dict[str, Any]] = (
+
+        # TODO: Use `Any` type because the `room_participant_raw` data to insert into `room_participants` has complex type
+        room_participants: list[dict[str, Any]] = (                                 # type: ignore[explicit-any]
             room_participants_raw if isinstance(room_participants_raw, list) else []
         )
 

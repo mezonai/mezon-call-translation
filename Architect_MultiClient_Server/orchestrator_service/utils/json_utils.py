@@ -6,7 +6,8 @@ import json
 from typing import Any
 
 
-def safe_json_loads_object(payload: str) -> dict[str, Any]:
+# TODO: Return type uses `Any` because callers receive dynamic JSON objects
+def safe_json_loads_object(payload: str) -> dict[str, Any]:                 # type: ignore[explicit-any]
     """Parse JSON string and return an object dict; fallback to empty dict."""
     if not payload:
         return {}

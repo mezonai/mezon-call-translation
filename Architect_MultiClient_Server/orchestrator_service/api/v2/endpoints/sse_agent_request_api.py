@@ -39,7 +39,8 @@ class SendAgentRequestBody(BaseModel):                          # type: ignore[e
     agent_id: str = Field(..., description="Agent ID to target specific agent")
 
     class Config:
-        json_schema_extra: ClassVar[dict[str, Any]] = {
+        # TODO: Use `Any` type becase json_schema_extra is defined by complex structure
+        json_schema_extra: ClassVar[dict[str, Any]] = {         # type: ignore[explicit-any]
             "examples": [
                 {
                     "payload": {"request_type": "transcript_control", "action": "enable"},

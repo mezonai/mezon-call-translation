@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from typing import Any
 
 import requests
 from fastapi import HTTPException
@@ -10,6 +9,7 @@ from orchestrator_service.constants.permissions import DEFAULT_BOT_PERMISSIONS, 
 from orchestrator_service.models.auth_models import (
     BotLoginResponse,
     CurrentUserResponse,
+    ExchangeCodeResponse,
     RefreshTokenResponse,
     UserProfile,
 )
@@ -58,7 +58,7 @@ class AuthService:
         logger.info("  - Client Secret: configured")
         logger.info(f"  - Redirect URI: {self.oauth2_config.redirect_uri}")
 
-    async def exchange_code_for_token(self, code: str, state: str) -> dict[str, Any]:
+    async def exchange_code_for_token(self, code: str, state: str) -> ExchangeCodeResponse:
         try:
             # Exchange authorization code for access token
             # Mezon uses client_secret_post method (credentials in body, not Basic Auth)
@@ -162,13 +162,12 @@ class AuthService:
 
             logger.info(f"Successfully authenticated user: {user_info['username']} (ID: {user_data.user_id})")
 
-            return {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "token_type": "Bearer",
-                "expires_in": expires_in,
-                "user": user_info,
-            }
+            return ExchangeCodeResponse(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_in=expires_in,
+                user=user_info,
+            )
 
         except requests.RequestException as e:
             logger.error(f"Network error during OAuth2 exchange: {e}")

@@ -31,7 +31,8 @@ class NotificationProducerService:
             stream_key=self._config.stream_key,
         )
 
-    async def send(
+    # TODO: Use `Any` type because `message` can have different formats
+    async def send(                                     # type: ignore[explicit-any]
         self,
         title: str,
         message: dict[str, Any],

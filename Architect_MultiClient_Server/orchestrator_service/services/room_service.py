@@ -2,11 +2,11 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
-from google.protobuf.json_format import MessageToDict
 
 from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.services.livekit_client import (
     AudioTrackInfo,
+    DispatchActionResponseModel,
     LiveKitServiceError,
     ParticipantBasicInfo,
     get_livekit_service,
@@ -26,7 +26,8 @@ class RoomService:
     def __init__(self, pg_repo: PgTranscriptRepository):
         self.pg_repo = pg_repo
 
-    def _serialize_room(self, room: Room) -> dict[str, Any]:
+    # TODO: Use `Any` type because `serialized_room` is defined by complex types
+    def _serialize_room(self, room: Room) -> dict[str, Any]:            # type: ignore[explicit-any]
         serialized_room = {
             "id": room.id,
             "room_name": room.room_name,
@@ -38,7 +39,8 @@ class RoomService:
         }
         return serialized_room
 
-    async def list_rooms(
+    # TODO: Use `Any` type because the return value has a tuple of complex types (call _serialize_room())
+    async def list_rooms(                                               # type: ignore[explicit-any]
         self,
         auth: AuthContext,
         status: str | None,
@@ -57,7 +59,8 @@ class RoomService:
 
         return [self._serialize_room(room) for room in rooms], total
 
-    async def get_room_by_id(self, room_id: str, auth: AuthContext) -> dict[str, Any]:
+    # TODO: Use `Any` type because the return value has a tuple of complex types (call _serialize_room())
+    async def get_room_by_id(self, room_id: str, auth: AuthContext) -> dict[str, Any]:      # type: ignore[explicit-any]
         if not auth.can_view_all_rooms:
             has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
@@ -70,7 +73,8 @@ class RoomService:
 
         return self._serialize_room(room)
 
-    async def get_room_statistics(self, room_id: str, auth: AuthContext) -> dict[str, Any]:
+    # TODO: Use `Any` type because the return dictionary is defined by complex types
+    async def get_room_statistics(self, room_id: str, auth: AuthContext) -> dict[str, Any]: # type: ignore[explicit-any]
         if not auth.can_view_all_rooms:
             has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
@@ -133,23 +137,17 @@ class RoomService:
 
         return file_results
 
-    async def create_dispatch(self, room_name: str) -> dict[str, Any]:
+    async def create_dispatch(self, room_name: str) -> DispatchActionResponseModel:
         livekit_service = get_livekit_service()
         try:
-            result = await livekit_service.ensure_dispatch(room_name)
-            if result.get("dispatch") is not None:
-                result["dispatch"] = MessageToDict(result["dispatch"], preserving_proto_field_name=True)        # type: ignore[explicit-any]
-            return result
+            return await livekit_service.ensure_dispatch(room_name)
         except LiveKitServiceError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    async def cancel_dispatch(self, room_name: str) -> dict[str, Any]:
+    async def cancel_dispatch(self, room_name: str) -> DispatchActionResponseModel:
         livekit_service = get_livekit_service()
         try:
-            result = await livekit_service.cancel_dispatch(room_name)
-            if result.get("dispatch") is not None:
-                result["dispatch"] = MessageToDict(result["dispatch"], preserving_proto_field_name=True)        # type: ignore[explicit-any]
-            return result
+            return await livekit_service.cancel_dispatch(room_name)
         except LiveKitServiceError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 

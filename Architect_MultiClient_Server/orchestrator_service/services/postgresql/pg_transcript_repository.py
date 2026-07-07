@@ -5,7 +5,7 @@ Handles rooms, tracks, chunks, summary, and metadata events.
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from sqlalchemy import Select, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -190,7 +190,13 @@ class PgTranscriptRepository:
                     logger.error(f"Room {room_id} not found")
                     return {"success": False, "added_count": 0, "skipped_count": 0}
 
-                existing_participants = room.participants or []
+                # TODO: Use `Any` because the `Room.participants` field in the database model is mapped as a generic `dict`
+                raw_participants = cast(Any, room.participants) or []                   # type: ignore[explicit-any]
+
+                existing_participants: list[dict[str, Any]] = [                         # type: ignore[explicit-any]
+                    p for p in raw_participants if isinstance(p, dict)
+                ]
+
                 existing_identities: set[str] = {
                     str(p.get("participant_identity")) for p in existing_participants if p.get("participant_identity")
                 }
@@ -246,7 +252,13 @@ class PgTranscriptRepository:
             logger.error(f"❌ Error in save_batch_participants: {e}")
             return {"success": False, "added_count": 0, "skipped_count": 0}
 
-    async def update_room_participants(self, room_id: str, participants: list[dict[str, Any]]) -> bool:
+    # TODO: Use `Any` type because `room_participants` input field from generate_summary() in SummaryService
+    # has list[dict[str, Any]] type
+    async def update_room_participants(                 # type: ignore[explicit-any]
+        self,
+        room_id: str,
+        participants: list[dict[str, Any]]
+    ) -> bool:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -429,7 +441,8 @@ class PgTranscriptRepository:
     # SUMMARY
     # ------------------------------------------------------------------
 
-    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:
+    # TODO: Use `Any` type because `draft_summary` from generate_summary() in SummaryService has complex structure
+    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:              # type: ignore[explicit-any]
         session_factory = get_session_factory()
         room_uid = summary_data.get("room_id")
         try:
@@ -451,7 +464,8 @@ class PgTranscriptRepository:
             logger.error(f"Failed to save room summary: {e}")
             return None
 
-    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:
+    # TODO: Use `Any` type because `summary_data` from generate_summary() in SummaryService has complex structure
+    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:    # type: ignore[explicit-any]
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:

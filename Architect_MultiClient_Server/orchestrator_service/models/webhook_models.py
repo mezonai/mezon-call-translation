@@ -77,7 +77,8 @@ class WebhookEgressInfo(BaseModel):         # type: ignore[explicit-any]
     status: str | None = None
     error: str | None = None
     file: WebhookEgressFile | None = None
-    track: dict[str, Any] | None = None
+    # TODO: Use Any because webhook track payload structure varies dynamically
+    track: dict[str, Any] | None = None     # type: ignore[explicit-any]
 
 
 class LiveKitWebhookEvent(BaseModel):       # type: ignore[explicit-any]

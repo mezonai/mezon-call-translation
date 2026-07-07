@@ -13,14 +13,17 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-class MetadataEventResponse(BaseModel):                              # type: ignore[explicit-any]
+class MetadataEventResponse(BaseModel):                                             # type: ignore[explicit-any]
     """Data Transfer Object for Metadata Event (phân biệt với ORM Model)"""
     id: str = Field(description="Event primary key")
     event_id: str | None = Field(default=None, description="Event UUID")
     event_type: str | None = Field(default=None, description="Event Type")
     room_id: str | None = Field(default=None, description="Room ID")
     room_name: str | None = Field(default=None, description="Room Name")
-    metadata: dict[str, Any] | None = Field(default=None, description="Metadata")
+
+    # TODO: Use `Any` type because metadata can have dynamic structures
+    metadata: dict[str, Any] | None = Field(default=None, description="Metadata")   # type: ignore[explicit-any]
+
     timestamp: str | None = Field(default=None, description="Timestamp")
     created_at: str | None = Field(default=None, description="Created At")
 

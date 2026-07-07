@@ -15,8 +15,8 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-
-def extract_json_from_llm(raw_text: str) -> dict[str, Any]:
+# TODO: Use `Any` type because `json.loads()` parses dynamic structures from LLM responses that are not pre-defined.
+def extract_json_from_llm(raw_text: str) -> dict[str, Any]:         # type: ignore[explicit-any]
     """
     Safely extract JSON payload from OpenAI-compatible chat completion responses.
 
@@ -36,7 +36,7 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:
 
     # 1) Direct JSON parse
     try:
-        return json.loads(raw)
+        return json.loads(raw)                                      # type: ignore[no-any-return]
     except Exception:
         logger.warning(f"Direct JSON parse failed, attempting to extract JSON from LLM outputL: {raw}")
         pass
@@ -58,7 +58,7 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:
 
     for candidate in reversed(candidates):
         try:
-            return json.loads(candidate)
+            return json.loads(candidate)                            # type: ignore[no-any-return]
         except Exception:
             logger.warning("Candidate JSON parse failed, trying next candidate")
             continue
@@ -67,7 +67,7 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:
     blocks = re.findall(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
     for block in reversed(blocks):
         try:
-            return json.loads(block)
+            return json.loads(block)                                # type: ignore[no-any-return]
         except Exception:
             logger.warning("Markdown code block JSON parse failed, trying next block")
             continue
