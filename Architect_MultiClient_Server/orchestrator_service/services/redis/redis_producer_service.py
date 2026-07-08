@@ -120,9 +120,9 @@ class RedisProducerService(Generic[T]):
                 # TODO: Use dict[Any, Any] instead of complex
                 # dict[bytearray | bytes | float | int | memoryview | str | None,
                 #                   bytearray | bytes | float | int | memoryview | str | None]
-                mapping=cast(
-                    dict[Any, Any], # type: ignore[explicit-any]
-                    {  
+                mapping=cast(  # type: ignore[explicit-any]
+                    dict[Any, Any],
+                    {
                         **task_data,
                         "message_id": message_id_str,
                         "status": StreamTaskStatus.PENDING.value,
