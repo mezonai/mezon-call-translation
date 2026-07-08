@@ -24,7 +24,7 @@ router = APIRouter()
 # ==================== Pydantic Models ====================
 
 
-class RoomInfo(BaseModel):                                          # type: ignore[explicit-any]
+class RoomInfo(BaseModel):  # type: ignore[explicit-any]
     """Room information"""
 
     room_id: str = Field(..., description="Room identifier")
@@ -41,42 +41,32 @@ class RoomInfo(BaseModel):                                          # type: igno
 
     class Config:
         # TODO: Use `Any` type becase json_schema_extra is defined by complex structure
-        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
-            "example": {
-                "room_id": "abc123",
-                "room_name": "Interview Room 1"
-            }
+        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
+            "example": {"room_id": "abc123", "room_name": "Interview Room 1"}
         }
 
 
-class SessionStartedRequest(RoomInfo):                              # type: ignore[explicit-any]
+class SessionStartedRequest(RoomInfo):  # type: ignore[explicit-any]
     """Request model for session_started event"""
 
     class Config(RoomInfo.Config):
-        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
-            "example": {
-                "room_id": "abc123",
-                "room_name": "Interview Room 1"
-            }
+        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
+            "example": {"room_id": "abc123", "room_name": "Interview Room 1"}
         }
 
 
-class SessionEndedRequest(RoomInfo):                                # type: ignore[explicit-any]
+class SessionEndedRequest(RoomInfo):  # type: ignore[explicit-any]
     """Request model for session_ended event"""
 
     duration_seconds: int | None = Field(None, description="Duration of room session in seconds")
 
     class Config(RoomInfo.Config):
-        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
-            "example": {
-                "room_id": "abc123",
-                "room_name": "Interview Room 1",
-                "duration_seconds": 3600
-            }
+        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
+            "example": {"room_id": "abc123", "room_name": "Interview Room 1", "duration_seconds": 3600}
         }
 
 
-class FileResult(BaseModel):                                        # type: ignore[explicit-any]
+class FileResult(BaseModel):  # type: ignore[explicit-any]
     """Recording file result"""
 
     participant_identity: str = Field(..., description="Identity of participant")
@@ -95,11 +85,11 @@ class FileResult(BaseModel):                                        # type: igno
         }
 
 
-class SessionRecordDoneRequest(RoomInfo):                           # type: ignore[explicit-any]
+class SessionRecordDoneRequest(RoomInfo):  # type: ignore[explicit-any]
     """Request model for room_record_done event"""
 
     class Config(RoomInfo.Config):
-        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
+        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
             "example": {
                 "room_id": "abc123",
                 "room_name": "Room_1",
@@ -107,15 +97,12 @@ class SessionRecordDoneRequest(RoomInfo):                           # type: igno
         }
 
 
-class SessionSummaryDoneRequest(RoomInfo):                          # type: ignore[explicit-any]
+class SessionSummaryDoneRequest(RoomInfo):  # type: ignore[explicit-any]
     """Request model for room_summary_done event"""
 
     class Config(RoomInfo.Config):
-        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
-            "example": {
-                "room_id": "69a66008cfc00881f1d7b382",
-                "room_name": "H3U-EXdDg"
-            }
+        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
+            "example": {"room_id": "69a66008cfc00881f1d7b382", "room_name": "H3U-EXdDg"}
         }
 
 

@@ -25,12 +25,13 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-TModel = TypeVar('TModel', bound=BaseModel)
+TModel = TypeVar("TModel", bound=BaseModel)
+
 
 class LocalLLMService(BaseLLMService):
     """Local LLM service for OpenAI-compatible API"""
 
-    def __init__(self, config):
+    def __init__(self, config: LLMConfig):
         """
         Initialize local LLM service.
 
@@ -200,7 +201,7 @@ class LocalLLMService(BaseLLMService):
             )
             action_items = []
         else:
-            valid_action_items= cast(ActionItemsResult, action_items_res)
+            valid_action_items = cast(ActionItemsResult, action_items_res)
             action_items = valid_action_items.action_items
 
         if not summary_failed and not action_items_failed:

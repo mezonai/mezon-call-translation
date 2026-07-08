@@ -475,7 +475,7 @@ class Config:
             return
         self._load_config()
 
-    def _load_config(self):
+    def _load_config(self) -> None:
         """
         Load all configuration from environment variables
         """
@@ -497,7 +497,7 @@ class Config:
         self._initialized = True
         self._validate_all()
 
-    def _validate_all(self):
+    def _validate_all(self) -> None:
         """Validate all configuration sections"""
         if not self.livekit.validate():
             raise ValueError("Invalid LiveKit configuration")

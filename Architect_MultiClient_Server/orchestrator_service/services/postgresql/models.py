@@ -54,7 +54,7 @@ class Room(Base):
     status: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # TODO: Use `Any` type because `participants` has JSON format and default=list
-    participants: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True, default=list)   # type: ignore[explicit-any]
+    participants: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True, default=list)  # type: ignore[explicit-any]
 
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -89,7 +89,7 @@ class Track(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # TODO: Use `Any` type because `audio_info` has JSON format and complex value type hints
-    audio_info: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)         # type: ignore[explicit-any]
+    audio_info: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)  # type: ignore[explicit-any]
 
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -122,7 +122,7 @@ class TranscriptChunk(Base):
     item_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Use `Any` type because `segments` has JSON format and complex value type hints
-    segments: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)     # type: ignore[explicit-any]
+    segments: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)  # type: ignore[explicit-any]
 
     __table_args__ = (
         Index("ix_chunks_track_ref_id", "track_ref_id"),
@@ -148,8 +148,8 @@ class RoomSummary(Base):
     participants: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
     # TODO: Use `Any` type because `summary_data` and `messages` has JSON format and complex value type hints
-    summary_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)        # type: ignore[explicit-any]
-    messages: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)      # type: ignore[explicit-any]
+    summary_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)  # type: ignore[explicit-any]
+    messages: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)  # type: ignore[explicit-any]
 
     total_segments: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -178,7 +178,7 @@ class MetadataEvent(Base):
     room_name: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # TODO: Use `Any` type because `metadata` has JSON format and complex value type hints
-    event_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)   # type: ignore[explicit-any]
+    event_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)  # type: ignore[explicit-any]
 
     timestamp: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -278,8 +278,8 @@ class OutboxTask(Base):
     status: Mapped[OutboxStatus] = mapped_column(SQLEnum(OutboxStatus), nullable=False, default=OutboxStatus.PENDING)
 
     # TODO: Use `Any` type because `configs` has JSON format and complex value type hints
-    configs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)     # type: ignore[explicit-any]
-    
+    configs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)  # type: ignore[explicit-any]
+
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

@@ -33,6 +33,7 @@ logger = get_logger(__name__)
 # Router
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+
 @router.post("/mezon/exchange", response_model=ExchangeCodeResponse)
 async def exchange_code_for_token(request: ExchangeCodeRequest, auth_service: AuthService = Depends(get_auth_service)):
     """
@@ -154,12 +155,7 @@ async def logout(
         raise HTTPException(status_code=400, detail="Invalid token format: missing required claims")
 
     try:
-        await auth_service.logout(
-            jti=jti,
-            user_id=user_id,
-            exp_timestamp=exp,
-            refresh_token=request.refresh_token
-        )
+        await auth_service.logout(jti=jti, user_id=user_id, exp_timestamp=exp, refresh_token=request.refresh_token)
 
         return {"status": "ok", "message": "Logged out successfully"}
     except HTTPException:

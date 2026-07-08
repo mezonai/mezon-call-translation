@@ -8,6 +8,8 @@ Uses the shared Redis connection pool (RedisConnectionManager).
 
 from typing import ClassVar, Generic, TypeVar, cast
 
+from redis.asyncio import Redis
+
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.queue_models import ProducerQueueStats
 from orchestrator_service.models.stream_base import (
@@ -17,7 +19,6 @@ from orchestrator_service.models.stream_base import (
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.utils.decode import decode_mapping, decode_value
 from orchestrator_service.utils.logger import get_logger
-from redis.asyncio import Redis
 
 logger = get_logger(__name__)
 
@@ -62,11 +63,7 @@ class RedisProducerService(Generic[T]):
         logger.info(f"RedisProducerService[{task_class.__name__}] created - stream='{self._stream_key}'")
 
     @classmethod
-    def get_instance(
-        cls,
-        task_class: type[T],
-        stream_key: str | None = None
-    ) -> "RedisProducerService[T]":
+    def get_instance(cls, task_class: type[T], stream_key: str | None = None) -> "RedisProducerService[T]":
         """
         Get or create singleton instance for task class and stream.
 
@@ -85,10 +82,7 @@ class RedisProducerService(Generic[T]):
                 task_class=task_class,
                 stream_key=stream_key,
             )
-            cls._instances[instance_key] = cast(
-                "RedisProducerService[ProducerTaskProtocol]",
-                new_instance
-            )
+            cls._instances[instance_key] = cast("RedisProducerService[ProducerTaskProtocol]", new_instance)
 
         return cast("RedisProducerService[T]", cls._instances[instance_key])
 

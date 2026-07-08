@@ -19,7 +19,7 @@ class MetadataEventType(StrEnum):
     ROOM_SUMMARY_DONE = "room_summary_done"
 
     @classmethod
-    def values(cls):
+    def values(cls) -> list[str]:
         """Get list of all event type values"""
         return [e.value for e in cls]
 

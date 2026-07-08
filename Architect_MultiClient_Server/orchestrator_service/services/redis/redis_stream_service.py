@@ -27,6 +27,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import ClassVar, Generic, TypeVar, cast
 
+from redis.asyncio import Redis
+from redis.exceptions import ResponseError
+
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.stream_base import (
     StreamTaskProtocol,
@@ -35,8 +38,6 @@ from orchestrator_service.models.stream_base import (
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.utils.decode import decode_value
 from orchestrator_service.utils.logger import get_logger
-from redis.asyncio import Redis
-from redis.exceptions import ResponseError
 
 logger = get_logger(__name__)
 
@@ -63,17 +64,21 @@ class WorkerInfo:
     tasks_processed: int = 0
     tasks_failed: int = 0
 
+
 @dataclass
 class PendingSummary:
     """Model for summary of pending tasks"""
+
     pending_count: int = 0
     min_message_id: str | None = None
     max_message_id: str | None = None
     consumers: dict[str, int] = field(default_factory=dict)
 
+
 @dataclass
 class PendingTask:
     """Model for detail of pending tasks"""
+
     message_id: str | None
     consumer: str | None
     idle_time_ms: int
@@ -172,10 +177,7 @@ class RedisStreamService(Generic[T]):
                 stream_key=stream_key,
                 group_name=group_name,
             )
-            cls._instances[instance_key] = cast(
-                "RedisStreamService[StreamTaskProtocol]",
-                new_instance
-            )
+            cls._instances[instance_key] = cast("RedisStreamService[StreamTaskProtocol]", new_instance)
 
         return cast("RedisStreamService[T]", cls._instances[instance_key])
 
@@ -210,7 +212,7 @@ class RedisStreamService(Generic[T]):
             if not manager.is_connected:
                 await manager.connect()
 
-            await self._redis.ping()   # type: ignore[misc]
+            await self._redis.ping()  # type: ignore[misc]
             logger.info(f"✅ Redis stream service using shared pool at {self._config.host}:{self._config.port}")
 
             # Create consumer group (idempotent)
@@ -953,5 +955,7 @@ def create_stream_service(
         RedisStreamService instance for the specified task type
     """
     return RedisStreamService.get_instance(
-        task_class=task_class, stream_key=stream_key, group_name=group_name,
+        task_class=task_class,
+        stream_key=stream_key,
+        group_name=group_name,
     )

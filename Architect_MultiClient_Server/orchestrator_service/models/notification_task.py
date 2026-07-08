@@ -12,7 +12,7 @@ from orchestrator_service.models.stream_base import BaseProducerTask, TaskPriori
 
 
 @dataclass
-class NotificationTask(BaseProducerTask):                                   # type: ignore[explicit-any]
+class NotificationTask(BaseProducerTask):  # type: ignore[explicit-any]
     """
     Task for sending notifications to Mezon channels via webhooks.
 
@@ -23,7 +23,7 @@ class NotificationTask(BaseProducerTask):                                   # ty
     title: str = field(kw_only=True)  # Brief title/subject
 
     # TODO: Return type uses `Any` because the notification message payload can have dynamic structures
-    message: dict[str, Any] = field(kw_only=True, default_factory=dict)     # type: ignore[explicit-any]
+    message: dict[str, Any] = field(kw_only=True, default_factory=dict)  # type: ignore[explicit-any]
 
     # Redis stream metadata
     message_id: str = ""

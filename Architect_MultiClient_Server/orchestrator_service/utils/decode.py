@@ -6,6 +6,7 @@ strings.  Used by hash repositories, queue discovery, and any other layer
 that operates with decode_responses=False.
 """
 
+
 def decode_value(value: bytes | str | int | float | None) -> str | None:
     """
     Decode a single Redis value to string.

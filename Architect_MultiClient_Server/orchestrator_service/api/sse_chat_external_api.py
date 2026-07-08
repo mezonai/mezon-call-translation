@@ -21,7 +21,7 @@ sse_manager = SSEManager()
 chat_external_channel = ChatExternalChannel(sse_manager)
 
 
-class PushChatExternalRequest(BaseModel):                               # type: ignore[explicit-any]
+class PushChatExternalRequest(BaseModel):  # type: ignore[explicit-any]
     """Request model for pushing chat external events"""
 
     room_name: str

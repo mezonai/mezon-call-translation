@@ -1,5 +1,6 @@
 import signal
 from contextlib import asynccontextmanager
+from types import FrameType
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -22,6 +23,8 @@ from orchestrator_service.api.v2.router import (
 )  # Import the v2 API router
 from orchestrator_service.api.webhook_api import (
     egress_service,
+)
+from orchestrator_service.api.webhook_api import (
     router as webhook_router,
 )
 from orchestrator_service.config.application_config import get_config
@@ -44,7 +47,7 @@ original_sigint = signal.getsignal(signal.SIGINT)
 original_sigterm = signal.getsignal(signal.SIGTERM)
 
 
-def signal_exit(signum, frame):
+def signal_exit(signum: int, frame: FrameType | None):
     """
     Signal handler for SIGINT (Ctrl+C) and SIGTERM.
 

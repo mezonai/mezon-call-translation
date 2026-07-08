@@ -4,7 +4,7 @@ Provides common functions for creating SSE endpoints"""
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterable, Callable
 
 from fastapi.responses import StreamingResponse
 
@@ -99,7 +99,9 @@ async def event_generator(
         )
 
 
-def create_sse_response(generator, additional_headers: dict[str, str] | None = None) -> StreamingResponse:
+def create_sse_response(
+    generator: AsyncIterable[str], additional_headers: dict[str, str] | None = None
+) -> StreamingResponse:
     """
     Create a standardized SSE StreamingResponse.
 

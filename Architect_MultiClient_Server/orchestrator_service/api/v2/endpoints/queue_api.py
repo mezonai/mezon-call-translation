@@ -53,7 +53,9 @@ async def list_available_queues(auth: AuthContext = Depends(require_any_permissi
 
     except Exception as e:
         logger.error(f"Error listing queues: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list queues: {e!s}") from e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list queues: {e!s}"
+        ) from e
 
 
 @router.get("/{queue_name}/stats", response_model=QueueStatsResponse)
@@ -261,7 +263,9 @@ async def get_dlq_tasks(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error getting DLQ tasks for queue '{queue_name}': {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get DLQ tasks: {e!s}") from e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get DLQ tasks: {e!s}"
+        ) from e
 
 
 @router.post("/{queue_name}/dlq/retry/{task_id}", response_model=DLQRetryAllResponse)

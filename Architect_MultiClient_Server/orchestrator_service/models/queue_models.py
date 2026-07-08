@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 # ========================================
 
 
-class QueueStatsBase(BaseModel):                                # type: ignore[explicit-any]
+class QueueStatsBase(BaseModel):  # type: ignore[explicit-any]
     """Base model for queue statistics fields shared across multiple models."""
 
     stream_length: int = Field(default=0, description="Current queue length")
@@ -15,7 +15,7 @@ class QueueStatsBase(BaseModel):                                # type: ignore[e
     active_workers: int = Field(default=0, description="Number of active workers")
 
 
-class DLQRetryBase(BaseModel):                                  # type: ignore[explicit-any]
+class DLQRetryBase(BaseModel):  # type: ignore[explicit-any]
     """Base model for DLQ retry operation results."""
 
     queue_name: str
@@ -29,14 +29,14 @@ class DLQRetryBase(BaseModel):                                  # type: ignore[e
 # ========================================
 
 
-class ProducerQueueStats(QueueStatsBase):                       # type: ignore[explicit-any]
+class ProducerQueueStats(QueueStatsBase):  # type: ignore[explicit-any]
     """Response model for Redis producer queue statistics."""
 
     stream_key: str | None = Field(default=None, description="Redis stream key")
     error: str | None = Field(default=None, description="Error message if any")
 
 
-class QueueInfo(QueueStatsBase):                                # type: ignore[explicit-any]
+class QueueInfo(QueueStatsBase):  # type: ignore[explicit-any]
     """Model representing queue information discovered from Redis."""
 
     queue_name: str = Field(..., description="Queue identifier")
@@ -44,7 +44,7 @@ class QueueInfo(QueueStatsBase):                                # type: ignore[e
     exists: bool = Field(..., description="Whether the queue exists")
 
 
-class QueueStatsResponse(QueueStatsBase):                       # type: ignore[explicit-any]
+class QueueStatsResponse(QueueStatsBase):  # type: ignore[explicit-any]
     """Response model for queue statistics."""
 
     queue_name: str | None = Field(default=None, description="Queue identifier")
@@ -53,7 +53,7 @@ class QueueStatsResponse(QueueStatsBase):                       # type: ignore[e
     error: str | None = Field(default=None, description="Error message if any")
 
 
-class QueueInfoResponse(BaseModel):                             # type: ignore[explicit-any]
+class QueueInfoResponse(BaseModel):  # type: ignore[explicit-any]
     """Response model for basic queue information."""
 
     queue_name: str = Field(..., description="Queue identifier")
@@ -63,7 +63,7 @@ class QueueInfoResponse(BaseModel):                             # type: ignore[e
     exists: bool = Field(..., description="Whether the queue exists")
 
 
-class QueueListResponse(BaseModel):                             # type: ignore[explicit-any]
+class QueueListResponse(BaseModel):  # type: ignore[explicit-any]
     """Response model for list of queues."""
 
     queues: list[QueueInfoResponse] = Field(..., description="List of queues")
@@ -75,7 +75,7 @@ class QueueListResponse(BaseModel):                             # type: ignore[e
 # ========================================
 
 
-class TaskStatusResponse(BaseModel):                            # type: ignore[explicit-any]
+class TaskStatusResponse(BaseModel):  # type: ignore[explicit-any]
     """Response model for task status."""
 
     task_id: str = Field(..., description="Task identifier")
@@ -93,7 +93,7 @@ class TaskStatusResponse(BaseModel):                            # type: ignore[e
 # ========================================
 
 
-class DLQTaskResponse(BaseModel):                               # type: ignore[explicit-any]
+class DLQTaskResponse(BaseModel):  # type: ignore[explicit-any]
     """Response model for DLQ task information."""
 
     message_id: str = Field(..., description="Redis stream message ID")
@@ -106,7 +106,7 @@ class DLQTaskResponse(BaseModel):                               # type: ignore[e
     status: str = Field(default="dead_letter", description="Task status")
 
 
-class DLQListResponse(BaseModel):                               # type: ignore[explicit-any]
+class DLQListResponse(BaseModel):  # type: ignore[explicit-any]
     """Response model for DLQ task list."""
 
     queue_name: str = Field(..., description="Queue identifier")
@@ -115,13 +115,13 @@ class DLQListResponse(BaseModel):                               # type: ignore[e
     count: int = Field(..., description="Number of tasks in DLQ")
 
 
-class DLQRetryResponse(DLQRetryBase):                           # type: ignore[explicit-any]
+class DLQRetryResponse(DLQRetryBase):  # type: ignore[explicit-any]
     """Response model for DLQ retry operation."""
 
     retried_tasks: list[str] = Field(..., description="List of task IDs that were retried")
 
 
-class DLQRetryAllResponse(DLQRetryBase):                        # type: ignore[explicit-any]
+class DLQRetryAllResponse(DLQRetryBase):  # type: ignore[explicit-any]
     """Response model for bulk DLQ retry operation."""
 
     message: str = Field(..., description="Summary message")

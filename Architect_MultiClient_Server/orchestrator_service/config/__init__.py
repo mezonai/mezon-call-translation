@@ -18,7 +18,7 @@ __all__ = [
     "LiveKitConfig",
     "LoggerConfig",
     "MinIOConfig",
-    "ServerConfig",
     "STTServiceConfig",
+    "ServerConfig",
     "get_config",
 ]

@@ -3,6 +3,7 @@ Notification Producer Service - Sends notification tasks to Redis Stream
 
 Helper service to easily send notifications to Mezon channels.
 """
+
 from typing import Any
 
 from orchestrator_service.config.application_config import get_config
@@ -32,7 +33,7 @@ class NotificationProducerService:
         )
 
     # TODO: Use `Any` type because `message` can have different formats
-    async def send(                                     # type: ignore[explicit-any]
+    async def send(  # type: ignore[explicit-any]
         self,
         title: str,
         message: dict[str, Any],

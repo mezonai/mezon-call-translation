@@ -177,7 +177,9 @@ class PgTranscriptRepository:
             logger.error(f"Failed to save participant: {e}")
             return False
 
-    async def save_batch_participants(self, room_id: str, participants: list[dict[str, str | datetime]]) -> dict[str, int]:
+    async def save_batch_participants(
+        self, room_id: str, participants: list[dict[str, str | datetime]]
+    ) -> dict[str, int]:
         if not participants:
             return {"success": True, "added_count": 0, "skipped_count": 0}
 
@@ -191,9 +193,9 @@ class PgTranscriptRepository:
                     return {"success": False, "added_count": 0, "skipped_count": 0}
 
                 # TODO: Use `Any` because the `Room.participants` field in the database model is mapped as a generic `dict`
-                raw_participants = cast(Any, room.participants) or []                   # type: ignore[explicit-any]
+                raw_participants = cast(Any, room.participants) or []  # type: ignore[explicit-any]
 
-                existing_participants: list[dict[str, Any]] = [                         # type: ignore[explicit-any]
+                existing_participants: list[dict[str, Any]] = [  # type: ignore[explicit-any]
                     p for p in raw_participants if isinstance(p, dict)
                 ]
 
@@ -254,10 +256,8 @@ class PgTranscriptRepository:
 
     # TODO: Use `Any` type because `room_participants` input field from generate_summary() in SummaryService
     # has list[dict[str, Any]] type
-    async def update_room_participants(                 # type: ignore[explicit-any]
-        self,
-        room_id: str,
-        participants: list[dict[str, Any]]
+    async def update_room_participants(  # type: ignore[explicit-any]
+        self, room_id: str, participants: list[dict[str, Any]]
     ) -> bool:
         session_factory = get_session_factory()
         try:
@@ -442,7 +442,7 @@ class PgTranscriptRepository:
     # ------------------------------------------------------------------
 
     # TODO: Use `Any` type because `draft_summary` from generate_summary() in SummaryService has complex structure
-    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:              # type: ignore[explicit-any]
+    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:  # type: ignore[explicit-any]
         session_factory = get_session_factory()
         room_uid = summary_data.get("room_id")
         try:
@@ -465,7 +465,7 @@ class PgTranscriptRepository:
             return None
 
     # TODO: Use `Any` type because `summary_data` from generate_summary() in SummaryService has complex structure
-    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:    # type: ignore[explicit-any]
+    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:  # type: ignore[explicit-any]
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -544,7 +544,9 @@ class PgTranscriptRepository:
     # METADATA EVENTS
     # ------------------------------------------------------------------
 
-    async def save_metadata_event(self, event_data: dict[str, str | int | dict[str, int] | dict[str, str] | datetime]) -> str | None:
+    async def save_metadata_event(
+        self, event_data: dict[str, str | int | dict[str, int] | dict[str, str] | datetime]
+    ) -> str | None:
         session_factory = get_session_factory()
         uid = uuid.uuid4()
         room_uid = event_data.get("room_id")
@@ -579,7 +581,9 @@ class PgTranscriptRepository:
             logger.error(f"Failed to get event by id: {e}")
             return None
 
-    async def append_transcript_chunk(self, track_ref_id: str, new_segments: list[dict[str, float | str | None]]) -> bool:
+    async def append_transcript_chunk(
+        self, track_ref_id: str, new_segments: list[dict[str, float | str | None]]
+    ) -> bool:
         """Append new segments as additional chunks"""
         if not new_segments:
             return True

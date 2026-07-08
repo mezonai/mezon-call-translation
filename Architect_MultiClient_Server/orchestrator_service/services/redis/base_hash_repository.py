@@ -6,20 +6,21 @@ Subclasses define domain-specific logic.
 """
 
 import time
-from abc import ABC
 
 from pydantic import BaseModel, Field
+from redis.asyncio import Redis
 
 from orchestrator_service.utils.decode import decode_mapping, decode_value
 from orchestrator_service.utils.logger import get_logger
-from redis.asyncio import Redis
 
 from .connection_pool import get_redis_connection
 
 logger = get_logger(__name__)
 
-class BaseHashStats(BaseModel):                                 # type: ignore[explicit-any]
+
+class BaseHashStats(BaseModel):  # type: ignore[explicit-any]
     """Model representing generic hash statistics from Redis"""
+
     total_items: int = Field(default=0, description="Total number of items")
     total_set: int = Field(default=0, description="Total number of set operations")
     total_deleted: int = Field(default=0, description="Total number of deleted operations")
@@ -27,7 +28,8 @@ class BaseHashStats(BaseModel):                                 # type: ignore[e
     last_deleted_at: str | None = Field(default=None, description="Timestamp of last deleted operation")
     error: str | None = Field(default=None, description="Error message")
 
-class BaseHashRepository(ABC):
+
+class BaseHashRepository:
     """
     Base repository for Redis Hash operations.
 
@@ -82,13 +84,13 @@ class BaseHashRepository(ABC):
 
         try:
             # Check if exists first
-            exists = await redis.hexists(hash_key, key)     # type: ignore[misc]
+            exists = await redis.hexists(hash_key, key)  # type: ignore[misc]
             if exists:
                 logger.warning(f"[{self.__class__.__name__}] Key '{key}' already exists")
                 return False
 
             # Set value
-            await redis.hset(hash_key, key, value)          # type: ignore[misc]
+            await redis.hset(hash_key, key, value)  # type: ignore[misc]
 
             # Update stats if enabled
             if stats_key:
@@ -115,7 +117,7 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
 
         try:
-            value = await redis.hget(hash_key, key)        # type: ignore[misc]
+            value = await redis.hget(hash_key, key)  # type: ignore[misc]
             return decode_value(value)
 
         except Exception as e:
@@ -136,14 +138,14 @@ class BaseHashRepository(ABC):
 
         try:
             # Get value before deletion (for logging)
-            value = await redis.hget(hash_key, key)         # type: ignore[misc]
+            value = await redis.hget(hash_key, key)  # type: ignore[misc]
 
             if value is None:
                 logger.warning(f"[{self.__class__.__name__}] Key '{key}' not found")
                 return False
 
             # Delete
-            deleted = await redis.hdel(hash_key, key)       # type: ignore[misc]
+            deleted = await redis.hdel(hash_key, key)  # type: ignore[misc]
 
             if deleted > 0:
                 # Update stats if enabled
@@ -173,7 +175,7 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
 
         try:
-            exists = await redis.hexists(hash_key, key)     # type: ignore[misc]
+            exists = await redis.hexists(hash_key, key)  # type: ignore[misc]
             return bool(exists)
 
         except Exception as e:
@@ -190,7 +192,7 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
 
         try:
-            data = await redis.hgetall(hash_key)     # type: ignore[misc]
+            data = await redis.hgetall(hash_key)  # type: ignore[misc]
             return decode_mapping(data) if data else {}
 
         except Exception as e:
@@ -207,7 +209,7 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
 
         try:
-            count = await redis.hlen(hash_key)      # type: ignore[misc]
+            count = await redis.hlen(hash_key)  # type: ignore[misc]
             return int(count)
 
         except Exception as e:
@@ -226,7 +228,7 @@ class BaseHashRepository(ABC):
         try:
             count = await self.count(hash_key)
             if count > 0:
-                await redis.delete(hash_key)            # type: ignore[misc]
+                await redis.delete(hash_key)  # type: ignore[misc]
                 logger.info(f"[{self.__class__.__name__}] Cleared {count} keys")
             return count
 
@@ -247,7 +249,7 @@ class BaseHashRepository(ABC):
         redis = await self._get_redis()
 
         try:
-            stats_data = await redis.hgetall(stats_key) # type: ignore[misc]
+            stats_data = await redis.hgetall(stats_key)  # type: ignore[misc]
             stats = decode_mapping(stats_data) if stats_data else {}
             item_count = await self.count(hash_key)
 
@@ -269,10 +271,10 @@ class BaseHashRepository(ABC):
         """Increment a stat counter."""
 
         redis = await self._get_redis()
-        await redis.hincrby(stats_key, stat_name, amount)   # type: ignore[misc]
+        await redis.hincrby(stats_key, stat_name, amount)  # type: ignore[misc]
 
     async def _update_stat(self, stats_key: str, stat_name: str, value: str) -> None:
         """Update a stat value."""
 
         redis = await self._get_redis()
-        await redis.hset(stats_key, stat_name, value)       # type: ignore[misc]
+        await redis.hset(stats_key, stat_name, value)  # type: ignore[misc]

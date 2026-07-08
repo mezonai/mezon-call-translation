@@ -96,18 +96,11 @@ class PgOutboxRepository:
         now = datetime.now(UTC)
         try:
             async with session_factory() as session:
-                update_values = {
-                    "status": status,
-                    "updated_at": now
-                }
+                update_values = {"status": status, "updated_at": now}
                 if error_msg is not None:
                     update_values["last_error"] = error_msg
 
-                stmt = (
-                    update(OutboxTask)
-                    .where(OutboxTask.id == task_id)
-                    .values(**update_values)
-                )
+                stmt = update(OutboxTask).where(OutboxTask.id == task_id).values(**update_values)
                 await session.execute(stmt)
                 await session.commit()
                 return True

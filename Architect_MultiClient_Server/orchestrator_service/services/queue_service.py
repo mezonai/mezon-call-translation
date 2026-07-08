@@ -90,10 +90,7 @@ class QueueService(Generic[T]):
                 stream_key=stream_key,
                 queue_name=queue_name,
             )
-            cls._instances[instance_key] = cast(
-                "QueueService[ProducerTaskProtocol]",
-                new_instance
-            )
+            cls._instances[instance_key] = cast("QueueService[ProducerTaskProtocol]", new_instance)
 
         return cast("QueueService[T]", cls._instances[instance_key])
 
@@ -150,7 +147,7 @@ class QueueService(Generic[T]):
             )
 
     # TODO: Return type uses `Any` because `task_data` field has type dict[str | Unknown, str | Unknown]
-    async def get_task(self, task_id: str) -> dict[str, Any] | None:                    # type: ignore[explicit-any]
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:  # type: ignore[explicit-any]
         """
         Get status of a specific task.
 
@@ -181,7 +178,7 @@ class QueueService(Generic[T]):
             return None
 
     # TODO: Return type uses `Any` because `pending_tasks` field has complex type list[dict[str, float | str | Unknown | None]]
-    async def get_pending_tasks(self) -> list[dict[str, Any]]:                  # type: ignore[explicit-any]
+    async def get_pending_tasks(self) -> list[dict[str, Any]]:  # type: ignore[explicit-any]
         """
         Get list of pending tasks.
 
@@ -220,7 +217,7 @@ class QueueService(Generic[T]):
             return []
 
     # TODO: Return type uses `Any` because `dlq_tasks` field has complex type list[dict[str, float | int | str | Unknown | None]]
-    async def get_dlq_tasks(self, limit: int = 100) -> list[dict[str, Any]]:    # type: ignore[explicit-any]
+    async def get_dlq_tasks(self, limit: int = 100) -> list[dict[str, Any]]:  # type: ignore[explicit-any]
         """
         Get list of tasks in Dead Letter Queue.
 

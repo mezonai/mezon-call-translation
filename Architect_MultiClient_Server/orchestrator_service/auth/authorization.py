@@ -8,6 +8,7 @@ Features:
 - FastAPI dependencies for authorization
 - Easy to grant/revoke permissions per user
 """
+
 from fastapi import Depends, HTTPException
 
 from orchestrator_service.auth.jwt_auth import verify_jwt

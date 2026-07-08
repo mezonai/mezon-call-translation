@@ -13,8 +13,10 @@ from .base_hash_repository import BaseHashRepository
 
 logger = get_logger(__name__)
 
-class RoomRegistryStats(BaseModel):                         # type: ignore[explicit-any]
+
+class RoomRegistryStats(BaseModel):  # type: ignore[explicit-any]
     """Model representing room registry statistics"""
+
     active_rooms: int = Field(default=0, description="Active rooms")
     total_registered: int = Field(default=0, description="Total registered rooms")
     total_unregistered: int = Field(default=0, description="Total unregistered rooms")
@@ -173,7 +175,7 @@ class RoomRegistryRepository(BaseHashRepository):
 
         # Add domain-specific fields
         redis = await self._get_redis()
-        registry_stats = await redis.hgetall(self.STATS_KEY)        # type: ignore[misc]
+        registry_stats = await redis.hgetall(self.STATS_KEY)  # type: ignore[misc]
 
         return RoomRegistryStats(
             active_rooms=base_stats.total_items,

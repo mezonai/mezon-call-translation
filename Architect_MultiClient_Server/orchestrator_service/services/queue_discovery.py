@@ -12,6 +12,7 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class QueueDiscovery:
     """
     Discover and list available queues from Redis.
@@ -94,12 +95,12 @@ class QueueDiscovery:
 
             # Get stats if available
             stats_key = f"{stream_key}:stats"
-            stats_data = await redis_client.hgetall(stats_key)          # type: ignore[misc]
+            stats_data = await redis_client.hgetall(stats_key)  # type: ignore[misc]
             stats = decode_mapping(stats_data) if stats_data else {}
 
             # Count workers
             workers_key = f"{stream_key}:workers"
-            workers_count = await redis_client.hlen(workers_key)        # type: ignore[misc]
+            workers_count = await redis_client.hlen(workers_key)  # type: ignore[misc]
 
             # Extract queue name from stream key
             queue_name = stream_key.replace(":stream", "")

@@ -19,7 +19,7 @@ from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Task Handler type definition
-TaskHandler = Callable[[dict[str, Any]], Awaitable[None]]                   # type: ignore[explicit-any]
+TaskHandler = Callable[[dict[str, Any]], Awaitable[None]]  # type: ignore[explicit-any]
 
 
 class OutboxHandlerRegistry:
@@ -28,7 +28,7 @@ class OutboxHandlerRegistry:
     _registry: ClassVar[dict[str, TaskHandler]] = {}
 
     @classmethod
-    def register(cls, use_case: str, handler: TaskHandler):
+    def register(cls, use_case: str, handler: TaskHandler) -> None:
         cls._registry[use_case] = handler
         logger.info(f"Registered outbox task handler for use_case: {use_case}")
 
@@ -42,7 +42,7 @@ class OutboxHandlerRegistry:
 # ------------------------------------------------------------------
 
 
-async def handle_retry_summarization(configs: dict[str, Any]) -> None:      # type: ignore[explicit-any]
+async def handle_retry_summarization(configs: dict[str, Any]) -> None:  # type: ignore[explicit-any]
     room_id = configs.get("room_id")
     retry_type_str = configs.get("retry_type")
     if not room_id or not retry_type_str:
@@ -150,13 +150,17 @@ class SummaryOutboxWorker:
 
             try:
                 # Mark as processing
-                await self.outbox_repo.update_outbox_task_status(task_id=str(task_id), status=OutboxStatus.PROCESSING.value)
+                await self.outbox_repo.update_outbox_task_status(
+                    task_id=str(task_id), status=OutboxStatus.PROCESSING.value
+                )
 
                 # Execute handler
                 await handler(configs)
 
                 # Mark as completed on success
-                await self.outbox_repo.update_outbox_task_status(task_id=str(task_id), status=OutboxStatus.COMPLETED.value)
+                await self.outbox_repo.update_outbox_task_status(
+                    task_id=str(task_id), status=OutboxStatus.COMPLETED.value
+                )
                 logger.info(f"✅ Outbox task {task_id} completed successfully")
 
             except Exception as e:

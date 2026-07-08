@@ -25,7 +25,8 @@ logger = get_logger(__name__)
 # Initialize transcription service
 transcription_service = TranscriptionService()
 
-class RoomRegisterRequest(BaseModel):                               # type: ignore[explicit-any]
+
+class RoomRegisterRequest(BaseModel):  # type: ignore[explicit-any]
     """Request model for room registration"""
 
     room_name: str = Field(..., description="Room name to register")
@@ -38,13 +39,13 @@ class RoomRegisterRequest(BaseModel):                               # type: igno
         }
 
 
-class RoomUnregisterRequest(BaseModel):                             # type: ignore[explicit-any]
+class RoomUnregisterRequest(BaseModel):  # type: ignore[explicit-any]
     """Request model for room unregistration"""
 
     room_name: str = Field(..., description="Room name to unregister")
 
 
-class RoomStatusResponse(BaseModel):                                # type: ignore[explicit-any]
+class RoomStatusResponse(BaseModel):  # type: ignore[explicit-any]
     """Response model for room status"""
 
     room_name: str
