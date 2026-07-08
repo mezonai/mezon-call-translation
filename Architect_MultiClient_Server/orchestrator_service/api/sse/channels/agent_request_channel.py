@@ -91,7 +91,7 @@ class AgentRequestChannel:
         )
 
     # TODO: Use `Any` type for the payload type because the request payload has a complex structure
-    async def send_request(                                 # type: ignore[explicit-any]
+    async def send_request(  # type: ignore[explicit-any]
         self,
         request_type: str,
         payload: dict[str, Any],

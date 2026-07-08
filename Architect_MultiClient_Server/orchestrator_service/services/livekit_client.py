@@ -18,33 +18,35 @@ try:
 except ImportError:
     LIVEKIT_AVAILABLE = False
 
-from orchestrator_service.config.application_config import get_config
+from orchestrator_service.config.application_config import Config, get_config
 from orchestrator_service.utils.json_utils import safe_json_loads_object
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class ParticipantBasicInfo(BaseModel):                                  # type: ignore[explicit-any]
+class ParticipantBasicInfo(BaseModel):  # type: ignore[explicit-any]
     identity: str = Field(..., description="Identity of the participant")
     name: str = Field(..., description="Name of the participant")
     state: str = Field(..., description="State of the participant")
     joined_at: int = Field(..., description="Timestamp when participant joined")
 
     # TODO: Use `Any` type because metadata can have dynamic structures
-    metadata: dict[str, Any] = Field(                                   # type: ignore[explicit-any]
-        ...,
-        description="Metadata of the participant"
+    metadata: dict[str, Any] = Field(  # type: ignore[explicit-any]
+        ..., description="Metadata of the participant"
     )
 
-class AudioTrackInfo(BaseModel):                                        # type: ignore[explicit-any]
+
+class AudioTrackInfo(BaseModel):  # type: ignore[explicit-any]
     """Model represent audio track information"""
+
     participant_identity: str = Field(..., description="Participant identity")
     filename: str = Field(..., description="Audio track filename")
     started_at_ns: int | str | None = Field(default=None, description="Audio track started at (nanoseconds)")
     ended_at_ns: int | str | None = Field(default=None, description="Audio track ended at (nanoseconds)")
 
-class TrackInfo(BaseModel):                                             # type: ignore[explicit-any]
+
+class TrackInfo(BaseModel):  # type: ignore[explicit-any]
     sid: str = Field(..., description="SID of the track")
     type: str = Field(..., description="Type of the track")
     name: str = Field(..., description="Name of the track")
@@ -54,14 +56,16 @@ class TrackInfo(BaseModel):                                             # type: 
     source: str = Field(..., description="Source of the track")
     mime_type: str = Field(..., description="MIME type of the track")
 
-class ParticipantPermission(BaseModel):                                 # type: ignore[explicit-any]
+
+class ParticipantPermission(BaseModel):  # type: ignore[explicit-any]
     can_subscribe: bool = Field(..., description="Can subscribe permission")
     can_publish: bool = Field(..., description="Can publish permission")
     can_publish_data: bool = Field(..., description="Can publish data permission")
     hidden: bool = Field(..., description="Hidden permission")
     recorder: bool = Field(..., description="Recorder permission")
 
-class ParticipantDetail(BaseModel):                                     # type: ignore[explicit-any]
+
+class ParticipantDetail(BaseModel):  # type: ignore[explicit-any]
     identity: str = Field(..., description="Identity of the participant")
     found: bool = Field(..., description="Found status")
     message: str | None = Field(default=None, description="Message")
@@ -70,9 +74,8 @@ class ParticipantDetail(BaseModel):                                     # type: 
     name: str | None = Field(default=None, description="Name of the participant")
 
     # TODO: Use `Any` type because metadata can have dynamic structures
-    metadata: dict[str, Any] | None = Field(                            # type: ignore[explicit-any]
-        default=None,
-        description="Metadata of the participant"
+    metadata: dict[str, Any] | None = Field(  # type: ignore[explicit-any]
+        default=None, description="Metadata of the participant"
     )
 
     joined_at: int | None = Field(default=None, description="Timestamp when participant joined")
@@ -86,27 +89,27 @@ class ParticipantDetail(BaseModel):                                     # type: 
     tracks: list[TrackInfo] = Field(default_factory=list, description="Tracks of the participant")
     permission: ParticipantPermission | None = Field(default=None, description="Permission of the participant")
 
-class DispatchActionResponseModel(BaseModel):                           # type: ignore[explicit-any]
+
+class DispatchActionResponseModel(BaseModel):  # type: ignore[explicit-any]
     status: str = Field(..., description="Status of the operation")
     message: str | None = Field(default=None, description="Message")
     # TODO: Use `Any` type because `dispatch` is converted from `AgentDispatch` protobuf to dict
-    dispatch: dict[str, Any] | None = Field(default=None, description="Dispatch information")   # type: ignore[explicit-any]
+    dispatch: dict[str, Any] | None = Field(default=None, description="Dispatch information")  # type: ignore[explicit-any]
 
 
-class ParticipantModel(BaseModel):                                      # type: ignore[explicit-any]
+class ParticipantModel(BaseModel):  # type: ignore[explicit-any]
     identity: str = Field(..., description="Identity of the participant")
     name: str = Field(..., description="Name of the participant")
     state: str = Field(..., description="State of the participant")
     joined_at: int = Field(..., description="Timestamp when participant joined")
 
     # TODO: Use `Any` type because metadata can have dynamic structures
-    metadata: dict[str, Any] = Field(                                   # type: ignore[explicit-any]
-        ...,
-        description="Metadata of the participant"
+    metadata: dict[str, Any] = Field(  # type: ignore[explicit-any]
+        ..., description="Metadata of the participant"
     )
 
 
-class ParticipantListResponseModel(BaseModel):                          # type: ignore[explicit-any]
+class ParticipantListResponseModel(BaseModel):  # type: ignore[explicit-any]
     status: str = Field(..., description="Status of the operation")
     participants: list[ParticipantModel] = Field(default_factory=list, description="List of participants")
 
@@ -145,7 +148,7 @@ class LiveKitClientService:
         """Check if LiveKit API is available"""
         return LIVEKIT_AVAILABLE
 
-    def _validate_config(self):
+    def _validate_config(self) -> Config:
         """Validate LiveKit configuration"""
         config = get_config()
         if not config.livekit.api_key or not config.livekit.api_secret:
@@ -242,10 +245,7 @@ class LiveKitClientService:
 
         dispatches = await self.list_dispatches(room_name)
         if await self.find_agent_dispatch(dispatches, agent_name):
-            return DispatchActionResponseModel(
-                status="exists",
-                message="Dispatch already exists"
-            )
+            return DispatchActionResponseModel(status="exists", message="Dispatch already exists")
 
         try:
             dispatch = await client.agent_dispatch.create_dispatch(
@@ -253,7 +253,7 @@ class LiveKitClientService:
             )
             return DispatchActionResponseModel(
                 status="created",
-                dispatch=MessageToDict(dispatch, preserving_proto_field_name=True)  # type: ignore[explicit-any]
+                dispatch=MessageToDict(dispatch, preserving_proto_field_name=True),  # type: ignore[explicit-any]
             )
         except Exception as e:
             if LIVEKIT_AVAILABLE and isinstance(e, twirp_client.TwirpError):
@@ -270,8 +270,7 @@ class LiveKitClientService:
 
         if not target_dispatch:
             return DispatchActionResponseModel(
-                status="not_found",
-                message=f"No active dispatch found for agent '{agent_name}'"
+                status="not_found", message=f"No active dispatch found for agent '{agent_name}'"
             )
 
         try:
@@ -329,28 +328,35 @@ class LiveKitClientService:
             # Find the specific participant
             for p in response.participants:
                 if p.identity == identity:
+                    tracks = (
+                        [
+                            TrackInfo(
+                                sid=track.sid,
+                                type=api.TrackType.Name(track.type),
+                                name=track.name,
+                                muted=track.muted,
+                                width=track.width,
+                                height=track.height,
+                                source=api.TrackSource.Name(track.source),
+                                mime_type=track.mime_type,
+                            )
+                            for track in p.tracks
+                        ]
+                        if p.tracks
+                        else []
+                    )
 
-                    tracks = [
-                        TrackInfo(
-                            sid=track.sid,
-                            type=api.TrackType.Name(track.type),
-                            name=track.name,
-                            muted=track.muted,
-                            width=track.width,
-                            height=track.height,
-                            source=api.TrackSource.Name(track.source),
-                            mime_type=track.mime_type,
+                    permission = (
+                        ParticipantPermission(
+                            can_subscribe=p.permission.can_subscribe if p.permission else False,
+                            can_publish=p.permission.can_publish if p.permission else False,
+                            can_publish_data=p.permission.can_publish_data if p.permission else False,
+                            hidden=p.permission.hidden if p.permission else False,
+                            recorder=p.permission.recorder if p.permission else False,
                         )
-                        for track in p.tracks
-                    ] if p.tracks else []
-
-                    permission = ParticipantPermission(
-                        can_subscribe=p.permission.can_subscribe if p.permission else False,
-                        can_publish=p.permission.can_publish if p.permission else False,
-                        can_publish_data=p.permission.can_publish_data if p.permission else False,
-                        hidden=p.permission.hidden if p.permission else False,
-                        recorder=p.permission.recorder if p.permission else False,
-                    ) if p.permission else None
+                        if p.permission
+                        else None
+                    )
 
                     return ParticipantDetail(
                         found=True,

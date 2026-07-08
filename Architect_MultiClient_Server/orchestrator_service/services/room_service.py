@@ -27,7 +27,7 @@ class RoomService:
         self.pg_repo = pg_repo
 
     # TODO: Use `Any` type because `serialized_room` is defined by complex types
-    def _serialize_room(self, room: Room) -> dict[str, Any]:            # type: ignore[explicit-any]
+    def _serialize_room(self, room: Room) -> dict[str, Any]:  # type: ignore[explicit-any]
         serialized_room = {
             "id": room.id,
             "room_name": room.room_name,
@@ -40,7 +40,7 @@ class RoomService:
         return serialized_room
 
     # TODO: Use `Any` type because the return value has a tuple of complex types (call _serialize_room())
-    async def list_rooms(                                               # type: ignore[explicit-any]
+    async def list_rooms(  # type: ignore[explicit-any]
         self,
         auth: AuthContext,
         status: str | None,
@@ -60,7 +60,7 @@ class RoomService:
         return [self._serialize_room(room) for room in rooms], total
 
     # TODO: Use `Any` type because the return value has a tuple of complex types (call _serialize_room())
-    async def get_room_by_id(self, room_id: str, auth: AuthContext) -> dict[str, Any]:      # type: ignore[explicit-any]
+    async def get_room_by_id(self, room_id: str, auth: AuthContext) -> dict[str, Any]:  # type: ignore[explicit-any]
         if not auth.can_view_all_rooms:
             has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
@@ -74,7 +74,7 @@ class RoomService:
         return self._serialize_room(room)
 
     # TODO: Use `Any` type because the return dictionary is defined by complex types
-    async def get_room_statistics(self, room_id: str, auth: AuthContext) -> dict[str, Any]: # type: ignore[explicit-any]
+    async def get_room_statistics(self, room_id: str, auth: AuthContext) -> dict[str, Any]:  # type: ignore[explicit-any]
         if not auth.can_view_all_rooms:
             has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:

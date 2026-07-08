@@ -2,6 +2,7 @@
 Message Channel for transcript/translation messages
 Handles SSE connections for room-based message streaming
 """
+
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_base import create_sse_response, event_generator
@@ -103,7 +104,11 @@ class MessageChannel:
             logger.warning(f"[Message Channel] No active connections for room {room}, message may be lost")
 
         # Prepare message data
-        message_data: SSEMessage = {"message": message, "type": message_type, "participant_identity": participant_identity}
+        message_data: SSEMessage = {
+            "message": message,
+            "type": message_type,
+            "participant_identity": participant_identity,
+        }
 
         # Broadcast message
         broadcast_count = await self.manager.broadcast_message(self.CHANNEL_TYPE, context_key, message_data)

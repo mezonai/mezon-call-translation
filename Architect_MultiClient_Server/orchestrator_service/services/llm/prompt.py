@@ -48,7 +48,7 @@ Return these fields with clear content:
 - Purpose of the meeting
 - Overall mood (e.g., collaborative, urgent, exploratory)
 - Key speakers and their roles if identifiable
-- Write 2–3 concise sentences
+- Write 2-3 concise sentences
 
 2. key_discussions
 - Main topics discussed in depth

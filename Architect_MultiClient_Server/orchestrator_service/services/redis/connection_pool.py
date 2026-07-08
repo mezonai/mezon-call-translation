@@ -4,10 +4,12 @@ Shared Redis Connection Pool
 Single ConnectionPool per process for all Redis usage (hash repos, streams, producer).
 Uses decode_responses=False so stream workflows keep raw Redis behavior.
 """
+
+from redis.asyncio import ConnectionPool, Redis
+
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
-from redis.asyncio import ConnectionPool, Redis
 
 logger = get_logger(__name__)
 
@@ -52,7 +54,7 @@ class RedisConnectionManager:
             )
 
             redis_client = Redis(connection_pool=self._pool)
-            await redis_client.ping() # type: ignore[misc]
+            await redis_client.ping()  # type: ignore[misc]
             await redis_client.close()
 
             self._connected = True
@@ -113,7 +115,7 @@ class RedisConnectionManager:
 
         try:
             client = self.get_client()
-            await client.ping() # type: ignore[misc]
+            await client.ping()  # type: ignore[misc]
             await client.close()
             return True
         except Exception as e:

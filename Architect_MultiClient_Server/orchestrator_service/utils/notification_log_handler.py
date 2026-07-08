@@ -85,7 +85,7 @@ class NotificationHandler(logging.Handler):
         self,
         record: logging.LogRecord,
         message: str,
-    ):
+    ) -> None:
         try:
             producer = self._get_producer()
             if not producer:
@@ -102,4 +102,3 @@ class NotificationHandler(logging.Handler):
             )
         except Exception:
             pass
-

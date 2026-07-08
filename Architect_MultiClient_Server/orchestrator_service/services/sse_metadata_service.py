@@ -13,8 +13,10 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-class MetadataEventResponse(BaseModel):                                             # type: ignore[explicit-any]
-    """Data Transfer Object for Metadata Event (phân biệt với ORM Model)"""
+
+class MetadataEventResponse(BaseModel):  # type: ignore[explicit-any]
+    """Data Transfer Object for Metadata Event (distinguish with ORM model)"""
+
     id: str = Field(description="Event primary key")
     event_id: str | None = Field(default=None, description="Event UUID")
     event_type: str | None = Field(default=None, description="Event Type")
@@ -22,10 +24,11 @@ class MetadataEventResponse(BaseModel):                                         
     room_name: str | None = Field(default=None, description="Room Name")
 
     # TODO: Use `Any` type because metadata can have dynamic structures
-    metadata: dict[str, Any] | None = Field(default=None, description="Metadata")   # type: ignore[explicit-any]
+    metadata: dict[str, Any] | None = Field(default=None, description="Metadata")  # type: ignore[explicit-any]
 
     timestamp: str | None = Field(default=None, description="Timestamp")
     created_at: str | None = Field(default=None, description="Created At")
+
 
 class SseMetadataService:
     def __init__(self, pg_repo: PgTranscriptRepository, metadata_channel: MetadataChannel):

@@ -181,9 +181,7 @@ class TranscriptionService:
             return False
 
     async def save_participants_batch(
-        self,
-        room_id: str,
-        participants: list[dict[str, datetime | str]]
+        self, room_id: str, participants: list[dict[str, datetime | str]]
     ) -> dict[str, int]:
         """
         Save batch of participants to PostgreSQL

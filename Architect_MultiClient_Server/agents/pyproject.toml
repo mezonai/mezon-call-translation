@@ -19,7 +19,12 @@ select = [
     "RUF",  # Ruff-specific: Exclusive rules for best performance and code quality
     "ANN",  # Annotations: Enforce type annotations
 ]
-ignore = ["E501"]   # Ignore "line too long" (E501) for unbreakable strings/URLs
+
+ignore = [
+    "E501",   # Ignore "line too long" (E501) for unbreakable strings/URLs
+    "ANN204", # Ignore missing return type annotation for special methods (e.g., __init__)
+    "ANN201", # Ignore missing return type annotation for public functions (API endpoints)
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["agents"]
@@ -28,6 +33,7 @@ known-first-party = ["agents"]
 quote-style = "double"  # Strictly enforce double quotes "" for all strings
 
 [tool.mypy]
+mypy_path = ".."
 python_version = "3.11"
 warn_return_any = true                  # Warn when a function returns Any
 disallow_untyped_defs = false           # Don't require type annotations on all functions (gradual adoption)

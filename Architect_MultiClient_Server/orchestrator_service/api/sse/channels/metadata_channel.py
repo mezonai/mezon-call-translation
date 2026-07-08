@@ -84,9 +84,7 @@ class MetadataChannel:
             )
         )
 
-    def _create_base_event(
-        self, event_type: str, room_id: str, room_name: str, metadata: dict[str, int]
-    ) -> SSEMessage:
+    def _create_base_event(self, event_type: str, room_id: str, room_name: str, metadata: dict[str, int]) -> SSEMessage:
         """
         Create base event structure with unified format.
 

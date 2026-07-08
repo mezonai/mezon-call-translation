@@ -50,7 +50,9 @@ def verify_simple_secret(credentials: HTTPAuthorizationCredentials) -> bool:
     return credentials.credentials == API_SECRET
 
 
-async def verify_api_key(credentials: HTTPAuthorizationCredentials | None = Security(security)) -> dict[str, str | bool]:
+async def verify_api_key(
+    credentials: HTTPAuthorizationCredentials | None = Security(security),
+) -> dict[str, str | bool]:
     """
     Verify API authentication credentials.
     Args:

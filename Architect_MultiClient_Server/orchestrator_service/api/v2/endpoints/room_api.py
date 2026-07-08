@@ -24,6 +24,7 @@ from orchestrator_service.utils.transcript_validators import (
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
+
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,

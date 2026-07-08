@@ -32,6 +32,7 @@ if not JWT_SECRET:
 
 logger.info(f"JWT Configuration: Algorithm={JWT_ALGORITHM}, Expiry={JWT_EXPIRY_DAYS} days")
 
+
 def generate_jwt_token(user_data: UserProfile, expiry_days: int | None = None, jti: str | None = None) -> str:
     """
     Generate a JWT token containing user information.

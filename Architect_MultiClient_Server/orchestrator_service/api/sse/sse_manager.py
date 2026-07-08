@@ -15,6 +15,7 @@ logger = get_logger(__name__)
 
 SSEMessage = dict[str, str | int | dict[str, str] | dict[str, int] | MetadataEventType]
 
+
 @singleton
 class SSEManager:
     """
@@ -52,14 +53,14 @@ class SSEManager:
         self._shutdown_flag = False
         self._shutdown_lock = threading.Lock()
 
-    def _ensure_channel_exists(self, channel_type: str):
+    def _ensure_channel_exists(self, channel_type: str) -> None:
         """Internal: Ensure channel exists in both dictionaries"""
         if channel_type not in self.connection_queues:
             self.connection_queues[channel_type] = {}
         if channel_type not in self.connection_appids:
             self.connection_appids[channel_type] = {}
 
-    def _ensure_context_exists(self, channel_type: str, context_key: str):
+    def _ensure_context_exists(self, channel_type: str, context_key: str) -> None:
         """Internal: Ensure context exists within channel"""
         self._ensure_channel_exists(channel_type)
         if context_key not in self.connection_queues[channel_type]:
@@ -95,7 +96,9 @@ class SSEManager:
 
             return connection_id
 
-    async def create_connection_queue(self, channel_type: str, context_key: str, connection_id: str) -> asyncio.Queue[SSEMessage]:
+    async def create_connection_queue(
+        self, channel_type: str, context_key: str, connection_id: str
+    ) -> asyncio.Queue[SSEMessage]:
         """
         Create a dedicated queue for a connection.
 

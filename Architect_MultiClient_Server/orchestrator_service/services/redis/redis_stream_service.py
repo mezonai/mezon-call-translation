@@ -25,7 +25,10 @@ import socket
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import ClassVar, Generic, TypeVar, cast
+from typing import Any, ClassVar, Generic, TypeVar, cast
+
+from redis.asyncio import Redis
+from redis.exceptions import ResponseError
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.stream_base import (
@@ -35,8 +38,6 @@ from orchestrator_service.models.stream_base import (
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.utils.decode import decode_value
 from orchestrator_service.utils.logger import get_logger
-from redis.asyncio import Redis
-from redis.exceptions import ResponseError
 
 logger = get_logger(__name__)
 
@@ -63,17 +64,21 @@ class WorkerInfo:
     tasks_processed: int = 0
     tasks_failed: int = 0
 
+
 @dataclass
 class PendingSummary:
     """Model for summary of pending tasks"""
+
     pending_count: int = 0
     min_message_id: str | None = None
     max_message_id: str | None = None
     consumers: dict[str, int] = field(default_factory=dict)
 
+
 @dataclass
 class PendingTask:
     """Model for detail of pending tasks"""
+
     message_id: str | None
     consumer: str | None
     idle_time_ms: int
@@ -172,10 +177,7 @@ class RedisStreamService(Generic[T]):
                 stream_key=stream_key,
                 group_name=group_name,
             )
-            cls._instances[instance_key] = cast(
-                "RedisStreamService[StreamTaskProtocol]",
-                new_instance
-            )
+            cls._instances[instance_key] = cast("RedisStreamService[StreamTaskProtocol]", new_instance)
 
         return cast("RedisStreamService[T]", cls._instances[instance_key])
 
@@ -210,7 +212,7 @@ class RedisStreamService(Generic[T]):
             if not manager.is_connected:
                 await manager.connect()
 
-            await self._redis.ping()   # type: ignore[misc]
+            await self._redis.ping()  # type: ignore[misc]
             logger.info(f"✅ Redis stream service using shared pool at {self._config.host}:{self._config.port}")
 
             # Create consumer group (idempotent)
@@ -376,7 +378,10 @@ class RedisStreamService(Generic[T]):
                 return []
 
             tasks: list[T] = []
-            for _, messages in result:
+
+            # TODO: User list[Any] instead of list[tuple[bytes | str, list[tuple[bytes | str, dict[bytes | str, bytes | str]]]]] (type-checking)
+            res_list = cast(list[Any], result)  # type: ignore[explicit-any]
+            for _, messages in res_list:
                 for message_id, data in messages:
                     message_id_str = decode_value(message_id)
                     # Use injected task_class to parse the message
@@ -388,7 +393,7 @@ class RedisStreamService(Generic[T]):
                         f"{self._tasks_prefix}:{task.task_id}",
                         mapping={
                             "status": StreamTaskStatus.PROCESSING.value,
-                            "consumer_id": self._consumer_id,
+                            "consumer_id": self._consumer_id or "",
                             "processing_started_at": str(time.time()),
                         },
                     )
@@ -487,7 +492,7 @@ class RedisStreamService(Generic[T]):
                     f"{self._tasks_prefix}:{task.task_id}",
                     mapping={
                         "status": StreamTaskStatus.PENDING.value,
-                        "message_id": new_message_id_str,
+                        "message_id": str(new_message_id_str),
                         "retry_count": str(new_retry_count),
                         "last_error": error[:500],
                         "retried_at": str(time.time()),
@@ -555,26 +560,29 @@ class RedisStreamService(Generic[T]):
         """
         try:
             # XPENDING stream group - returns summary
-            result = await self._redis.xpending(
+            result = await self._redis.xpending(  # type: ignore[explicit-any]
                 self._stream_key,  # type: ignore[arg-type]
                 self._group_name,  # type: ignore[arg-type]
             )
 
+            # TODO: Cast to Any because redis-py returns a union of (dict | None | list | tuple)
+            res_any: Any = result  # type: ignore[explicit-any]
+
             # Handle empty or None result
-            if not result or (isinstance(result, list | tuple) and len(result) == 0):
+            if not res_any or (isinstance(res_any, list | tuple) and len(res_any) == 0):
                 return PendingSummary()
 
             # Handle dict format (some redis-py versions return dict)
-            if isinstance(result, dict):
-                pending_count = result.get("pending", 0)
-                min_id = result.get("min", None)
-                max_id = result.get("max", None)
-                consumers = result.get("consumers", [])
+            if isinstance(res_any, dict):
+                pending_count = res_any.get("pending", 0)
+                min_id = res_any.get("min", None)
+                max_id = res_any.get("max", None)
+                consumers = res_any.get("consumers", [])
             # Handle tuple/list format [pending_count, min_id, max_id, consumers]
-            elif isinstance(result, list | tuple) and len(result) >= 4:
-                pending_count, min_id, max_id, consumers = result[:4]
+            elif isinstance(res_any, list | tuple) and len(res_any) >= 4:
+                pending_count, min_id, max_id, consumers = res_any[:4]
             else:
-                logger.warning(f"Unexpected xpending result format: {type(result)} - {result}")
+                logger.warning(f"Unexpected xpending result format: {type(res_any)} - {res_any}")
                 return PendingSummary()
 
             # Decode consumer info
@@ -624,8 +632,20 @@ class RedisStreamService(Generic[T]):
                 message_id = decode_value(entry["message_id"])
                 consumer = decode_value(entry["consumer"])
 
-                idle_time_ms = entry["time_since_delivered"]
-                delivery_count = entry["times_delivered"]
+                # TODO: Cast to Any because redis-py returns a union of (bytes | str | int)
+                # which requires a type bypass for safe conversion to int via int()
+                idle_time_ms = (
+                    int(cast(Any, entry.get("time_since_delivered")))  # type: ignore[explicit-any]
+                    if entry.get("time_since_delivered") is not None
+                    else 0
+                )
+                # TODO: Cast to Any because redis-py returns a union of (bytes | str | int)
+                # which requires a type bypass for safe conversion to int via int()
+                delivery_count = (
+                    int(cast(Any, entry.get("times_delivered")))  # type: ignore[explicit-any]
+                    if entry.get("times_delivered") is not None
+                    else 0
+                )
 
                 # Filter by idle time if specified
                 if min_idle_time_ms and idle_time_ms < min_idle_time_ms:
@@ -667,7 +687,7 @@ class RedisStreamService(Generic[T]):
 
         try:
             # XAUTOCLAIM stream group consumer min-idle-time start [COUNT count]
-            result = await self._redis.xautoclaim(
+            result: list[Any] = await self._redis.xautoclaim(  # type: ignore[explicit-any]
                 self._stream_key,  # type: ignore[arg-type]
                 self._group_name,  # type: ignore[arg-type]
                 self._consumer_id,  # type: ignore[arg-type]
@@ -953,5 +973,7 @@ def create_stream_service(
         RedisStreamService instance for the specified task type
     """
     return RedisStreamService.get_instance(
-        task_class=task_class, stream_key=stream_key, group_name=group_name,
+        task_class=task_class,
+        stream_key=stream_key,
+        group_name=group_name,
     )
