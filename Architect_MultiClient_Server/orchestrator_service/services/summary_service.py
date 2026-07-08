@@ -94,9 +94,6 @@ class SummaryService:
 
                 for chunk in chunks:
                     for seg in chunk.segments or []:
-                        if not isinstance(seg, dict):
-                            continue
-
                         text = seg.get("text", "").strip()
                         if not text:
                             continue
