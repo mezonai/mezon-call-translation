@@ -5,6 +5,8 @@ Scans Redis to find existing streams and provides queue information.
 No manual registration required - automatically discovers queues.
 """
 
+from typing import Any, cast
+
 from orchestrator_service.models.queue_models import QueueInfo
 from orchestrator_service.services.redis.connection_pool import get_redis_connection
 from orchestrator_service.utils.decode import decode_mapping, decode_value
@@ -53,7 +55,7 @@ class QueueDiscovery:
                             if decoded_key is not None:
                                 streams.append(decoded_key)
                     except Exception as e:
-                        logger.debug(f"Error checking key {key}: {e}")
+                        logger.debug(f"Error checking key {key!r}: {e}")
                         continue
 
                 if cursor == 0:
@@ -96,7 +98,10 @@ class QueueDiscovery:
             # Get stats if available
             stats_key = f"{stream_key}:stats"
             stats_data = await redis_client.hgetall(stats_key)  # type: ignore[misc]
-            stats = decode_mapping(stats_data) if stats_data else {}
+
+            # TODO: Use dict[Any, Any] type because the input for decode_mapping() has a complex type signature
+            # dict[bytes | str | int | float, bytes | str | int | float]
+            stats = decode_mapping(cast(dict[Any, Any], stats_data)) if stats_data else {}  # type: ignore[explicit-any]
 
             # Count workers
             workers_key = f"{stream_key}:workers"

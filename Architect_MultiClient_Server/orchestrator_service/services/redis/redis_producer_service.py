@@ -6,7 +6,7 @@ Supports any task type implementing ProducerTaskProtocol.
 Uses the shared Redis connection pool (RedisConnectionManager).
 """
 
-from typing import ClassVar, Generic, TypeVar, cast
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from redis.asyncio import Redis
 
@@ -112,16 +112,22 @@ class RedisProducerService(Generic[T]):
                 approximate=True,
             )
 
-            message_id_str = decode_value(message_id)
+            message_id_str = decode_value(message_id) or ""
 
             # Store task metadata for quick lookup
             await self._redis.hset(  # type: ignore[misc]
                 f"{self._tasks_prefix}:{task_id}",
-                mapping={
-                    **task_data,
-                    "message_id": message_id_str,
-                    "status": StreamTaskStatus.PENDING.value,
-                },
+                # TODO: Use dict[Any, Any] instead of complex
+                # dict[bytearray | bytes | float | int | memoryview | str | None,
+                #                   bytearray | bytes | float | int | memoryview | str | None]
+                mapping=cast(
+                    dict[Any, Any],
+                    {  # type: ignore[explicit-any]
+                        **task_data,
+                        "message_id": message_id_str,
+                        "status": StreamTaskStatus.PENDING.value,
+                    },
+                ),
             )
 
             # Set expiry for task metadata (7 days)
@@ -146,7 +152,10 @@ class RedisProducerService(Generic[T]):
 
             # Get stats
             stats_data = await self._redis.hgetall(self._stats_key)  # type: ignore[misc]
-            stats = decode_mapping(stats_data) if stats_data else {}
+
+            # TODO: Use dict[Any, Any] because the input for decode_mapping() has a complex type signature
+            # dict[bytes | str | int | float, bytes | str | int | float]
+            stats = decode_mapping(cast(dict[Any, Any], stats_data)) if stats_data else {}  # type: ignore[explicit-any]
 
             # Count active workers
             workers_key = f"{self._stream_key}:workers"

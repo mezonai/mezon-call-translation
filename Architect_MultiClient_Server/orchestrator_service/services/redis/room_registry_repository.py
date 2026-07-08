@@ -20,8 +20,8 @@ class RoomRegistryStats(BaseModel):  # type: ignore[explicit-any]
     active_rooms: int = Field(default=0, description="Active rooms")
     total_registered: int = Field(default=0, description="Total registered rooms")
     total_unregistered: int = Field(default=0, description="Total unregistered rooms")
-    last_registered_at: str | None = Field(default=None, description="Timestamp of last registered room")
-    last_unregistered_at: str | None = Field(default=None, description="Timestamp of last unregistered room")
+    last_registered_at: bytes | str | None = Field(default=None, description="Timestamp of last registered room")
+    last_unregistered_at: bytes | str | None = Field(default=None, description="Timestamp of last unregistered room")
     error: str | None = Field(default=None, description="Error message")
 
 

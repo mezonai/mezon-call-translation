@@ -9,7 +9,7 @@ import logging
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.models.queue_models import QueueStatsResponse
+from orchestrator_service.models.queue_models import DLQTaskResponse, PendingTaskResponse, QueueStatsResponse
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
 from orchestrator_service.models.stream_base import ProducerTaskProtocol
 from orchestrator_service.models.transcription_task import TranscriptionTask
@@ -177,8 +177,7 @@ class QueueService(Generic[T]):
             logger.error(f"Failed to get task {task_id}: {e}")
             return None
 
-    # TODO: Return type uses `Any` because `pending_tasks` field has complex type list[dict[str, float | str | Unknown | None]]
-    async def get_pending_tasks(self) -> list[dict[str, Any]]:  # type: ignore[explicit-any]
+    async def get_pending_tasks(self) -> list[PendingTaskResponse]:
         """
         Get list of pending tasks.
 
@@ -191,23 +190,28 @@ class QueueService(Generic[T]):
         try:
             # Read pending messages from stream (last 100)
             messages = await self._producer._redis.xrange(self.stream_key, count=100)
+            if not messages:
+                return []
 
-            pending_tasks = []
+            pending_tasks: list[PendingTaskResponse] = []
             for message_id, data in messages:
+                if not data:
+                    return []
+
                 # Decode message
-                task_data = {
+                task_data: dict[str, str] = {
                     k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
                     for k, v in data.items()
                 }
 
                 pending_tasks.append(
-                    {
-                        "message_id": message_id.decode() if isinstance(message_id, bytes) else message_id,
-                        "task_id": task_data.get("task_id"),
-                        "filename": task_data.get("filename"),
-                        "created_at": float(task_data.get("created_at", 0)),
-                        "status": "pending",
-                    }
+                    PendingTaskResponse(
+                        message_id=message_id.decode() if isinstance(message_id, bytes) else str(message_id),
+                        task_id=task_data.get("task_id"),
+                        filename=task_data.get("filename"),
+                        created_at=float(task_data.get("created_at", 0.0)),
+                        status="pending",
+                    )
                 )
 
             return pending_tasks
@@ -216,8 +220,7 @@ class QueueService(Generic[T]):
             logger.error(f"Failed to get pending tasks: {e}")
             return []
 
-    # TODO: Return type uses `Any` because `dlq_tasks` field has complex type list[dict[str, float | int | str | Unknown | None]]
-    async def get_dlq_tasks(self, limit: int = 100) -> list[dict[str, Any]]:  # type: ignore[explicit-any]
+    async def get_dlq_tasks(self, limit: int = 100) -> list[DLQTaskResponse]:
         """
         Get list of tasks in Dead Letter Queue.
 
@@ -232,26 +235,31 @@ class QueueService(Generic[T]):
 
             # Read messages from DLQ stream
             messages = await self._producer._redis.xrange(dlq_stream_key, count=limit)
+            if not messages:
+                return []
 
-            dlq_tasks = []
+            dlq_tasks: list[DLQTaskResponse] = []
             for message_id, data in messages:
+                if not data:
+                    return []
+
                 # Decode message
-                task_data = {
+                task_data: dict[str, str] = {
                     k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
                     for k, v in data.items()
                 }
 
                 dlq_tasks.append(
-                    {
-                        "message_id": message_id.decode() if isinstance(message_id, bytes) else message_id,
-                        "task_id": task_data.get("task_id"),
-                        "filename": task_data.get("filename"),
-                        "created_at": float(task_data.get("created_at", 0)),
-                        "dead_letter_at": float(task_data.get("dead_letter_at", 0)),
-                        "final_error": task_data.get("final_error", "Unknown error"),
-                        "retry_count": int(task_data.get("retry_count", 0)),
-                        "status": "dead_letter",
-                    }
+                    DLQTaskResponse(
+                        message_id=message_id.decode() if isinstance(message_id, bytes) else str(message_id),
+                        task_id=task_data.get("task_id"),
+                        filename=task_data.get("filename"),
+                        created_at=float(task_data.get("created_at", 0.0)),
+                        dead_letter_at=float(task_data.get("dead_letter_at", 0.0)),
+                        final_error=task_data.get("final_error", "Unknown error"),
+                        retry_count=int(task_data.get("retry_count", 0)),
+                        status="dead_letter",
+                    )
                 )
 
             return dlq_tasks
@@ -277,10 +285,15 @@ class QueueService(Generic[T]):
 
             # Find the task in DLQ
             messages = await self._producer._redis.xrange(dlq_stream_key)
+            if not messages:
+                return False
 
             for message_id, data in messages:
-                task_data = {
-                    k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
+                if not data:
+                    continue
+
+                task_data: dict[str, str] = {
+                    k.decode() if isinstance(k, bytes) else k: (v.decode() if isinstance(v, bytes) else v)
                     for k, v in data.items()
                 }
 
@@ -293,10 +306,16 @@ class QueueService(Generic[T]):
                     task_data.pop("dead_letter_at", None)
 
                     # Re-enqueue to main stream
-                    await self._producer._redis.xadd(self.stream_key, task_data)
+                    # TODO: Use dict[Any, Any] type instead of complex
+                    # dict[bytearray | bytes | float | int | memoryview | str | None,
+                    #                   bytearray | bytes | float | int | memoryview | str | None]
+                    await self._producer._redis.xadd(
+                        self.stream_key,
+                        cast(dict[Any, Any], task_data),  # type: ignore[explicit-any]
+                    )
 
                     # Remove from DLQ
-                    await self._producer._redis.xdel(dlq_stream_key, message_id)
+                    await self._producer._redis.xdel(dlq_stream_key, message_id)  # type: ignore[arg-type]
 
                     logger.info(f"Retried DLQ task: {task_id}")
                     return True

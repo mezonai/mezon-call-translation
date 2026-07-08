@@ -93,17 +93,22 @@ class TaskStatusResponse(BaseModel):  # type: ignore[explicit-any]
 # ========================================
 
 
-class DLQTaskResponse(BaseModel):  # type: ignore[explicit-any]
-    """Response model for DLQ task information."""
+class PendingTaskResponse(BaseModel):  # type: ignore[explicit-any]
+    """Response model for pending task information."""
 
     message_id: str = Field(..., description="Redis stream message ID")
-    task_id: str = Field(..., description="Task identifier")
-    filename: str | None = Field(None, description="Task filename (if applicable)")
+    task_id: str | None = Field(None, description="Task identifier")
+    filename: str | None = Field(None, description="Task filename")
     created_at: float = Field(..., description="Timestamp when task was created")
+    status: str = Field(default="pending", description="Task status")
+
+
+class DLQTaskResponse(PendingTaskResponse):  # type: ignore[explicit-any]
+    """Response model for DLQ task information."""
+
     dead_letter_at: float = Field(..., description="Timestamp when task was moved to DLQ")
     final_error: str = Field(..., description="Error message that caused task to fail")
     retry_count: int = Field(..., description="Number of retries attempted")
-    status: str = Field(default="dead_letter", description="Task status")
 
 
 class DLQListResponse(BaseModel):  # type: ignore[explicit-any]

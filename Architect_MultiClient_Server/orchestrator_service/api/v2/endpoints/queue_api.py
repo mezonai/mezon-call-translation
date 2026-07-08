@@ -14,7 +14,6 @@ from orchestrator_service.constants.permissions import QUEUES_VIEW_STATS
 from orchestrator_service.models.queue_models import (
     DLQListResponse,
     DLQRetryAllResponse,
-    DLQTaskResponse,
     QueueInfoResponse,
     QueueListResponse,
     QueueStatsResponse,
@@ -255,7 +254,7 @@ async def get_dlq_tasks(
         return DLQListResponse(
             queue_name=queue_name,
             dlq_stream_key=f"{queue_service.stream_key}:dlq",
-            tasks=[DLQTaskResponse(**task) for task in dlq_tasks],
+            tasks=dlq_tasks,
             count=len(dlq_tasks),
         )
 

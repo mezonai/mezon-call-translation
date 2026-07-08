@@ -6,6 +6,7 @@ Subclasses define domain-specific logic.
 """
 
 import time
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
@@ -191,9 +192,11 @@ class BaseHashRepository:
         """
         redis = await self._get_redis()
 
+        # TODO: Use dict[Any, Any] because the input for decode_mapping() has a complex type signature
+        # dict[bytes | str | int | float, bytes | str | int | float]
         try:
             data = await redis.hgetall(hash_key)  # type: ignore[misc]
-            return decode_mapping(data) if data else {}
+            return decode_mapping(cast(dict[Any, Any], data)) if data else {}  # type: ignore[explicit-any]
 
         except Exception as e:
             logger.error(f"[{self.__class__.__name__}] Failed to get all: {e}")
@@ -210,7 +213,7 @@ class BaseHashRepository:
 
         try:
             count = await redis.hlen(hash_key)  # type: ignore[misc]
-            return int(count)
+            return count
 
         except Exception as e:
             logger.error(f"[{self.__class__.__name__}] Failed to count: {e}")
@@ -248,9 +251,11 @@ class BaseHashRepository:
 
         redis = await self._get_redis()
 
+        # TODO: Use dict[Any, Any] because the input for decode_mapping() has a complex type signature
+        # dict[bytes | str | int | float, bytes | str | int | float]
         try:
             stats_data = await redis.hgetall(stats_key)  # type: ignore[misc]
-            stats = decode_mapping(stats_data) if stats_data else {}
+            stats = decode_mapping(cast(dict[Any, Any], stats_data)) if stats_data else {}  # type: ignore[explicit-any]
             item_count = await self.count(hash_key)
 
             return BaseHashStats(
