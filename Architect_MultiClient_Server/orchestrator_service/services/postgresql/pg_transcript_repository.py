@@ -247,7 +247,7 @@ class PgTranscriptRepository:
                         "skipped_count": skipped_count,
                     }
                 else:
-                    logger.info(f"ℹ️ No new participants to add to room {room_id}")
+                    logger.info(f"No new participants to add to room {room_id}")
                     return {"success": True, "added_count": 0, "skipped_count": skipped_count}
 
         except Exception as e:
