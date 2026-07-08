@@ -635,15 +635,17 @@ class RedisStreamService(Generic[T]):
                 # TODO: Cast to Any because redis-py returns a union of (bytes | str | int)
                 # which requires a type bypass for safe conversion to int via int()
                 idle_time_ms = (
-                    int(cast(Any, entry.get("time_since_delivered")))
+                    int(cast(Any, entry.get("time_since_delivered")))   # type: ignore[explicit-any]
                     if entry.get("time_since_delivered") is not None
                     else 0
-                )  # type: ignore[explicit-any]
+                )  
                 # TODO: Cast to Any because redis-py returns a union of (bytes | str | int)
                 # which requires a type bypass for safe conversion to int via int()
                 delivery_count = (
-                    int(cast(Any, entry.get("times_delivered"))) if entry.get("times_delivered") is not None else 0
-                )  # type: ignore[explicit-any]
+                    int(cast(Any, entry.get("times_delivered")))        # type: ignore[explicit-any]
+                    if entry.get("times_delivered") is not None
+                    else 0
+                )  
 
                 # Filter by idle time if specified
                 if min_idle_time_ms and idle_time_ms < min_idle_time_ms:

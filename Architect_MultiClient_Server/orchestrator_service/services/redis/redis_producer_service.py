@@ -121,8 +121,8 @@ class RedisProducerService(Generic[T]):
                 # dict[bytearray | bytes | float | int | memoryview | str | None,
                 #                   bytearray | bytes | float | int | memoryview | str | None]
                 mapping=cast(
-                    dict[Any, Any],
-                    {  # type: ignore[explicit-any]
+                    dict[Any, Any], # type: ignore[explicit-any]
+                    {  
                         **task_data,
                         "message_id": message_id_str,
                         "status": StreamTaskStatus.PENDING.value,
