@@ -67,7 +67,7 @@ class PgTokenBlacklistRepository:
                 is_bl = await session.scalar(stmt)
             if is_bl:
                 logger.debug(f"Token jti={jti} is blacklisted")
-            return is_bl
+            return bool(is_bl)
         except Exception as e:
             logger.error(f"Failed to check blacklist: {e}")
             # Fail closed — treat as blacklisted if DB unavailable

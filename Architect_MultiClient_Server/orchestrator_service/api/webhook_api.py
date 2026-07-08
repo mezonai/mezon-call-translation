@@ -1,6 +1,5 @@
 import json
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -79,7 +78,7 @@ async def handle_webhook(request: Request):
 
 
 @router.post("/internal", response_model=WebhookResponse)
-async def handle_internal_webhook(request: Request, auth: dict[str, Any] = Depends(verify_api_key)):
+async def handle_internal_webhook(request: Request, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     Handle webhook events từ LiveKit
 

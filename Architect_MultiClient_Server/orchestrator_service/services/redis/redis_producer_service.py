@@ -6,9 +6,10 @@ Supports any task type implementing ProducerTaskProtocol.
 Uses the shared Redis connection pool (RedisConnectionManager).
 """
 
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import ClassVar, Generic, TypeVar, cast
 
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.queue_models import ProducerQueueStats
 from orchestrator_service.models.stream_base import (
     ProducerTaskProtocol,
     StreamTaskStatus,
@@ -35,7 +36,7 @@ class RedisProducerService(Generic[T]):
     """
 
     # Singleton registry per (task_class, stream_key)
-    _instances: ClassVar[dict[str, "RedisProducerService"]] = {}
+    _instances: ClassVar[dict[str, "RedisProducerService[ProducerTaskProtocol]"]] = {}
 
     def __init__(
         self,
@@ -80,12 +81,16 @@ class RedisProducerService(Generic[T]):
         instance_key = f"{task_class.__name__}:{effective_stream_key}"
 
         if instance_key not in cls._instances:
-            cls._instances[instance_key] = cls(
+            new_instance = cls(
                 task_class=task_class,
                 stream_key=stream_key,
             )
+            cls._instances[instance_key] = cast(
+                "RedisProducerService[ProducerTaskProtocol]",
+                new_instance
+            )
 
-        return cls._instances[instance_key]
+        return cast("RedisProducerService[T]", cls._instances[instance_key])
 
     async def enqueue(self, task: T) -> str:
         """
@@ -139,7 +144,7 @@ class RedisProducerService(Generic[T]):
             logger.error(f"✗ Failed to enqueue task {task_id}: {e}")
             raise
 
-    async def get_queue_stats(self) -> dict[str, Any]:
+    async def get_queue_stats(self) -> ProducerQueueStats:
         """Get queue statistics including active workers count."""
         try:
             # Get stream length
@@ -153,18 +158,18 @@ class RedisProducerService(Generic[T]):
             workers_key = f"{self._stream_key}:workers"
             active_workers_count = await self._redis.hlen(workers_key)  # type: ignore[misc]
 
-            return {
-                "stream_key": self._stream_key,
-                "stream_length": stream_len,
-                "total_enqueued": int(stats.get("total_enqueued", 0)),
-                "total_processed": int(stats.get("total_processed", 0)),
-                "total_failed": int(stats.get("total_failed", 0)),
-                "active_workers": active_workers_count,
-            }
+            return ProducerQueueStats(
+                stream_key=self._stream_key,
+                stream_length=stream_len,
+                total_enqueued=int(stats.get("total_enqueued", 0)),
+                total_processed=int(stats.get("total_processed", 0)),
+                total_failed=int(stats.get("total_failed", 0)),
+                active_workers=active_workers_count,
+            )
 
         except Exception as e:
             logger.error(f"Error getting queue stats: {e}")
-            return {}
+            return ProducerQueueStats(error=str(e))
 
     @property
     def is_connected(self) -> bool:

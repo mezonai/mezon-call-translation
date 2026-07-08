@@ -78,7 +78,9 @@ async def get_summary_by_room_id(
 
     speech_durations = []
     room_participants_raw = room.participants
-    room_participants: list[dict[str, Any]] = (
+
+    # TODO: Use `Any` type because the `room_participant_raw` data to insert into `room_participants` has complex type
+    room_participants: list[dict[str, Any]] = (                                     # type: ignore[explicit-any]
         room_participants_raw if isinstance(room_participants_raw, list) else []
     )
 

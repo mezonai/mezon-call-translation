@@ -8,14 +8,12 @@ Features:
 - FastAPI dependencies for authorization
 - Easy to grant/revoke permissions per user
 """
-
-from typing import Any
-
 from fastapi import Depends, HTTPException
 
 from orchestrator_service.auth.jwt_auth import verify_jwt
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL
 from orchestrator_service.services.postgresql.pg_user_permission_repository import PgUserPermissionRepository
+from orchestrator_service.utils.jwt_utils import JWTPayload
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -27,7 +25,7 @@ class AuthContext:
     Extracted from JWT token - permissions loaded from users collection.
     """
 
-    def __init__(self, user: dict[str, Any], permissions: set[str]):
+    def __init__(self, user: JWTPayload, permissions: set[str]):
         """
         Initialize authorization context.
 
@@ -36,9 +34,9 @@ class AuthContext:
             permissions: Set of flat permissions for this user
         """
         self.user = user
-        self.user_id = user["user_id"]
-        self.username = user.get("username", "")
-        self.display_name = user.get("display_name", "")
+        self.user_id = user.user_id
+        self.username = user.username if user.username is not None else ""
+        self.display_name = user.display_name if user.display_name is not None else ""
         self.permissions = permissions
 
         if not self.permissions:
@@ -106,7 +104,7 @@ class AuthContext:
         return f"AuthContext(user_id={self.user_id}, username={self.username}, permissions={len(self.permissions)})"
 
 
-async def get_auth_context(user: dict[str, Any] = Depends(verify_jwt)) -> AuthContext:
+async def get_auth_context(user: JWTPayload = Depends(verify_jwt)) -> AuthContext:
     """
     Extract authorization context from JWT token.
     Loads flat permissions from users collection in database.
@@ -117,7 +115,7 @@ async def get_auth_context(user: dict[str, Any] = Depends(verify_jwt)) -> AuthCo
     Returns:
         AuthContext with permissions loaded from database
     """
-    user_id = user.get("user_id")
+    user_id = user.user_id
 
     # Try to load permissions from database
     permissions: set[str] = set()

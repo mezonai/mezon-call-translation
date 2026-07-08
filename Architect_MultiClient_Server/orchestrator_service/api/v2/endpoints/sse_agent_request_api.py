@@ -29,7 +29,7 @@ agent_request_channel = AgentRequestChannel(sse_manager)
 # ==================== Pydantic Models ====================
 
 
-class SendAgentRequestBody(BaseModel):
+class SendAgentRequestBody(BaseModel):                          # type: ignore[explicit-any]
     """Request body for sending requests to agents with discriminated union payload"""
 
     payload: AgentRequestPayload = Field(
@@ -39,7 +39,8 @@ class SendAgentRequestBody(BaseModel):
     agent_id: str = Field(..., description="Agent ID to target specific agent")
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {
+        # TODO: Use `Any` type becase json_schema_extra is defined by complex structure
+        json_schema_extra: ClassVar[dict[str, Any]] = {         # type: ignore[explicit-any]
             "examples": [
                 {
                     "payload": {"request_type": "transcript_control", "action": "enable"},
@@ -70,7 +71,7 @@ class SendAgentRequestBody(BaseModel):
         }
 
 
-class SendAgentRequestResponse(BaseModel):
+class SendAgentRequestResponse(BaseModel):                      # type: ignore[explicit-any]
     """Response for send agent request"""
 
     status: str = Field(..., description="Status of operation")
@@ -81,7 +82,7 @@ class SendAgentRequestResponse(BaseModel):
     sent_to: int = Field(..., description="Number of agents that received the request")
 
 
-class AgentStatusResponse(BaseModel):
+class AgentStatusResponse(BaseModel):                           # type: ignore[explicit-any]
     """Response for agent status check"""
 
     status: str = Field(..., description="Status of operation")
@@ -93,7 +94,7 @@ class AgentStatusResponse(BaseModel):
 
 
 @router.get("/sse/agent-requests")
-async def sse_agent_requests_endpoint(agent_id: str, room_name: str, auth: dict[str, Any] = Depends(verify_api_key)):
+async def sse_agent_requests_endpoint(agent_id: str, room_name: str, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     SSE endpoint for agents to receive requests from orchestrator.
 

@@ -6,13 +6,13 @@ Room API endpoints for querying room data from PostgreSQL
 """
 
 from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
+from orchestrator_service.services.livekit_client import AudioTrackInfo
 from orchestrator_service.services.room_service import RoomService, get_room_service
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.transcript_validators import (
@@ -23,14 +23,6 @@ from orchestrator_service.utils.transcript_validators import (
 
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
-
-
-def _serialize_room(room: dict) -> dict:
-    serialized_room = dict(room)
-    if serialized_room.get("id") is not None:
-        serialized_room["id"] = str(serialized_room["id"])
-    return serialized_room
-
 
 @router.get("", response_description="List all rooms")
 async def list_rooms(
@@ -143,7 +135,7 @@ async def get_audio_info(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
     room_service: RoomService = Depends(get_room_service),
-) -> dict[str, Any]:
+) -> dict[str, str | list[AudioTrackInfo]]:
     """
     Get all audio info for a specific room by ID.
 

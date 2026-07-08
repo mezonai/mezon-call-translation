@@ -57,7 +57,10 @@ To ensure MyPy correctly understands the package structure and resolves absolute
 # Make sure you are in the root directory: Architect_MultiClient_Server/
 
 # Check an ENTIRE service package recursively (Use -p for package)
-mypy -p orchestrator_service > mypy_errors.txt
+mypy -p orchestrator_service > mypy-errors.txt
+
+# Check with a specific pyproject.toml config file
+mypy --config-file orchestrator_service/pyproject.toml -p orchestrator_service > mypy-errors.txt
 
 # Check a SPECIFIC sub-module precisely (Use -m for module)
 mypy -m orchestrator_service.services.room_registry

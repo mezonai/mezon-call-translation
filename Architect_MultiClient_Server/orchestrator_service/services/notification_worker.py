@@ -50,7 +50,7 @@ class NotificationWorker:
         self._config = get_config().notification
         self._worker_id = worker_id
         self._running = False
-        self._consumer_task: asyncio.Task | None = None
+        self._consumer_task: asyncio.Task[None] | None = None
 
         self._stream_service: RedisStreamService[NotificationTask] = create_stream_service(
             task_class=NotificationTask,

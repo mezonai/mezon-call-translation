@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from typing import Any
 
 import requests
 from fastapi import HTTPException
@@ -7,6 +6,13 @@ from fastapi import HTTPException
 from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.permissions import DEFAULT_BOT_PERMISSIONS, DEFAULT_USER_PERMISSIONS
+from orchestrator_service.models.auth_models import (
+    BotLoginResponse,
+    CurrentUserResponse,
+    ExchangeCodeResponse,
+    RefreshTokenResponse,
+    UserProfile,
+)
 from orchestrator_service.services.postgresql.pg_refresh_token_repository import (
     PgRefreshTokenRepository,
     get_pg_refresh_token_repository,
@@ -23,7 +29,6 @@ from orchestrator_service.utils.jwt_utils import generate_jwt_token, get_token_e
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
 
 class AuthService:
     def __init__(
@@ -53,7 +58,7 @@ class AuthService:
         logger.info("  - Client Secret: configured")
         logger.info(f"  - Redirect URI: {self.oauth2_config.redirect_uri}")
 
-    async def exchange_code_for_token(self, code: str, state: str) -> dict[str, Any]:
+    async def exchange_code_for_token(self, code: str, state: str) -> ExchangeCodeResponse:
         try:
             # Exchange authorization code for access token
             # Mezon uses client_secret_post method (credentials in body, not Basic Auth)
@@ -137,7 +142,7 @@ class AuthService:
                 )
                 logger.debug(f"Updated user info for user_id={user_id}")
 
-            user_data = {"user_id": user_id}
+            user_data = UserProfile(user_id=user_id)
 
             # Generate JWT access token
             access_token = generate_jwt_token(user_data)
@@ -155,36 +160,34 @@ class AuthService:
             token_expiry = get_token_expiry(access_token)
             expires_in = int((token_expiry - datetime.now(UTC)).total_seconds())
 
-            logger.info(f"Successfully authenticated user: {user_info['username']} (ID: {user_data['user_id']})")
+            logger.info(f"Successfully authenticated user: {user_info['username']} (ID: {user_data.user_id})")
 
-            return {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "token_type": "Bearer",
-                "expires_in": expires_in,
-                "user": user_info,
-            }
+            return ExchangeCodeResponse(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_in=expires_in,
+                user=user_info,
+            )
 
         except requests.RequestException as e:
             logger.error(f"Network error during OAuth2 exchange: {e}")
             raise HTTPException(status_code=500, detail=f"Network error communicating with Mezon: {e!s}") from e
 
-    async def get_current_user(self, user_id: str) -> dict[str, Any]:
+    async def get_current_user(self, user_id: str) -> CurrentUserResponse:
         user_info = await self.user_repo.get_user_info(user_id)
         if not user_info:
             raise HTTPException(status_code=404, detail="User not found")
 
-        return {
-            "status": "ok",
-            "user": {
-                "user_id": user_info.id,
-                "username": user_info.username,
-                "display_name": user_info.display_name,
-                "avatar": user_info.avatar_url,
-            },
-        }
+        user_profile = UserProfile(
+            user_id=user_info.id,
+            username=str(user_info.username),
+            display_name=user_info.display_name,
+            avatar=user_info.avatar_url,
+        )
 
-    async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
+        return CurrentUserResponse(status="ok", user=user_profile)
+
+    async def refresh_access_token(self, refresh_token: str) -> RefreshTokenResponse:
         # Validate refresh token
         token_doc = await self.refresh_token_repo.validate_refresh_token(refresh_token)
         if not token_doc:
@@ -194,7 +197,7 @@ class AuthService:
         user_id = str(token_doc.user_id)
 
         # Get user data from token (permissions will be loaded from DB on each request)
-        user_data = {"user_id": user_id}
+        user_data = UserProfile(user_id=user_id)
 
         # Blacklist the old access token (if not already expired/blacklisted)
         old_jti = str(token_doc.access_token_jti)
@@ -222,14 +225,13 @@ class AuthService:
         token_expiry = get_token_expiry(new_access_token)
         expires_in = int((token_expiry - datetime.now(UTC)).total_seconds())
 
-        logger.info(f"Access token refreshed for user_id={user_data['user_id']}")
+        logger.info(f"Access token refreshed for user_id={user_data.user_id}")
 
-        return {
-            "access_token": new_access_token,
-            "refresh_token": new_refresh_token,
-            "token_type": "Bearer",
-            "expires_in": expires_in,
-        }
+        return RefreshTokenResponse(
+            access_token=new_access_token,
+            refresh_token=new_refresh_token,
+            expires_in=expires_in,
+        )
 
     async def logout(self, jti: str, user_id: str, exp_timestamp: int, refresh_token: str):
         token_expiry = datetime.fromtimestamp(exp_timestamp, tz=UTC)
@@ -238,7 +240,7 @@ class AuthService:
         # Revoke the refresh token
         await self.refresh_token_repo.revoke_refresh_token(refresh_token)
 
-    async def bot_login(self, account_dict: dict) -> dict[str, Any]:
+    async def bot_login(self, account_dict: dict[str, str]) -> BotLoginResponse:
         # Authenticate account with Mezon
         auth_result = await authenticate_account(account_dict)
         if not auth_result:
@@ -246,40 +248,37 @@ class AuthService:
             raise HTTPException(status_code=401, detail="Account authentication failed. Invalid credentials.")
 
         # Extract authentication data
-        user_id = auth_result["user_id"]
-        payload = auth_result["payload"]
+        user_id = auth_result.user_id
+        payload = auth_result.payload
 
         # Extract user info from JWT payload
-        username = payload.get("usn", "")  # usn = username in Mezon JWT
-        tid = payload.get("tid", "")  # tid = team id
-        uid = payload.get("uid", "")  # uid = user id (numeric)
+        username = str(payload.get("usn", ""))  # usn = username in Mezon JWT
+        tid = str(payload.get("tid", ""))  # tid = team id
+        uid = str(payload.get("uid", ""))  # uid = user id (numeric)
 
         logger.debug(f"Payload extracted: tid={tid}, uid={uid}, usn={username}")
 
-        # Prepare user data for our JWT token
-        user_data = {"user_id": str(user_id)}
-
         # Check if bot user already exists
-        existing_bot = await self.user_repo.get_user_info(str(user_id))
+        existing_bot = await self.user_repo.get_user_info(user_id)
 
         if not existing_bot:
             # First bot login - create bot user with default bot permissions
             logger.info(f"First bot login for user_id={user_id}, assigning default bot permissions")
             await self.user_repo.create_or_update_user(
-                user_id=str(user_id), username=username, display_name=username, permissions=DEFAULT_BOT_PERMISSIONS
+                user_id=user_id, username=username, display_name=username, permissions=DEFAULT_BOT_PERMISSIONS
             )
             logger.info(f"Assigned {len(DEFAULT_BOT_PERMISSIONS)} default bot permissions")
         else:
             # Existing bot - just update basic info (keep existing permissions)
             await self.user_repo.create_or_update_user(
-                user_id=str(user_id),
+                user_id=user_id,
                 username=username,
                 display_name=username,
                 permissions=None,  # Don't update permissions for existing bots
             )
             logger.debug(f"Updated bot info for user_id={user_id}")
 
-        user_data = {"user_id": str(user_id)}
+        user_data = UserProfile(user_id=user_id)
 
         # Generate our JWT access token for the bot
         access_token = generate_jwt_token(user_data)
@@ -291,7 +290,7 @@ class AuthService:
 
         # Create refresh token
         refresh_token = await self.refresh_token_repo.create_refresh_token(
-            user_id=str(user_id), access_token_jti=access_token_jti, device_info=None
+            user_id=user_id, access_token_jti=access_token_jti, device_info=None
         )
 
         # Calculate token expiry in seconds (for frontend)
@@ -300,12 +299,11 @@ class AuthService:
 
         logger.info(f"✅ Bot authenticated: user_id={user_id}, username={username}")
 
-        return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "Bearer",
-            "expires_in": expires_in,
-        }
+        return BotLoginResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=expires_in,
+        )
 
 
 # Get singleton instances

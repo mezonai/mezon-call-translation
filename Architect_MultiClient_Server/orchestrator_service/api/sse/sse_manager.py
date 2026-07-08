@@ -6,13 +6,14 @@ Manages connections, queues, and broadcasting for multiple channel types
 import asyncio
 import threading
 import time
-from typing import Any
 
+from orchestrator_service.models.metadata_event_models import MetadataEventType
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+SSEMessage = dict[str, str | int | dict[str, str] | dict[str, int] | MetadataEventType]
 
 @singleton
 class SSEManager:
@@ -37,7 +38,7 @@ class SSEManager:
 
     def __init__(self):
         # channel_type -> context_key -> connection_id -> asyncio.Queue
-        self.connection_queues: dict[str, dict[str, dict[str, asyncio.Queue[Any]]]] = {}
+        self.connection_queues: dict[str, dict[str, dict[str, asyncio.Queue[SSEMessage]]]] = {}
 
         # channel_type -> context_key -> connection_id -> appid
         self.connection_appids: dict[str, dict[str, dict[str, str]]] = {}
@@ -94,7 +95,7 @@ class SSEManager:
 
             return connection_id
 
-    async def create_connection_queue(self, channel_type: str, context_key: str, connection_id: str) -> asyncio.Queue:
+    async def create_connection_queue(self, channel_type: str, context_key: str, connection_id: str) -> asyncio.Queue[SSEMessage]:
         """
         Create a dedicated queue for a connection.
 
@@ -110,7 +111,7 @@ class SSEManager:
             self._ensure_context_exists(channel_type, context_key)
 
             # Create asyncio.Queue for this connection
-            conn_queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=100)  # Limit to prevent memory issues
+            conn_queue: asyncio.Queue[SSEMessage] = asyncio.Queue(maxsize=100)  # Limit to prevent memory issues
             self.connection_queues[channel_type][context_key][connection_id] = conn_queue
 
             return conn_queue
@@ -147,7 +148,7 @@ class SSEManager:
                     and existing_connection_id in self.connection_queues[channel_type][context_key]
                 ):
                     queue = self.connection_queues[channel_type][context_key][existing_connection_id]
-                    disconnect_message = {
+                    disconnect_message: SSEMessage = {
                         "event": "disconnect",
                         "data": {"message": "Duplicate connection from same appid"},
                     }
@@ -221,7 +222,7 @@ class SSEManager:
                 f"(channel={channel_type}, context={context_key})"
             )
 
-    async def broadcast_message(self, channel_type: str, context_key: str, message: dict) -> int:
+    async def broadcast_message(self, channel_type: str, context_key: str, message: SSEMessage) -> int:
         """
         Broadcast message to all connections in a channel/context.
 
@@ -334,7 +335,7 @@ class SSEManager:
             logger.info("[SSE Manager] Signal shutdown initiated, notifying all connections...")
 
             total_notified = 0
-            shutdown_message = {"event": "disconnect", "data": {"message": "Server is shutting down"}}
+            shutdown_message: SSEMessage = {"event": "disconnect", "data": {"message": "Server is shutting down"}}
 
             # Iterate through all queues and send shutdown message
             for _, contexts in list(self.connection_queues.items()):

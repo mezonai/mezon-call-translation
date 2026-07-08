@@ -19,7 +19,7 @@ from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Task Handler type definition
-TaskHandler = Callable[[dict[str, Any]], Awaitable[None]]
+TaskHandler = Callable[[dict[str, Any]], Awaitable[None]]                   # type: ignore[explicit-any]
 
 
 class OutboxHandlerRegistry:
@@ -42,7 +42,7 @@ class OutboxHandlerRegistry:
 # ------------------------------------------------------------------
 
 
-async def handle_retry_summarization(configs: dict[str, Any]) -> None:
+async def handle_retry_summarization(configs: dict[str, Any]) -> None:      # type: ignore[explicit-any]
     room_id = configs.get("room_id")
     retry_type_str = configs.get("retry_type")
     if not room_id or not retry_type_str:
@@ -69,7 +69,7 @@ class SummaryOutboxWorker:
         outbox_cfg = get_config().outbox
         self.outbox_repo = PgOutboxRepository()
         self._running = False
-        self._worker_task: asyncio.Task | None = None
+        self._worker_task: asyncio.Task[None] | None = None
         self._last_run_hour = -1  # Prevent duplicate runs in the same hour
         self._check_interval_sec = outbox_cfg.check_interval_sec
         self._delay_between_items = outbox_cfg.delay_between_items_sec
@@ -134,15 +134,15 @@ class SummaryOutboxWorker:
         logger.info(f"Processing {len(tasks)} pending outbox tasks...")
 
         for index, task in enumerate(tasks):
-            task_id = task["id"]
-            use_case = task["use_case"]
-            configs = task["configs"]
+            task_id = task.id
+            use_case = task.use_case
+            configs = task.configs
 
             handler = OutboxHandlerRegistry.get_handler(use_case)
             if not handler:
                 logger.error(f"No handler registered for outbox use_case: {use_case}")
                 await self.outbox_repo.update_outbox_task_status(
-                    task_id=task_id,
+                    task_id=str(task_id),
                     status=OutboxStatus.FAILED.value,
                     error_msg=f"No handler registered for use_case: {use_case}",
                 )
@@ -150,19 +150,19 @@ class SummaryOutboxWorker:
 
             try:
                 # Mark as processing
-                await self.outbox_repo.update_outbox_task_status(task_id=task_id, status=OutboxStatus.PROCESSING.value)
+                await self.outbox_repo.update_outbox_task_status(task_id=str(task_id), status=OutboxStatus.PROCESSING.value)
 
                 # Execute handler
                 await handler(configs)
 
                 # Mark as completed on success
-                await self.outbox_repo.update_outbox_task_status(task_id=task_id, status=OutboxStatus.COMPLETED.value)
+                await self.outbox_repo.update_outbox_task_status(task_id=str(task_id), status=OutboxStatus.COMPLETED.value)
                 logger.info(f"✅ Outbox task {task_id} completed successfully")
 
             except Exception as e:
                 # Task fails completely and is marked as failed on the first attempt
                 await self.outbox_repo.update_outbox_task_status(
-                    task_id=task_id, status=OutboxStatus.FAILED.value, error_msg=str(e)
+                    task_id=str(task_id), status=OutboxStatus.FAILED.value, error_msg=str(e)
                 )
                 logger.error(f"❌ Outbox task {task_id} failed and marked as 'failed': {e}", exc_info=True)
 

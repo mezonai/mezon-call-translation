@@ -24,7 +24,7 @@ router = APIRouter()
 # ==================== Pydantic Models ====================
 
 
-class RoomInfo(BaseModel):
+class RoomInfo(BaseModel):                                          # type: ignore[explicit-any]
     """Room information"""
 
     room_id: str = Field(..., description="Room identifier")
@@ -40,28 +40,43 @@ class RoomInfo(BaseModel):
         return v
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
+        # TODO: Use `Any` type becase json_schema_extra is defined by complex structure
+        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
+            "example": {
+                "room_id": "abc123",
+                "room_name": "Interview Room 1"
+            }
+        }
 
 
-class SessionStartedRequest(RoomInfo):
+class SessionStartedRequest(RoomInfo):                              # type: ignore[explicit-any]
     """Request model for session_started event"""
 
-    class Config:
-        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "abc123", "room_name": "Interview Room 1"}}
+    class Config(RoomInfo.Config):
+        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
+            "example": {
+                "room_id": "abc123",
+                "room_name": "Interview Room 1"
+            }
+        }
 
 
-class SessionEndedRequest(RoomInfo):
+class SessionEndedRequest(RoomInfo):                                # type: ignore[explicit-any]
     """Request model for session_ended event"""
 
     duration_seconds: int | None = Field(None, description="Duration of room session in seconds")
 
-    class Config:
-        json_schema_extra: ClassVar[dict] = {
-            "example": {"room_id": "abc123", "room_name": "Interview Room 1", "duration_seconds": 3600}
+    class Config(RoomInfo.Config):
+        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
+            "example": {
+                "room_id": "abc123",
+                "room_name": "Interview Room 1",
+                "duration_seconds": 3600
+            }
         }
 
 
-class FileResult(BaseModel):
+class FileResult(BaseModel):                                        # type: ignore[explicit-any]
     """Recording file result"""
 
     participant_identity: str = Field(..., description="Identity of participant")
@@ -70,7 +85,7 @@ class FileResult(BaseModel):
     end_time: str = Field(..., description="Recording end time (ISO 8601)")
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "participant_identity": "user_1",
                 "filename": "user_1_audio.mp3",
@@ -80,11 +95,11 @@ class FileResult(BaseModel):
         }
 
 
-class SessionRecordDoneRequest(RoomInfo):
+class SessionRecordDoneRequest(RoomInfo):                           # type: ignore[explicit-any]
     """Request model for room_record_done event"""
 
-    class Config:
-        json_schema_extra: ClassVar[dict] = {
+    class Config(RoomInfo.Config):
+        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
             "example": {
                 "room_id": "abc123",
                 "room_name": "Room_1",
@@ -92,11 +107,16 @@ class SessionRecordDoneRequest(RoomInfo):
         }
 
 
-class SessionSummaryDoneRequest(RoomInfo):
+class SessionSummaryDoneRequest(RoomInfo):                          # type: ignore[explicit-any]
     """Request model for room_summary_done event"""
 
-    class Config:
-        json_schema_extra: ClassVar[dict] = {"example": {"room_id": "69a66008cfc00881f1d7b382", "room_name": "H3U-EXdDg"}}
+    class Config(RoomInfo.Config):
+        json_schema_extra: ClassVar[dict[str, Any]] = {             # type: ignore[explicit-any]
+            "example": {
+                "room_id": "69a66008cfc00881f1d7b382",
+                "room_name": "H3U-EXdDg"
+            }
+        }
 
 
 # ==================== SSE Endpoint ====================
@@ -126,7 +146,7 @@ async def sse_metadata_endpoint(
 @router.post("/push_metadata/session_started")
 async def push_session_started_api(
     req: SessionStartedRequest,
-    auth: dict[str, Any] = Depends(verify_api_key),
+    auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
 ):
     """
@@ -145,7 +165,7 @@ async def push_session_started_api(
 @router.post("/push_metadata/session_ended")
 async def push_session_ended_api(
     req: SessionEndedRequest,
-    auth: dict[str, Any] = Depends(verify_api_key),
+    auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
 ):
     """
@@ -166,7 +186,7 @@ async def push_session_ended_api(
 @router.post("/push_metadata/session_record_done")
 async def push_session_record_done_api(
     req: SessionRecordDoneRequest,
-    auth: dict[str, Any] = Depends(verify_api_key),
+    auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
 ):
     """
@@ -186,7 +206,7 @@ async def push_session_record_done_api(
 @router.post("/push_metadata/session_summary_done")
 async def push_session_summary_done_api(
     req: SessionSummaryDoneRequest,
-    auth: dict[str, Any] = Depends(verify_api_key),
+    auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
 ):
     """

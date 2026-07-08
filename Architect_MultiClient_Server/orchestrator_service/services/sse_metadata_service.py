@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
@@ -12,6 +13,19 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+class MetadataEventResponse(BaseModel):                                             # type: ignore[explicit-any]
+    """Data Transfer Object for Metadata Event (phân biệt với ORM Model)"""
+    id: str = Field(description="Event primary key")
+    event_id: str | None = Field(default=None, description="Event UUID")
+    event_type: str | None = Field(default=None, description="Event Type")
+    room_id: str | None = Field(default=None, description="Room ID")
+    room_name: str | None = Field(default=None, description="Room Name")
+
+    # TODO: Use `Any` type because metadata can have dynamic structures
+    metadata: dict[str, Any] | None = Field(default=None, description="Metadata")   # type: ignore[explicit-any]
+
+    timestamp: str | None = Field(default=None, description="Timestamp")
+    created_at: str | None = Field(default=None, description="Created At")
 
 class SseMetadataService:
     def __init__(self, pg_repo: PgTranscriptRepository, metadata_channel: MetadataChannel):
@@ -44,7 +58,7 @@ class SseMetadataService:
         limit: int,
         skip: int,
         sort_order: str,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[MetadataEventResponse], int]:
         raw_events = await self.pg_repo.get_metadata_events(
             event_type=event_type,
             room_id=room_id,
@@ -64,40 +78,36 @@ class SseMetadataService:
 
         events = []
         for event in raw_events:
-            e = {
-                "id": event.id,
-                "event_id": event.event_id,
-                "event_type": event.event_type,
-                "room_id": event.room_id,
-                "room_name": event.room_name,
-                "metadata": event.event_metadata,
-                "timestamp": event.timestamp,
-                "created_at": event.created_at.isoformat() + "Z" if isinstance(event.created_at, datetime) else None,
-            }
+            e = MetadataEventResponse(
+                id=str(event.id),
+                event_id=event.event_id,
+                event_type=event.event_type,
+                room_id=str(event.room_id) if event.room_id else None,
+                room_name=event.room_name,
+                metadata=event.event_metadata,
+                timestamp=event.timestamp,
+                created_at=event.created_at.isoformat() + "Z" if isinstance(event.created_at, datetime) else None,
+            )
 
             events.append(e)
 
         return events, total
 
-    async def get_metadata_event_by_id(self, event_id: str) -> dict[str, Any]:
+    async def get_metadata_event_by_id(self, event_id: str) -> MetadataEventResponse:
         event_obj = await self.pg_repo.get_metadata_event_by_event_id(event_id)
         if not event_obj:
             raise HTTPException(status_code=404, detail=f"Event not found: {event_id}")
 
-        event_dict = {
-            "id": event_obj.id,
-            "event_id": event_obj.event_id,
-            "event_type": event_obj.event_type,
-            "room_id": event_obj.room_id,
-            "room_name": event_obj.room_name,
-            "metadata": event_obj.event_metadata,
-            "timestamp": event_obj.timestamp,
-            "created_at": event_obj.created_at.isoformat() + "Z"
-            if isinstance(event_obj.created_at, datetime)
-            else None,
-        }
-
-        return event_dict
+        return MetadataEventResponse(
+            id=str(event_obj.id),
+            event_id=event_obj.event_id,
+            event_type=event_obj.event_type,
+            room_id=str(event_obj.room_id) if event_obj.room_id else None,
+            room_name=event_obj.room_name,
+            metadata=event_obj.event_metadata,
+            timestamp=event_obj.timestamp,
+            created_at=event_obj.created_at.isoformat() + "Z" if isinstance(event_obj.created_at, datetime) else None,
+        )
 
 
 # Get singleton instances

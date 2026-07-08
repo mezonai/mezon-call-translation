@@ -1,15 +1,14 @@
-from typing import Any
-
 import httpx
 import jwt
 
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.auth_models import MezonAuthResponse
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-async def authenticate_account(account: dict) -> dict[str, Any] | None:
+async def authenticate_account(account: dict[str, str]) -> MezonAuthResponse | None:
     """
     Authenticate account with Mezon server and return authentication details.
 
@@ -42,14 +41,14 @@ async def authenticate_account(account: dict) -> dict[str, Any] | None:
                             f"✅ Account authenticated: user_id={data.get('user_id')}, usn={payload.get('usn')}"
                         )
 
-                        return {
-                            "token": data.get("token"),
-                            "refresh_token": data.get("refresh_token"),
-                            "user_id": data.get("user_id"),
-                            "api_url": data.get("api_url"),
-                            "ws_url": data.get("ws_url"),
-                            "payload": payload,
-                        }
+                        return MezonAuthResponse(
+                            token=data.get("token"),
+                            refresh_token=data.get("refresh_token"),
+                            user_id=str(data.get("user_id")),
+                            api_url=data.get("api_url"),
+                            ws_url=data.get("ws_url"),
+                            payload=payload,
+                        )
                     except jwt.InvalidTokenError as e:
                         logger.error(f"❌ Failed to decode JWT token: {e}")
                         return None

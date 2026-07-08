@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 class TaskPriority(int, Enum):
@@ -48,7 +48,7 @@ class BaseStreamTask:
     retry_count: int = 0
     priority: int | TaskPriority = TaskPriority.NORMAL
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, str]:
         """
         Convert to dictionary for Redis storage.
 
@@ -88,7 +88,7 @@ class BaseProducerTask:
     task_id: str = field(default_factory=lambda: f"task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:4]}")
     created_at: float = field(default_factory=time.time)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, str]:
         """
         Convert to dict for Redis XADD.
 
@@ -124,7 +124,7 @@ class ProducerTaskProtocol(Protocol):
     retry_count: int
     priority: int | TaskPriority
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, str]:
         """
         Convert task to dictionary for Redis XADD.
 
@@ -160,7 +160,7 @@ class StreamTaskProtocol(Protocol):
     retry_count: int
     priority: int | TaskPriority
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, str]:
         """
         Convert task to dictionary for Redis storage.
 
@@ -196,10 +196,10 @@ def parse_priority(value: int | TaskPriority | str) -> int:
     Returns:
         Integer priority value
     """
-    if isinstance(value, int):
-        return value
     if isinstance(value, TaskPriority):
         return int(value)
+    if isinstance(value, int):
+        return value
     if isinstance(value, str):
         try:
             return int(value)

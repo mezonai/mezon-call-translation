@@ -17,8 +17,6 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any
-
 from livekit.api import TokenVerifier
 from livekit.api import WebhookReceiver as _WebhookReceiver
 
@@ -32,7 +30,7 @@ _config = get_config()
 VERIFY_WEBHOOKS = _config.livekit.verify_webhooks
 
 
-def get_webhook_receiver() -> Any | None:
+def get_webhook_receiver() -> _WebhookReceiver | None:
     """
     Create a WebhookReceiver instance for verifying webhook signatures.
 

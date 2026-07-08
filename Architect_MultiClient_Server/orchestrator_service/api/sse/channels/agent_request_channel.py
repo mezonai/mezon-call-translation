@@ -10,7 +10,7 @@ from typing import Any
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_base import create_sse_response, event_generator
-from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.api.sse.sse_manager import SSEManager, SSEMessage
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
@@ -90,7 +90,8 @@ class AgentRequestChannel:
             event_generator(self.CHANNEL_TYPE, context_key, connection_id, connection_queue, self.manager)
         )
 
-    async def send_request(
+    # TODO: Use `Any` type for the payload type because the request payload has a complex structure
+    async def send_request(                                 # type: ignore[explicit-any]
         self,
         request_type: str,
         payload: dict[str, Any],
@@ -117,7 +118,7 @@ class AgentRequestChannel:
             logger.warning(f"[Agent Request Channel] No active agents for context {context_key}, request may be lost")
 
         # Prepare request data
-        request_data = {
+        request_data: SSEMessage = {
             "request_id": str(uuid.uuid4()),
             "request_type": request_type,
             "timestamp": int(time.time()),

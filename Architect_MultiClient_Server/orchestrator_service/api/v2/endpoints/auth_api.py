@@ -12,12 +12,19 @@ Handles OAuth2 authentication flow with Mezon:
 """
 
 import re
-from typing import Any, ClassVar
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 
-from orchestrator_service.auth.jwt_auth import verify_jwt
+from orchestrator_service.auth.jwt_auth import JWTPayload, verify_jwt
+from orchestrator_service.models.auth_models import (
+    BotLoginRequest,
+    BotLoginResponse,
+    ExchangeCodeRequest,
+    ExchangeCodeResponse,
+    LogoutRequest,
+    RefreshTokenRequest,
+    RefreshTokenResponse,
+)
 from orchestrator_service.services.auth_service import AuthService, get_auth_service
 from orchestrator_service.utils.logger import get_logger
 
@@ -25,27 +32,6 @@ logger = get_logger(__name__)
 
 # Router
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-
-# Request/Response Models
-class ExchangeCodeRequest(BaseModel):
-    code: str = Field(..., description="Authorization code from Mezon OAuth2 callback")
-    state: str = Field(..., description="State parameter for CSRF protection (11 alphanumeric chars)")
-
-
-class ExchangeCodeResponse(BaseModel):
-    access_token: str = Field(..., description="JWT access token for authenticated sessions")
-    refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
-    token_type: str = Field(default="Bearer", description="Token type")
-    expires_in: int = Field(..., description="Access token expiry in seconds")
-    user: dict[str, Any] = Field(..., description="User information from Mezon")
-
-
-class OAuth2ConfigResponse(BaseModel):
-    client_id: str = Field(..., description="Mezon OAuth2 client ID")
-    auth_url: str = Field(..., description="Mezon authorization URL")
-    redirect_uri: str = Field(..., description="Registered redirect URI")
-
 
 @router.post("/mezon/exchange", response_model=ExchangeCodeResponse)
 async def exchange_code_for_token(request: ExchangeCodeRequest, auth_service: AuthService = Depends(get_auth_service)):
@@ -75,8 +61,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest, auth_service: Au
         raise HTTPException(status_code=400, detail="Invalid state parameter. Must be 11 alphanumeric characters.")
 
     try:
-        result = await auth_service.exchange_code_for_token(request.code, request.state)
-        return ExchangeCodeResponse(**result)
+        return await auth_service.exchange_code_for_token(request.code, request.state)
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
@@ -87,7 +72,7 @@ async def exchange_code_for_token(request: ExchangeCodeRequest, auth_service: Au
 
 @router.get("/mezon/userinfo")
 async def get_current_user(
-    user: dict[str, Any] = Depends(verify_jwt), auth_service: AuthService = Depends(get_auth_service)
+    user: JWTPayload = Depends(verify_jwt), auth_service: AuthService = Depends(get_auth_service)
 ):
     """
     Get information about the currently authenticated user.
@@ -101,51 +86,16 @@ async def get_current_user(
     Requires:
         Authorization: Bearer <jwt_token>
     """
-    user_id = user.get("user_id")
+    user_id = user.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: missing user_id")
     try:
-        return await auth_service.get_current_user(str(user_id))
+        return await auth_service.get_current_user(user_id)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error fetching user info: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-# New Request/Response Models for Refresh and Logout
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str = Field(..., description="Refresh token obtained from login")
-
-
-class RefreshTokenResponse(BaseModel):
-    access_token: str = Field(..., description="New JWT access token")
-    refresh_token: str = Field(..., description="New refresh token for future access tokens")
-    token_type: str = Field(default="Bearer", description="Token type")
-    expires_in: int = Field(..., description="Access token expiry in seconds")
-
-
-class LogoutRequest(BaseModel):
-    refresh_token: str = Field(..., description="Refresh token to revoke")
-
-
-class AccountModel(BaseModel):
-    appid: str
-    token: str
-
-
-class BotLoginRequest(BaseModel):
-    account: AccountModel = Field(..., description="Bot account credentials")
-
-    class Config:
-        json_schema_extra: ClassVar[dict] = {"examples": [{"account": {"appid": "string", "token": "string"}}]}
-
-
-class BotLoginResponse(BaseModel):
-    access_token: str = Field(..., description="JWT access token for bot session")
-    refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
-    token_type: str = Field(default="Bearer", description="Token type")
-    expires_in: int = Field(..., description="Access token expiry in seconds")
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
@@ -166,8 +116,7 @@ async def refresh_access_token(request: RefreshTokenRequest, auth_service: AuthS
         HTTPException: 401 if refresh token is invalid or expired
     """
     try:
-        result = await auth_service.refresh_access_token(request.refresh_token)
-        return RefreshTokenResponse(**result)
+        return await auth_service.refresh_access_token(request.refresh_token)
     except HTTPException:
         raise
     except Exception as e:
@@ -178,7 +127,7 @@ async def refresh_access_token(request: RefreshTokenRequest, auth_service: AuthS
 @router.post("/logout")
 async def logout(
     request: LogoutRequest,
-    user: dict[str, Any] = Depends(verify_jwt),
+    user: JWTPayload = Depends(verify_jwt),
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """
@@ -197,18 +146,18 @@ async def logout(
     Requires:
         Authorization: Bearer <access_token>
     """
-    jti = user.get("jti")
-    user_id = user.get("user_id")
-    exp = user.get("exp")
+    jti = user.jti
+    user_id = user.user_id
+    exp = user.exp
 
     if not jti or not user_id or exp is None:
         raise HTTPException(status_code=400, detail="Invalid token format: missing required claims")
 
     try:
         await auth_service.logout(
-            jti=str(jti),
-            user_id=str(user_id),
-            exp_timestamp=int(exp),
+            jti=jti,
+            user_id=user_id,
+            exp_timestamp=exp,
             refresh_token=request.refresh_token
         )
 
@@ -240,8 +189,7 @@ async def bot_login(request: BotLoginRequest, auth_service: AuthService = Depend
         HTTPException: 401 if account authentication fails, 500 on server error
     """
     try:
-        result = await auth_service.bot_login(request.account.model_dump())
-        return BotLoginResponse(**result)
+        return await auth_service.bot_login(request.account.model_dump())
     except HTTPException:
         raise
     except Exception as e:

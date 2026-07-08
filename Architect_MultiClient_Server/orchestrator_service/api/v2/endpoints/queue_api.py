@@ -8,101 +8,24 @@ Automatically discovers available queues from Redis.
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from pydantic import BaseModel, Field
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import QUEUES_VIEW_STATS
+from orchestrator_service.models.queue_models import (
+    DLQListResponse,
+    DLQRetryAllResponse,
+    DLQTaskResponse,
+    QueueInfoResponse,
+    QueueListResponse,
+    QueueStatsResponse,
+    TaskStatusResponse,
+)
 from orchestrator_service.services.queue_discovery import QueueDiscovery
 from orchestrator_service.services.queue_service import get_queue_service_by_name
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/queue", tags=["queue"])
-
-
-class TaskStatusResponse(BaseModel):
-    """Response model for task status."""
-
-    task_id: str
-    status: str
-    filename: str
-    created_at: float
-    started_processing_at: float | None = None
-    completed_at: float | None = None
-    result: str | None = None
-    error: str | None = None
-
-
-class QueueStatsResponse(BaseModel):
-    """Response model for queue statistics."""
-
-    queue_name: str | None = Field(None, description="Queue identifier")
-    stream_key: str | None = Field(None, description="Redis stream key")
-    stream_length: int = Field(..., description="Current queue length")
-    total_enqueued: int = Field(..., description="Total tasks enqueued")
-    total_processed: int = Field(..., description="Total tasks processed")
-    total_failed: int = Field(..., description="Total tasks failed")
-    pending_count: int = Field(..., description="Number of pending tasks")
-    active_workers: int = Field(..., description="Number of active workers")
-
-
-class QueueInfoResponse(BaseModel):
-    """Response model for basic queue information."""
-
-    queue_name: str
-    stream_key: str
-    stream_length: int
-    active_workers: int
-    exists: bool
-
-
-class QueueListResponse(BaseModel):
-    """Response model for list of queues."""
-
-    queues: list[QueueInfoResponse]
-    count: int
-
-
-class DLQTaskResponse(BaseModel):
-    """Response model for DLQ task information."""
-
-    message_id: str = Field(..., description="Redis stream message ID")
-    task_id: str = Field(..., description="Task identifier")
-    filename: str | None = Field(None, description="Task filename (if applicable)")
-    created_at: float = Field(..., description="Timestamp when task was created")
-    dead_letter_at: float = Field(..., description="Timestamp when task was moved to DLQ")
-    final_error: str = Field(..., description="Error message that caused task to fail")
-    retry_count: int = Field(..., description="Number of retries attempted")
-    status: str = Field(default="dead_letter", description="Task status")
-
-
-class DLQListResponse(BaseModel):
-    """Response model for DLQ task list."""
-
-    queue_name: str = Field(..., description="Queue identifier")
-    dlq_stream_key: str = Field(..., description="Redis DLQ stream key")
-    tasks: list[DLQTaskResponse]
-    count: int = Field(..., description="Number of tasks in DLQ")
-
-
-class DLQRetryResponse(BaseModel):
-    """Response model for DLQ retry operation."""
-
-    queue_name: str
-    retried_tasks: list[str] = Field(..., description="List of task IDs that were retried")
-    success_count: int
-    failed_count: int
-    total: int
-
-
-class DLQRetryAllResponse(BaseModel):
-    """Response model for bulk DLQ retry operation."""
-
-    queue_name: str
-    success_count: int = Field(..., description="Number of successfully retried tasks")
-    failed_count: int = Field(..., description="Number of tasks that failed to retry")
-    total: int = Field(..., description="Total tasks processed")
-    message: str = Field(..., description="Summary message")
 
 
 # ========================================
@@ -124,7 +47,7 @@ async def list_available_queues(auth: AuthContext = Depends(require_any_permissi
     try:
         queues_data = await QueueDiscovery.list_queues()
 
-        queues = [QueueInfoResponse(**queue_data) for queue_data in queues_data]
+        queues = [QueueInfoResponse(**queue_data.model_dump()) for queue_data in queues_data]
 
         return QueueListResponse(queues=queues, count=len(queues))
 
@@ -152,8 +75,7 @@ async def get_queue_stats_by_name(
     """
     try:
         queue_service = get_queue_service_by_name(queue_name)
-        stats = await queue_service.get_stats()
-        return QueueStatsResponse(**stats)
+        return await queue_service.get_stats()
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
@@ -272,17 +194,17 @@ async def get_all_queues_overview(auth: AuthContext = Depends(require_any_permis
         overview = {}
 
         for queue_data in queues_data:
-            queue_name = queue_data["queue_name"]
+            queue_name = queue_data.queue_name
             try:
                 queue_service = get_queue_service_by_name(queue_name)
                 stats = await queue_service.get_stats()
                 overview[queue_name] = stats
             except Exception as e:
                 logger.error(f"Error getting stats for queue '{queue_name}': {e}")
-                overview[queue_name] = {
-                    "error": str(e),
-                    "queue_name": queue_name,
-                }
+                overview[queue_name] = QueueStatsResponse(
+                    error=str(e),
+                    queue_name=queue_name,
+                )
 
         return {
             "queues": overview,
@@ -342,7 +264,7 @@ async def get_dlq_tasks(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get DLQ tasks: {e!s}") from e
 
 
-@router.post("/{queue_name}/dlq/retry", response_model=DLQRetryAllResponse)
+@router.post("/{queue_name}/dlq/retry/{task_id}", response_model=DLQRetryAllResponse)
 async def retry_dlq_tasks(
     queue_name: str = Path(..., description="Queue identifier"),
     task_id: str = Path(..., description="Task ID to retry a single task "),

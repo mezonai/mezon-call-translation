@@ -8,9 +8,7 @@ Delegates all operations to RoomRegistryRepository.
 from typing import Optional
 
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
-from orchestrator_service.services.redis.room_registry_repository import (
-    RoomRegistryRepository,
-)
+from orchestrator_service.services.redis.room_registry_repository import RoomRegistryRepository, RoomRegistryStats
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -65,7 +63,7 @@ class RoomRegistry:
             ConnectionError: If Redis operation fails
         """
         try:
-            room_id_str = str(room_id)
+            room_id_str = room_id
             if not room_id_str or room_id_str == "None":
                 logger.error(f"Cannot register room '{room_name}': room_id converts to invalid string '{room_id_str}'")
                 return False
@@ -174,7 +172,7 @@ class RoomRegistry:
         repository = self._get_repository()
         return await repository.clear_all_rooms()
 
-    async def get_stats(self) -> dict:
+    async def get_stats(self) -> RoomRegistryStats:
         """
         Get registry statistics.
 
@@ -191,9 +189,6 @@ class RoomRegistry:
         Returns:
             True if healthy, False otherwise
         """
-        if self._repository is None:
-            return False
-
         connection_manager = get_connection_manager()
         return await connection_manager.health_check()
 

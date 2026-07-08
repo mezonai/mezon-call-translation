@@ -35,7 +35,8 @@ class SummaryService:
         self.llm_service = create_llm_service(self.config.llm)
         logger.info(f"SummaryService initialized with LLM provider: {self.config.llm.provider}")
 
-    async def generate_summary(self, room_id: str) -> dict[str, Any] | None:
+    # TODO: Use `Any` type because `draft_summary` response has complex structure
+    async def generate_summary(self, room_id: str) -> dict[str, Any] | None:        # type: ignore[explicit-any]
         """
         Generate a summary for the given room_id.
 
@@ -66,10 +67,11 @@ class SummaryService:
             return None
 
         # 3. Collect all segments with absolute timestamps in one pass
-        all_segments: list[dict[str, Any]] = []
+        # TODO: Use `Any` type because the `type` data to insert into `all_segments` has unknown type
+        all_segments: list[dict[str, Any]] = []                                     # type: ignore[explicit-any]
         participant_durations: dict[str, float] = {}
 
-        track_ids = [str(track.id) for track in tracks]
+        track_ids = [track.id for track in tracks]
         all_chunks = await self.pg_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
 
         chunks_by_track: dict[str, list[TranscriptChunk]] = {tid: [] for tid in track_ids}
@@ -83,7 +85,7 @@ class SummaryService:
                 participant = track.participant_identity or "Unknown"
                 audio_info = track.audio_info or {}
                 track_start_ns = int(audio_info.get("started_at_ns", 0) or 0)
-                chunks = chunks_by_track[str(track.id)]
+                chunks = chunks_by_track[track.id]
 
                 # Calculate duration for this track/participant using start_time and end_time of chunks
                 track_duration = sum((c.end_time or 0.0) - (c.start_time or 0.0) for c in chunks)
@@ -92,9 +94,6 @@ class SummaryService:
 
                 for chunk in chunks:
                     for seg in chunk.segments or []:
-                        if not isinstance(seg, dict):
-                            continue
-
                         text = seg.get("text", "").strip()
                         if not text:
                             continue
@@ -145,7 +144,9 @@ class SummaryService:
 
         # Update room participants list in-place with their calculated speech durations and save
         room_participants_raw = room_doc.participants
-        room_participants: list[dict[str, Any]] = (
+
+        # TODO: Use `Any` type because the `room_participant_raw` data to insert into `room_participants` has complex type
+        room_participants: list[dict[str, Any]] = (                                 # type: ignore[explicit-any]
             room_participants_raw if isinstance(room_participants_raw, list) else []
         )
 
@@ -164,7 +165,7 @@ class SummaryService:
         # In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
         full_text = "\n".join(f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in turns)
 
-        draft_summary: dict[str, Any] = {
+        draft_summary: dict[str, Any] = {                                       # type: ignore[explicit-any]
             "room_id": room_id,
             "room_name": room_doc.room_name or "Unknown",
             "participants": list(unique_participants),
@@ -215,7 +216,7 @@ class SummaryService:
             if summary_data_result.summary_success and summary_data_result.action_items_success:
                 metadata_channel = MetadataChannel()
                 await metadata_channel.push_room_summary_done(
-                    room_id=str(room_id), room_name=room_doc.room_name or "Unknown"
+                    room_id=room_id, room_name=room_doc.room_name or "Unknown"
                 )
             else:
                 if not summary_data_result.summary_success and not summary_data_result.action_items_success:
@@ -229,7 +230,7 @@ class SummaryService:
 
                 logger.warning(f"{retry_type} task failed for room {room_id}. Creating outbox task.")
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id), retry_type=retry_type, error_msg=error_msg
+                    room_id=room_id, retry_type=retry_type, error_msg=error_msg
                 )
 
             return result
@@ -237,7 +238,8 @@ class SummaryService:
             logger.error(f"Failed to generate summary for room {room_id}: {e}")
             return {**draft_summary, "id": saved_id}
 
-    async def retry_summary_from_full_text(
+    # TODO: Use `Any` type because `summary_data` response from this function has complex type
+    async def retry_summary_from_full_text(                                 # type: ignore[explicit-any]
         self, room_id: str, retry_type: RetryType = RetryType.ALL
     ) -> dict[str, Any] | None:
         """
@@ -410,7 +412,9 @@ class SummaryService:
 
         speech_durations = []
         room_participants_raw = room.participants
-        room_participants: list[dict[str, Any]] = (
+
+        # TODO: Use `Any` type because the `room_participant_raw` data to insert into `room_participants` has complex type
+        room_participants: list[dict[str, Any]] = (                                 # type: ignore[explicit-any]
             room_participants_raw if isinstance(room_participants_raw, list) else []
         )
 

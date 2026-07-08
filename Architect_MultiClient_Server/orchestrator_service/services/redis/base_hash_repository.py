@@ -7,7 +7,8 @@ Subclasses define domain-specific logic.
 
 import time
 from abc import ABC
-from typing import Any
+
+from pydantic import BaseModel, Field
 
 from orchestrator_service.utils.decode import decode_mapping, decode_value
 from orchestrator_service.utils.logger import get_logger
@@ -17,6 +18,14 @@ from .connection_pool import get_redis_connection
 
 logger = get_logger(__name__)
 
+class BaseHashStats(BaseModel):                                 # type: ignore[explicit-any]
+    """Model representing generic hash statistics from Redis"""
+    total_items: int = Field(default=0, description="Total number of items")
+    total_set: int = Field(default=0, description="Total number of set operations")
+    total_deleted: int = Field(default=0, description="Total number of deleted operations")
+    last_set_at: str | None = Field(default=None, description="Timestamp of last set operation")
+    last_deleted_at: str | None = Field(default=None, description="Timestamp of last deleted operation")
+    error: str | None = Field(default=None, description="Error message")
 
 class BaseHashRepository(ABC):
     """
@@ -199,7 +208,7 @@ class BaseHashRepository(ABC):
 
         try:
             count = await redis.hlen(hash_key)      # type: ignore[misc]
-            return count
+            return int(count)
 
         except Exception as e:
             logger.error(f"[{self.__class__.__name__}] Failed to count: {e}")
@@ -225,7 +234,7 @@ class BaseHashRepository(ABC):
             logger.error(f"[{self.__class__.__name__}] Failed to clear: {e}")
             raise
 
-    async def get_stats(self, hash_key: str, stats_key: str) -> dict[str, Any]:
+    async def get_stats(self, hash_key: str, stats_key: str) -> BaseHashStats:
         """
         Get repository statistics.
 
@@ -233,7 +242,7 @@ class BaseHashRepository(ABC):
             Dictionary with stats
         """
         if not stats_key:
-            return {}
+            return BaseHashStats()
 
         redis = await self._get_redis()
 
@@ -242,17 +251,17 @@ class BaseHashRepository(ABC):
             stats = decode_mapping(stats_data) if stats_data else {}
             item_count = await self.count(hash_key)
 
-            return {
-                "total_items": item_count,
-                self.STAT_TOTAL_SET: int(stats.get(self.STAT_TOTAL_SET, 0)),
-                self.STAT_TOTAL_DELETED: int(stats.get(self.STAT_TOTAL_DELETED, 0)),
-                self.STAT_LAST_SET_AT: stats.get(self.STAT_LAST_SET_AT),
-                self.STAT_LAST_DELETED_AT: stats.get(self.STAT_LAST_DELETED_AT),
-            }
+            return BaseHashStats(
+                total_items=item_count,
+                total_set=int(stats.get(self.STAT_TOTAL_SET, 0)),
+                total_deleted=int(stats.get(self.STAT_TOTAL_DELETED, 0)),
+                last_set_at=str(stats.get(self.STAT_LAST_SET_AT)),
+                last_deleted_at=str(stats.get(self.STAT_LAST_DELETED_AT)),
+            )
 
         except Exception as e:
             logger.error(f"[{self.__class__.__name__}] Failed to get stats: {e}")
-            return {"error": str(e)}
+            return BaseHashStats(error=str(e))
 
     # Helper methods for stats
 

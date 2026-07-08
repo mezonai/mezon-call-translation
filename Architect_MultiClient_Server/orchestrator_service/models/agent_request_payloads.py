@@ -12,17 +12,17 @@ from pydantic import BaseModel, Field
 from orchestrator_service.models.agent_request_type import AgentRequestType
 
 
-class TranscriptControlPayload(BaseModel):
+class TranscriptControlPayload(BaseModel):                      # type: ignore[explicit-any]
     """Payload for transcript_control request"""
 
     request_type: Literal[AgentRequestType.TRANSCRIPT_CONTROL]
     action: Literal["enable", "disable"] = Field(..., description="Action to perform: enable or disable transcription")
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {"example": {"request_type": "transcript_control", "action": "enable"}}
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {"example": {"request_type": "transcript_control", "action": "enable"}}
 
 
-class TtsPlayPayload(BaseModel):
+class TtsPlayPayload(BaseModel):                                # type: ignore[explicit-any]
     """Payload for tts_play request"""
 
     class VoiceEnum(StrEnum):
@@ -45,7 +45,7 @@ class TtsPlayPayload(BaseModel):
     speed: float | None = Field(default=None, description="Optional speech speed multiplier (0.5-2.0)")
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str | float]]] = {
             "example": {
                 "request_type": "tts_play",
                 "text": "Hello from orchestrator",
@@ -56,7 +56,7 @@ class TtsPlayPayload(BaseModel):
         }
 
 
-class SendChatMessagePayload(BaseModel):
+class SendChatMessagePayload(BaseModel):                       # type: ignore[explicit-any]
     """Payload for send_chat_message request"""
 
     request_type: Literal[AgentRequestType.SEND_CHAT_MESSAGE]
@@ -64,7 +64,7 @@ class SendChatMessagePayload(BaseModel):
     sender_name: str = Field(default="Agent", description="Display name of the sender")
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "request_type": "send_chat_message",
                 "message": "Hello from orchestrator!",
@@ -73,7 +73,7 @@ class SendChatMessagePayload(BaseModel):
         }
 
 
-class StartAudioRecordingPayload(BaseModel):
+class StartAudioRecordingPayload(BaseModel):                    # type: ignore[explicit-any]
     """Payload for start_audio_recording request"""
 
     request_type: Literal[AgentRequestType.START_AUDIO_RECORDING]
@@ -83,7 +83,7 @@ class StartAudioRecordingPayload(BaseModel):
     )
 
     class Config:
-        json_schema_extra: ClassVar[dict] = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "request_type": "start_audio_recording",
                 "track_id": "livekit_track_id_123",

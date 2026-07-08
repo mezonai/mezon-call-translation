@@ -5,7 +5,6 @@ Task model for enqueueing transcription jobs to Redis Stream.
 """
 
 from dataclasses import dataclass
-from typing import Any
 
 from orchestrator_service.models.stream_base import BaseProducerTask
 
@@ -30,7 +29,7 @@ class TranscriptionTask(BaseProducerTask):
     # Optional fields
     source: str = ""
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, str]:
         """
         Convert to dict for Redis XADD.
 

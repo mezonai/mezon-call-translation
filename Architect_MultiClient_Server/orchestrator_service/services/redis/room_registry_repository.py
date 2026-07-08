@@ -4,12 +4,23 @@ Room Registry Repository - Domain-specific repository for room management
 Extends BaseHashRepository with room-specific business logic.
 """
 
+from pydantic import BaseModel, Field
+
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
 from .base_hash_repository import BaseHashRepository
 
 logger = get_logger(__name__)
+
+class RoomRegistryStats(BaseModel):                         # type: ignore[explicit-any]
+    """Model representing room registry statistics"""
+    active_rooms: int = Field(default=0, description="Active rooms")
+    total_registered: int = Field(default=0, description="Total registered rooms")
+    total_unregistered: int = Field(default=0, description="Total unregistered rooms")
+    last_registered_at: str | None = Field(default=None, description="Timestamp of last registered room")
+    last_unregistered_at: str | None = Field(default=None, description="Timestamp of last unregistered room")
+    error: str | None = Field(default=None, description="Error message")
 
 
 @singleton
@@ -148,7 +159,7 @@ class RoomRegistryRepository(BaseHashRepository):
         logger.warning(f"🗑️ Cleared all {count} rooms from registry")
         return count
 
-    async def get_registry_stats(self) -> dict:
+    async def get_registry_stats(self) -> RoomRegistryStats:
         """
         Get room registry statistics.
 
@@ -157,14 +168,17 @@ class RoomRegistryRepository(BaseHashRepository):
         """
         base_stats = await self.get_stats(self.HASH_KEY, self.STATS_KEY)
 
+        if base_stats.error:
+            return RoomRegistryStats(error=base_stats.error)
+
         # Add domain-specific fields
         redis = await self._get_redis()
         registry_stats = await redis.hgetall(self.STATS_KEY)        # type: ignore[misc]
 
-        return {
-            "active_rooms": base_stats.get("total_items", 0),
-            "total_registered": int(registry_stats.get("total_registered", 0)),
-            "total_unregistered": int(registry_stats.get("total_unregistered", 0)),
-            "last_registered_at": registry_stats.get("last_registered_at"),
-            "last_unregistered_at": registry_stats.get("last_unregistered_at"),
-        }
+        return RoomRegistryStats(
+            active_rooms=base_stats.total_items,
+            total_registered=int(registry_stats.get("total_registered", 0)),
+            total_unregistered=int(registry_stats.get("total_unregistered", 0)),
+            last_registered_at=registry_stats.get("last_registered_at"),
+            last_unregistered_at=registry_stats.get("last_unregistered_at"),
+        )

@@ -6,6 +6,7 @@ All configuration values are loaded from environment variables with sensible def
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import ClassVar
 
 # Try to load .env file if dotenv is available
 try:
@@ -327,6 +328,12 @@ class RedisConfig:
     socket_connect_timeout: float = 10.0
     block_timeout_ms: int = 5000  # Timeout for blocking operations (e.g., XREADGROUP)
 
+    # Additional fields for stream processing
+    max_retries: int = 3
+    claim_min_idle_time_ms: int = 60000
+    heartbeat_interval_sec: int = 10
+    worker_timeout_sec: int = 60
+
     @classmethod
     def from_env(cls) -> "RedisConfig":
         """Create Redis config from environment variables"""
@@ -340,6 +347,10 @@ class RedisConfig:
             socket_timeout=float(os.getenv("REDIS_SOCKET_TIMEOUT", "30.0")),
             socket_connect_timeout=float(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "10.0")),
             block_timeout_ms=int(os.getenv("REDIS_BLOCK_TIMEOUT_MS", "5000")),
+            max_retries=int(os.getenv("REDIS_MAX_RETRIES", "3")),
+            claim_min_idle_time_ms=int(os.getenv("REDIS_CLAIM_MIN_IDLE_TIME_MS", "60000")),
+            heartbeat_interval_sec=int(os.getenv("REDIS_HEARTBEAT_INTERVAL_SEC", "10")),
+            worker_timeout_sec=int(os.getenv("REDIS_WORKER_TIMEOUT_SEC", "60")),
         )
 
 
@@ -422,7 +433,7 @@ class OutboxConfig:
     check_interval_sec: int = 30
     delay_between_items_sec: int = 30
     batch_limit: int = 5
-    retry_summarization_target_hours: list = field(default_factory=lambda: [19, 20, 21])
+    retry_summarization_target_hours: list[int] = field(default_factory=lambda: [19, 20, 21])
 
     @classmethod
     def from_env(cls) -> "OutboxConfig":
@@ -450,7 +461,8 @@ class Config:
     All configuration is loaded from environment variables.
     """
 
-    _instance = None
+    _instance: ClassVar["Config | None"] = None
+    _initialized: bool
 
     def __new__(cls):
         if cls._instance is None:
@@ -461,6 +473,12 @@ class Config:
     def __init__(self):
         if self._initialized:
             return
+        self._load_config()
+
+    def _load_config(self):
+        """
+        Load all configuration from environment variables
+        """
 
         # Load all configuration sections
         self.livekit = LiveKitConfig.from_env()
@@ -495,8 +513,7 @@ class Config:
 
     def reload(self):
         """Reload configuration from environment"""
-        self._initialized = False
-        self.__init__()
+        self._load_config()
 
 
 # ============================================================================

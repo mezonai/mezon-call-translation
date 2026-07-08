@@ -113,7 +113,7 @@ class EgressService:
                     f"Fallback START_AUDIO_RECORDING dispatched for track={track_sid}, "
                     f"request_id={fallback_result.get('request_id')}"
                 )
-                return fallback_result.get("request_id")
+                return str(fallback_result.get("request_id"))
 
         except Exception as e:
             logger.error(f"✗ Failed to start egress: {e}")
@@ -184,6 +184,26 @@ class EgressService:
         """Get all active egresses in a room"""
         repo = self._get_repo()
         return await repo.get_all_tracks(room_name)
+
+    async def get_active_count(self) -> int:
+        """Get total number of active egresses across all rooms"""
+        registry = get_room_registry()
+        rooms = await registry.list_rooms()
+        total_count = 0
+        for room_name in rooms:
+            total_count += await self.get_active_count_by_room(room_name)
+        return total_count
+
+    async def get_all_active(self) -> dict[str, dict[str, str]]:
+        """Get all active egresses mapped by room_name"""
+        registry = get_room_registry()
+        rooms = await registry.list_rooms()
+        all_active = {}
+        for room_name in rooms:
+            tracks = await self.get_all_active_by_room(room_name)
+            if tracks:
+                all_active[room_name] = tracks
+        return all_active
 
     async def cleanup_room(self, room_name: str):
         """Cleanup egresses for a specific room"""

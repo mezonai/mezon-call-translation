@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Any
 
 from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.config.application_config import get_config
@@ -35,7 +34,6 @@ class TranscriptionService:
                 task_class=TranscriptionTask,
                 stream_key=self.stream_key,
             )
-            await self._redis_producer.connect()
         return self._redis_producer
 
     async def enqueue(self, egress_info: EgressInfo) -> bool:
@@ -67,11 +65,11 @@ class TranscriptionService:
                 )
 
                 if track_result and track_result.room_ref_id:
-                    room = await self.pg_repo.check_event_record_done(track_result.room_ref_id)
+                    room = await self.pg_repo.check_event_record_done(str(track_result.room_ref_id))
                     if room:
                         await metadata_channel.push_room_record_done(
                             room_id=str(room.id),
-                            room_name=room.room_name,
+                            room_name=str(room.room_name),
                         )
                 elif track_result:
                     logger.warning(f"Track metadata saved but no room_ref_id found: {track_result}")
@@ -136,7 +134,7 @@ class TranscriptionService:
             logger.exception("Failed to end room transcription: %s", e)
             return False
 
-    async def start_room(self, room_name: str) -> dict | None:
+    async def start_room(self, room_name: str) -> dict[str, bool | str | None] | None:
         """
         Notify transcription service to start room
 
@@ -182,15 +180,18 @@ class TranscriptionService:
             logger.exception(f"Failed to save participant: {e}")
             return False
 
-    async def save_participants_batch(self, room_id: str, participants: list[dict[str, Any]]) -> dict[str, int]:
+    async def save_participants_batch(
+        self,
+        room_id: str,
+        participants: list[dict[str, datetime | str]]
+    ) -> dict[str, int]:
         """
         Save batch of participants to PostgreSQL
         """
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-            result = await self.pg_repo.save_batch_participants(room_id=room_id, participants=participants)
-            return result
+            return await self.pg_repo.save_batch_participants(room_id=room_id, participants=participants)
         except Exception as e:
             logger.exception(f"Failed to save batch participants: {e}")
             return {"success": False, "added_count": 0, "skipped_count": 0}

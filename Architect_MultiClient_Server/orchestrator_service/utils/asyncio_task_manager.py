@@ -7,9 +7,9 @@ from typing import Any
 
 # Set containing strong references to tasks - prevents them from being garbage collected
 # Add task when create it - remove when task is done
-_active_tasks: set[asyncio.Task[Any]] = set()
+_active_tasks: set[asyncio.Task[Any]] = set()                                           # type: ignore[explicit-any]
 
-def asyncio_create_task_safety(coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+def asyncio_create_task_safety(coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:    # type: ignore[explicit-any]
     """
     Creates an asyncio.Task safely with a self-managed lifecycle.
     Performs 3 steps:

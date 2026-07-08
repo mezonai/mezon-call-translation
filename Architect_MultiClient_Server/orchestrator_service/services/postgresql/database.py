@@ -16,7 +16,7 @@ from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _engine: AsyncEngine | None = None
-_session_factory: async_sessionmaker | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def get_engine() -> AsyncEngine:
@@ -37,7 +37,7 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
-def get_session_factory() -> async_sessionmaker:
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
     """Return (or lazily create) the async session factory."""
     global _session_factory
     if _session_factory is None:

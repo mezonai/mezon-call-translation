@@ -4,12 +4,11 @@ Handles SSE connections for chat external events (global, not room-specific)
 """
 
 from datetime import datetime
-from typing import Any
 
 from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_base import create_sse_response, event_generator
-from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.api.sse.sse_manager import SSEManager, SSEMessage
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -78,7 +77,7 @@ class ChatExternalChannel:
 
     async def push_chat_event(
         self, room_name: str, room_id: str, participant_identity: str, message: str, time: str | None = None
-    ) -> dict[str, Any]:
+    ) -> dict[str, str | int]:
         """
         Push chat external event to all connected bots.
 
@@ -103,7 +102,7 @@ class ChatExternalChannel:
             logger.warning("[Chat External Channel] No active bot connections, event may be lost")
 
         # Prepare event data
-        event_data = {
+        event_data: SSEMessage = {
             "type": "chat_external",
             "room_name": room_name,
             "room_id": room_id,

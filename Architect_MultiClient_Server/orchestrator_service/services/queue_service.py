@@ -6,9 +6,10 @@ Supports multiple queue types through generic type parameter.
 """
 
 import logging
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.queue_models import QueueStatsResponse
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
 from orchestrator_service.models.stream_base import ProducerTaskProtocol
 from orchestrator_service.models.transcription_task import TranscriptionTask
@@ -34,7 +35,7 @@ class QueueService(Generic[T]):
     """
 
     # Singleton registry per (task_class, stream_key)
-    _instances: ClassVar[dict[str, "QueueService"]] = {}
+    _instances: ClassVar[dict[str, "QueueService[ProducerTaskProtocol]"]] = {}
 
     def __init__(
         self,
@@ -84,13 +85,17 @@ class QueueService(Generic[T]):
         instance_key = f"{task_class.__name__}:{stream_key}"
 
         if instance_key not in cls._instances:
-            cls._instances[instance_key] = cls(
+            new_instance = cls(
                 task_class=task_class,
                 stream_key=stream_key,
                 queue_name=queue_name,
             )
+            cls._instances[instance_key] = cast(
+                "QueueService[ProducerTaskProtocol]",
+                new_instance
+            )
 
-        return cls._instances[instance_key]
+        return cast("QueueService[T]", cls._instances[instance_key])
 
     @property
     def queue_name(self) -> str:
@@ -100,16 +105,14 @@ class QueueService(Generic[T]):
     @property
     def stream_key(self) -> str:
         """Get the stream key."""
-        producer = self._producer
-        key_from_producer = producer.stream_key if producer else None
-        return key_from_producer or self._stream_key or self.config.redis.stream_key
+        return self._producer.stream_key or self._stream_key
 
     @property
     def task_class(self) -> type[T]:
         """Get the task class."""
         return self._task_class
 
-    async def get_stats(self) -> dict[str, Any]:
+    async def get_stats(self) -> QueueStatsResponse:
         """
         Get comprehensive queue statistics.
 
@@ -122,31 +125,32 @@ class QueueService(Generic[T]):
             stats = await self._producer.get_queue_stats()
 
             # Transform to expected format with queue identification
-            return {
-                "queue_name": self._queue_name,
-                "stream_key": stats.get("stream_key", self.stream_key),
-                "stream_length": stats.get("stream_length", 0),
-                "total_enqueued": stats.get("total_enqueued", 0),
-                "total_processed": stats.get("total_processed", 0),
-                "total_failed": stats.get("total_failed", 0),
-                "pending_count": stats.get("stream_length", 0),  # Stream length = pending tasks
-                "active_workers": stats.get("active_workers", 0),  # From Redis workers hash
-            }
+            return QueueStatsResponse(
+                queue_name=self._queue_name,
+                stream_key=stats.stream_key if stats.stream_key else self.stream_key,
+                stream_length=stats.stream_length if stats.stream_length else 0,
+                total_enqueued=stats.total_enqueued if stats.total_enqueued else 0,
+                total_processed=stats.total_processed if stats.total_processed else 0,
+                total_failed=stats.total_failed if stats.total_failed else 0,
+                pending_count=stats.stream_length if stats.stream_length else 0,  # Stream length = pending tasks
+                active_workers=stats.active_workers if stats.active_workers else 0,  # From Redis workers hash
+            )
 
         except Exception as e:
             logger.error(f"Failed to get queue stats for {self._queue_name}: {e}")
-            return {
-                "queue_name": self._queue_name,
-                "stream_key": self.stream_key,
-                "stream_length": 0,
-                "total_enqueued": 0,
-                "total_processed": 0,
-                "total_failed": 0,
-                "pending_count": 0,
-                "active_workers": 0,
-            }
+            return QueueStatsResponse(
+                queue_name=self._queue_name,
+                stream_key=self.stream_key,
+                stream_length=0,
+                total_enqueued=0,
+                total_processed=0,
+                total_failed=0,
+                pending_count=0,
+                active_workers=0,
+            )
 
-    async def get_task(self, task_id: str) -> dict[str, Any] | None:
+    # TODO: Return type uses `Any` because `task_data` field has type dict[str | Unknown, str | Unknown]
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:                    # type: ignore[explicit-any]
         """
         Get status of a specific task.
 
@@ -158,7 +162,7 @@ class QueueService(Generic[T]):
         """
         try:
             # Get task metadata from Redis hash
-            task_key = f"{self._producer._config.tasks_prefix}:{task_id}"
+            task_key = f"{self._producer._tasks_prefix}:{task_id}"
             task_data_raw = await self._producer._redis.hgetall(task_key)  # type: ignore[misc]
 
             if not task_data_raw:
@@ -176,7 +180,8 @@ class QueueService(Generic[T]):
             logger.error(f"Failed to get task {task_id}: {e}")
             return None
 
-    async def get_pending_tasks(self) -> list[dict[str, Any]]:
+    # TODO: Return type uses `Any` because `pending_tasks` field has complex type list[dict[str, float | str | Unknown | None]]
+    async def get_pending_tasks(self) -> list[dict[str, Any]]:                  # type: ignore[explicit-any]
         """
         Get list of pending tasks.
 
@@ -188,7 +193,7 @@ class QueueService(Generic[T]):
         """
         try:
             # Read pending messages from stream (last 100)
-            messages = await self._producer._redis.xrange(self._producer.stream_key, count=100)
+            messages = await self._producer._redis.xrange(self.stream_key, count=100)
 
             pending_tasks = []
             for message_id, data in messages:
@@ -214,7 +219,8 @@ class QueueService(Generic[T]):
             logger.error(f"Failed to get pending tasks: {e}")
             return []
 
-    async def get_dlq_tasks(self, limit: int = 100) -> list[dict[str, Any]]:
+    # TODO: Return type uses `Any` because `dlq_tasks` field has complex type list[dict[str, float | int | str | Unknown | None]]
+    async def get_dlq_tasks(self, limit: int = 100) -> list[dict[str, Any]]:    # type: ignore[explicit-any]
         """
         Get list of tasks in Dead Letter Queue.
 
@@ -290,7 +296,7 @@ class QueueService(Generic[T]):
                     task_data.pop("dead_letter_at", None)
 
                     # Re-enqueue to main stream
-                    await self._producer._redis.xadd(self._producer.stream_key, task_data)
+                    await self._producer._redis.xadd(self.stream_key, task_data)
 
                     # Remove from DLQ
                     await self._producer._redis.xdel(dlq_stream_key, message_id)
@@ -335,7 +341,7 @@ def create_queue_service(
     )
 
 
-def get_queue_service_by_name(queue_name: str) -> QueueService:
+def get_queue_service_by_name(queue_name: str) -> QueueService[ProducerTaskProtocol]:
     """
     Get queue service by queue name.
 

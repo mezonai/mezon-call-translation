@@ -5,7 +5,7 @@ Handles rooms, tracks, chunks, summary, and metadata events.
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from sqlalchemy import Select, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -13,6 +13,8 @@ from sqlalchemy.dialects.postgresql import insert
 from orchestrator_service.services.postgresql.database import get_session_factory
 from orchestrator_service.services.postgresql.models import MetadataEvent, Room, RoomSummary, Track, TranscriptChunk
 from orchestrator_service.utils.logger import get_logger
+
+_T = TypeVar("_T")
 
 logger = get_logger(__name__)
 
@@ -45,12 +47,12 @@ class PgTranscriptRepository:
 
     def _build_list_rooms_condition_query(
         self,
-        stmt: Select,
+        stmt: Select[tuple[_T]],
         status: str | None = None,
         search: str | None = None,
         from_utc: datetime | None = None,
         to_utc: datetime | None = None,
-    ) -> Select:
+    ) -> Select[tuple[_T]]:
         if status:
             stmt = stmt.where(Room.status == status)
         if from_utc:
@@ -175,7 +177,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to save participant: {e}")
             return False
 
-    async def save_batch_participants(self, room_id: str, participants: list[dict[str, Any]]) -> dict[str, int]:
+    async def save_batch_participants(self, room_id: str, participants: list[dict[str, str | datetime]]) -> dict[str, int]:
         if not participants:
             return {"success": True, "added_count": 0, "skipped_count": 0}
 
@@ -188,9 +190,15 @@ class PgTranscriptRepository:
                     logger.error(f"Room {room_id} not found")
                     return {"success": False, "added_count": 0, "skipped_count": 0}
 
-                existing_participants = room.participants or []
+                # TODO: Use `Any` because the `Room.participants` field in the database model is mapped as a generic `dict`
+                raw_participants = cast(Any, room.participants) or []                   # type: ignore[explicit-any]
+
+                existing_participants: list[dict[str, Any]] = [                         # type: ignore[explicit-any]
+                    p for p in raw_participants if isinstance(p, dict)
+                ]
+
                 existing_identities: set[str] = {
-                    p.get("participant_identity") for p in existing_participants if p.get("participant_identity")
+                    str(p.get("participant_identity")) for p in existing_participants if p.get("participant_identity")
                 }
 
                 participants_to_add = []
@@ -244,7 +252,13 @@ class PgTranscriptRepository:
             logger.error(f"❌ Error in save_batch_participants: {e}")
             return {"success": False, "added_count": 0, "skipped_count": 0}
 
-    async def update_room_participants(self, room_id: str, participants: list[dict[str, Any]]) -> bool:
+    # TODO: Use `Any` type because `room_participants` input field from generate_summary() in SummaryService
+    # has list[dict[str, Any]] type
+    async def update_room_participants(                 # type: ignore[explicit-any]
+        self,
+        room_id: str,
+        participants: list[dict[str, Any]]
+    ) -> bool:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -262,7 +276,7 @@ class PgTranscriptRepository:
 
     async def get_tracks_by_room(self, room_id: str, status: str | None = None) -> list[Track]:
         try:
-            uid = str(uuid.UUID(str(room_id)))
+            uid = str(uuid.UUID(room_id))
         except (ValueError, AttributeError):
             logger.warning(f"get_tracks_by_room: invalid UUID format repr={room_id!r}, returning empty")
             return []
@@ -286,7 +300,7 @@ class PgTranscriptRepository:
             logger.error(f"Failed to get track: {e}")
             return None
 
-    async def update_track_status(self, track_ref_id: str, status: str) -> dict:
+    async def update_track_status(self, track_ref_id: str, status: str) -> dict[str, str | Track | bool]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -370,7 +384,7 @@ class PgTranscriptRepository:
 
                 logger.debug(f"user_has_room_access: user_id={user_id}, room_id={room_id}, has_access={has_access}")
 
-                return has_access
+                return bool(has_access)
 
         except Exception as e:
             logger.error(f"Failed to check user room access: {e}")
@@ -427,7 +441,8 @@ class PgTranscriptRepository:
     # SUMMARY
     # ------------------------------------------------------------------
 
-    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:
+    # TODO: Use `Any` type because `draft_summary` from generate_summary() in SummaryService has complex structure
+    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:              # type: ignore[explicit-any]
         session_factory = get_session_factory()
         room_uid = summary_data.get("room_id")
         try:
@@ -449,7 +464,8 @@ class PgTranscriptRepository:
             logger.error(f"Failed to save room summary: {e}")
             return None
 
-    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:
+    # TODO: Use `Any` type because `summary_data` from generate_summary() in SummaryService has complex structure
+    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:    # type: ignore[explicit-any]
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -528,7 +544,7 @@ class PgTranscriptRepository:
     # METADATA EVENTS
     # ------------------------------------------------------------------
 
-    async def save_metadata_event(self, event_data: dict[str, Any]) -> str | None:
+    async def save_metadata_event(self, event_data: dict[str, str | int | dict[str, int] | dict[str, str] | datetime]) -> str | None:
         session_factory = get_session_factory()
         uid = uuid.uuid4()
         room_uid = event_data.get("room_id")
@@ -557,12 +573,13 @@ class PgTranscriptRepository:
         try:
             async with session_factory() as session:
                 stmt = select(MetadataEvent).where(MetadataEvent.event_id == event_id)
-                return await session.scalar(stmt)
+                res: MetadataEvent | None = await session.scalar(stmt)
+                return res
         except Exception as e:
             logger.error(f"Failed to get event by id: {e}")
             return None
 
-    async def append_transcript_chunk(self, track_ref_id: str, new_segments: list[dict[str, Any]]) -> bool:
+    async def append_transcript_chunk(self, track_ref_id: str, new_segments: list[dict[str, float | str | None]]) -> bool:
         """Append new segments as additional chunks"""
         if not new_segments:
             return True
@@ -622,12 +639,12 @@ class PgTranscriptRepository:
 
     def _build_metadata_events_condition_query(
         self,
-        stmt: Select,
+        stmt: Select[tuple[_T]],
         event_type: str | None = None,
         room_id: str | None = None,
         from_utc: datetime | None = None,
         to_utc: datetime | None = None,
-    ) -> Select:
+    ) -> Select[tuple[_T]]:
         if room_id:
             stmt = stmt.where(MetadataEvent.room_id == room_id)
         if event_type:
@@ -737,7 +754,7 @@ class PgTranscriptRepository:
         track_id: str | None = None,
         room_ref_id: str | None = None,
         participant_identity: str | None = None,
-        audio_info: dict[str, Any] | None = None,
+        audio_info: dict[str, str | None] | None = None,
         status: str = "pending",
         error: str | None = None,
     ) -> Track | None:
