@@ -178,6 +178,7 @@ class RoomSectionSummary(Base):
     summary_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     start_time: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     end_time: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_rooms_section_summary_room_id", "room_id"),

@@ -1,8 +1,7 @@
 """
 Factory for creating LLM service instances based on provider type
 """
-
-from orchestrator_service.config.application_config import LLMConfig, LLMProvider
+from orchestrator_service.config.application_config import LLMConfig, LLMProvider, get_config
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.gemini_llm_service import GeminiLLMService
 from orchestrator_service.services.llm.local_llm_service import LocalLLMService
@@ -11,7 +10,7 @@ from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def create_llm_service(config: LLMConfig) -> BaseLLMService:
+def create_llm_service(provider: str, model: str) -> BaseLLMService:
     """
     Factory function to create LLM service based on provider type.
 
@@ -27,16 +26,20 @@ def create_llm_service(config: LLMConfig) -> BaseLLMService:
     Raises:
         ValueError: If provider is unknown or unsupported
     """
-    provider = config.provider.lower()
-
-    logger.info(f"Creating LLM service for provider: {provider}, model: {config.model}")
+    provider = provider.lower()
+    config = get_config()
 
     if provider == LLMProvider.GEMINI:
-        return GeminiLLMService(config)
+        llm_config = config.gemini_llm_config
+        service = GeminiLLMService(llm_config)
     elif provider == LLMProvider.LOCAL:
-        return LocalLLMService(config)
+        llm_config = config.local_llm_config
+        service = LocalLLMService(llm_config)
     else:
         raise ValueError(
             f"Unknown LLM provider: {provider}. "
             f"Supported providers: {LLMProvider.GEMINI.value}, {LLMProvider.LOCAL.value}"
         )
+
+    logger.info(f"Creating LLM service for provider: {provider}, model: {model}, temperature: {llm_config.temperature}")
+    return service

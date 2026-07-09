@@ -27,6 +27,7 @@ def upgrade() -> None:
         sa.Column("summary_data", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("start_time", sa.Text(), nullable=True),
         sa.Column("end_time", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.PrimaryKeyConstraint("id"),
     )
 

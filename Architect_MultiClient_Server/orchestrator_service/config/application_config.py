@@ -277,37 +277,21 @@ class LLMProvider(StrEnum):
 
 @dataclass
 class LLMConfig:
-    """Unified LLM configuration for all providers (Gemini, Local, OpenAI, etc.)"""
-
-    provider: str = LLMProvider.LOCAL  # LLMProvider.GEMINI | LLMProvider.LOCAL
     api_key: str = ""
-    model: str = "Qwen3.5-35B-A3B"
-    base_url: str | None = None
-    timeout: int = 120
-    language: str = "Vietnamese"
-    # Fallback to a Gemini-family model when primary LLM fails
-    fallback_enabled: bool = False
-    fallback_api_key: str = ""
-    fallback_model: str = "gemma-4-31b-it"
+    base_url: str = None
+    temperature: float = 0.4
 
     @classmethod
-    def from_env(cls) -> "LLMConfig":
+    def from_env(cls, api_key_env: str, url_env, default_url: str = None) -> 'LLMConfig':
         return cls(
-            provider=os.getenv("LLM_PROVIDER", "local").lower(),
-            base_url=os.getenv("LLM_URL", "http://localhost:8080/v1/chat/completions"),
-            model=os.getenv("LLM_MODEL", "Qwen3.5-35B-A3B"),
-            api_key=os.getenv("LLM_API_KEY", ""),
-            timeout=int(os.getenv("LLM_TIMEOUT", "120")),
-            language=os.getenv("LLM_LANGUAGE", "Vietnamese"),
-            fallback_enabled=os.getenv("LLM_FALLBACK_ENABLED", "false").lower() == "true",
-            fallback_api_key=os.getenv("LLM_FALLBACK_API_KEY", ""),
-            fallback_model=os.getenv("LLM_FALLBACK_MODEL", "gemma-4-31b-it"),
+            api_key=os.getenv(api_key_env, ''),
+            base_url=os.getenv(url_env, default_url),
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.4"))
         )
-
+    
     def validate(self) -> bool:
-        # Optional validation if needed
         return True
-
+    
 
 # ============================================================================
 # Redis Configuration (Task Queue)
@@ -451,23 +435,70 @@ class OutboxConfig:
 
 
 # ============================================================================
+# Summary Configuration
+# ============================================================================
+
+@dataclass
+class SummaryConfig:
+    provider: str = "local"
+    model: str = "Qwen3.5-35B-A3B"
+    timeout: int = 120
+    language: str = "Vietnamese"
+    retry_count: int = 3
+
+    fallback_enable: bool = True
+    fallback_provider: str = "gemini"
+    fallback_model: str = "gemma-4-31b-it"
+    fallback_timeout: int = 120
+    fallback_retry_count: int = 3
+
+    threshold_min: int = 20
+
+    @classmethod
+    def from_env(cls) -> 'SummaryConfig':
+        return cls(
+            provider=os.getenv("SUMMARY_LLM_PROVIDER", "local"),
+            model=os.getenv("SUMMARY_LLM_MODEL", "Qwen3.5-35B-A3B"),
+            timeout=int(os.getenv("SUMMARY_LLM_TIMEOUT", "120")),
+            language=os.getenv("SUMMARY_LANGUAGE", "Vietnamese"),
+            retry_count=int(os.getenv("SUMMARY_LLM_RETRY_COUNT", "3")),
+
+            fallback_enable=os.getenv("SUMMARY_LLM_FALLBACK_ENABLE", 'true').lower() == "true",
+            fallback_provider=os.getenv("SUMMARY_LLM_FALLBACK_PROVIDER", 'gemini'),
+            fallback_model=os.getenv("SUMMARY_LLM_FALLBACK_MODEL", "gemma-4-31b-it"),
+            fallback_timeout=int(os.getenv("SUMMARY_LLM_FALLBACK_TIMEOUT", "120")),
+            fallback_retry_count=int(os.getenv("SUMMARY_LLM_FALLBACK_RETRY_COUNT", "3")),
+        
+            threshold_min=int(os.getenv("SUMMARY_THRESHOLD_MIN", "20")),
+        )
+
+
+# ============================================================================
 # Light Summary Configuration
 # ============================================================================
 
 @dataclass
 class LightSummaryConfig:
-    threshold_min: int = 20
     target_duration_min: int = 15
     extend_min: int = 5
     max_duration_min: int = 30
 
+    provider: str = None
+    model: str = "gemma-4-31b-it"
+    timeout: int = 120
+    retry_count: int = 3
+
     @classmethod
     def from_env(cls) -> 'LightSummaryConfig':
         return cls(
-            threshold_min=int(os.getenv("LIGHT_SUMMARY_THRESHOLD_MIN", "20")),
             target_duration_min=int(os.getenv("LIGHT_SUMMARY_TARGET_DURATION_MIN", "15")),
             extend_min=int(os.getenv("LIGHT_SUMMARY_EXTEND_MIN", "5")),
-            max_duration_min=int(os.getenv("LIGHT_SUMMARY_MAX_DURATION_MIN", "30"))
+            max_duration_min=int(os.getenv("LIGHT_SUMMARY_MAX_DURATION_MIN", "30")),
+
+            provider=os.getenv("LIGHT_SUMMARY_LLM_PROVIDER", "gemini"),
+            model=os.getenv("LIGHT_SUMMARY_LLM_MODEL", "gemma-4-31b-it"),
+            timeout=int(os.getenv("LIGHT_SUMMARY_TIMEOUT", 120)),
+            retry_count=int(os.getenv("LIGHT_SUMMARY_LLM_RETRY_COUNT", "3"))
         )
 
 
@@ -509,11 +540,20 @@ class Config:
         self.logger = LoggerConfig.from_env()
         self.auth = AuthConfig.from_env()
         self.minio = MinIOConfig.from_env()
-        self.llm = LLMConfig.from_env()
+        self.gemini_llm_config = LLMConfig.from_env(
+            api_key_env='GEMINI_API_KEY', 
+            url_env='GEMINI_URL'
+        )
+        self.local_llm_config = LLMConfig.from_env(
+            api_key_env='LOCAL_LLM_API_KEY', 
+            url_env='LOCAL_LLM_URL',
+            default_url='http://localhost:8080/v1/chat/completions'
+        )
         self.redis = RedisConfig.from_env()
         self.notification = NotificationConfig.from_env()
         self.oauth2 = OAuth2Config.from_env()
         self.outbox = OutboxConfig.from_env()
+        self.summary = SummaryConfig.from_env()
         self.light_summary = LightSummaryConfig.from_env()
 
         self._initialized = True

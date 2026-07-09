@@ -1,29 +1,10 @@
-"""
-Gemini LLM service implementation
-"""
-
 import json
 import re
-from typing import Any
-
 from google import genai
-
+from typing import Dict, Any
+from pydantic import BaseModel
 from orchestrator_service.config.application_config import LLMConfig
-from orchestrator_service.models.summary_models import ActionItemsResult, SummaryActionItemsResult, SummaryResult
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
-from orchestrator_service.services.llm.prompt import (
-    build_light_summary_prompt,
-    build_overall_context_prompt,
-    build_prompt_action_items,
-    build_prompt_summary
-)
-from orchestrator_service.models.summary_models import (
-    ActionItemsResult,
-    SummaryActionItemsResult,
-    SummaryResult,
-    LightSummaryResult,
-    OverallContextResult
-)
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -91,110 +72,19 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:  # type: ignore[expl
 
 
 class GeminiLLMService(BaseLLMService):
-    """Gemini LLM service implementation using Google Generative AI SDK"""
-
     def __init__(self, config: LLMConfig):
-        """
-        Initialize Gemini service with API client.
-
-        Args:
-            config: LLMConfig with Gemini API key and model name
-
-        Raises:
-            Exception: If Gemini client initialization fails
-        """
         super().__init__(config)
-        try:
-            self.client = genai.Client(api_key=config.api_key)
-            logger.info(f"Initialized Gemini LLM service with model: {config.model}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini client: {e}")
-            raise
+        self.client = genai.Client(api_key=config.api_key)
 
-    async def summarize_summary(self, conversation_text: str, language: str) -> SummaryResult:
-        prompt = build_prompt_summary(conversation_text, language)
+    async def generate(self, prompt: str, response_model: type[BaseModel], model: str, timeout: int) -> BaseModel:
         response = await self.client.aio.models.generate_content(
-            model=self.config.model,
+            model=model,
             contents=prompt,
             config={
                 "response_mime_type": "application/json",
-                "response_json_schema": SummaryResult.model_json_schema(),
-            },
+                "response_json_schema": response_model.model_json_schema(),
+                "temperature": self.config.temperature
+            }
         )
-
-        raw_text = response.text
-        if not raw_text:
-            raise ValueError("Empty response text from Gemini API")
-
-        return SummaryResult.model_validate(extract_json_from_llm(raw_text))
-
-    async def summarize_action_items(self, conversation_text: str, language: str) -> ActionItemsResult:
-        prompt = build_prompt_action_items(conversation_text, language)
-        response = await self.client.aio.models.generate_content(
-            model=self.config.model,
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-                "response_json_schema": ActionItemsResult.model_json_schema(),
-            },
-        )
-
-    async def summarize_conversation(self, conversation_text: str, room_id: str = "", language: str = "Vietnamese") -> SummaryActionItemsResult:
-        """Run 2 Gemini requests: one for summary and one for action items."""
-        try:
-            summary_result = await self.summarize_summary(conversation_text, language)
-            action_items_result = await self.summarize_action_items(conversation_text, language)
-            logger.info(
-                f"Successfully generated summary and action items using Gemini (2 requests) for room: {room_id}"
-            )
-
-            # Build summary with only non-empty fields
-            summary_parts = [f"Context\n{summary_result.context}"]
-
-            if summary_result.key_discussions:
-                summary_parts.append("Key Discussions\n" + "\n".join(summary_result.key_discussions))
-
-            if summary_result.next_focus:
-                summary_parts.append("Next Focus\n" + "\n".join(summary_result.next_focus))
-
-            if summary_result.detail:
-                summary_parts.append("Detail\n" + "\n".join(summary_result.detail))
-
-            return SummaryActionItemsResult(
-                summary="\n\n".join(summary_parts),
-                action_items=action_items_result.action_items,
-                summary_success=True,
-                action_items_success=True,
-            )
-        except Exception as e:
-            logger.error(f"Gemini summarization error for room {room_id}: {e}")
-            return SummaryActionItemsResult(
-                summary=f"An error occurred during summarization: {e}",
-                action_items=[],
-                summary_success=False,
-                action_items_success=False,
-            )
-        
-    async def summarize_light_section(self, conversation_str, previous_context, language) -> LightSummaryResult:
-        prompt = build_light_summary_prompt(conversation_str, previous_context, language)
-        response = await self.client.aio.models.generate_content(
-            model=self.config.model,
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-                "response_json_schema": LightSummaryResult.model_json_schema(),
-            },
-        )
-        return LightSummaryResult.model_validate(extract_json_from_llm(response.text))
-    
-    async def summarize_overall_context(self, section_context_str, language) -> OverallContextResult:
-        prompt = build_overall_context_prompt(section_context_str, language)
-        response = await self.client.aio.models.generate_content(
-            model=self.config.model,
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-                "response_json_schema": OverallContextResult.model_json_schema(),
-            },
-        )
-        return OverallContextResult.model_validate(extract_json_from_llm(response.text))
+        parsed_json = extract_json_from_llm(response.text)
+        return response_model.model_validate(parsed_json)
