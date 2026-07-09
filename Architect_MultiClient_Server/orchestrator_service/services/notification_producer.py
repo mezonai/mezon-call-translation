@@ -57,7 +57,7 @@ class NotificationProducerService:
             )
         """
         # Pypass for test
-        return True
+        # return True
 
         task = NotificationTask(
             title=title,

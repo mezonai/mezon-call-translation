@@ -259,7 +259,7 @@ class SummaryService:
                 result["id"] = saved_id
                 
                 metadata_channel = MetadataChannel()
-                await metadata_channel.push_room_summary_done(room_id=str(room_id), room_name=(room_doc.room_name or "Unknown"))
+                await metadata_channel.push_room_summary_done(room_id=room_id, room_name=(room_doc.room_name or "Unknown"))
 
                 return result
             
