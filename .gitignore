@@ -1,6 +1,6 @@
 /models/
 *.py[cod]
-venv/
+*.venv/
 .env
 \logs
 *.mp3
