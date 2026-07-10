@@ -1,17 +1,24 @@
 import json
 import uuid
-from typing import Any, Dict, List
+from typing import Dict, List
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from orchestrator_service.services.postgresql.pg_summary_repository import PgSummaryRepository
-# from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
-from orchestrator_service.services.llm.prompt import build_light_summary_prompt, build_overall_context_prompt
-from orchestrator_service.models.summary_models import LightSummaryResult, OverallContextResult
+from orchestrator_service.services.llm.prompt import build_light_summary_prompt
+from orchestrator_service.models.summary_models import LightSummaryResult
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
 from pydantic import BaseModel
-import asyncio
+import logging
 
 logger = get_logger(__name__)
 
@@ -20,22 +27,24 @@ class LightSummaryService:
         self.pg_repo = pg_repo
         self.llm_service = llm_service
         self.config = get_config().light_summary
-        
-    async def _call_llm_with_retry(self, prompt: str, response_model: type[BaseModel]) -> BaseModel:
-        for attempt in range(1, self.config.retry_count + 1):
-            try:
-                return await self.llm_service.generate(
-                    prompt=prompt,
-                    response_model=response_model,
-                    model=self.config.model,
-                    timeout=self.config.timeout
-                )
-            except Exception as e:
-                logger.error(f"[Light Summary LLM] attempt {attempt}/{self.config.retry_count} failed: {e}")
-                if attempt == self.config.retry_count:
-                    raise e
-                await asyncio.sleep(2)
-
+    
+    async def _call_llm(self, prompt: str, response_model: type[BaseModel]) -> BaseModel:
+        @retry(
+            stop=stop_after_attempt(self.config.retry_count),
+            wait=wait_exponential(multiplier=1, min=10, max=60),
+            retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+            before_sleep=before_sleep_log(logger, logging.ERROR),
+            reraise=True,
+        )
+        async def _inner():
+            return await self.llm_service.generate(
+                prompt=prompt,
+                response_model=response_model,
+                model=self.config.model,
+                temperature=self.config.temperature,
+                timeout=self.config.timeout
+            )
+        return await _inner()
     
     async def process_room(
             self,
@@ -43,7 +52,8 @@ class LightSummaryService:
             room_name: str,
             messages: List[Dict],
             language: str = "Vietnamese",
-            target_duration: int | None = None
+            target_duration: int | None = None,
+            resume_from_section: int = 0
     ):
         working_messages = messages
 
@@ -57,8 +67,24 @@ class LightSummaryService:
 
         logger.info(f"Start processing light summary room_id={room_id}, room_name={room_name}, messages={len(working_messages)}")
 
-        await self.pg_repo.delete_section_summaries_by_room_id(room_id)
+        if resume_from_section > 0:
+            existing_sections = await self.pg_repo.get_section_summaries_by_room_id(room_id)
+            if existing_sections:
+                last_section = existing_sections[-1]
 
+                for idx, msg in enumerate(working_messages):
+                    if msg.get("timestamp") == last_section.end_time:
+                        start_idx = idx + 1
+                        break
+                section_index = last_section.section_index + 1
+
+                previous_context = json.dumps(
+                    last_section.messages, ensure_ascii=False, indent=2
+                )
+                logger.info(
+                    f"Resuming from section {section_index}, "
+                    f"start_idx={start_idx}, previous_context loaded from DB"
+                )
 
         while start_idx < len(working_messages):
             current_duration = base_duration
@@ -75,7 +101,7 @@ class LightSummaryService:
 
                 try:
                     prompt = build_light_summary_prompt(transcript_str, previous_context, language)
-                    summary_result = await self._call_llm_with_retry(prompt, LightSummaryResult)
+                    summary_result = await self._call_llm(prompt, LightSummaryResult)
                 except Exception as api_err:
                     logger.error(f"LLM Error after all retries at start_idx={start_idx} room={room_id}. Error: {api_err}")
                     raise ValueError(f"Failed to process section due to LLM error: {api_err}")
@@ -144,8 +170,9 @@ class LightSummaryService:
             self,
             room_id: str,
             language: str = "Vietnamese",
-            target_duration: int | None = None
-    ) -> Dict[str, Any]:
+            target_duration: int | None = None,
+            resume_from_section: int = 0
+    ) -> int:
         summary, room = await self.pg_repo.get_summary_by_room_id(room_id)
         if not room:
             logger.error(f"Room summary not found: {room_id}")
@@ -157,18 +184,17 @@ class LightSummaryService:
         
         messages = summary.messages
 
-        await self.process_room(
+        if resume_from_section == 0:
+            await self.pg_repo.delete_section_summaries_by_room_id(room_id)
+
+        return await self.process_room(
             room_id=room_id,
             room_name=room.room_name,
             messages=messages,
             language=language,
-            target_duration=target_duration
+            target_duration=target_duration,
+            resume_from_section=resume_from_section
         )
-
-        final_summary = await self.generate_overall_summary(room_id, language)
-        await self.pg_repo.update_room_summary_data(room_id, final_summary)
-
-        return final_summary
     
     def get_candidate_end_idx(
             self,
@@ -195,52 +221,3 @@ class LightSummaryService:
             f"Cannot find end_message_time={end_message_time} "
             f"in candidate messages {start_idx}->{candidate_end_idx - 1}"
         )
-    
-    def merge_section_summaries(self, sections: List[Dict], overall_context: str) -> Dict:
-        final_summary = {
-            "context": overall_context,
-            "key_discussions": [],
-            "next_focus": [],
-            "detail": []
-        }
-
-        for sec in sections:
-            summary = sec.summary_data or {}
-            
-            for key in ["key_discussions", "next_focus", "detail"]:
-                items = summary.get(key, [])
-                if isinstance(items, list):
-                    final_summary[key].extend(items)
-
-        return final_summary
-    
-    async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> Dict[str, Any]:
-        sections = await self.pg_repo.get_section_summaries_by_room_id(room_id)
-
-        if not sections:
-            logger.error(f"No section summaries found for room_id={room_id}")
-            raise ValueError(f"No section summaries found for room_id={room_id}")
-
-        
-        section_context = [
-            {
-                "section_index": sec.section_index,
-                "start_time": sec.start_time,
-                "end_time": sec.end_time,
-                "context": (sec.summary_data or {}).get("context", "") 
-            }
-            for sec in sections
-        ]
-
-        try:
-            section_context_str = json.dumps(section_context, ensure_ascii=False, indent=2)
-            prompt = build_overall_context_prompt(section_context_str, language)
-            result = await self._call_llm_with_retry(prompt, OverallContextResult)
-
-            return self.merge_section_summaries(
-            sections=sections,
-            overall_context=result.context
-            )
-        except Exception as e:
-            logger.error(f"Failed to generate overall summary for room_id={room_id}: {e}")
-            raise ValueError(f"Failed to generate overall summary for room_id={room_id}: {e}")

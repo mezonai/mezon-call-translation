@@ -10,7 +10,7 @@ from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def create_llm_service(provider: str, model: str) -> BaseLLMService:
+def create_llm_service(provider: str, model: str, temperature: float) -> BaseLLMService:
     """
     Factory function to create LLM service based on provider type.
 
@@ -41,5 +41,5 @@ def create_llm_service(provider: str, model: str) -> BaseLLMService:
             f"Supported providers: {LLMProvider.GEMINI.value}, {LLMProvider.LOCAL.value}"
         )
 
-    logger.info(f"Creating LLM service for provider: {provider}, model: {model}, temperature: {llm_config.temperature}")
+    logger.info(f"Creating LLM service for provider: {provider}, model: {model}, temperature: {temperature}")
     return service

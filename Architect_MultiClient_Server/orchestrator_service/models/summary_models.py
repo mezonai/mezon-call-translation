@@ -13,6 +13,12 @@ class RetryType(StrEnum):
     ACTION_ITEMS = "action_items"
     ALL = "all"
 
+    SECTIONS = "sections"
+    OVERALL_CONTEXT = "overall_context"
+
+class ActionItemResult(BaseModel):
+    participant_identity: str = Field(description="Participant identity")
+    participant_actions: List[str] = Field(description="List of actions performed by the participant")
 
 class ActionItemResult(BaseModel):  # type: ignore[explicit-any]
     participant_identity: str = Field(description="Participant identity")
@@ -57,9 +63,5 @@ class RoomSummaryResponse(BaseModel):  # type: ignore[explicit-any]
     created_at: str = Field(description="Created At", default="")
     completed_at: str = Field(description="Completed At", default="")
     total_segments: int = Field(description="Total Segments", default=0)
-
-    # TODO: Use `Any` because this field consists of participant_identity and duration, where
-    #  participant_identity (user_id) is retrieved from Room.participants dict in the database.
-    speech_durations: list[dict[str, Any]] = Field(  # type: ignore[explicit-any]
-        description="Speech Durations of each participant", default=[]
-    )
+    speech_durations: List[Dict[str, Any]] = Field(description="Speech Durations of each participant", default=[])
+    

@@ -203,7 +203,7 @@ class PgSummaryRepository:
         session_factory = get_session_factory()
         
         try:
-            room_uid = uuid.UUID(str(room_id))
+            room_uid = uuid.UUID(room_id)
             async with session_factory() as session:
                 stmt = delete(RoomSectionSummary).where(RoomSectionSummary.room_id == room_uid)
                 await session.execute(stmt)
