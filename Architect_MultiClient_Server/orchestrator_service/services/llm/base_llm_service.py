@@ -3,8 +3,10 @@ Base abstract class for all LLM service providers
 """
 
 from abc import ABC, abstractmethod
-from orchestrator_service.config.application_config import LLMConfig
+
 from pydantic import BaseModel
+
+from orchestrator_service.config.application_config import LLMConfig
 
 
 class BaseLLMService(ABC):
@@ -20,6 +22,8 @@ class BaseLLMService(ABC):
         self.config = config
 
     @abstractmethod
-    async def generate(self, prompt: str, response_model: type[BaseModel], model: str, temperature: float, timeout: int) -> BaseModel:
+    async def generate(
+        self, prompt: str, response_model: type[BaseModel], model: str, temperature: float, timeout: int
+    ) -> BaseModel:
         """fuction doc"""
         pass

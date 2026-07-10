@@ -3,11 +3,12 @@ Service for generating room summaries
 """
 
 import json
-from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple
-from pydantic import BaseModel
-from fastapi import HTTPException
 import logging
+from datetime import datetime
+from typing import Any
+
+from fastapi import HTTPException
+from pydantic import BaseModel
 from tenacity import (
     before_sleep_log,
     retry,
@@ -16,28 +17,36 @@ from tenacity import (
     wait_exponential,
 )
 
-from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository, get_pg_outbox_repository
-from orchestrator_service.services.postgresql.pg_summary_repository import PgSummaryRepository, get_pg_summary_repository
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository, get_pg_transcript_repository
-from orchestrator_service.services.llm.llm_factory import create_llm_service
-from orchestrator_service.services.llm.base_llm_service import BaseLLMService
-from orchestrator_service.services.llm.prompt import build_prompt_summary, build_prompt_action_items, build_overall_context_prompt
-from orchestrator_service.models.summary_models import SummaryResult, ActionItemsResult, OverallContextResult
+from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
-from orchestrator_service.services.llm.factory import create_llm_service
-from orchestrator_service.services.postgresql.models import TranscriptChunk
+from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
+from orchestrator_service.models.summary_models import (
+    ActionItemsResult,
+    OverallContextResult,
+    RetryType,
+    RoomSummaryResponse,
+    SummaryResult,
+)
+from orchestrator_service.services.light_summary_service import LightSummaryService
+from orchestrator_service.services.llm.base_llm_service import BaseLLMService
+from orchestrator_service.services.llm.llm_factory import create_llm_service
+from orchestrator_service.services.llm.prompt import (
+    build_overall_context_prompt,
+    build_prompt_action_items,
+    build_prompt_summary,
+)
 from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository, get_pg_outbox_repository
+from orchestrator_service.services.postgresql.pg_summary_repository import (
+    PgSummaryRepository,
+    get_pg_summary_repository,
+)
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
 )
-from orchestrator_service.utils.time_convert import convert_to_iso_8601
-from orchestrator_service.services.light_summary_service import LightSummaryService
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
+from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
 
@@ -45,14 +54,15 @@ logger = get_logger(__name__)
 class SummaryService:
     """Service to handle room summarization logic"""
 
-    def __init__(self,
-                pg_transcript_repo: PgTranscriptRepository,
-                pg_summary_repo: PgSummaryRepository,
-                outbox_repo: PgOutboxRepository,
-                light_summary_service: Any,
-                llm_service: BaseLLMService,
-                llm_service_fallback: Optional[BaseLLMService] = None,
-                ):
+    def __init__(
+        self,
+        pg_transcript_repo: PgTranscriptRepository,
+        pg_summary_repo: PgSummaryRepository,
+        outbox_repo: PgOutboxRepository,
+        light_summary_service: LightSummaryService,
+        llm_service: BaseLLMService,
+        llm_service_fallback: BaseLLMService | None = None,
+    ):
         self.pg_transcript_repo = pg_transcript_repo
         self.pg_summary_repo = pg_summary_repo
         self.outbox_repo = outbox_repo
@@ -60,9 +70,7 @@ class SummaryService:
         self.light_summary_service = light_summary_service
         self.llm_service = llm_service
         self.llm_service_fallback = llm_service_fallback
-        logger.info(
-            f"SummaryService initialized with LLM provider: {self.config.provider}"
-        )
+        logger.info(f"SummaryService initialized with LLM provider: {self.config.provider}")
 
     async def _call_llm(
         self,
@@ -72,7 +80,7 @@ class SummaryService:
         model: str,
         timeout: int,
         temperature: float,
-        max_attempts: int
+        max_attempts: int,
     ) -> BaseModel:
         @retry(
             stop=stop_after_attempt(max_attempts),
@@ -81,17 +89,12 @@ class SummaryService:
             before_sleep=before_sleep_log(logger, logging.ERROR),
             reraise=True,
         )
-        async def _inner():
+        async def _inner() -> BaseModel:
             return await llm_service.generate(
-                prompt=prompt,
-                response_model=response_model,
-                model=model,
-                temperature=temperature,
-                timeout=timeout
+                prompt=prompt, response_model=response_model, model=model, temperature=temperature, timeout=timeout
             )
 
         return await _inner()
-
 
     async def _call_llm_with_fallback(self, prompt: str, response_model: type[BaseModel]) -> BaseModel:
         try:
@@ -102,7 +105,7 @@ class SummaryService:
                 model=self.config.model,
                 temperature=self.config.temperature,
                 timeout=self.config.timeout,
-                max_attempts=self.config.retry_count
+                max_attempts=self.config.retry_count,
             )
         except Exception as e:
             if self.config.fallback_enable and self.llm_service_fallback:
@@ -114,21 +117,16 @@ class SummaryService:
                     model=self.config.fallback_model,
                     temperature=self.config.fallback_temperature,
                     timeout=self.config.fallback_timeout,
-                    max_attempts=self.config.fallback_retry_count
+                    max_attempts=self.config.fallback_retry_count,
                 )
             raise
-        
-    def merge_section_summaries(self, sections: List[Dict], overall_context: str) -> Dict:
-        final_summary = {
-            "context": overall_context,
-            "key_discussions": [],
-            "next_focus": [],
-            "detail": []
-        }
+
+    def merge_section_summaries(self, sections: list[dict], overall_context: str) -> dict:
+        final_summary = {"context": overall_context, "key_discussions": [], "next_focus": [], "detail": []}
 
         for sec in sections:
             summary = sec.summary_data or {}
-            
+
             for key in ["key_discussions", "next_focus", "detail"]:
                 items = summary.get(key, [])
                 if isinstance(items, list):
@@ -136,20 +134,19 @@ class SummaryService:
 
         return final_summary
 
-    async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> Dict[str, Any]:
+    async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:
         sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)
 
         if not sections:
             logger.error(f"No section summaries found for room_id={room_id}")
             raise ValueError(f"No section summaries found for room_id={room_id}")
 
-        
         section_context = [
             {
                 "section_index": sec.section_index,
                 "start_time": sec.start_time,
                 "end_time": sec.end_time,
-                "context": (sec.summary_data or {}).get("context", "") 
+                "context": (sec.summary_data or {}).get("context", ""),
             }
             for sec in sections
         ]
@@ -159,33 +156,23 @@ class SummaryService:
             prompt = build_overall_context_prompt(section_context_str, language)
             result = await self._call_llm_with_fallback(prompt, OverallContextResult)
 
-            return self.merge_section_summaries(
-                sections=sections,
-                overall_context=result.context
-            )
+            return self.merge_section_summaries(sections=sections, overall_context=result.context)
         except Exception as e:
             logger.error(f"Failed to generate overall summary for room_id={room_id}: {e}")
-            raise ValueError(f"Failed to generate overall summary for room_id={room_id}: {e}")
-        
-    async def retry_overall_summary_only(
-            self,
-            room_id: str,
-            language: str = "Vietnamese"
-    ) -> Dict[str, Any]:
+            raise ValueError(f"Failed to generate overall summary for room_id={room_id}: {e}") from e
+
+    async def retry_overall_summary_only(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:
         """Chỉ retry generate_overall_summary, không chạy lại sections."""
         sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)
         if not sections:
-            raise ValueError(
-                f"No existing sections found for room_id={room_id}. "
-                f"Cannot retry overall only."
-            )
+            raise ValueError(f"No existing sections found for room_id={room_id}. Cannot retry overall only.")
 
         final_summary = await self.generate_overall_summary(room_id, language)
         await self.pg_summary_repo.update_room_summary_data(room_id, final_summary)
 
         return final_summary
 
-    async def generate_summary(self, room_id: str) -> Optional[Dict[str, Any]]:
+    async def generate_summary(self, room_id: str) -> dict[str, Any] | None:
         """
         Generate a summary for the given room_id.
 
@@ -210,9 +197,7 @@ class SummaryService:
             return None
 
         # 2. Get All Tracks
-        tracks = await self.pg_transcript_repo.get_tracks_by_room(
-            room_id, status="completed"
-        )
+        tracks = await self.pg_transcript_repo.get_tracks_by_room(room_id, status="completed")
         if not tracks:
             logger.warning(f"No tracks found for room {room_id}")
             return None
@@ -224,7 +209,7 @@ class SummaryService:
 
         track_ids = [str(track.id) for track in tracks]
         all_chunks = await self.pg_transcript_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
-        
+
         chunks_by_track = {tid: [] for tid in track_ids}
         for chunk in all_chunks:
             tid = str(chunk.track_ref_id)
@@ -341,33 +326,27 @@ class SummaryService:
             total_duration = (room_doc.finalized_at - room_doc.created_at).total_seconds()
 
         if total_duration > self.config.threshold_min * 60:
-            logger.info(f"Room duration ({total_duration:.1f}s) > {self.config.threshold_min} mins. Using Light Summary flow.")
-            
+            logger.info(
+                f"Room duration ({total_duration:.1f}s) > {self.config.threshold_min} mins. Using Light Summary flow."
+            )
+
             try:
                 # Phase 1: Sections
-                await self.light_summary_service.process_room_by_id(
-                    room_id, language=self.config.language
-                )
+                await self.light_summary_service.process_room_by_id(room_id, language=self.config.language)
             except Exception as e:
                 logger.warning(f"Section processing failed for room {room_id}: {e}. Creating outbox task.")
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id),
-                    retry_type=RetryType.SECTIONS,
-                    error_msg=str(e)
+                    room_id=str(room_id), retry_type=RetryType.SECTIONS, error_msg=str(e)
                 )
                 return {**draft_summary, "id": saved_id}
 
             try:
                 # Phase 2: Overall context
-                summary_data = await self.generate_overall_summary(
-                    room_id, language=self.config.language
-                )
+                summary_data = await self.generate_overall_summary(room_id, language=self.config.language)
             except Exception as e:
                 logger.warning(f"Overall summary failed for room {room_id}: {e}. Creating outbox task.")
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id),
-                    retry_type=RetryType.OVERALL_CONTEXT,
-                    error_msg=str(e)
+                    room_id=str(room_id), retry_type=RetryType.OVERALL_CONTEXT, error_msg=str(e)
                 )
                 return {**draft_summary, "id": saved_id}
 
@@ -381,24 +360,24 @@ class SummaryService:
             result["id"] = saved_id
 
             metadata_channel = MetadataChannel()
-            await metadata_channel.push_room_summary_done(
-                room_id=room_id, room_name=(room_doc.room_name or "Unknown")
-            )
+            await metadata_channel.push_room_summary_done(room_id=room_id, room_name=(room_doc.room_name or "Unknown"))
             return result
 
         else:
             # Normal summary flow
-            logger.info(f"Room duration ({total_duration:.1f}s) <= {self.config.threshold_min} mins. Using Normal Summary flow.")
+            logger.info(
+                f"Room duration ({total_duration:.1f}s) <= {self.config.threshold_min} mins. Using Normal Summary flow."
+            )
             summary_data_result = None
             action_result = None
-            
+
             # Phase 1: Summary
             try:
                 summary_prompt = build_prompt_summary(full_text, self.config.language)
                 summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult)
             except Exception as e:
                 logger.warning(f"Summary task failed for room {room_id}: {e}")
-                
+
             # Phase 2: Action items
             try:
                 action_prompt = build_prompt_action_items(full_text, self.config.language)
@@ -409,12 +388,10 @@ class SummaryService:
             # If all failed -> Outbox ALL
             if not summary_data_result and not action_result:
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id),
-                    retry_type=RetryType.ALL,
-                    error_msg="Both summary and action items failed"
+                    room_id=str(room_id), retry_type=RetryType.ALL, error_msg="Both summary and action items failed"
                 )
                 return {**draft_summary, "id": saved_id}
-                
+
             # Concate data
             summary_parts = []
             if summary_data_result:
@@ -429,15 +406,15 @@ class SummaryService:
             summary_data = {
                 "summary": "\n\n".join(summary_parts) if summary_parts else "",
                 "action_items": {
-                    item.participant_identity: item.participant_actions
-                    for item in action_result.action_items
-                } if action_result else {},
+                    item.participant_identity: item.participant_actions for item in action_result.action_items
+                }
+                if action_result
+                else {},
             }
 
             final_summary = dict(draft_summary)
             final_summary["summary_data"] = summary_data
 
-            
             # Save reuslt to DB
             updated = await self.pg_summary_repo.update_room_summary(room_id, summary_data)
             if not updated:
@@ -459,17 +436,13 @@ class SummaryService:
                 # Only summary failed
                 logger.warning(f"Summary failed for room {room_id}. Creating SUMMARY outbox task.")
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id),
-                    retry_type=RetryType.SUMMARY,
-                    error_msg="Summary generation failed"
+                    room_id=str(room_id), retry_type=RetryType.SUMMARY, error_msg="Summary generation failed"
                 )
             elif not action_result:
                 # Only Action items failed
                 logger.warning(f"Action items failed for room {room_id}. Creating ACTION_ITEMS outbox task.")
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id),
-                    retry_type=RetryType.ACTION_ITEMS,
-                    error_msg="Action items generation failed"
+                    room_id=str(room_id), retry_type=RetryType.ACTION_ITEMS, error_msg="Action items generation failed"
                 )
 
             return result
@@ -511,32 +484,22 @@ class SummaryService:
 
             try:
                 if retry_type == RetryType.OVERALL_CONTEXT:
-                    summary_data = await self.retry_overall_summary_only(
-                        room_id, language=self.config.language
-                    )
+                    summary_data = await self.retry_overall_summary_only(room_id, language=self.config.language)
                 elif retry_type == RetryType.SECTIONS:
                     existing_sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)
                     resume_from = existing_sections[-1].section_index if existing_sections else 0
 
                     await self.light_summary_service.process_room_by_id(
-                        room_id,
-                        language=self.config.language,
-                        resume_from_section=resume_from
+                        room_id, language=self.config.language, resume_from_section=resume_from
                     )
 
-                    summary_data = await self.generate_overall_summary(
-                        room_id, language=self.config.language
-                    )
+                    summary_data = await self.generate_overall_summary(room_id, language=self.config.language)
 
                     await self.pg_summary_repo.update_room_summary_data(room_id, summary_data)
                 else:  # RetryType.ALL
-                    await self.light_summary_service.process_room_by_id(
-                        room_id, language=self.config.language
-                    )
+                    await self.light_summary_service.process_room_by_id(room_id, language=self.config.language)
 
-                    summary_data = await self.generate_overall_summary(
-                        room_id, language=self.config.language
-                    )
+                    summary_data = await self.generate_overall_summary(room_id, language=self.config.language)
                     await self.pg_summary_repo.update_room_summary_data(room_id, summary_data)
 
                 metadata_channel = MetadataChannel()
@@ -550,8 +513,10 @@ class SummaryService:
 
         else:
             # Normal summary flow
-            logger.info(f"Retrying room ({total_duration:.1f}s) <= {self.config.threshold_min} mins. Using Normal Summary flow.")
-            
+            logger.info(
+                f"Retrying room ({total_duration:.1f}s) <= {self.config.threshold_min} mins. Using Normal Summary flow."
+            )
+
             # Extract existing summary_data to preserve fields that aren't being retried
             existing_summary_data = summary_doc.summary_data or {}
             existing_summary = existing_summary_data.get("summary", "")
@@ -591,8 +556,7 @@ class SummaryService:
                     summary_data = {
                         "summary": existing_summary,
                         "action_items": {
-                            item.participant_identity: item.participant_actions
-                            for item in result.action_items
+                            item.participant_identity: item.participant_actions for item in result.action_items
                         },
                     }
 
@@ -614,12 +578,11 @@ class SummaryService:
                         summary_parts.append("Next Focus\n" + "\n".join(summary_result.next_focus))
                     if summary_result.detail:
                         summary_parts.append("Detail\n" + "\n".join(summary_result.detail))
-                    
+
                     summary_data = {
                         "summary": "\n\n".join(summary_parts),
                         "action_items": {
-                            item.participant_identity: item.participant_actions
-                            for item in action_result.action_items
+                            item.participant_identity: item.participant_actions for item in action_result.action_items
                         },
                     }
 
@@ -645,19 +608,13 @@ class SummaryService:
                 return None
 
     async def get_summary_by_room_name(
-        self,
-        room_name: str,
-        start_time: Optional[datetime],
-        end_time: Optional[datetime],
-        auth: AuthContext
-    ) -> Tuple[List[RoomSummaryResponse], int]:
+        self, room_name: str, start_time: datetime | None, end_time: datetime | None, auth: AuthContext
+    ) -> tuple[list[RoomSummaryResponse], int]:
         if not self.pg_summary_repo.connected:
             await self.pg_summary_repo.connect()
-        
+
         if auth.can_view_all_rooms:
-            summaries, rooms = await self.pg_summary_repo.get_summary_by_room_name(
-                room_name, start_time, end_time
-            )
+            summaries, rooms = await self.pg_summary_repo.get_summary_by_room_name(room_name, start_time, end_time)
         else:
             summaries, rooms = await self.pg_summary_repo.get_summary_by_room_name(
                 room_name, start_time, end_time, auth.user_id
@@ -686,11 +643,7 @@ class SummaryService:
 
         return summary_models, len(summary_models)
 
-    async def get_summary_by_room_id(
-        self,
-        room_id: str,
-        auth: AuthContext
-    ) -> RoomSummaryResponse:
+    async def get_summary_by_room_id(self, room_id: str, auth: AuthContext) -> RoomSummaryResponse:
         if not self.pg_summary_repo.connected:
             await self.pg_summary_repo.connect()
         if not self.pg_transcript_repo.connected:
@@ -699,13 +652,9 @@ class SummaryService:
         if not auth.can_view_all_rooms:
             has_access = await self.pg_transcript_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
-                logger.warning(
-                    f"User {auth.user_id} denied access to room statistics for {room_id}"
-                )
-                raise HTTPException(
-                    status_code=403, detail="You don't have access to this room"
-                )
-        
+                logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
+                raise HTTPException(status_code=403, detail="You don't have access to this room")
+
         summary, room = await self.pg_summary_repo.get_summary_by_room_id(room_id)
         if not summary or not room:
             return RoomSummaryResponse.model_construct()
@@ -749,14 +698,18 @@ def get_summary_service() -> SummaryService:
         config = get_config()
         pg_transcript_repo = get_pg_transcript_repository()
         pg_summary_repo = get_pg_summary_repository()
-        
+
         primary_llm = create_llm_service(config.summary.provider, config.summary.model, config.summary.temperature)
-        
+
         fallback_llm = None
         if config.summary.fallback_enable:
-            fallback_llm = create_llm_service(config.summary.fallback_provider, config.summary.fallback_model, config.summary.fallback_temperature)
-        
-        light_summary_llm = create_llm_service(config.light_summary.provider, config.light_summary.model, config.light_summary.temperature)
+            fallback_llm = create_llm_service(
+                config.summary.fallback_provider, config.summary.fallback_model, config.summary.fallback_temperature
+            )
+
+        light_summary_llm = create_llm_service(
+            config.light_summary.provider, config.light_summary.model, config.light_summary.temperature
+        )
         light_summary_service = LightSummaryService(pg_summary_repo, light_summary_llm)
         _summary_service = SummaryService(
             pg_transcript_repo=pg_transcript_repo,

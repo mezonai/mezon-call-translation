@@ -7,11 +7,16 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, TypeVar, cast
 
-from sqlalchemy import text, select, update, exists, func, Select, or_, delete
+from sqlalchemy import Select, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
-from orchestrator_service.services.postgresql.models import Room, Track, RoomSummary, RoomSectionSummary, MetadataEvent, TranscriptChunk
+from orchestrator_service.services.postgresql.models import (
+    MetadataEvent,
+    Room,
+    Track,
+    TranscriptChunk,
+)
 from orchestrator_service.utils.logger import get_logger
 
 _T = TypeVar("_T")
@@ -436,7 +441,6 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to count rooms by user: {e}")
             return 0
-
 
     # ------------------------------------------------------------------
     # METADATA EVENTS

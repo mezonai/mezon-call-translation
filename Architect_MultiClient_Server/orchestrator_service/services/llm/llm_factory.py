@@ -1,7 +1,8 @@
 """
 Factory for creating LLM service instances based on provider type
 """
-from orchestrator_service.config.application_config import LLMConfig, LLMProvider, get_config
+
+from orchestrator_service.config.application_config import LLMProvider, get_config
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.gemini_llm_service import GeminiLLMService
 from orchestrator_service.services.llm.local_llm_service import LocalLLMService

@@ -278,18 +278,15 @@ class LLMProvider(StrEnum):
 @dataclass
 class LLMConfig:
     api_key: str = ""
-    base_url: str = None
+    base_url: str | None = None
 
     @classmethod
-    def from_env(cls, api_key_env: str, url_env, default_url: str = None) -> 'LLMConfig':
-        return cls(
-            api_key=os.getenv(api_key_env, ''),
-            base_url=os.getenv(url_env, default_url)
-        )
-    
+    def from_env(cls, api_key_env: str, url_env: str, default_url: str | None = None) -> "LLMConfig":
+        return cls(api_key=os.getenv(api_key_env, ""), base_url=os.getenv(url_env, default_url))
+
     def validate(self) -> bool:
         return True
-    
+
 
 # ============================================================================
 # Redis Configuration (Task Queue)
@@ -436,6 +433,7 @@ class OutboxConfig:
 # Summary Configuration
 # ============================================================================
 
+
 @dataclass
 class SummaryConfig:
     provider: str = "local"
@@ -455,7 +453,7 @@ class SummaryConfig:
     threshold_min: int = 20
 
     @classmethod
-    def from_env(cls) -> 'SummaryConfig':
+    def from_env(cls) -> "SummaryConfig":
         return cls(
             provider=os.getenv("SUMMARY_LLM_PROVIDER", "local"),
             model=os.getenv("SUMMARY_LLM_MODEL", "Qwen3.5-35B-A3B"),
@@ -463,14 +461,12 @@ class SummaryConfig:
             timeout=int(os.getenv("SUMMARY_LLM_TIMEOUT", "120")),
             language=os.getenv("SUMMARY_LANGUAGE", "Vietnamese"),
             retry_count=int(os.getenv("SUMMARY_LLM_RETRY_COUNT", "3")),
-
-            fallback_enable=os.getenv("SUMMARY_LLM_FALLBACK_ENABLE", 'true').lower() == "true",
-            fallback_provider=os.getenv("SUMMARY_LLM_FALLBACK_PROVIDER", 'gemini'),
+            fallback_enable=os.getenv("SUMMARY_LLM_FALLBACK_ENABLE", "true").lower() == "true",
+            fallback_provider=os.getenv("SUMMARY_LLM_FALLBACK_PROVIDER", "gemini"),
             fallback_model=os.getenv("SUMMARY_LLM_FALLBACK_MODEL", "gemma-4-31b-it"),
             fallback_temperature=float(os.getenv("SUMMARY_LLM_FALLBACK_TEMPERATURE", "0.4")),
             fallback_timeout=int(os.getenv("SUMMARY_LLM_FALLBACK_TIMEOUT", "120")),
             fallback_retry_count=int(os.getenv("SUMMARY_LLM_FALLBACK_RETRY_COUNT", "3")),
-        
             threshold_min=int(os.getenv("SUMMARY_THRESHOLD_MIN", "20")),
         )
 
@@ -479,30 +475,30 @@ class SummaryConfig:
 # Light Summary Configuration
 # ============================================================================
 
+
 @dataclass
 class LightSummaryConfig:
     target_duration_min: int = 15
     extend_min: int = 5
     max_duration_min: int = 30
 
-    provider: str = None
+    provider: str = "gemini"
     model: str = "gemma-4-31b-it"
     temperature: float = 0.4
     timeout: int = 120
     retry_count: int = 3
 
     @classmethod
-    def from_env(cls) -> 'LightSummaryConfig':
+    def from_env(cls) -> "LightSummaryConfig":
         return cls(
             target_duration_min=int(os.getenv("LIGHT_SUMMARY_TARGET_DURATION_MIN", "15")),
             extend_min=int(os.getenv("LIGHT_SUMMARY_EXTEND_MIN", "5")),
             max_duration_min=int(os.getenv("LIGHT_SUMMARY_MAX_DURATION_MIN", "30")),
-
             provider=os.getenv("LIGHT_SUMMARY_LLM_PROVIDER", "gemini"),
             model=os.getenv("LIGHT_SUMMARY_LLM_MODEL", "gemma-4-31b-it"),
             temperature=float(os.getenv("LIGHT_SUMMARY_LLM_TEMPERATURE", "0.4")),
             timeout=int(os.getenv("LIGHT_SUMMARY_TIMEOUT", 120)),
-            retry_count=int(os.getenv("LIGHT_SUMMARY_LLM_RETRY_COUNT", "3"))
+            retry_count=int(os.getenv("LIGHT_SUMMARY_LLM_RETRY_COUNT", "3")),
         )
 
 
@@ -544,14 +540,11 @@ class Config:
         self.logger = LoggerConfig.from_env()
         self.auth = AuthConfig.from_env()
         self.minio = MinIOConfig.from_env()
-        self.gemini_llm_config = LLMConfig.from_env(
-            api_key_env='GEMINI_API_KEY', 
-            url_env='GEMINI_URL'
-        )
+        self.gemini_llm_config = LLMConfig.from_env(api_key_env="GEMINI_API_KEY", url_env="GEMINI_URL")
         self.local_llm_config = LLMConfig.from_env(
-            api_key_env='LOCAL_LLM_API_KEY', 
-            url_env='LOCAL_LLM_URL',
-            default_url='http://localhost:8080/v1/chat/completions'
+            api_key_env="LOCAL_LLM_API_KEY",
+            url_env="LOCAL_LLM_URL",
+            default_url="http://localhost:8080/v1/chat/completions",
         )
         self.redis = RedisConfig.from_env()
         self.notification = NotificationConfig.from_env()

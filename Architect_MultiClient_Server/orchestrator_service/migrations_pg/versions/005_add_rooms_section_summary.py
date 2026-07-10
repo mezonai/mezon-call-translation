@@ -5,10 +5,9 @@ Revises: 004_add_outbox_tasks_with_enums
 Create Date: 2026-07-01 00:00:00.000000
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
-
 
 revision = "005_add_rooms_section_summary"
 down_revision = "004_add_outbox_tasks_with_enums"

@@ -1,8 +1,10 @@
 import json
 import re
+from typing import Any
+
 from google import genai
-from typing import Dict, Any
 from pydantic import BaseModel
+
 from orchestrator_service.config.application_config import LLMConfig
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.utils.logger import get_logger
@@ -76,15 +78,19 @@ class GeminiLLMService(BaseLLMService):
         super().__init__(config)
         self.client = genai.Client(api_key=config.api_key)
 
-    async def generate(self, prompt: str, response_model: type[BaseModel], model: str, temperature: float, timeout: int) -> BaseModel:
+    async def generate(
+        self, prompt: str, response_model: type[BaseModel], model: str, temperature: float, timeout: int
+    ) -> BaseModel:
         response = await self.client.aio.models.generate_content(
             model=model,
             contents=prompt,
             config={
                 "response_mime_type": "application/json",
                 "response_json_schema": response_model.model_json_schema(),
-                "temperature": temperature
-            }
+                "temperature": temperature,
+            },
         )
+        if response.text is None:
+            raise ValueError("Empty response text from Gemini API")
         parsed_json = extract_json_from_llm(response.text)
         return response_model.model_validate(parsed_json)

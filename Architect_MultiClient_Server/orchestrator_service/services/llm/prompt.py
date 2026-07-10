@@ -1,4 +1,9 @@
-from orchestrator_service.models.summary_models import ActionItemsResult, SummaryResult, LightSummaryResult, OverallContextResult
+from orchestrator_service.models.summary_models import (
+    ActionItemsResult,
+    LightSummaryResult,
+    OverallContextResult,
+    SummaryResult,
+)
 
 
 def build_prompt_summary(conversation_text: str, language: str) -> str:
@@ -22,7 +27,7 @@ The transcription is a JSON array containing objects with "content", "timestamp"
 1. **context**: A concise 2-3 sentence summary stating the meeting's purpose and its most important outcome.
 2. **key_discussions**: An array of strings. Each item must follow the format "[Topic Title]\n2-4 sentence summary."
 3. **next_focus**: An array of clear action items. If there are none, return [].
-4. **detail**: 
+4. **detail**:
    - The MOST DETAILED section of the document.
    - Each element should be a bullet point grouped by logical topics.
    - Priority structure: Who + Content + Decision + Technical details + Timestamp.
@@ -84,7 +89,6 @@ Strictly process the transcription below. Start directly with the JSON object.
 {conversation_text}
 ---
 """
-
 
 
 def build_light_summary_prompt(
@@ -204,7 +208,6 @@ Only return a valid JSON object according to the schema:
 # EXECUTION
 Analyze the input transcript and only return the JSON object.
 """
-
 
 
 def build_overall_context_prompt(section_context_str: str, language: str = "Vietnamese") -> str:

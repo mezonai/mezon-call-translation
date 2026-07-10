@@ -1,17 +1,18 @@
-from datetime import datetime, timezone
-from typing import Optional, Dict, List, Any, Tuple, Set
 import uuid
+from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import text, select, update, delete
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert
+
 from orchestrator_service.services.postgresql.database import get_session_factory
-from orchestrator_service.services.postgresql.models import Room, RoomSummary, RoomSectionSummary
+from orchestrator_service.services.postgresql.models import Room, RoomSectionSummary, RoomSummary
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-class PgSummaryRepository:
 
+class PgSummaryRepository:
     def __init__(self):
         self.connected = True  # Always "connected" via connection pool
 
@@ -31,12 +32,11 @@ class PgSummaryRepository:
         except Exception:
             return False
 
-
     # ------------------------------------------------------------------
     # SUMMARY
     # ------------------------------------------------------------------
 
-    async def save_room_summary(self, summary_data: Dict[str, Any]) -> Optional[str]:
+    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:
         session_factory = get_session_factory()
         room_uid = summary_data.get("room_id")
         try:
@@ -49,7 +49,7 @@ class PgSummaryRepository:
                     summary_data=summary_data.get("summary_data", {}),
                     messages=summary_data.get("messages", []),
                     total_segments=summary_data.get("total_segments", 0),
-                    created_at=summary_data.get("created_at", datetime.now(timezone.utc))
+                    created_at=summary_data.get("created_at", datetime.now(UTC)),
                 )
                 session.add(new_summary)
                 await session.commit()
@@ -58,7 +58,7 @@ class PgSummaryRepository:
             logger.error(f"Failed to save room summary: {e}")
             return None
 
-    async def update_room_summary(self, room_id: str, summary_data: Dict[str, Any]) -> bool:
+    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -77,7 +77,7 @@ class PgSummaryRepository:
             logger.error(f"Failed to update summary: {e}")
             return False
 
-    async def get_summary_by_room_id(self, room_id: str) -> Tuple[Optional[RoomSummary], Optional[Room]]:
+    async def get_summary_by_room_id(self, room_id: str) -> tuple[RoomSummary | None, Room | None]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -100,10 +100,10 @@ class PgSummaryRepository:
     async def get_summary_by_room_name(
         self,
         room_name: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        user_id: Optional[str] = None,
-    ) -> Tuple[List[RoomSummary], List[Room]]:
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        user_id: str | None = None,
+    ) -> tuple[list[RoomSummary], list[Room]]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -115,7 +115,7 @@ class PgSummaryRepository:
                     room_stmt = room_stmt.where(Room.created_at <= end_time)
                 if user_id:
                     room_stmt = room_stmt.where(Room.participants.contains([{"participant_identity": user_id}]))
-                
+
                 room_stmt = room_stmt.order_by(Room.created_at.desc())
                 room_list = list((await session.scalars(room_stmt)).all())
 
@@ -132,12 +132,12 @@ class PgSummaryRepository:
         except Exception as e:
             logger.error(f"Failed to get summary by room name: {e}")
             return [], []
-    
+
     # ------------------------------------------------------------------
     # LIGHT SUMMARY
     # ------------------------------------------------------------------
 
-    async def upsert_room_section_summary(self, record: Dict[str, Any]) -> bool:
+    async def upsert_room_section_summary(self, record: dict[str, Any]) -> bool:
         session_factory = get_session_factory()
 
         try:
@@ -154,29 +154,29 @@ class PgSummaryRepository:
                     messages=record.get("messages", []),
                     summary_data=summary_data,
                     start_time=record.get("start_time"),
-                    end_time=record.get("end_time")
+                    end_time=record.get("end_time"),
                 )
 
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[RoomSectionSummary.room_id, RoomSectionSummary.section_index],
-                        set_={
+                    set_={
                         "room_name": record.get("room_name"),
                         "messages": record.get("messages", []),
                         "summary_data": summary_data,
                         "start_time": record.get("start_time"),
-                        "end_time": record.get("end_time")
-                    }
+                        "end_time": record.get("end_time"),
+                    },
                 )
 
                 await session.execute(stmt)
                 await session.commit()
                 return True
-        
+
         except Exception as e:
             logger.error(f"Failed to upsert room section summary: {e}")
             return False
 
-    async def get_section_summaries_by_room_id(self, room_id: str) -> List[RoomSectionSummary]:
+    async def get_section_summaries_by_room_id(self, room_id: str) -> list[RoomSectionSummary]:
         session_factory = get_session_factory()
 
         try:
@@ -191,17 +191,17 @@ class PgSummaryRepository:
                 sections = list((await session.scalars(stmt)).all())
 
                 return sections
-    
+
         except Exception as e:
             logger.error(f"Failed to get section summaries by room id: {e}")
             return []
-    
-    async def update_room_summary_data(self, room_id: str, summary_data: Dict[str, any]) -> bool:
+
+    async def update_room_summary_data(self, room_id: str, summary_data: dict[str, any]) -> bool:
         return await self.update_room_summary(room_id, summary_data)
-    
+
     async def delete_section_summaries_by_room_id(self, room_id: str) -> bool:
         session_factory = get_session_factory()
-        
+
         try:
             room_uid = uuid.UUID(room_id)
             async with session_factory() as session:
@@ -212,10 +212,11 @@ class PgSummaryRepository:
         except Exception as e:
             logger.error(f"Failed to delete section summaries for room {room_id}: {e}")
             return False
-        
+
 
 # --------------- Singleton ---------------
 _pg_summary_repository: PgSummaryRepository | None = None
+
 
 def get_pg_summary_repository() -> PgSummaryRepository:
     global _pg_summary_repository

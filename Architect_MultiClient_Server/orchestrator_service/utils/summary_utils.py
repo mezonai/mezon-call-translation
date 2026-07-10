@@ -1,7 +1,9 @@
 from datetime import datetime
+
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
 
 def parse_timestamp_to_seconds(ts: str) -> float:
     """
