@@ -65,7 +65,9 @@ class PgOutboxRepository:
             logger.error(f"Failed to add task to outbox: {e}", exc_info=True)
             return False
 
-    async def fetch_pending_outbox_tasks(self, limit: int = 5, use_case: OutboxUseCase | None = None) -> list[OutboxTask]:
+    async def fetch_pending_outbox_tasks(
+        self, limit: int = 5, use_case: OutboxUseCase | None = None
+    ) -> list[OutboxTask]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:

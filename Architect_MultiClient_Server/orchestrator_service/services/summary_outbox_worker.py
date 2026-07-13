@@ -150,17 +150,13 @@ class SummaryOutboxWorker:
 
             try:
                 # Mark as processing
-                await self.outbox_repo.update_outbox_task_status(
-                    task_id=str(task_id), status=OutboxStatus.PROCESSING
-                )
+                await self.outbox_repo.update_outbox_task_status(task_id=str(task_id), status=OutboxStatus.PROCESSING)
 
                 # Execute handler
                 await handler(configs)
 
                 # Mark as completed on success
-                await self.outbox_repo.update_outbox_task_status(
-                    task_id=str(task_id), status=OutboxStatus.COMPLETED
-                )
+                await self.outbox_repo.update_outbox_task_status(task_id=str(task_id), status=OutboxStatus.COMPLETED)
                 logger.info(f"✅ Outbox task {task_id} completed successfully")
 
             except Exception as e:
