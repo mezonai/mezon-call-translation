@@ -78,7 +78,7 @@ class PgOutboxRepository:
                 )
 
                 if use_case:
-                    stmt = stmt.where(OutboxTask.use_case == use_case)
+                    stmt = stmt.where(OutboxTask.use_case == OutboxUseCase[use_case])
 
                 orm_tasks = list((await session.scalars(stmt)).all())
                 return orm_tasks
