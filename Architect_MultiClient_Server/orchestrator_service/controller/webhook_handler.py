@@ -96,7 +96,7 @@ class WebhookHandler:
         track = TrackInfo(
             sid=event.track.sid if event.track and event.track.sid else "",
             mime_type=event.track.mime_type if event.track and event.track.mime_type else "",
-            source=event.track.source if event.track and event.track.source else "",
+            source=event.track.source if event.track and event.track.source else "UNKNOWN",
         )
 
         logger.info(f"  Room: {room_name}")

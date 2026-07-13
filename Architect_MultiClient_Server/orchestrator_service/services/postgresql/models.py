@@ -274,8 +274,15 @@ class OutboxTask(Base):
     __tablename__ = "outbox_tasks"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    use_case: Mapped[OutboxUseCase] = mapped_column(SQLEnum(OutboxUseCase), nullable=False)
-    status: Mapped[OutboxStatus] = mapped_column(SQLEnum(OutboxStatus), nullable=False, default=OutboxStatus.PENDING)
+    use_case: Mapped[OutboxUseCase] = mapped_column(
+        SQLEnum(OutboxUseCase, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
+    status: Mapped[OutboxStatus] = mapped_column(
+        SQLEnum(OutboxStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=OutboxStatus.PENDING,
+    )
 
     # TODO: Use `Any` type because `configs` has JSON format and complex value type hints
     configs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)  # type: ignore[explicit-any]

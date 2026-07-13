@@ -65,7 +65,7 @@ class PgOutboxRepository:
             logger.error(f"Failed to add task to outbox: {e}", exc_info=True)
             return False
 
-    async def fetch_pending_outbox_tasks(self, limit: int = 5, use_case: str | None = None) -> list[OutboxTask]:
+    async def fetch_pending_outbox_tasks(self, limit: int = 5, use_case: OutboxUseCase | None = None) -> list[OutboxTask]:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -89,14 +89,14 @@ class PgOutboxRepository:
     async def update_outbox_task_status(
         self,
         task_id: str,
-        status: str,
+        status: OutboxStatus,
         error_msg: str | None = None,
     ) -> bool:
         session_factory = get_session_factory()
         now = datetime.now(UTC)
         try:
             async with session_factory() as session:
-                update_values = {"status": status, "updated_at": now}
+                update_values: dict[str, OutboxStatus | datetime | str] = {"status": status, "updated_at": now}
                 if error_msg is not None:
                     update_values["last_error"] = error_msg
 
