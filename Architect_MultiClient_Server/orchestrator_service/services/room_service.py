@@ -59,7 +59,9 @@ class RoomService:
             rooms = await self.pg_transcript_repo.list_rooms(status, search, from_utc, to_utc, limit, skip)
             total = await self.pg_transcript_repo.count_rooms(status, search, from_utc, to_utc)
         else:
-            rooms = await self.pg_transcript_repo.list_rooms_by_user(auth.user_id, status, search, from_utc, to_utc, limit, skip)
+            rooms = await self.pg_transcript_repo.list_rooms_by_user(
+                auth.user_id, status, search, from_utc, to_utc, limit, skip
+            )
             total = await self.pg_transcript_repo.count_rooms_by_user(auth.user_id, status, search, from_utc, to_utc)
 
         return [self._serialize_room(room) for room in rooms], total
@@ -180,5 +182,7 @@ _room_service: RoomService | None = None
 def get_room_service() -> RoomService:
     global _room_service
     if _room_service is None:
-        _room_service = RoomService(pg_transcript_repo=get_pg_transcript_repository(), pg_summary_repo=get_pg_summary_repository())
+        _room_service = RoomService(
+            pg_transcript_repo=get_pg_transcript_repository(), pg_summary_repo=get_pg_summary_repository()
+        )
     return _room_service

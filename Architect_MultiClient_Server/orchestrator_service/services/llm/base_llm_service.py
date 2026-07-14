@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from orchestrator_service.config.application_config import LLMConfig
 
 T = TypeVar("T", bound=BaseModel)
+
+
 class BaseLLMService(ABC):
     """Base abstract class for all LLM service providers"""
 
@@ -23,8 +25,6 @@ class BaseLLMService(ABC):
         self.config = config
 
     @abstractmethod
-    async def generate(
-        self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int
-    ) -> T:
+    async def generate(self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int) -> T:
         """fuction doc"""
         pass

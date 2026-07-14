@@ -15,9 +15,7 @@ class LocalLLMService(BaseLLMService):
         clean_url = config.base_url.replace("/chat/completions", "").rstrip("/") if config.base_url else ""
         self.client = AsyncOpenAI(base_url=clean_url or None, api_key=config.api_key)
 
-    async def generate(
-        self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int
-    ) -> T:
+    async def generate(self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int) -> T:
         response = await self.client.beta.chat.completions.parse(
             model=model,
             messages=[{"role": "user", "content": prompt}],

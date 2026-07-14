@@ -79,9 +79,7 @@ class GeminiLLMService(BaseLLMService):
         super().__init__(config)
         self.client = genai.Client(api_key=config.api_key)
 
-    async def generate(
-        self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int
-    ) -> T:
+    async def generate(self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int) -> T:
         response = await self.client.aio.models.generate_content(
             model=model,
             contents=prompt,
