@@ -120,6 +120,7 @@ class UvicornErrorFilter(logging.Filter):
     Filter to rename 'uvicorn.error' logger name to 'uvicorn' in log records.
     This prevents confusing 'INFO' logs showing up as 'uvicorn.error'.
     """
+
     def filter(self, record: logging.LogRecord) -> bool:
         if record.name == "uvicorn.error":
             record.name = "uvicorn.info"
