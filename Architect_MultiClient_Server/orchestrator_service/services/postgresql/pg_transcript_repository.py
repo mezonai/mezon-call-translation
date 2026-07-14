@@ -11,7 +11,12 @@ from sqlalchemy import Select, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
-from orchestrator_service.services.postgresql.models import MetadataEvent, Room, RoomSummary, Track, TranscriptChunk
+from orchestrator_service.services.postgresql.models import (
+    MetadataEvent,
+    Room,
+    Track,
+    TranscriptChunk,
+)
 from orchestrator_service.utils.logger import get_logger
 
 _T = TypeVar("_T")
@@ -436,109 +441,6 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to count rooms by user: {e}")
             return 0
-
-    # ------------------------------------------------------------------
-    # SUMMARY
-    # ------------------------------------------------------------------
-
-    # TODO: Use `Any` type because `draft_summary` from generate_summary() in SummaryService has complex structure
-    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:  # type: ignore[explicit-any]
-        session_factory = get_session_factory()
-        room_uid = summary_data.get("room_id")
-        try:
-            async with session_factory() as session:
-                new_summary = RoomSummary(
-                    id=room_uid,
-                    room_id=room_uid,
-                    room_name=summary_data.get("room_name"),
-                    participants=summary_data.get("participants", []),
-                    summary_data=summary_data.get("summary_data", {}),
-                    messages=summary_data.get("messages", []),
-                    total_segments=summary_data.get("total_segments", 0),
-                    created_at=summary_data.get("created_at", datetime.now(UTC)),
-                )
-                session.add(new_summary)
-                await session.commit()
-                return str(room_uid) if room_uid else None
-        except Exception as e:
-            logger.error(f"Failed to save room summary: {e}")
-            return None
-
-    # TODO: Use `Any` type because `summary_data` from generate_summary() in SummaryService has complex structure
-    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:  # type: ignore[explicit-any]
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                stmt = (
-                    update(RoomSummary)
-                    .where(RoomSummary.room_id == room_id)
-                    .values(
-                        summary_data=summary_data,
-                    )
-                    .returning(RoomSummary.id)
-                )
-                res = await session.execute(stmt)
-                await session.commit()
-                return res.scalar_one_or_none() is not None
-        except Exception as e:
-            logger.error(f"Failed to update summary: {e}")
-            return False
-
-    async def get_summary_by_room_id(self, room_id: str) -> tuple[RoomSummary | None, Room | None]:
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                room = await session.get(Room, room_id)
-                if not room:
-                    return None, None
-
-                stmt = (
-                    select(RoomSummary)
-                    .where(RoomSummary.room_id == room_id)
-                    .order_by(RoomSummary.created_at.desc())
-                    .limit(1)
-                )
-                summary = await session.scalar(stmt)
-                return summary, room
-        except Exception as e:
-            logger.error(f"Failed to get summary by id: {e}")
-            return None, None
-
-    async def get_summary_by_room_name(
-        self,
-        room_name: str,
-        start_time: datetime | None = None,
-        end_time: datetime | None = None,
-        user_id: str | None = None,
-    ) -> tuple[list[RoomSummary], list[Room]]:
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                # 1. build query for rooms
-                room_stmt = select(Room).where(Room.room_name == room_name)
-                if start_time:
-                    room_stmt = room_stmt.where(Room.created_at >= start_time)
-                if end_time:
-                    room_stmt = room_stmt.where(Room.created_at <= end_time)
-                if user_id:
-                    room_stmt = room_stmt.where(Room.participants.contains([{"participant_identity": user_id}]))
-
-                room_stmt = room_stmt.order_by(Room.created_at.desc())
-                room_list = list((await session.scalars(room_stmt)).all())
-
-                if not room_list:
-                    return [], []
-
-                room_ids = [r.id for r in room_list]
-
-                # 2. get summaries
-                summary_stmt = select(RoomSummary).where(RoomSummary.room_id.in_(room_ids))
-                summary_list = list((await session.scalars(summary_stmt)).all())
-
-                return summary_list, room_list
-        except Exception as e:
-            logger.error(f"Failed to get summary by room name: {e}")
-            return [], []
 
     # ------------------------------------------------------------------
     # METADATA EVENTS

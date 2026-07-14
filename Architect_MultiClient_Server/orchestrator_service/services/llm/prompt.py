@@ -1,103 +1,239 @@
-from orchestrator_service.models.summary_models import ActionItemsResult, SummaryResult
+from orchestrator_service.models.summary_models import (
+    ActionItemsResult,
+    LightSummaryResult,
+    OverallContextResult,
+    SummaryResult,
+)
 
 
 def build_prompt_summary(conversation_text: str, language: str) -> str:
     return f"""
-# ROLE
-You are an AI assistant specialized in analyzing meeting and conversation transcripts across different domains (product, engineering, operations, support, business, education, etc.).
+# ROLE & OBJECTIVES
+You are a professional Project Manager & Technical Writer. Your task is to convert a meeting transcript into Meeting Minutes that strictly adhere to the provided JSON schema.
 
-Your responsibilities:
-- Always return output in {language}
-- Generate a comprehensive, well-structured meeting summary
-- Preserve strict factual accuracy
-- Preserve original participant identities exactly as provided
-- Preserve important details, names, technical terms, and specific information
-
-This summary will help team members:
-- Quickly review meeting outcomes without reading the full transcript
-- Understand detailed discussions, context, and conclusions
+# CRITICAL RULES
+1. Return ONLY a SINGLE valid JSON object, with absolutely no other text, characters, or markdown wrapping.
+2. Always write in {language}.
+3. Use only the exact `participant_id` values found in the transcript. Use "[Everyone]" only when a task is explicitly assigned to the entire team.
+4. Do not fabricate actions, assignees, or decisions.
+5. `next_focus` must contain ONLY CLEAR and EXPLICIT action items. If none are explicitly stated → return [].
+6. `detail` must be the most comprehensive section, capturing all critical information.
 
 # INPUT FORMAT
-The transcript is formatted as:
-    [timestamp] participant_identity: transcript_text
-
-Example:
-    [10:19:50] 1946168514767228920: We should migrate Redis next week.
-    [10:19:51] 1946168514767228922: I will handle the configuration.
-
-# CRITICAL RULES (NON-NEGOTIABLE)
-
-1. "participant_identity" is the exact identifier appearing after the timestamp.
-2. Do NOT rename, normalize, translate, or modify participant identities.
-3. Preserve original meaning. Do NOT add new information.
-4. Always write the summary in {language}, regardless of transcript language.
-5. Do not switch to any other language in the output.
-6. This request is for SUMMARY ONLY.
-7. Do NOT output any action item list.
-8. Return exactly these 5 top-level JSON fields: context, key_discussions, decisions, unresolved_issues, next_focus.
-9. Do NOT use markdown headings like "#" or "##" inside field values.
-10. Do NOT invent decisions, owners, deadlines, or unresolved issues.
-11. Transcript may contain ASR noise, filler words, repetitions, interruptions, or informal phrasing. Infer only what is high-confidence from context.
-12. If a detail cannot be grounded in transcript content, omit it.
+The transcription is a JSON array containing objects with "content", "timestamp", and "participant_id".
 
 # SUMMARY CONTENT REQUIREMENTS
 
-Return these fields with clear content:
+1. **context**: A concise 2-3 sentence summary stating the meeting's purpose and its most important outcome.
+2. **key_discussions**: An array of strings. Each item must follow the format "[Topic Title]\n2-4 sentence summary."
+3. **next_focus**: An array of clear action items. If there are none, return [].
+4. **detail**:
+   - The MOST DETAILED section of the document.
+   - Each element should be a bullet point grouped by logical topics.
+   - Priority structure: Who + Content + Decision + Technical details + Timestamp.
+   - Each bullet point can be 1-4 lines long.
 
-1. context
-- Purpose of the meeting
-- Overall mood (e.g., collaborative, urgent, exploratory)
-- Key speakers and their roles if identifiable
-- Write 2-3 concise sentences
-
-2. key_discussions
-- Main topics discussed in depth
-- Key issues, challenges, or questions raised
-- Different viewpoints, proposals, or ideas shared
-- Capture the substance of the discussion, not just topic names
-- Include important technical details, names, systems, or specific items mentioned
-- Write as cohesive paragraphs (NOT bullet points)
-- Do not overfit to one specific meeting style or domain
-
-3. decisions
-- Concrete decisions made
-- Agreements or resolutions reached
-- Include who made or confirmed the decision if mentioned
-- If no formal decisions were made, return empty string
-
-4. unresolved_issues
-- Parking lot items
-- Open questions
-- Problems discussed but not resolved
-- If none exist, return empty string
-
-5. next_focus
-- Expected outcomes after this conversation
-- Next steps at a high level
-- Priorities moving forward
-- Overall direction or conclusion
-- If none identified, return empty string
-
-# OUTPUT FORMAT
-Return ONLY valid JSON that matches this schema:
+# OUTPUT FORMAT (MANDATORY)
+Return only a valid JSON object matching the SummaryResult schema:
 ```json
 {SummaryResult.model_json_schema()}
 ```
 
-# CONVERSATION TRANSCRIPT
+# FEW-SHOT EXAMPLES
+
+**Example 1:**
+```json
+{{
+  "context": "Cuộc họp nhằm kiểm tra tiến độ Pull Request và Task, đồng thời thảo luận về cải thiện UI/UX.",
+  "key_discussions": [
+    "[Tiến độ Pull Request và Task]\\nĐã yêu cầu review khoảng 10 Pull Request. Một số task đã hoàn thành, một số bị tạm hoãn.",
+    "[Xác nhận hoàn thành Task]\\nNhiều task đã được giải quyết và được phê duyệt."
+  ],
+  "next_focus": [
+    "[1779509763680243712] Review 10 Pull Request.",
+    "[1779484387973271552] Tổng hợp ý kiến cải tiến UX và gửi cho [1779509763680243712]."
+  ],
+  "detail": [
+    "Yêu cầu review Pull Request: [1779484387973271552] đã chia sẻ màn hình và yêu cầu review khoảng 10 Pull Request (00:04:15).",
+    "Xác nhận hoàn thành Task: [1779484387973271552] báo cáo Task 52 và Task 10073 dự kiến hoàn thành (00:03:10).",
+    "Migration Lobby: Team thống nhất migrate từng bước từ V1 sang V2 (10:17:00)."
+  ]
+}}
+```
+
+**Example 2:**
+```json
+{{
+  "context": "Cuộc họp kỹ thuật xử lý sự cố hệ thống thanh toán trên Production.",
+  "key_discussions": [
+    "[Nguyên nhân gốc rễ]\\nLỗi do lệnh KEYS * trên Redis trong Middleware.",
+    "[Giải pháp]\\nChuyển sang Redis Set/Hash và triển khai Blue-Green Deployment."
+  ],
+  "next_focus": [
+    "[Backend Son] Viết tài liệu Post-mortem.",
+    "[DevOps Long] Giám sát hệ thống sau triển khai."
+  ],
+  "detail": [
+    "Xác nhận tình trạng lỗi: Hệ thống xuất hiện lỗi Connection Timeout (09:00:05).",
+    "Xác định vị trí lỗi: Backend Son chỉ ra request bị timeout ở tầng Middleware (09:02:42).",
+    "Giải pháp kỹ thuật: Team thống nhất thay thế KEYS * bằng SISMEMBER O(1) (09:08:02)."
+  ]
+}}
+```
+
+# IMPORTANT EXECUTION INSTRUCTION
+Strictly process the transcription below. Start directly with the JSON object.
+
+# DATA TO BE PROCESSED
 ---
 {conversation_text}
 ---
+"""
 
-# FINAL CHECK BEFORE RESPONDING
 
-* Is the output written in {language}?
-* Is the summary written with no markdown headings?
-* Are participant identities preserved exactly?
-* Are all 5 required JSON fields present?
-* Can decisions, unresolved_issues, and next_focus be empty strings if not applicable?
-* Are discussions written in paragraph form?
-* Is every key statement grounded in transcript evidence (not assumptions)?
+def build_light_summary_prompt(
+    conversation_str: str,
+    previous_context: str = "",
+    language: str = "Vietnamese",
+) -> str:
+    if previous_context.strip():
+        previous_block = f"""
+# PREVIOUS SECTION CONTEXT
+
+{previous_context}
+"""
+    else:
+        previous_block = "# PREVIOUS SECTION CONTEXT\n(No previous context - this is the first section.)"
+
+    return f"""
+# ROLE & OBJECTIVES
+You are a professional Project Manager & Technical Writer. Your task is to convert a meeting transcript into Meeting Minutes that strictly comply with the provided JSON schema.
+
+{previous_block}
+
+# INPUT TRANSCRIPT
+* You will receive a candidate transcript window from a long conversation.
+* Each message consists of the following fields: `content`, `timestamp`, `participant_id`
+
+---
+{conversation_str}
+---
+
+# YOUR TASK
+You need to perform 2 tasks within a single response:
+1. Detect the first completed topic starting from the first message of the input.
+2. Create a Light Summary ONLY for that completed topic.
+
+# BOUNDARY RULES
+1. The completed section must start from the first message in the input transcript.
+2. `end_message_time` is the `timestamp` of the last message belonging to the first completed topic.
+3. Do not cut too early just because of a short status update, an isolated action item, or a change of speaker.
+4. If the subsequent messages are still within the same workflow/topic, keep them within one completed section.
+5. Only end the section when there is a clear sign that the topic has concluded. (For example: encountering keywords like decision, conclusion, outcome, handoff; or a clear shift to a new, completely unrelated topic).
+6. If the first topic is incomplete, return `end_message_time: null` and empty summary fields.
+7. If there is a later topic after the completed topic, DO NOT summarize the later topic.
+8. Do not return information about incomplete tails or later topics.
+
+# SUMMARY RULES
+1. ONLY return a single valid JSON object, absolutely no other text, characters, or markdown wrapping.
+2. Always write in {language}.
+3. Use exactly the `participant_id` values found in the transcript. Only use "[Everyone]" when a task is explicitly assigned to the entire team.
+4. Do not invent actions, assignees, or decisions.
+5. `next_focus` MUST ONLY contain CLEAR and SPECIFIC action items. If none are explicitly stated → return [].
+6. `detail` must be the most comprehensive part, capturing all important information.
+7. Use PREVIOUS CONTEXT to understand the flow, but only summarize the completed section within the current input.
+
+# SUMMARY CONTENT REQUIREMENTS
+1. **context**: A concise 1-3 sentence summary stating the purpose of the meeting and its most important outcome.
+2. **key_discussions**: An array of strings. Each item must follow the format "[Topic Title]\n1-3 sentence summary."
+3. **next_focus**: An array of clear action items. If none, return [].
+4. **detail**:
+* The MOST DETAILED part of the document.
+* Each element should be a bullet point grouped by logical topics.
+* Preferred structure: Who + Content + Decision + Technical details + Timestamp.
+* Each bullet point can be 1-4 lines long.
+
+# OUTPUT FORMAT
+Only return a valid JSON object according to the schema:
+```json
+{LightSummaryResult.model_json_schema()}
+```
+
+# FEW-SHOT EXAMPLES
+
+## Example 1 - Complete topic, later topic starts after boundary
+```json
+{{
+  "end_message_time": "00:12:45",
+  "context": "The section focuses on the Pull Request Review and the status of related tasks.",
+  "key_discussions": [
+    "[Review Pull Request]\nThe team discussed the number of PRs to review, completed tasks, and blockers to be addressed next."
+  ],
+  "next_focus": [
+    "[1779509763680243712] Review the remaining Pull Requests."
+  ],
+  "detail": [
+    "[1779484387973271552] requested a PR review and shared task status (00:04:15).",
+    "The team agreed to continue reviewing the remaining PRs before moving on to the deployment topic (00:12:45)."
+  ]
+}}
+```
+
+## Example 2 - First topic is not complete
+```json
+{{
+  "end_message_time": null,
+  "context": "",
+  "key_discussions": [],
+  "next_focus": [],
+  "detail": []
+}}
+```
+
+## Example 3 - Do not over-split small updates
+```json
+{{
+  "end_message_time": "00:28:00",
+  "context": "The section summarizes sprint progress, UI bugs, and testing blockers.",
+  "key_discussions": [
+    "[Sprint Progress]\nThe team updated multiple minor tasks related to UI, bug fixes, and testing within the same workflow."
+  ],
+  "next_focus": [],
+  "detail": [
+    "Participants took turns updating task status, UI bugs, and testing notes within the same discussion thread (00:20:00-00:28:00)."
+  ]
+}}
+```
+
+# EXECUTION
+Analyze the input transcript and only return the JSON object.
+"""
+
+
+def build_overall_context_prompt(section_context_str: str, language: str = "Vietnamese") -> str:
+    return f"""
+# ROLE
+You are a professional Project Manager and Technical Writer.
+
+# YOUR TASK
+Create an overall context summary for the entire transcript based on section contexts.
+
+# INPUT SECTION CONTEXTS
+---
+{section_context_str}
+---
+
+# RULES
+1. Always write in {language}.
+2. Summarize the whole transcript in 3-5 sentences.
+3. Do not invent new decisions, actions, or details.
+4. ONLY return a single valid JSON object, absolutely no other text, characters, or markdown wrapping.
+
+# OUTPUT FORMAT
+Only return a valid JSON object according to the schema:
+```json
+{OverallContextResult.model_json_schema()}
+```
 """
 
 

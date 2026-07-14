@@ -13,6 +13,9 @@ class RetryType(StrEnum):
     ACTION_ITEMS = "action_items"
     ALL = "all"
 
+    SECTIONS = "sections"
+    OVERALL_CONTEXT = "overall_context"
+
 
 class ActionItemResult(BaseModel):  # type: ignore[explicit-any]
     participant_identity: str = Field(description="Participant identity")
@@ -21,14 +24,27 @@ class ActionItemResult(BaseModel):  # type: ignore[explicit-any]
 
 class SummaryResult(BaseModel):  # type: ignore[explicit-any]
     context: str = Field(description="Meeting context and participant permissions")
-    key_discussions: str = Field(description="Main discussion details and viewpoints")
-    decisions: str = Field(description="Concrete decisions or agreements")
-    unresolved_issues: str = Field(description="Open issues and parking lot items")
-    next_focus: str = Field(description="Expected next steps and priorities")
+    key_discussions: list[str] = Field(description="Main discussion details and viewpoints")
+    next_focus: list[str] = Field(description="Expected next steps and priorities")
+    detail: list[str] = Field(description="Detailed discussion points, decisions, and technical details")
 
 
 class ActionItemsResult(BaseModel):  # type: ignore[explicit-any]
     action_items: list[ActionItemResult] = Field(description="List of action items for all participants")
+
+
+class LightSummaryResult(BaseModel):  # type: ignore[explicit-any]
+    end_message_time: str | None = Field(
+        description="Timestamp of the last message in the completed section. Null if no completed topic yet."
+    )
+    context: str = Field(description="Meeting purpose, context, and most important outcome")
+    key_discussions: list[str] = Field(description="Main discussion details and viewpoints")
+    next_focus: list[str] = Field(description="Explicit action items")
+    detail: list[str] = Field(description="Detailed discussion points, decisions, and technical details")
+
+
+class OverallContextResult(BaseModel):  # type: ignore[explicit-any]
+    context: str = Field(description="Meeting purpose, context, and most important outcome")
 
 
 class SummaryActionItemsResult(BaseModel):  # type: ignore[explicit-any]

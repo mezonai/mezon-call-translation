@@ -8,8 +8,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
-from orchestrator_service.services.postgresql.pg_transcript_repository import (
-    PgTranscriptRepository,
+from orchestrator_service.services.postgresql.pg_summary_repository import (
+    PgSummaryRepository,
 )
 from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
@@ -29,7 +29,8 @@ async def get_summary_by_room_name(
     """
     Get summary by room name.
     """
-    pg_repo = PgTranscriptRepository()
+    pg_repo = PgSummaryRepository()
+
     summaries, rooms = await pg_repo.get_summary_by_room_name(room_name, start_time, end_time)
 
     room_dict = {str(r.id): r for r in rooms}
@@ -59,7 +60,7 @@ async def get_summary_by_room_id(
     """
     Get summary by room id.
     """
-    pg_repo = PgTranscriptRepository()
+    pg_repo = PgSummaryRepository()
     summary, room = await pg_repo.get_summary_by_room_id(room_id)
 
     if not summary or not room:
