@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Any
+from typing import Any, TypeVar
 
 from google import genai
 from pydantic import BaseModel
@@ -10,6 +10,7 @@ from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
+T = TypeVar("T", bound=BaseModel)
 
 
 # TODO: Use `Any` type because `json.loads()` parses dynamic structures from LLM responses that are not pre-defined.
@@ -79,8 +80,8 @@ class GeminiLLMService(BaseLLMService):
         self.client = genai.Client(api_key=config.api_key)
 
     async def generate(
-        self, prompt: str, response_model: type[BaseModel], model: str, temperature: float, timeout: int
-    ) -> BaseModel:
+        self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int
+    ) -> T:
         response = await self.client.aio.models.generate_content(
             model=model,
             contents=prompt,

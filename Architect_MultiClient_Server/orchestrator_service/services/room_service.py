@@ -12,6 +12,10 @@ from orchestrator_service.services.livekit_client import (
     get_livekit_service,
 )
 from orchestrator_service.services.postgresql.models import Room
+from orchestrator_service.services.postgresql.pg_summary_repository import (
+    PgSummaryRepository,
+    get_pg_summary_repository,
+)
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
@@ -23,8 +27,9 @@ logger = get_logger(__name__)
 
 
 class RoomService:
-    def __init__(self, pg_repo: PgTranscriptRepository):
-        self.pg_repo = pg_repo
+    def __init__(self, pg_transcript_repo: PgTranscriptRepository, pg_summary_repo: PgSummaryRepository):
+        self.pg_transcript_repo = pg_transcript_repo
+        self.pg_summary_repo = pg_summary_repo
 
     # TODO: Use `Any` type because `serialized_room` is defined by complex types
     def _serialize_room(self, room: Room) -> dict[str, Any]:  # type: ignore[explicit-any]
@@ -51,23 +56,23 @@ class RoomService:
         skip: int,
     ) -> tuple[list[dict[str, Any]], int]:
         if auth.can_view_all_rooms:
-            rooms = await self.pg_repo.list_rooms(status, search, from_utc, to_utc, limit, skip)
-            total = await self.pg_repo.count_rooms(status, search, from_utc, to_utc)
+            rooms = await self.pg_transcript_repo.list_rooms(status, search, from_utc, to_utc, limit, skip)
+            total = await self.pg_transcript_repo.count_rooms(status, search, from_utc, to_utc)
         else:
-            rooms = await self.pg_repo.list_rooms_by_user(auth.user_id, status, search, from_utc, to_utc, limit, skip)
-            total = await self.pg_repo.count_rooms_by_user(auth.user_id, status, search, from_utc, to_utc)
+            rooms = await self.pg_transcript_repo.list_rooms_by_user(auth.user_id, status, search, from_utc, to_utc, limit, skip)
+            total = await self.pg_transcript_repo.count_rooms_by_user(auth.user_id, status, search, from_utc, to_utc)
 
         return [self._serialize_room(room) for room in rooms], total
 
     # TODO: Use `Any` type because the return value has a tuple of complex types (call _serialize_room())
     async def get_room_by_id(self, room_id: str, auth: AuthContext) -> dict[str, Any]:  # type: ignore[explicit-any]
         if not auth.can_view_all_rooms:
-            has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
+            has_access = await self.pg_transcript_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room {room_id}")
                 raise HTTPException(status_code=403, detail="You don't have access to this room")
 
-        room = await self.pg_repo.get_room_by_id(room_id)
+        room = await self.pg_transcript_repo.get_room_by_id(room_id)
         if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
 
@@ -76,13 +81,13 @@ class RoomService:
     # TODO: Use `Any` type because the return dictionary is defined by complex types
     async def get_room_statistics(self, room_id: str, auth: AuthContext) -> dict[str, Any]:  # type: ignore[explicit-any]
         if not auth.can_view_all_rooms:
-            has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
+            has_access = await self.pg_transcript_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
                 raise HTTPException(status_code=403, detail="You don't have access to this room")
 
-        summary, room = await self.pg_repo.get_summary_by_room_id(room_id)
-        tracks = await self.pg_repo.get_tracks_by_room(room_id)
+        summary, room = await self.pg_summary_repo.get_summary_by_room_id(room_id)
+        tracks = await self.pg_transcript_repo.get_tracks_by_room(room_id)
         if not room:
             raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
 
@@ -109,12 +114,12 @@ class RoomService:
 
     async def get_audio_info(self, room_id: str, auth: AuthContext) -> list[AudioTrackInfo]:
         if not auth.can_view_all_rooms:
-            has_access = await self.pg_repo.user_has_room_access(room_id, auth.user_id)
+            has_access = await self.pg_transcript_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
                 raise HTTPException(status_code=403, detail="You don't have access to this room")
 
-        tracks = await self.pg_repo.get_tracks_by_room(room_id)
+        tracks = await self.pg_transcript_repo.get_tracks_by_room(room_id)
         if not tracks:
             raise HTTPException(
                 status_code=404,
@@ -152,7 +157,7 @@ class RoomService:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     async def list_participants(self, room_id: str) -> list[ParticipantBasicInfo]:
-        room = await self.pg_repo.get_room_by_id(room_id)
+        room = await self.pg_transcript_repo.get_room_by_id(room_id)
         if not room:
             raise HTTPException(status_code=404, detail="Room not found")
 
@@ -175,5 +180,5 @@ _room_service: RoomService | None = None
 def get_room_service() -> RoomService:
     global _room_service
     if _room_service is None:
-        _room_service = RoomService(pg_repo=get_pg_transcript_repository())
+        _room_service = RoomService(pg_transcript_repo=get_pg_transcript_repository(), pg_summary_repo=get_pg_summary_repository())
     return _room_service

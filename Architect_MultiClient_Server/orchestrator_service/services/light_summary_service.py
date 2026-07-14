@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 from tenacity import (
@@ -21,7 +22,7 @@ from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
 
 logger = get_logger(__name__)
-
+T = TypeVar("T", bound=BaseModel)
 
 class LightSummaryService:
     def __init__(self, pg_repo: PgSummaryRepository, llm_service: BaseLLMService):
@@ -29,7 +30,7 @@ class LightSummaryService:
         self.llm_service = llm_service
         self.config = get_config().light_summary
 
-    async def _call_llm(self, prompt: str, response_model: type[BaseModel]) -> BaseModel:
+    async def _call_llm(self, prompt: str, response_model: type[T]) -> T:
         @retry(
             stop=stop_after_attempt(self.config.retry_count),
             wait=wait_exponential(multiplier=1, min=10, max=60),
@@ -37,7 +38,7 @@ class LightSummaryService:
             before_sleep=before_sleep_log(logger, logging.ERROR),
             reraise=True,
         )
-        async def _inner() -> BaseModel:
+        async def _inner() -> T:
             return await self.llm_service.generate(
                 prompt=prompt,
                 response_model=response_model,
@@ -48,15 +49,15 @@ class LightSummaryService:
 
         return await _inner()
 
-    async def process_room(
+    async def process_room( # type: ignore[explicit-any]
         self,
         room_id: str,
         room_name: str,
-        messages: list[dict],
+        messages: list[dict[str, Any]],
         language: str = "Vietnamese",
         target_duration: int | None = None,
         resume_from_section: int = 0,
-    ):
+    ) -> int:
         working_messages = messages
 
         start_idx = 0
@@ -190,14 +191,14 @@ class LightSummaryService:
 
         return await self.process_room(
             room_id=room_id,
-            room_name=room.room_name,
-            messages=messages,
+            room_name=room.room_name or "Unknow",
+            messages=messages or [],
             language=language,
             target_duration=target_duration,
             resume_from_section=resume_from_section,
         )
 
-    def get_candidate_end_idx(self, messages: list[dict], start_idx: int, duration_min: int) -> int:
+    def get_candidate_end_idx(self, messages: list[dict[Any, Any]], start_idx: int, duration_min: int) -> int: # type: ignore[explicit-any]
         start_time = parse_timestamp_to_seconds(messages[start_idx]["timestamp"])
         target_sec = start_time + duration_min * 60
 
@@ -208,8 +209,8 @@ class LightSummaryService:
 
         return min(end_idx, len(messages))
 
-    def find_end_idx_by_time(
-        self, messages: list[dict], start_idx: int, candidate_end_idx: int, end_message_time: str
+    def find_end_idx_by_time( # type: ignore[explicit-any]
+        self, messages: list[dict[str, Any]], start_idx: int, candidate_end_idx: int, end_message_time: str
     ) -> int:
         for idx in range(candidate_end_idx - 1, start_idx - 1, -1):
             if messages[idx].get("timestamp") == end_message_time:

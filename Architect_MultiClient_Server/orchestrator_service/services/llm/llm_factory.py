@@ -29,6 +29,7 @@ def create_llm_service(provider: str, model: str, temperature: float) -> BaseLLM
     """
     provider = provider.lower()
     config = get_config()
+    service: BaseLLMService
 
     if provider == LLMProvider.GEMINI:
         llm_config = config.gemini_llm_config

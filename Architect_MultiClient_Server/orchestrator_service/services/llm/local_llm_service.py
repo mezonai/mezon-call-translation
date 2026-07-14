@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from orchestrator_service.config.application_config import LLMConfig
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 
-TModel = TypeVar("TModel", bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
 
 
 class LocalLLMService(BaseLLMService):
@@ -16,8 +16,8 @@ class LocalLLMService(BaseLLMService):
         self.client = AsyncOpenAI(base_url=clean_url or None, api_key=config.api_key)
 
     async def generate(
-        self, prompt: str, response_model: type[BaseModel], model: str, temperature: float, timeout: int
-    ) -> BaseModel:
+        self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int
+    ) -> T:
         response = await self.client.beta.chat.completions.parse(
             model=model,
             messages=[{"role": "user", "content": prompt}],
@@ -25,4 +25,9 @@ class LocalLLMService(BaseLLMService):
             temperature=temperature,
             timeout=timeout,
         )
-        return response.choices[0].message.parsed
+        parsed_result = response.choices[0].message.parsed
+
+        if parsed_result is None:
+            raise ValueError("Empty response text from Local LLM")
+
+        return parsed_result

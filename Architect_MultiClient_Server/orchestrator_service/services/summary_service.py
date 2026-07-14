@@ -5,7 +5,7 @@ Service for generating room summaries
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, TypeVar
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -36,6 +36,7 @@ from orchestrator_service.services.llm.prompt import (
     build_prompt_action_items,
     build_prompt_summary,
 )
+from orchestrator_service.services.postgresql.models import RoomSectionSummary, TranscriptChunk
 from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository, get_pg_outbox_repository
 from orchestrator_service.services.postgresql.pg_summary_repository import (
     PgSummaryRepository,
@@ -49,6 +50,7 @@ from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
+T = TypeVar("T", bound=BaseModel)
 
 
 class SummaryService:
@@ -76,12 +78,12 @@ class SummaryService:
         self,
         llm_service: BaseLLMService,
         prompt: str,
-        response_model: type[BaseModel],
+        response_model: type[T],
         model: str,
         timeout: int,
         temperature: float,
         max_attempts: int,
-    ) -> BaseModel:
+    ) -> T:
         @retry(
             stop=stop_after_attempt(max_attempts),
             wait=wait_exponential(multiplier=1, min=10, max=60),
@@ -89,14 +91,14 @@ class SummaryService:
             before_sleep=before_sleep_log(logger, logging.ERROR),
             reraise=True,
         )
-        async def _inner() -> BaseModel:
+        async def _inner() -> T:
             return await llm_service.generate(
                 prompt=prompt, response_model=response_model, model=model, temperature=temperature, timeout=timeout
             )
 
         return await _inner()
 
-    async def _call_llm_with_fallback(self, prompt: str, response_model: type[BaseModel]) -> BaseModel:
+    async def _call_llm_with_fallback(self, prompt: str, response_model: type[T]) -> T:
         try:
             return await self._call_llm(
                 llm_service=self.llm_service,
@@ -121,8 +123,8 @@ class SummaryService:
                 )
             raise
 
-    def merge_section_summaries(self, sections: list[dict], overall_context: str) -> dict:
-        final_summary = {"context": overall_context, "key_discussions": [], "next_focus": [], "detail": []}
+    def merge_section_summaries(self, sections: list[RoomSectionSummary], overall_context: str) -> dict[str, str | list[str]]:
+        final_summary: dict[str, str | list[str]] = {"context": overall_context, "key_discussions": [], "next_focus": [], "detail": []}
 
         for sec in sections:
             summary = sec.summary_data or {}
@@ -130,11 +132,11 @@ class SummaryService:
             for key in ["key_discussions", "next_focus", "detail"]:
                 items = summary.get(key, [])
                 if isinstance(items, list):
-                    final_summary[key].extend(items)
+                    final_summary[key].extend(items) # type: ignore[union-attr]
 
         return final_summary
 
-    async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:
+    async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]: # type: ignore[explicit-any]
         sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)
 
         if not sections:
@@ -161,7 +163,7 @@ class SummaryService:
             logger.error(f"Failed to generate overall summary for room_id={room_id}: {e}")
             raise ValueError(f"Failed to generate overall summary for room_id={room_id}: {e}") from e
 
-    async def retry_overall_summary_only(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:
+    async def retry_overall_summary_only(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]: # type: ignore[explicit-any]
         """Chỉ retry generate_overall_summary, không chạy lại sections."""
         sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)
         if not sections:
@@ -172,7 +174,7 @@ class SummaryService:
 
         return final_summary
 
-    async def generate_summary(self, room_id: str) -> dict[str, Any] | None:
+    async def generate_summary(self, room_id: str) -> dict[str, Any] | None: # type: ignore[explicit-any]
         """
         Generate a summary for the given room_id.
 
@@ -210,7 +212,7 @@ class SummaryService:
         track_ids = [str(track.id) for track in tracks]
         all_chunks = await self.pg_transcript_repo.get_chunks_by_track_ids(track_ids, sorted_by_index=True)
 
-        chunks_by_track = {tid: [] for tid in track_ids}
+        chunks_by_track: dict[str, list[TranscriptChunk]] = {tid: [] for tid in track_ids}
         for chunk in all_chunks:
             tid = str(chunk.track_ref_id)
             if tid in chunks_by_track:
@@ -467,6 +469,8 @@ class SummaryService:
         summary_doc, room_doc = await self.pg_summary_repo.get_summary_by_room_id(room_id)
         if not summary_doc:
             raise ValueError(f"Not found summary_doc for room_id: {room_id}")
+        if not room_doc:
+            raise ValueError(f"Not found room_doc for room_id: {room_id}")
 
         messages = summary_doc.messages or []
         if not messages:
@@ -551,12 +555,12 @@ class SummaryService:
 
                 elif retry_type == RetryType.ACTION_ITEMS:
                     prompt = build_prompt_action_items(full_text, self.config.language)
-                    result = await self._call_llm_with_fallback(prompt, ActionItemsResult)
+                    action_result = await self._call_llm_with_fallback(prompt, ActionItemsResult)
 
                     summary_data = {
                         "summary": existing_summary,
                         "action_items": {
-                            item.participant_identity: item.participant_actions for item in result.action_items
+                            item.participant_identity: item.participant_actions for item in action_result.action_items
                         },
                     }
 
