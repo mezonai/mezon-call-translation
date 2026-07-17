@@ -59,7 +59,7 @@ def _create_file_handler(log_file: str) -> TimedRotatingFileHandler:
         encoding="utf-8",
         utc=False,
     )
-    handler.suffix = "%Y%m%d"  # suffix for the rotated file before renaming
+    handler.suffix = "%Y%m%d"
     handler.namer = _namer
     return handler
 
