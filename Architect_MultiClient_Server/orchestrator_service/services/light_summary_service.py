@@ -9,7 +9,6 @@ from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
-    wait_exponential,
 )
 
 from orchestrator_service.config.application_config import get_config
@@ -19,6 +18,7 @@ from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.prompt import build_light_summary_prompt
 from orchestrator_service.services.postgresql.pg_summary_repository import PgSummaryRepository
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.retry_utils import WaitCustomStrategy
 from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
 
 logger = get_logger(__name__)
@@ -33,8 +33,8 @@ class LightSummaryService:
 
     async def _call_llm(self, prompt: str, response_model: type[T]) -> T:
         @retry(
-            stop=stop_after_attempt(self.config.retry_count),
-            wait=wait_exponential(multiplier=1, min=10, max=60),
+            stop=stop_after_attempt(self.config.retry_count * 3),
+            wait=WaitCustomStrategy(),
             retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
             before_sleep=before_sleep_log(logger, logging.ERROR),
             reraise=True,
@@ -97,7 +97,12 @@ class LightSummaryService:
                     messages=working_messages, start_idx=start_idx, duration_min=current_duration
                 )
 
-                candidate_messages = working_messages[start_idx:candidate_end_idx]
+                if len(working_messages) - candidate_end_idx < 5:
+                    candidate_end_idx = len(working_messages)
+                    candidate_messages = working_messages[start_idx:]
+                else:
+                    candidate_messages = working_messages[start_idx:candidate_end_idx]
+
                 transcript_str = json.dumps(candidate_messages, ensure_ascii=False, indent=2)
 
                 try:
@@ -114,18 +119,26 @@ class LightSummaryService:
                 if end_message_time is not None:
                     break
 
+                if candidate_end_idx == len(working_messages):
+                    logger.info("Reached the end of index; forcing completion of the final section.")
+                    break
+
                 logger.info(f"Topic incomplete within {current_duration} mins, extending window...")
                 current_duration += extend_min
 
-            if not summary_result or summary_result.end_message_time is None:
+            if not summary_result or (summary_result.end_message_time is None and candidate_end_idx < len(working_messages)):
                 raise ValueError(f"Cannot find completed topic from start_idx={start_idx}")
 
-            end_idx = self.find_end_idx_by_time(
-                messages=working_messages,
-                start_idx=start_idx,
-                candidate_end_idx=candidate_end_idx,
-                end_message_time=summary_result.end_message_time,
-            )
+            if candidate_end_idx == len(working_messages):
+                end_idx = len(working_messages) - 1
+            else:
+                assert summary_result.end_message_time is not None
+                end_idx = self.find_end_idx_by_time(
+                    messages=working_messages,
+                    start_idx=start_idx,
+                    candidate_end_idx=candidate_end_idx,
+                    end_message_time=summary_result.end_message_time,
+                )
 
             section_messages = working_messages[start_idx : end_idx + 1]
 
