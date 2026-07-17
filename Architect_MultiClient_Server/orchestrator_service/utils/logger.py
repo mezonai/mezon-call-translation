@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime
+import re
 from logging.handlers import TimedRotatingFileHandler
 
 from orchestrator_service.config.application_config import get_config
@@ -16,6 +16,26 @@ log_level_str = get_config().logger.level
 log_level = getattr(logging, log_level_str, logging.INFO)
 
 
+class FormattedRotatingFileHandler(TimedRotatingFileHandler):
+    def getFilesToDelete(self):  # noqa: N802
+        dir_name, _ = os.path.split(self.baseFilename)
+        file_names = os.listdir(dir_name)
+        result = []
+
+        # Create a regex that matches the format: mezon-orchestrator-service-YYYYMMDD.log
+        pattern = re.compile(rf"^{SERVICE_NAME}-\d{{8}}\.log$")
+
+        for file_name in file_names:
+            if pattern.match(file_name):
+                result.append(os.path.join(dir_name, file_name))
+
+        if len(result) < self.backupCount:
+            return []
+        else:
+            result.sort()  # Sort by date
+            return result[: len(result) - self.backupCount]
+
+
 def _namer(default_name: str) -> str:
     """
     Custom namer for TimedRotatingFileHandler.
@@ -25,18 +45,13 @@ def _namer(default_name: str) -> str:
     parts = default_name.rsplit(".", 1)
     if len(parts) == 2:
         date_str = parts[1]
-        try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
-            formatted = dt.strftime("%Y%m%d")
-            return os.path.join(dir_name, f"{SERVICE_NAME}-{formatted}.log")
-        except ValueError:
-            pass
+        return os.path.join(dir_name, f"{SERVICE_NAME}-{date_str}.log")
     return default_name
 
 
 def _create_file_handler(log_file: str) -> TimedRotatingFileHandler:
-    """Create a TimedRotatingFileHandler that rotates at 17:00."""
-    handler = TimedRotatingFileHandler(
+    """Create a TimedRotatingFileHandler that rotates at 00:00"""
+    handler = FormattedRotatingFileHandler(
         filename=log_file,
         when="midnight",
         interval=1,
@@ -44,7 +59,7 @@ def _create_file_handler(log_file: str) -> TimedRotatingFileHandler:
         encoding="utf-8",
         utc=False,
     )
-    handler.suffix = "%Y-%m-%d"  # suffix for the rotated file before renaming
+    handler.suffix = "%Y%m%d"  # suffix for the rotated file before renaming
     handler.namer = _namer
     return handler
 
