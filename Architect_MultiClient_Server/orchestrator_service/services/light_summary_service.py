@@ -18,6 +18,11 @@ from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.prompt import build_light_summary_prompt
 from orchestrator_service.services.postgresql.pg_summary_repository import PgSummaryRepository
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.participant_identity import (
+    generate_participant_alias_maps,
+    mask_messages,
+    sanitize_and_decode_list,
+)
 from orchestrator_service.utils.retry_utils import WaitCustomStrategy
 from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
 
@@ -54,11 +59,18 @@ class LightSummaryService:
         room_id: str,
         room_name: str,
         messages: list[dict[str, Any]],
+        id_to_alias: dict[str, str] | None = None,
+        alias_to_id: dict[str, str] | None = None,
         language: str = "Vietnamese",
         target_duration: int | None = None,
         resume_from_section: int = 0,
     ) -> int:
-        working_messages = messages
+        id_to_alias = id_to_alias or {}
+        alias_to_id = alias_to_id or {}
+
+        real_messages = messages
+        working_messages = mask_messages(messages, id_to_alias)
+
 
         start_idx = 0
         section_index = 1
@@ -83,7 +95,8 @@ class LightSummaryService:
                         break
                 section_index = last_section.section_index + 1
 
-                previous_context = json.dumps(last_section.messages, ensure_ascii=False, indent=2)
+                masked_prev = mask_messages(last_section.messages or [], id_to_alias)
+                previous_context = json.dumps(masked_prev, ensure_ascii=False, indent=2)
                 logger.info(
                     f"Resuming from section {section_index}, start_idx={start_idx}, previous_context loaded from DB"
                 )
@@ -105,8 +118,22 @@ class LightSummaryService:
                 transcript_str = json.dumps(candidate_messages, ensure_ascii=False, indent=2)
 
                 try:
-                    prompt = build_light_summary_prompt(transcript_str, previous_context, language)
+                    is_final = (candidate_end_idx == len(working_messages))
+                    prompt = build_light_summary_prompt(
+                        conversation_str=transcript_str,
+                        previous_context=previous_context,
+                        language=language,
+                        is_final_section=is_final
+                    )
                     summary_result = await self._call_llm(prompt, LightSummaryResult)
+
+                    if summary_result.key_discussions:
+                        summary_result.key_discussions = sanitize_and_decode_list(summary_result.key_discussions, alias_to_id, require_brackets=True)
+                    if summary_result.next_focus:
+                        summary_result.next_focus = sanitize_and_decode_list(summary_result.next_focus, alias_to_id, require_brackets=True)
+                    if summary_result.detail:
+                        summary_result.detail = sanitize_and_decode_list(summary_result.detail, alias_to_id, require_brackets=False)
+
                 except Exception as api_err:
                     logger.error(
                         f"LLM Error after all retries at start_idx={start_idx} room={room_id}. Error: {api_err}"
@@ -139,7 +166,7 @@ class LightSummaryService:
                     end_message_time=summary_result.end_message_time,
                 )
 
-            section_messages = working_messages[start_idx : end_idx + 1]
+            section_messages = real_messages[start_idx : end_idx + 1]
 
             summary_to_save = {
                 "context": summary_result.context or "",
@@ -148,7 +175,8 @@ class LightSummaryService:
                 "detail": summary_result.detail or [],
             }
 
-            previous_context = json.dumps(section_messages, ensure_ascii=False, indent=2)
+            masked_section_messages = mask_messages(section_messages, id_to_alias)
+            previous_context = json.dumps(masked_section_messages, ensure_ascii=False, indent=2)
 
             section_start_time = section_messages[0]["timestamp"]
             section_end_time = section_messages[-1]["timestamp"]
@@ -198,6 +226,7 @@ class LightSummaryService:
             raise ValueError(f"Not found room summary doc for room: {room_id}")
 
         messages = summary.messages
+        id_to_alias, alias_to_id = generate_participant_alias_maps(summary.participants or [])
 
         if resume_from_section == 0:
             await self.pg_repo.delete_section_summaries_by_room_id(room_id)
@@ -206,6 +235,8 @@ class LightSummaryService:
             room_id=room_id,
             room_name=room.room_name or "Unknow",
             messages=messages or [],
+            id_to_alias=id_to_alias,
+            alias_to_id=alias_to_id,
             language=language,
             target_duration=target_duration,
             resume_from_section=resume_from_section,

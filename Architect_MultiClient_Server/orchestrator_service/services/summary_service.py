@@ -46,6 +46,10 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import (
     get_pg_transcript_repository,
 )
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.participant_identity import (
+    generate_participant_alias_maps,
+    sanitize_and_decode_list,
+)
 from orchestrator_service.utils.retry_utils import WaitCustomStrategy
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
@@ -257,15 +261,14 @@ class SummaryService:
 
         # 4. Collect Full Text and Participants
         unique_participants = {seg["participant_id"] for seg in all_segments}
-
+        id_to_alias, alias_to_id = generate_participant_alias_maps(list(unique_participants))
         turns = []
         current_turn = None
 
         for seg in all_segments:
-            participant = seg["participant_id"]
+            real_p = str(seg["participant_id"])
             text = seg["text"]
-
-            if current_turn and current_turn["participant_id"] == participant:
+            if current_turn and current_turn["participant_id"] == real_p:
                 current_turn["content"] += f"\n{text}"
             else:
                 if current_turn:
@@ -273,10 +276,9 @@ class SummaryService:
                 dt = datetime.fromtimestamp(seg["timestamp"] / 1_000_000_000)
                 current_turn = {
                     "timestamp": dt.strftime("%H:%M:%S"),
-                    "participant_id": participant,
+                    "participant_id": real_p,
                     "content": text,
                 }
-
         if current_turn:
             turns.append(current_turn)
 
@@ -301,7 +303,10 @@ class SummaryService:
         # full_text is used for LLM summarization.
         # It can be a long string, but we keep it as is for now since it's needed for the summary generation step.
         # In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
-        full_text = "\n".join(f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in turns)
+        full_text = "\n".join(
+            f"[{t['timestamp']}] {id_to_alias.get(t['participant_id'], t['participant_id'])}: {t['content']}"
+            for t in turns
+        )
 
         draft_summary: dict[str, Any] = {  # type: ignore[explicit-any]
             "room_id": room_id,
@@ -399,11 +404,11 @@ class SummaryService:
             if summary_data_result:
                 summary_parts.append(f"Context\n{summary_data_result.context}")
                 if summary_data_result.key_discussions:
-                    summary_parts.append("Key Discussions\n" + "\n".join(summary_data_result.key_discussions))
+                    summary_data_result.key_discussions = sanitize_and_decode_list(summary_data_result.key_discussions, alias_to_id, require_brackets=True)
                 if summary_data_result.next_focus:
-                    summary_parts.append("Next Focus\n" + "\n".join(summary_data_result.next_focus))
+                    summary_data_result.next_focus = sanitize_and_decode_list(summary_data_result.next_focus, alias_to_id, require_brackets=True)
                 if summary_data_result.detail:
-                    summary_parts.append("Detail\n" + "\n".join(summary_data_result.detail))
+                    summary_data_result.detail = sanitize_and_decode_list(summary_data_result.detail, alias_to_id, require_brackets=False)
 
             summary_data = {
                 "summary": "\n\n".join(summary_parts) if summary_parts else "",

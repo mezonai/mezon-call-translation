@@ -89,6 +89,7 @@ class GeminiLLMService(BaseLLMService):
                 "response_mime_type": "application/json",
                 "response_json_schema": response_model.model_json_schema(),
                 "temperature": temperature,
+                "top_p": 0.4
             },
         )
         if response.text is None:
