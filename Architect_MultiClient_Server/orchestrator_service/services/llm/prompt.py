@@ -82,7 +82,7 @@ Return only a valid JSON object matching the SummaryResult schema:
 }}
 
 ## Example 3 - Architecture Discussion with Team Tasks, Unknown Assignee & Deadlines
-{
+{{
   "context": "Discussion on database migration plan from PostgreSQL to Qdrant Vector Store and CI/CD security scanning protocols.",
   "key_discussions": [
     "[Database Migration]\nEvaluated Vector Search performance and agreed on the data migration roadmap to Qdrant to optimize RAG retrieval speed.",
@@ -98,7 +98,7 @@ Return only a valid JSON object matching the SummaryResult schema:
     "[user-2] noted the need to audit open ports and excessive IAM permissions on GCP (09:34:31).",
     "The team agreed that all members must review the new Vector Store architecture document on Notion prior to next week's sync (09:40:15)."
   ]
-}
+}}
 
 # EXECUTION
 Analyze the input transcript and only return the JSON object.
@@ -224,10 +224,10 @@ Only return a valid JSON object according to the schema:
     "[user-2] Share screenshots of the guest invitation UI design with management for review (09:30:54)."
   ],
   "detail": [
-    "Progress Report: [user-1] reported that security documents were sent and is currently working on the Filter UI (09:26:01).",
-    "Deployment Caution: [user-3] advised caution during deployments due to upcoming client holiday schedules (09:28:15).",
-    "Feature Proposal: [user-2] proposed sending direct invitation links to guest users to avoid email setup complexity (09:29:06).",
-    "UI Review Request: [user-3] requested [user-2] to share screenshots of the proposed invitation UI for review (09:30:54)."
+    "[user-1] reported that security documents were sent and is currently working on the Filter UI (09:26:01).",
+    "[user-3] advised caution during deployments due to upcoming client holiday schedules (09:28:15).",
+    "[user-2] proposed sending direct invitation links to guest users to avoid email setup complexity (09:29:06).",
+    "[user-3] requested [user-2] to share screenshots of the proposed invitation UI for review (09:30:54)."
   ]
 }}
 

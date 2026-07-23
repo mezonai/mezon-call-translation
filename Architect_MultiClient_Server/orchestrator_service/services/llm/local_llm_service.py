@@ -16,13 +16,14 @@ class LocalLLMService(BaseLLMService):
         self.client = AsyncOpenAI(base_url=clean_url or None, api_key=config.api_key)
 
     async def generate(
-        self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int
+        self, prompt: str, response_model: type[T], model: str, temperature: float, top_p: float, timeout: int
     ) -> T:
         response = await self.client.beta.chat.completions.parse(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             response_format=response_model,
             temperature=temperature,
+            top_p=top_p,
             timeout=timeout,
         )
         parsed_result = response.choices[0].message.parsed

@@ -80,7 +80,7 @@ class GeminiLLMService(BaseLLMService):
         self.client = genai.Client(api_key=config.api_key)
 
     async def generate(
-        self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int
+        self, prompt: str, response_model: type[T], model: str, temperature: float, top_p: float, timeout: int
     ) -> T:
         response = await self.client.aio.models.generate_content(
             model=model,
@@ -89,7 +89,7 @@ class GeminiLLMService(BaseLLMService):
                 "response_mime_type": "application/json",
                 "response_json_schema": response_model.model_json_schema(),
                 "temperature": temperature,
-                "top_p": 0.4
+                "top_p": top_p
             },
         )
         if response.text is None:

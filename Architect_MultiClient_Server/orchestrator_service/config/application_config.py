@@ -439,6 +439,7 @@ class SummaryConfig:
     provider: str = "local"
     model: str = "Qwen3.5-35B-A3B"
     temperature: float = 0.4
+    top_p: float = 0.4
     timeout: int = 120
     language: str = "Vietnamese"
     retry_count: int = 3
@@ -447,6 +448,7 @@ class SummaryConfig:
     fallback_provider: str = "gemini"
     fallback_model: str = "gemma-4-31b-it"
     fallback_temperature: float = 0.4
+    fallback_top_p: float = 0.4
     fallback_timeout: int = 120
     fallback_retry_count: int = 3
 
@@ -458,6 +460,7 @@ class SummaryConfig:
             provider=os.getenv("SUMMARY_LLM_PROVIDER", "local"),
             model=os.getenv("SUMMARY_LLM_MODEL", "Qwen3.5-35B-A3B"),
             temperature=float(os.getenv("SUMMARY_LLM_TEMPERATURE", "0.4")),
+            top_p=float(os.getenv("SUMMARY_LLM_TOP_P", "0.4")),
             timeout=int(os.getenv("SUMMARY_LLM_TIMEOUT", "120")),
             language=os.getenv("SUMMARY_LANGUAGE", "Vietnamese"),
             retry_count=int(os.getenv("SUMMARY_LLM_RETRY_COUNT", "3")),
@@ -465,6 +468,7 @@ class SummaryConfig:
             fallback_provider=os.getenv("SUMMARY_LLM_FALLBACK_PROVIDER", "gemini"),
             fallback_model=os.getenv("SUMMARY_LLM_FALLBACK_MODEL", "gemma-4-31b-it"),
             fallback_temperature=float(os.getenv("SUMMARY_LLM_FALLBACK_TEMPERATURE", "0.4")),
+            fallback_top_p=float(os.getenv("SUMMARY_LLM_FALLBACK_TOP_P", "0.4")),
             fallback_timeout=int(os.getenv("SUMMARY_LLM_FALLBACK_TIMEOUT", "120")),
             fallback_retry_count=int(os.getenv("SUMMARY_LLM_FALLBACK_RETRY_COUNT", "3")),
             threshold_min=int(os.getenv("SUMMARY_THRESHOLD_MIN", "20")),
@@ -485,6 +489,7 @@ class LightSummaryConfig:
     provider: str = "gemini"
     model: str = "gemma-4-31b-it"
     temperature: float = 0.4
+    top_p: float = 0.4
     timeout: int = 120
     retry_count: int = 3
 
@@ -497,7 +502,8 @@ class LightSummaryConfig:
             provider=os.getenv("LIGHT_SUMMARY_LLM_PROVIDER", "gemini"),
             model=os.getenv("LIGHT_SUMMARY_LLM_MODEL", "gemma-4-31b-it"),
             temperature=float(os.getenv("LIGHT_SUMMARY_LLM_TEMPERATURE", "0.4")),
-            timeout=int(os.getenv("LIGHT_SUMMARY_TIMEOUT", 120)),
+            top_p=float(os.getenv("LIGHT_SUMMARY_LLM_TOP_P", "0.4")),
+            timeout=int(os.getenv("LIGHT_SUMMARY_LLM_TIMEOUT", 120)),
             retry_count=int(os.getenv("LIGHT_SUMMARY_LLM_RETRY_COUNT", "3")),
         )
 

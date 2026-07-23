@@ -49,6 +49,7 @@ class LightSummaryService:
                 response_model=response_model,
                 model=self.config.model,
                 temperature=self.config.temperature,
+                top_p=self.config.top_p,
                 timeout=self.config.timeout,
             )
 

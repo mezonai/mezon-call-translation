@@ -86,6 +86,7 @@ class SummaryService:
         model: str,
         timeout: int,
         temperature: float,
+        top_p: float,
         max_attempts: int,
     ) -> T:
         @retry(
@@ -97,7 +98,7 @@ class SummaryService:
         )
         async def _inner() -> T:
             return await llm_service.generate(
-                prompt=prompt, response_model=response_model, model=model, temperature=temperature, timeout=timeout
+                prompt=prompt, response_model=response_model, model=model, temperature=temperature, top_p=top_p, timeout=timeout
             )
 
         return await _inner()
@@ -110,6 +111,7 @@ class SummaryService:
                 response_model=response_model,
                 model=self.config.model,
                 temperature=self.config.temperature,
+                top_p=self.config.top_p,
                 timeout=self.config.timeout,
                 max_attempts=self.config.retry_count,
             )
@@ -122,6 +124,7 @@ class SummaryService:
                     response_model=response_model,
                     model=self.config.fallback_model,
                     temperature=self.config.fallback_temperature,
+                    top_p=self.config.fallback_top_p,
                     timeout=self.config.fallback_timeout,
                     max_attempts=self.config.fallback_retry_count,
                 )
@@ -403,12 +406,22 @@ class SummaryService:
             summary_parts = []
             if summary_data_result:
                 summary_parts.append(f"Context\n{summary_data_result.context}")
+
                 if summary_data_result.key_discussions:
                     summary_data_result.key_discussions = sanitize_and_decode_list(summary_data_result.key_discussions, alias_to_id, require_brackets=True)
+                    if summary_data_result.key_discussions:
+                        summary_parts.append("Key Discussions\n" + "\n".join(summary_data_result.key_discussions))
+
                 if summary_data_result.next_focus:
                     summary_data_result.next_focus = sanitize_and_decode_list(summary_data_result.next_focus, alias_to_id, require_brackets=True)
+                    if summary_data_result.next_focus:
+                        summary_parts.append("Next Focus\n" + "\n".join(summary_data_result.next_focus))
+
                 if summary_data_result.detail:
                     summary_data_result.detail = sanitize_and_decode_list(summary_data_result.detail, alias_to_id, require_brackets=False)
+                    if summary_data_result.detail:
+                        summary_parts.append("Detail\n" + "\n".join(summary_data_result.detail))
+
 
             summary_data = {
                 "summary": "\n\n".join(summary_parts) if summary_parts else "",
@@ -481,7 +494,12 @@ class SummaryService:
         if not messages:
             raise ValueError(f"messages is empty for room_id: {room_id}")
 
-        full_text = "\n".join(f"[{t['timestamp']}] {t['participant_id']}: {t['content']}" for t in messages)
+        unique_participants = {t["participant_id"] for t in messages}
+        id_to_alias, alias_to_id = generate_participant_alias_maps(list(unique_participants))
+        full_text = "\n".join(
+            f"[{t['timestamp']}] {id_to_alias.get(str(t['participant_id']), str(t['participant_id']))}: {t['content']}"
+            for t in messages
+        )
 
         total_duration = 0.0
         if room_doc.created_at and room_doc.finalized_at:
@@ -543,13 +561,19 @@ class SummaryService:
                     summary_parts = [f"Context\n{result.context}"]
 
                     if result.key_discussions:
-                        summary_parts.append("Key Discussions\n" + "\n".join(result.key_discussions))
+                        result.key_discussions = sanitize_and_decode_list(result.key_discussions, alias_to_id, require_brackets=True)
+                        if result.key_discussions:
+                            summary_parts.append("Key Discussions\n" + "\n".join(result.key_discussions))
 
                     if result.next_focus:
-                        summary_parts.append("Next Focus\n" + "\n".join(result.next_focus))
+                        result.next_focus = sanitize_and_decode_list(result.next_focus, alias_to_id, require_brackets=True)
+                        if result.next_focus:
+                            summary_parts.append("Next Focus\n" + "\n".join(result.next_focus))
 
                     if result.detail:
-                        summary_parts.append("Detail\n" + "\n".join(result.detail))
+                        result.detail = sanitize_and_decode_list(result.detail, alias_to_id, require_brackets=False)
+                        if result.detail:
+                            summary_parts.append("Detail\n" + "\n".join(result.detail))
 
                     summary_data = {
                         "summary": "\n\n".join(summary_parts),
@@ -582,11 +606,20 @@ class SummaryService:
                     summary_parts = [f"Context\n{summary_result.context}"]
 
                     if summary_result.key_discussions:
-                        summary_parts.append("Key Discussions\n" + "\n".join(summary_result.key_discussions))
+                        summary_result.key_discussions = sanitize_and_decode_list(summary_result.key_discussions, alias_to_id, require_brackets=True)
+                        if summary_result.key_discussions:
+                            summary_parts.append("Key Discussions\n" + "\n".join(summary_result.key_discussions))
+
                     if summary_result.next_focus:
-                        summary_parts.append("Next Focus\n" + "\n".join(summary_result.next_focus))
+                        summary_result.next_focus = sanitize_and_decode_list(summary_result.next_focus, alias_to_id, require_brackets=True)
+                        if summary_result.next_focus:
+                            summary_parts.append("Next Focus\n" + "\n".join(summary_result.next_focus))
+
                     if summary_result.detail:
-                        summary_parts.append("Detail\n" + "\n".join(summary_result.detail))
+                        summary_result.detail = sanitize_and_decode_list(summary_result.detail, alias_to_id, require_brackets=False)
+                        if summary_result.detail:
+                            summary_parts.append("Detail\n" + "\n".join(summary_result.detail))
+
 
                     summary_data = {
                         "summary": "\n\n".join(summary_parts),
@@ -708,16 +741,16 @@ def get_summary_service() -> SummaryService:
         pg_transcript_repo = get_pg_transcript_repository()
         pg_summary_repo = get_pg_summary_repository()
 
-        primary_llm = create_llm_service(config.summary.provider, config.summary.model, config.summary.temperature)
+        primary_llm = create_llm_service(config.summary.provider, config.summary.model, config.summary.temperature, config.summary.top_p)
 
         fallback_llm = None
         if config.summary.fallback_enable:
             fallback_llm = create_llm_service(
-                config.summary.fallback_provider, config.summary.fallback_model, config.summary.fallback_temperature
+                config.summary.fallback_provider, config.summary.fallback_model, config.summary.fallback_temperature, config.summary.fallback_top_p
             )
 
         light_summary_llm = create_llm_service(
-            config.light_summary.provider, config.light_summary.model, config.light_summary.temperature
+            config.light_summary.provider, config.light_summary.model, config.light_summary.temperature, config.light_summary.top_p
         )
         light_summary_service = LightSummaryService(pg_summary_repo, light_summary_llm)
         _summary_service = SummaryService(
