@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from orchestrator_service.config.application_config import LLMConfig
 
 T = TypeVar("T", bound=BaseModel)
+
+
 class BaseLLMService(ABC):
     """Base abstract class for all LLM service providers"""
 

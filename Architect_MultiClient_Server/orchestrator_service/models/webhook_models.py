@@ -52,13 +52,13 @@ class WebhookRoom(BaseModel):  # type: ignore[explicit-any]
 class WebhookParticipant(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="ignore")
     identity: str | None = None
-    disconnect_reason: str | None = None
+    disconnect_reason: str | None = Field(default=None, alias="disconnectReason")
 
 
 class WebhookTrack(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="ignore")
     sid: str | None = None
-    mime_type: str | None = None
+    mime_type: str | None = Field(default=None, alias="mimeType")
     source: str | None = None
 
 
@@ -68,14 +68,14 @@ class WebhookEgressFile(BaseModel):  # type: ignore[explicit-any]
     filepath: str | None = None
     location: str | None = None
     duration: int | str | None = None
-    started_at: int | str | None = None
-    ended_at: int | str | None = None
+    started_at: int | str | None = Field(default=None, alias="startedAt")
+    ended_at: int | str | None = Field(default=None, alias="endedAt")
 
 
 class WebhookEgressInfo(BaseModel):  # type: ignore[explicit-any]
     model_config = ConfigDict(extra="ignore")
-    egress_id: str | None = None
-    room_name: str | None = None
+    egress_id: str | None = Field(default=None, alias="egressId")
+    room_name: str | None = Field(default=None, alias="roomName")
     status: str | None = None
     error: str | None = None
     file: WebhookEgressFile | None = None
@@ -90,4 +90,4 @@ class LiveKitWebhookEvent(BaseModel):  # type: ignore[explicit-any]
     room: WebhookRoom | None = None
     participant: WebhookParticipant | None = None
     track: WebhookTrack | None = None
-    egress_info: WebhookEgressInfo | None = None
+    egress_info: WebhookEgressInfo | None = Field(default=None, alias="egressInfo")

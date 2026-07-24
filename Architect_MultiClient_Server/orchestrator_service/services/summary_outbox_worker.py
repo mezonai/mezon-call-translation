@@ -125,7 +125,7 @@ class SummaryOutboxWorker:
     async def _process_batch(self) -> None:
         """Fetch and process up to 5 pending tasks sorted by oldest first."""
         tasks = await self.outbox_repo.fetch_pending_outbox_tasks(
-            limit=self._batch_limit, use_case=OutboxUseCase.RETRY_SUMMARIZATION.value
+            limit=self._batch_limit, use_case=OutboxUseCase.RETRY_SUMMARIZATION
         )
         if not tasks:
             logger.info("No pending outbox tasks found to process.")
@@ -143,30 +143,26 @@ class SummaryOutboxWorker:
                 logger.error(f"No handler registered for outbox use_case: {use_case}")
                 await self.outbox_repo.update_outbox_task_status(
                     task_id=str(task_id),
-                    status=OutboxStatus.FAILED.value,
+                    status=OutboxStatus.FAILED,
                     error_msg=f"No handler registered for use_case: {use_case}",
                 )
                 continue
 
             try:
                 # Mark as processing
-                await self.outbox_repo.update_outbox_task_status(
-                    task_id=str(task_id), status=OutboxStatus.PROCESSING.value
-                )
+                await self.outbox_repo.update_outbox_task_status(task_id=str(task_id), status=OutboxStatus.PROCESSING)
 
                 # Execute handler
                 await handler(configs)
 
                 # Mark as completed on success
-                await self.outbox_repo.update_outbox_task_status(
-                    task_id=str(task_id), status=OutboxStatus.COMPLETED.value
-                )
+                await self.outbox_repo.update_outbox_task_status(task_id=str(task_id), status=OutboxStatus.COMPLETED)
                 logger.info(f"✅ Outbox task {task_id} completed successfully")
 
             except Exception as e:
                 # Task fails completely and is marked as failed on the first attempt
                 await self.outbox_repo.update_outbox_task_status(
-                    task_id=str(task_id), status=OutboxStatus.FAILED.value, error_msg=str(e)
+                    task_id=str(task_id), status=OutboxStatus.FAILED, error_msg=str(e)
                 )
                 logger.error(f"❌ Outbox task {task_id} failed and marked as 'failed': {e}", exc_info=True)
 

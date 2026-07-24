@@ -29,6 +29,7 @@ from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
+
 class LightSummaryService:
     def __init__(self, pg_repo: PgSummaryRepository, llm_service: BaseLLMService):
         self.pg_repo = pg_repo
@@ -55,7 +56,7 @@ class LightSummaryService:
 
         return await _inner()
 
-    async def process_room( # type: ignore[explicit-any]
+    async def process_room(  # type: ignore[explicit-any]
         self,
         room_id: str,
         room_name: str,
@@ -153,7 +154,9 @@ class LightSummaryService:
                 logger.info(f"Topic incomplete within {current_duration} mins, extending window...")
                 current_duration += extend_min
 
-            if not summary_result or (summary_result.end_message_time is None and candidate_end_idx < len(working_messages)):
+            if not summary_result or (
+                summary_result.end_message_time is None and candidate_end_idx < len(working_messages)
+            ):
                 raise ValueError(f"Cannot find completed topic from start_idx={start_idx}")
 
             if candidate_end_idx == len(working_messages):
@@ -243,7 +246,7 @@ class LightSummaryService:
             resume_from_section=resume_from_section,
         )
 
-    def get_candidate_end_idx(self, messages: list[dict[Any, Any]], start_idx: int, duration_min: int) -> int: # type: ignore[explicit-any]
+    def get_candidate_end_idx(self, messages: list[dict[Any, Any]], start_idx: int, duration_min: int) -> int:  # type: ignore[explicit-any]
         start_time = parse_timestamp_to_seconds(messages[start_idx]["timestamp"])
         target_sec = start_time + duration_min * 60
 
@@ -254,7 +257,7 @@ class LightSummaryService:
 
         return min(end_idx, len(messages))
 
-    def find_end_idx_by_time( # type: ignore[explicit-any]
+    def find_end_idx_by_time(  # type: ignore[explicit-any]
         self, messages: list[dict[str, Any]], start_idx: int, candidate_end_idx: int, end_message_time: str
     ) -> int:
         for idx in range(candidate_end_idx - 1, start_idx - 1, -1):
