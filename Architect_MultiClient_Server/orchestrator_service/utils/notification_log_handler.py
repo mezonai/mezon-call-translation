@@ -8,9 +8,8 @@ from typing import Any
 import httpx
 
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.utils.logger import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # Module-level thread pool — shared across all NotificationHandler instances
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="notification")
