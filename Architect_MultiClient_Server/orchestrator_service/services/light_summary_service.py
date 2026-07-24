@@ -126,7 +126,9 @@ class LightSummaryService:
                 logger.info(f"Topic incomplete within {current_duration} mins, extending window...")
                 current_duration += extend_min
 
-            if not summary_result or (summary_result.end_message_time is None and candidate_end_idx < len(working_messages)):
+            if not summary_result or (
+                summary_result.end_message_time is None and candidate_end_idx < len(working_messages)
+            ):
                 raise ValueError(f"Cannot find completed topic from start_idx={start_idx}")
 
             if candidate_end_idx == len(working_messages):

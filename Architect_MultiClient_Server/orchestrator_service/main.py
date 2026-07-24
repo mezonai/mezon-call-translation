@@ -29,7 +29,6 @@ from orchestrator_service.api.webhook_api import (
 )
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
-from orchestrator_service.services.notification_worker import NotificationWorker
 from orchestrator_service.services.postgresql.database import dispose_engine, get_engine
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.services.redis.redis_save_transcription_service import (
@@ -101,11 +100,6 @@ async def lifespan(app: FastAPI):
         await save_transcription_service.start()
         logger.info("✅ Save Transcription consumer service started")
 
-        # Initialize Notification worker
-        notification_worker = NotificationWorker()
-        await notification_worker.start()
-        logger.info("✅ Notification worker started")
-
         # Initialize Summary Outbox worker
         summary_outbox_worker = SummaryOutboxWorker()
         await summary_outbox_worker.start()
@@ -121,18 +115,9 @@ async def lifespan(app: FastAPI):
     # We just need to cleanup resources after generators are cancelled
     logger.info("🛑 FastAPI shutting down, cleaning up resources...")
 
-    # Step 0: Stop notification worker
+    # Step 0: Stop summary outbox worker
     try:
-        logger.info("Step 0/7: Stopping Notification worker...")
-        notification_worker = NotificationWorker()
-        await notification_worker.stop()
-        logger.info("✅ Notification worker stopped")
-    except Exception as e:
-        logger.error(f"Error stopping Notification worker: {e}")
-
-    # Stop summary outbox worker
-    try:
-        logger.info("Stopping Summary Outbox worker...")
+        logger.info("Step 0/7: Stopping Summary Outbox worker...")
         summary_outbox_worker = SummaryOutboxWorker()
         await summary_outbox_worker.stop()
         logger.info("✅ Summary Outbox worker stopped")
