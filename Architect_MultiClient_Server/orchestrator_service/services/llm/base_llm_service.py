@@ -25,6 +25,8 @@ class BaseLLMService(ABC):
         self.config = config
 
     @abstractmethod
-    async def generate(self, prompt: str, response_model: type[T], model: str, temperature: float, timeout: int) -> T:
+    async def generate(
+        self, prompt: str, response_model: type[T], model: str, temperature: float, top_p: float, timeout: int
+    ) -> T:
         """fuction doc"""
         pass
