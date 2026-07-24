@@ -8,6 +8,9 @@ from typing import Any
 import httpx
 
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Module-level thread pool — shared across all NotificationHandler instances
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="notification")
@@ -38,6 +41,7 @@ def _send_webhook(title: str, message: dict[str, Any]) -> None:  # type: ignore[
         webhook_token = config.webhook_token
 
         if not channel_id or not webhook_token:
+            logger.warning("❌ Missing notification config: channel_id or webhook_token not configured")
             return
 
         webhook_url = f"{config.webhook_endpoint}/{channel_id}/{webhook_token}"
@@ -49,13 +53,18 @@ def _send_webhook(title: str, message: dict[str, Any]) -> None:  # type: ignore[
         }
 
         client = _get_http_client()
-        client.post(
+        response = client.post(
             webhook_url,
             json=payload,
             headers={"Content-Type": "application/json"},
         )
-    except Exception:
-        pass
+
+        if response.status_code in [200, 201, 202, 204]:
+            logger.info(f"✅ Webhook sent successfully: {response.status_code}")
+        else:
+            logger.warning(f"⚠️ Webhook returned status {response.status_code}: {response.text}")
+    except Exception as e:
+        logger.warning(f"❌ Error sending webhook: {e}", exc_info=True)
 
 
 class NotificationHandler(logging.Handler):
