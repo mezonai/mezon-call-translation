@@ -20,6 +20,7 @@ from orchestrator_service.services.postgresql.pg_summary_repository import PgSum
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
     generate_participant_alias_maps,
+    group_next_focus_by_user,
     mask_messages,
     sanitize_and_decode_list,
 )
@@ -172,7 +173,7 @@ class LightSummaryService:
             summary_to_save = {
                 "context": summary_result.context or "",
                 "key_discussions": summary_result.key_discussions or [],
-                "next_focus": summary_result.next_focus or [],
+                "next_focus": group_next_focus_by_user(summary_result.next_focus) if summary_result.next_focus else {},
                 "detail": summary_result.detail or [],
             }
 

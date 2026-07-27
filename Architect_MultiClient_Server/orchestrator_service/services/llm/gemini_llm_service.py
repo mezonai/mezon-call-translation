@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from typing import Any, TypeVar
@@ -82,15 +83,18 @@ class GeminiLLMService(BaseLLMService):
     async def generate(
         self, prompt: str, response_model: type[T], model: str, temperature: float, top_p: float, timeout: int
     ) -> T:
-        response = await self.client.aio.models.generate_content(
-            model=model,
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-                "response_json_schema": response_model.model_json_schema(),
-                "temperature": temperature,
-                "top_p": top_p
-            },
+        response = await asyncio.wait_for(
+            self.client.aio.models.generate_content(
+                model=model,
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_json_schema": response_model.model_json_schema(),
+                    "temperature": temperature,
+                    "top_p": top_p
+                },
+            ),
+            timeout=timeout
         )
         if response.text is None:
             raise ValueError("Empty response text from Gemini API")
