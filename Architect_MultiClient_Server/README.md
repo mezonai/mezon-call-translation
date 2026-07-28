@@ -51,7 +51,14 @@ ruff check --select SIM . > ruff_sim_errors.txt             # Check for specific
 
 MyPy verifies type hints across the services. To prevent namespace collisions (e.g., shadowing external libraries) and `[import-not-found]` errors, you must **ALWAYS run MyPy from the root directory** (`Architect_MultiClient_Server`).
 
-#### Check a specific service or module (Recommended approach):
+#### Running locally (within a specific service, recommended approach):
+You can run MyPy directly inside any service directory, which will detect the local configurations:
+```bash
+cd orchestrator_service
+mypy .
+```
+
+#### Check a specific service or module:
 To ensure MyPy correctly understands the package structure and resolves absolute imports, use the -p (package) or -m (module) flag. Do not change directories.
 ```bash
 # Make sure you are in the root directory: Architect_MultiClient_Server/

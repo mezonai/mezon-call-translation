@@ -156,7 +156,7 @@ class SummaryService:
 
         return final_summary
 
-    async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]: # type: ignore[explicit-any]
+    async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:  # type: ignore[explicit-any]
         sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)
 
         if not sections:
@@ -183,7 +183,7 @@ class SummaryService:
             logger.error(f"Failed to generate overall summary for room_id={room_id}: {e}")
             raise ValueError(f"Failed to generate overall summary for room_id={room_id}: {e}") from e
 
-    async def retry_overall_summary_only(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]: # type: ignore[explicit-any]
+    async def retry_overall_summary_only(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:  # type: ignore[explicit-any]
         """Chỉ retry generate_overall_summary, không chạy lại sections."""
         sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)
         if not sections:
@@ -194,7 +194,7 @@ class SummaryService:
 
         return final_summary
 
-    async def generate_summary(self, room_id: str) -> dict[str, Any] | None: # type: ignore[explicit-any]
+    async def generate_summary(self, room_id: str) -> dict[str, Any] | None:  # type: ignore[explicit-any]
         """
         Generate a summary for the given room_id.
 

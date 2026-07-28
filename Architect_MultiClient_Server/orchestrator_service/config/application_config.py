@@ -343,11 +343,7 @@ class NotificationConfig:
     """Configuration for sending notifications via Mezon webhooks"""
 
     enabled: bool = True
-    stream_key: str = "notifications"  # Redis stream key
-    group_name: str = "notification-workers"  # Consumer group
     webhook_endpoint: str = "https://webhook.mezon.ai/webhooks"
-    max_retries: int = 3
-    retry_delay_sec: int = 5
     channel_id: str = ""  # Target Mezon channel ID
     webhook_token: str = ""  # Webhook authentication token
 
@@ -356,11 +352,7 @@ class NotificationConfig:
         """Create Notification config from environment variables"""
         return cls(
             enabled=os.getenv("NOTIFICATION_ENABLED", "true").lower() == "true",
-            stream_key=os.getenv("NOTIFICATION_STREAM_KEY", "notifications"),
-            group_name=os.getenv("NOTIFICATION_GROUP_NAME", "notification-workers"),
             webhook_endpoint=os.getenv("NOTIFICATION_WEBHOOK_ENDPOINT", "https://your_web_hook/webhooks"),
-            max_retries=int(os.getenv("NOTIFICATION_MAX_RETRIES", "3")),
-            retry_delay_sec=int(os.getenv("NOTIFICATION_RETRY_DELAY_SEC", "5")),
             channel_id=os.getenv("NOTIFICATION_CHANNEL_ID", ""),
             webhook_token=os.getenv("NOTIFICATION_WEBHOOK_TOKEN", ""),
         )

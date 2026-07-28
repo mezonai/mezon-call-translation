@@ -36,7 +36,7 @@ class PgSummaryRepository:
     # SUMMARY
     # ------------------------------------------------------------------
 
-    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None: # type: ignore[explicit-any]
+    async def save_room_summary(self, summary_data: dict[str, Any]) -> str | None:  # type: ignore[explicit-any]
         session_factory = get_session_factory()
         room_uid = summary_data.get("room_id")
         try:
@@ -58,7 +58,7 @@ class PgSummaryRepository:
             logger.error(f"Failed to save room summary: {e}")
             return None
 
-    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool: # type: ignore[explicit-any]
+    async def update_room_summary(self, room_id: str, summary_data: dict[str, Any]) -> bool:  # type: ignore[explicit-any]
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
@@ -137,7 +137,7 @@ class PgSummaryRepository:
     # LIGHT SUMMARY
     # ------------------------------------------------------------------
 
-    async def upsert_room_section_summary(self, record: dict[str, Any]) -> bool: # type: ignore[explicit-any]
+    async def upsert_room_section_summary(self, record: dict[str, Any]) -> bool:  # type: ignore[explicit-any]
         session_factory = get_session_factory()
 
         try:
@@ -196,7 +196,7 @@ class PgSummaryRepository:
             logger.error(f"Failed to get section summaries by room id: {e}")
             return []
 
-    async def update_room_summary_data(self, room_id: str, summary_data: dict[str, Any]) -> bool: # type: ignore[explicit-any]
+    async def update_room_summary_data(self, room_id: str, summary_data: dict[str, Any]) -> bool:  # type: ignore[explicit-any]
         return await self.update_room_summary(room_id, summary_data)
 
     async def delete_section_summaries_by_room_id(self, room_id: str) -> bool:
