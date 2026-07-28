@@ -48,6 +48,7 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import (
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
     generate_participant_alias_maps,
+    group_next_focus_by_user,
     sanitize_and_decode_list,
 )
 from orchestrator_service.utils.retry_utils import WaitCustomStrategy
@@ -130,25 +131,42 @@ class SummaryService:
                 )
             raise
 
-    def merge_section_summaries(
-        self, sections: list[RoomSectionSummary], overall_context: str
-    ) -> dict[str, str | list[str]]:
-        final_summary: dict[str, str | list[str]] = {
-            "context": overall_context,
+    def merge_section_summaries(self, sections: list[RoomSectionSummary], overall_context: str) -> dict[str, Any]: # type: ignore[explicit-any]
+        raw_data: dict[str, Any] = {  # type: ignore[explicit-any]
             "key_discussions": [],
-            "next_focus": [],
-            "detail": [],
+            "next_focus": {},
+            "detail": []
         }
 
         for sec in sections:
             summary = sec.summary_data or {}
 
-            for key in ["key_discussions", "next_focus", "detail"]:
+            for key in ["key_discussions", "detail"]:
                 items = summary.get(key, [])
                 if isinstance(items, list):
-                    final_summary[key].extend(items)  # type: ignore[union-attr]
+                    raw_data[key].extend(items)
 
-        return final_summary
+            sec_next_focus = summary.get("next_focus", {})
+            if isinstance(sec_next_focus, dict):
+                for user_id, tasks in sec_next_focus.items():
+                    if user_id not in raw_data["next_focus"]:
+                        raw_data["next_focus"][user_id] = []
+                    raw_data["next_focus"][user_id].extend(tasks)
+
+        summary_parts = []
+        if overall_context:
+            summary_parts.append(f"Context\n{overall_context}")
+
+        if raw_data["key_discussions"]:
+            summary_parts.append("Key Discussions\n" + "\n".join(raw_data["key_discussions"]))
+
+        if raw_data["detail"]:
+            summary_parts.append("Detail\n" + "\n".join(raw_data["detail"]))
+
+        return {
+            "summary": "\n\n".join(summary_parts) if summary_parts else "",
+            "action_items": raw_data["next_focus"]
+        }
 
     async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:  # type: ignore[explicit-any]
         sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)
@@ -432,6 +450,7 @@ class SummaryService:
 
             summary_data = {
                 "summary": "\n\n".join(summary_parts) if summary_parts else "",
+                "next_focus": group_next_focus_by_user(summary_data_result.next_focus) if summary_data_result else {},
                 "action_items": {
                     item.participant_identity: item.participant_actions for item in action_result.action_items
                 }
@@ -554,6 +573,7 @@ class SummaryService:
             # Extract existing summary_data to preserve fields that aren't being retried
             existing_summary_data = summary_doc.summary_data or {}
             existing_summary = existing_summary_data.get("summary", "")
+            existing_next_focus = existing_summary_data.get("next_focus", {})
             existing_action_items = existing_summary_data.get("action_items", {})
 
             logger.info(f"Retrying LLM with type '{retry_type.value}' for room {room_id} ({len(full_text)} chars)")
@@ -584,6 +604,7 @@ class SummaryService:
 
                     summary_data = {
                         "summary": "\n\n".join(summary_parts),
+                        "next_focus": group_next_focus_by_user(result.next_focus) if result else {},
                         "action_items": existing_action_items,
                     }
 
@@ -595,6 +616,7 @@ class SummaryService:
 
                     summary_data = {
                         "summary": existing_summary,
+                        "next_focus": existing_next_focus,
                         "action_items": {
                             item.participant_identity: item.participant_actions for item in action_result.action_items
                         },
@@ -630,6 +652,7 @@ class SummaryService:
 
                     summary_data = {
                         "summary": "\n\n".join(summary_parts),
+                        "next_focus": group_next_focus_by_user(summary_result.next_focus) if summary_result else {},
                         "action_items": {
                             item.participant_identity: item.participant_actions for item in action_result.action_items
                         },

@@ -5,6 +5,7 @@ Participant identity utilities
 import copy
 import json
 import re
+from collections import defaultdict
 from typing import Any
 
 from orchestrator_service.utils.logger import get_logger
@@ -96,3 +97,27 @@ def sanitize_and_decode_list(items: list[str], alias_to_id: dict[str, str], requ
         result.append(decoded)
 
     return result
+
+def group_next_focus_by_user(next_focus_list: list[str]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = defaultdict(list)
+
+    pattern = re.compile(r'^\[([^\]]+)\]\s*[:-]?\s*(.*)')
+
+    for item in next_focus_list or []:
+        cleaned_item = item.strip()
+        if not cleaned_item:
+            continue
+
+        match = pattern.match(cleaned_item)
+        if match:
+            user_id = match.group(1).strip()
+            task = match.group(2).strip()
+
+            task = re.sub(r'^[-*]\s*', '', task).strip()
+
+            if task:
+                grouped[user_id].append(task)
+        else:
+            grouped["general"].append(cleaned_item)
+
+    return dict(grouped)
