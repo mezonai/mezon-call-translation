@@ -132,8 +132,7 @@ class SummaryService:
             raise
 
     def merge_section_summaries(self, sections: list[RoomSectionSummary], overall_context: str) -> dict[str, Any]: # type: ignore[explicit-any]
-        final_summary: dict[str, Any] = { # type: ignore[explicit-any]
-            "context": overall_context,
+        raw_data: dict[str, Any] = {  # type: ignore[explicit-any]
             "key_discussions": [],
             "next_focus": {},
             "detail": []
@@ -145,16 +144,29 @@ class SummaryService:
             for key in ["key_discussions", "detail"]:
                 items = summary.get(key, [])
                 if isinstance(items, list):
-                    final_summary[key].extend(items)
+                    raw_data[key].extend(items)
 
             sec_next_focus = summary.get("next_focus", {})
             if isinstance(sec_next_focus, dict):
                 for user_id, tasks in sec_next_focus.items():
-                    if user_id not in final_summary["next_focus"]:
-                        final_summary["next_focus"][user_id] = []
-                    final_summary["next_focus"][user_id].extend(tasks)
+                    if user_id not in raw_data["next_focus"]:
+                        raw_data["next_focus"][user_id] = []
+                    raw_data["next_focus"][user_id].extend(tasks)
 
-        return final_summary
+        summary_parts = []
+        if overall_context:
+            summary_parts.append(f"Context\n{overall_context}")
+
+        if raw_data["key_discussions"]:
+            summary_parts.append("Key Discussions\n" + "\n".join(raw_data["key_discussions"]))
+
+        if raw_data["detail"]:
+            summary_parts.append("Detail\n" + "\n".join(raw_data["detail"]))
+
+        return {
+            "summary": "\n\n".join(summary_parts) if summary_parts else "",
+            "action_items": raw_data["next_focus"]
+        }
 
     async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:  # type: ignore[explicit-any]
         sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)

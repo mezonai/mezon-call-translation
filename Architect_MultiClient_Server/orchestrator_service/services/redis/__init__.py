@@ -12,7 +12,6 @@ from .room_registry_repository import RoomRegistryRepository
 __all__ = [
     "BaseHashRepository",
     "EgressRepository",
-    "EgressRepository",
     "RoomRegistryRepository",
     "get_redis_connection",
 ]
