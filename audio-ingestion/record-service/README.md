@@ -79,9 +79,10 @@ One `RecordingSession` = one `(room_id, track_id)` = one S3 multipart upload.
    `ActiveSession` in the in-memory `SessionRegistry`, or **resumes** an
    existing session if one is sitting in `GRACE_WAIT` for the same
    `session_id` (reconnect within the grace window — see Recovery tiers
-   below). A dedicated `asyncio.Lock` (`_create_lock`) serializes the whole
+   below). `SessionRegistry.creation_lock(session_id)` serializes the whole
    decision so two concurrent starts for the same track can't both open
-   separate uploads.
+   separate uploads — scoped per `session_id` (not a single global lock), so
+   starting one track never blocks starting an unrelated one (D24).
 
 3. **`application/append_audio.py`** (`AppendAudio`) — dumb pass-through by
    design (D6: no decode/re-encode). Buffers PCM bytes per session and
@@ -200,9 +201,11 @@ All env-driven, see `src/record_service/config.py` for defaults:
 | Reconciler | `RECORD_RECONCILE_INTERVAL_SECONDS` (30) |
 | Logging | `LOG_LEVEL` (INFO) |
 
-On the `agents` side, the corresponding client is gated by
-`RECORD_SERVICE_ENABLED` (default off) in
-`Architect_MultiClient_Server/agents/src/config/application_config.py`.
+On the `agents` side, there is no enabled/disabled switch (D25 — LiveKit
+Egress is fully removed, so there's no fallback for a flag to roll back to;
+see `Architect_MultiClient_Server/agents/src/config/application_config.py`).
+Forwarding is always attempted; `RecordServiceClient.new_forwarder` fails
+soft per track if record-service isn't reachable.
 
 ## Where the caller (agents) hooks in
 

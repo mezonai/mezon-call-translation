@@ -23,19 +23,19 @@ from record_service.domain.ports import EventReporter
 class HttpEventReporter(EventReporter):
     def __init__(self, config: OrchestratorConfig) -> None:
         self._config = config
-        self._client: httpx.AsyncClient | None = None
-
-    def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                base_url=self._config.base_url, timeout=self._config.request_timeout_seconds
-            )
-        return self._client
+        # Eager, not lazy: every reported event uses this client (there's no
+        # "constructed but never called" case), and httpx.AsyncClient(...)
+        # does no I/O at construction time -- it only opens connections
+        # lazily on first request. Building it here avoids the same
+        # check-then-create race S3BlobStorage had (ReportEvent can be
+        # called concurrently by multiple sessions finalizing at once).
+        self._client = httpx.AsyncClient(
+            base_url=self._config.base_url, timeout=self._config.request_timeout_seconds
+        )
 
     async def report(self, session: RecordingSession, event: str) -> bool:
-        client = self._get_client()
         headers = {"Authorization": f"Bearer {self._config.api_key}"} if self._config.api_key else {}
-        response = await client.post(
+        response = await self._client.post(
             self._config.events_path, json=_to_payload(session, event), headers=headers
         )
         if response.status_code >= 500:
@@ -43,8 +43,7 @@ class HttpEventReporter(EventReporter):
         return response.status_code < 400  # 4xx = orchestrator rejected it, not a transient failure
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
+        await self._client.aclose()
 
 
 def _to_payload(session: RecordingSession, event: str) -> dict:
