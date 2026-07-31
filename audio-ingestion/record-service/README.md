@@ -6,7 +6,7 @@ capture source (today: gRPC from `agents`) can later be swapped for direct
 SFU/RTP capture without touching the business logic.
 
 Design rationale for every decision below lives in `../PLAN.md` (decisions
-D1-D23) — this README is "what the code does and how to read it", the plan is
+D1-D26) — this README is "what the code does and how to read it", the plan is
 "why it's built this way".
 
 ## End-to-end flow
@@ -26,7 +26,7 @@ record-service  (this repo)
    → application/start_recording.py   (open S3 multipart upload)
    → application/append_audio.py      (buffer + flush parts, per frame)
    → application/stop_recording.py    (flush tail, complete/abort upload)
-   → application/report_event.py      (HTTP POST recording.completed/failed)
+   → application/report_event.py      (HTTP POST recording.started/completed/failed)
    ▼
 Architect_MultiClient_Server/orchestrator_service
    POST /api/v2/recordings/events     (recording_events_api.py)
@@ -82,7 +82,10 @@ One `RecordingSession` = one `(room_id, track_id)` = one S3 multipart upload.
    below). `SessionRegistry.creation_lock(session_id)` serializes the whole
    decision so two concurrent starts for the same track can't both open
    separate uploads — scoped per `session_id` (not a single global lock), so
-   starting one track never blocks starting an unrelated one (D24).
+   starting one track never blocks starting an unrelated one (D24). Once a
+   genuinely new session is registered, fires `recording.started` to
+   orchestrator fire-and-forget (D26) — not awaited, so a slow/unreachable
+   orchestrator never delays accepting audio.
 
 3. **`application/append_audio.py`** (`AppendAudio`) — dumb pass-through by
    design (D6: no decode/re-encode). Buffers PCM bytes per session and
@@ -162,10 +165,35 @@ Raw headerless PCM16, matching D6 (no encode on the critical path — that's
 One outbound call: `POST {ORCHESTRATOR_BASE_URL}{RECORDING_EVENTS_PATH}`
 (default `/api/v2/recordings/events`), Bearer-authenticated via
 `ORCHESTRATOR_API_KEY` if set. Payload is a full self-describing session
-snapshot (see `infra/reporting/http_event_reporter.py::_to_payload`) — no
-separate `recording.started` event exists; orchestrator's `save_track_metadata`
-upsert creates the row on first sight of `recording.completed`/`.failed`
-(D18/D22, a deliberate scope-minimizing correction, documented in `PLAN.md`).
+snapshot (see `infra/reporting/http_event_reporter.py::_to_payload`), same
+shape for all three events (`event` field is what orchestrator dispatches
+on):
+
+- `recording.started` — fired once, fire-and-forget, right after the session
+  is registered (`start_recording.py`). Orchestrator eagerly creates a
+  placeholder `tracks` row (`status`/`derivative_status` = `pending`) off
+  this so a still-recording track is visible/accounted-for the whole time
+  it's in flight, not just once it finishes — D22 originally skipped this
+  event to minimize scope, but that let a still-recording track's room
+  finalize (and even fire `room_record_done`) before the track had reported
+  anything at all. Reintroduced as **D26** (partial reversal of D22); see
+  `PLAN.md` for the full incident. Orchestrator inserts with
+  `ON CONFLICT (id) DO NOTHING` specifically because this can arrive *after*
+  `recording.completed`/`.failed` for very short recordings — it must never
+  clobber an already-terminal row.
+- `recording.completed` / `recording.failed` — unchanged, awaited from
+  `stop_recording.py`/`recover_orphaned_sessions.py`, upsert the same row via
+  `save_track_metadata`.
+
+**Known open gap (D26)**: if a track's placeholder row is created by
+`recording.started` and record-service then crashes and loses its local
+durable state before ever delivering the terminal event for it (state is
+local disk, see the known limitation in
+`infra/state/file_session_state_repo.py`), that track's row stays
+`derivative_status='pending'` forever — nothing on the orchestrator side
+currently times it out. Not yet built; flagged in
+`pg_transcript_repository.py::check_and_notify_room_recordings_ready`'s
+docstring so it isn't lost.
 
 ```json
 {

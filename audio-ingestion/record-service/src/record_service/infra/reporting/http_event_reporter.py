@@ -3,10 +3,12 @@
 Deliberately NOT shaped like a LiveKit egress webhook (no EgressInfo/
 EgressWebhook envelope, see PLAN.md D2) -- a clean, self-describing payload
 instead. Each event carries the full session snapshot so the orchestrator
-endpoint can upsert on `recording_id` regardless of delivery order (retries
-of the same event, or `recording.completed` arriving for a track orchestrator
-has no prior row for -- there is no separate `recording.started` event, see
-PLAN.md D18 self-correction; save_track_metadata's upsert creates the row).
+endpoint can upsert on `recording_id` regardless of delivery order: retries
+of the same event, `recording.completed`/`.failed` arriving for a track
+orchestrator has no prior row for (save_track_metadata's upsert creates the
+row), or `recording.started` (PLAN.md D26) arriving after the terminal event
+for a very short-lived track (orchestrator's placeholder insert is
+ON CONFLICT DO NOTHING, so it never clobbers a row that already finished).
 """
 
 from __future__ import annotations

@@ -61,7 +61,7 @@ def build_application(config: Config | None = None) -> Application:
     event_reporter = HttpEventReporter(config.orchestrator)
 
     report_event = ReportEvent(event_reporter, state_repo, policy.report_retry)
-    start_recording = StartRecording(registry, blob_storage, state_repo)
+    start_recording = StartRecording(registry, blob_storage, state_repo, report_event)
     append_audio = AppendAudio(registry, blob_storage, state_repo, policy)
     stop_recording = StopRecording(registry, blob_storage, state_repo, report_event, policy)
     recover_orphaned_sessions = RecoverOrphanedSessions(registry, blob_storage, state_repo, report_event, policy)

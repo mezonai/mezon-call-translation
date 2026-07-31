@@ -8,8 +8,10 @@ opening a second multipart upload for the same track.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
+from record_service.application.report_event import ReportEvent
 from record_service.application.session_registry import ActiveSession, SessionRegistry
 from record_service.domain.models import RecordingSession, RecordingStatus
 from record_service.domain.ports import BlobStorage, SessionStateRepository
@@ -23,10 +25,12 @@ class StartRecording:
         registry: SessionRegistry,
         blob_storage: BlobStorage,
         state_repo: SessionStateRepository,
+        report_event: ReportEvent,
     ) -> None:
         self._registry = registry
         self._blob_storage = blob_storage
         self._state_repo = state_repo
+        self._report_event = report_event
 
     async def execute(
         self,
@@ -83,6 +87,20 @@ class StartRecording:
                 object_key,
                 upload_id,
             )
+            # PLAN.md D26 (partial reversal of D22): orchestrator eagerly
+            # creates the Track row off this event so a still-recording
+            # track has a row (status="pending") the whole time it's in
+            # flight, not just once recording.completed/.failed lands.
+            # Fire-and-forget (not awaited) -- this must never add HTTP
+            # round-trip/retry latency to the critical path of accepting
+            # audio (the gRPC stream-open response waits on execute()
+            # returning). If delivery fails even after report_event's own
+            # retries, the eventual recording.completed/.failed still
+            # creates the row via the same upsert path, so nothing is lost,
+            # just less visible while still recording. Orchestrator's insert
+            # is ON CONFLICT DO NOTHING specifically so this is safe to
+            # deliver late/out-of-order relative to the terminal event too.
+            asyncio.create_task(self._report_event.execute(session, "recording.started"))
             return session
 
     async def _try_resume_or_reuse(
