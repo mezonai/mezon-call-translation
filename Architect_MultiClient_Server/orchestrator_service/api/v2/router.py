@@ -13,6 +13,7 @@ from orchestrator_service.api.v2.endpoints.room_registry_api import router as ro
 from orchestrator_service.api.v2.endpoints.queue_api import router as queue_router
 from orchestrator_service.api.v2.endpoints.auth_api import router as auth_router
 from orchestrator_service.api.v2.endpoints.summary_api import client_router as summary_client_router
+from orchestrator_service.api.v2.endpoints.recording_events_api import router as recording_events_router
 
 api_router = APIRouter()
 
@@ -27,6 +28,7 @@ api_router.include_router(queue_router)  # Has prefix="/api/queue"
 api_router.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
 api_router.include_router(room_registry_router)  # Has prefix="/api/room-registry"
 api_router.include_router(summary_client_router)
+api_router.include_router(recording_events_router, tags=["recording events"])
 
 
 __all__ = ["api_router"]

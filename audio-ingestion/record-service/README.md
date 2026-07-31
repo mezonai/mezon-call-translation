@@ -167,7 +167,20 @@ One outbound call: `POST {ORCHESTRATOR_BASE_URL}{RECORDING_EVENTS_PATH}`
 `ORCHESTRATOR_API_KEY` if set. Payload is a full self-describing session
 snapshot (see `infra/reporting/http_event_reporter.py::_to_payload`), same
 shape for all three events (`event` field is what orchestrator dispatches
-on):
+on).
+
+`room_id` throughout this file (`SessionStart.room_id`, `session_id`, the S3
+object key prefix) is whatever the agent sent at `StreamAudio` start --
+record-service treats it as an opaque string, no validation, no assumption
+about its shape. As of **PLAN.md D27** the agent sends orchestrator's own
+stable room UUID here (captured once at registration, before it even
+connects to the LiveKit room), not the LiveKit room name it used to send
+(PLAN.md D18) -- this is what lets orchestrator resolve `room_id` on an
+incoming event directly (existence check) instead of re-resolving a
+LiveKit-room-name-to-id mapping that could have been reassigned to a
+different call by the time a late event arrives. record-service itself
+needed zero code changes for this -- it was already agnostic to what
+`room_id` actually contains.
 
 - `recording.started` — fired once, fire-and-forget, right after the session
   is registered (`start_recording.py`). Orchestrator eagerly creates a
