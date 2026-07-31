@@ -50,29 +50,47 @@ async def entrypoint(ctx: agents.JobContext):
     
     # Setup core components
     session_id = ctx.room.name
+
+    # Register with orchestrator BEFORE connecting to the room (audio-ingestion
+    # PLAN.md D27). Previously this ran after ctx.connect()+
+    # subscribe_existing_tracks(), so a track already live when the agent
+    # joined could start forwarding to record-service using ctx.room.name
+    # (the room_id wasn't known yet) -- and since LiveKit room names can be
+    # reused by a brand-new call shortly after this one ends, that made
+    # late-arriving recording events resolvable to the wrong room. Doing
+    # this first means room_id is already in hand before any track can
+    # possibly be subscribed. If registration fails/orchestrator is
+    # unreachable, room_id stays None and downstream code falls back to
+    # ctx.room.name (see event_handlers.py) -- same behavior as before,
+    # not a hard dependency.
+    room_id = await register_with_orchestrator(orchestrator, session_id)
+
     transcript_manager = TranscriptManager(ctx)
     control_state = AgentControlState(transcription_enabled=False)
-    event_handlers = EventHandlers(ctx, transcript_manager, control_state=control_state)
-    
+    event_handlers = EventHandlers(
+        ctx, transcript_manager, control_state=control_state, room_id=room_id
+    )
+
     # Register event handlers
     ctx.room.on("track_subscribed", event_handlers.on_track_subscribed)
     ctx.room.on("track_unsubscribed", event_handlers.on_track_unsubscribed)
     ctx.room.on("participant_disconnected", event_handlers.on_participant_disconnected)
-    
+
     # Initialize TTS Manager (optional)
     tts_manager = await initialize_tts_manager(ctx, session_id)
-    
+
     # Register cleanup callback
     cleanup = create_cleanup_callback(
         orchestrator, session_id,
-        event_handlers, transcript_manager, tts_manager
+        event_handlers, transcript_manager, tts_manager,
+        room_id=room_id,
     )
     ctx.add_shutdown_callback(cleanup)
 
     # Connect to room
     await ctx.connect()
     p = ctx.room.local_participant
-    
+
     logger.info(
         f"[AGENT STARTED] "
         f"identity={p.identity} | "
@@ -80,19 +98,16 @@ async def entrypoint(ctx: agents.JobContext):
         f"sid={p.sid} | "
         f"room={ctx.room.name}"
     )
-    
+
     # Subscribe to existing tracks
     subscribe_existing_tracks(ctx, event_handlers)
-    
+
     # Start SSE agent request listener
     await start_agent_request_listener(
         orchestrator, p.identity, session_id,
         control_state, event_handlers, tts_manager, ctx
     )
 
-    # Register with orchestrator and get room_id
-    room_id = await register_with_orchestrator(orchestrator, session_id)
-    
     # Setup DataChannel dispatcher for chat messages
     dispatcher = DataChannelDispatcher(orchestrator, room_id, session_id)
     ctx.room.on("data_received", dispatcher.create_dispatcher())

@@ -30,11 +30,23 @@ class EventHandlers:
         transcript_manager: TranscriptManager,
         control_state: AgentControlState,
         agent_manager=None,
+        room_id: str | None = None,
     ):
         self.ctx = ctx
         self.transcript_manager = transcript_manager
         self.control_state = control_state
         self.agent_manager = agent_manager
+        # Orchestrator's stable room UUID, captured once at registration
+        # (main.py registers before ctx.connect() specifically so this is
+        # available before any track can be subscribed). Used for
+        # record-service forwarding instead of ctx.room.name -- a LiveKit
+        # room name can be reused by a brand-new call shortly after this
+        # one ends, and orchestrator used to have to re-resolve name->id on
+        # every recording event, which could attribute a late event to the
+        # wrong (reused) room. May be None if registration failed/was still
+        # in flight; _forward_track_to_record_service falls back to
+        # ctx.room.name in that case (see its docstring).
+        self.room_id = room_id
         self.active_clients = {}  # {participant_id: WebSocketClient}
         self.transcription_tasks = {}  # {speaker_id: asyncio.Task}
         self.pending_tracks = {}  # {speaker_id: (track, publication, participant)}
@@ -111,8 +123,17 @@ class EventHandlers:
         source = "screen" if publication.source == 4 else "mic"
         logger.info(f"Starting record-service forwarding for {participant_identity} (track={track_id})")
 
+        # Prefer the stable orchestrator room UUID (audio-ingestion PLAN.md
+        # D27) over ctx.room.name -- falls back to the LiveKit room name
+        # only if registration with orchestrator failed/hadn't completed
+        # (main.py registers before connect, so self.room_id should
+        # normally already be set by the time any track can be forwarded).
+        # Orchestrator's recording_event_service also tolerates receiving a
+        # room name here (degrade path), just without the room-reuse
+        # protection a stable id gives.
+        room_id = self.room_id or self.ctx.room.name
         forwarder = await self._record_service_client.new_forwarder(
-            room_id=self.ctx.room.name,
+            room_id=room_id,
             track_id=track_id,
             participant_identity=participant_identity,
             source=source,

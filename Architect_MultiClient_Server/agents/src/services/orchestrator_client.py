@@ -147,13 +147,20 @@ class OrchestratorClient:
             self.logger.error(f"Unexpected error registering room '{room_name}': {e}", exc_info=True)
             return None
     
-    async def unregister_room(self, room_name: str) -> bool:
+    async def unregister_room(self, room_name: str, room_id: Optional[str] = None) -> bool:
         """
         Unregister a room from the orchestrator service.
-        
+
         Args:
             room_name: Name of the room to unregister
-        
+            room_id: This worker's own stable room UUID, captured at
+                registration time (audio-ingestion PLAN.md D27). Passed
+                through so orchestrator can compare-and-delete instead of
+                deleting by name alone -- if room_name got reused by a new
+                call in the meantime (new registration, different room_id),
+                orchestrator will leave that new registration alone instead
+                of a late unregister from this worker clobbering it.
+
         Returns:
             True if unregistration successful, False otherwise
         """
@@ -176,15 +183,17 @@ class OrchestratorClient:
             await self.start()
         
         url = f"{self.config.orchestrator.base_url}/api/v2/room-registry/unregister"
-        
+
         payload = {
             "room_name": room_name
         }
-        
+        if room_id:
+            payload["room_id"] = room_id
+
         headers = {}
         if self.config.orchestrator.api_key:
             headers["Authorization"] = f"Bearer {self.config.orchestrator.api_key}"
-        
+
         try:
             response = await self._http_client.post(url, json=payload, headers=headers)
             if response.status_code in [200, 201]:
