@@ -45,7 +45,7 @@ async def main() -> None:
     event_reporter = FakeEventReporter()
     report_event = ReportEvent(event_reporter, state_repo, policy.report_retry)
 
-    start = StartRecording(registry, blob_storage, state_repo)
+    start = StartRecording(registry, blob_storage, state_repo, report_event)
     append = AppendAudio(registry, blob_storage, state_repo, policy)
     stop = StopRecording(registry, blob_storage, state_repo, report_event, policy)
     servicer = RecordingIngestServicer(start, append, stop, minio_bucket="dev-bucket")

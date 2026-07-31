@@ -1,0 +1,73 @@
+[Unit]
+Description=record-service instance %i (audio-ingestion critical-path audio capture, PLAN.md D14)
+Documentation=file:///opt/record-service/README.md
+After=network-online.target
+Wants=network-online.target
+# Optional: if MinIO/orchestrator run as systemd units on the same host,
+# uncomment to order startup after them. Does NOT retry on their failure --
+# record-service's own retry/reconciler logic already tolerates transient
+# unavailability of either (PLAN.md D5/D8), this is just start ordering.
+# After=minio.service orchestrator.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=record-service
+Group=record-service
+
+WorkingDirectory=/opt/record-service
+
+# Shared config first (MinIO, orchestrator, policy tunables, log level),
+# then per-instance overrides (port, state dir) -- later file wins on
+# overlapping keys. See common.env.example / instance.env.example.
+EnvironmentFile=/etc/record-service/common.env
+EnvironmentFile=/etc/record-service/instance-%i.env
+
+ExecStart=/opt/record-service/.venv/bin/python -m record_service.main
+
+# main.py already handles SIGTERM gracefully (drains in-flight uploads via
+# server.stop(grace=10), flushes pending event reports) -- give it enough
+# room to actually finish before systemd escalates to SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+Restart=on-failure
+RestartSec=5s
+
+# Auto-creates/chowns /var/lib/record-service/%i for this instance's crash
+# -recovery state (PLAN.md D5 tier 3) -- point RECORD_STATE_DIR at it in
+# instance-%i.env. One directory per instance, never shared: the
+# reconciler only skips sessions still live in *its own* process's
+# in-memory registry (PLAN.md D16 bug #1 fix) -- sharing a state dir
+# across instances would let one instance's reconciler pass finalize a
+# session another instance still owns.
+StateDirectory=record-service/%i
+StateDirectoryMode=0750
+
+# --- Resource limits (PLAN.md D13/D14) ---
+# Cost model from D13: record-service is a single Python process, so
+# everything that isn't offloaded to a thread/native async (gRPC I/O, S3
+# upload via asyncio.to_thread) is bound by the GIL to ~1 core -- "1
+# process ~= 1 core" is the scaling unit, hence one template instance per
+# core rather than one multi-threaded process. CPUQuota here is a ceiling
+# against a runaway/pathological session, not the expected steady-state.
+#
+# PLACEHOLDERS, NOT MEASURED -- tune after running the concurrency
+# benchmark (PLAN.md D13 action item, not done yet) against real
+# CPU%/session numbers before relying on these in prod capacity planning.
+CPUQuota=100%
+MemoryMax=512M
+MemoryHigh=384M
+
+# --- Hardening (standard systemd baseline) ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+# Logs go to the journal (main.py uses logging.basicConfig -> stdout,
+# no file logging configured) -- journalctl -u record-service@%i -f
+
+[Install]
+WantedBy=multi-user.target

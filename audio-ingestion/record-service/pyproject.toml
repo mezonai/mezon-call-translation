@@ -15,6 +15,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "grpcio-tools>=1.62",   # only needed to regenerate recording_pb2*.py, see scripts/gen_proto.sh
+    "psutil>=5.9",          # only needed by scripts/benchmark_concurrency.py
 ]
 
 [tool.setuptools.packages.find]

@@ -297,10 +297,40 @@ pip install -e ".[dev]"
 
 pytest   # 14 tests, no external services required (fakes in tests/fakes.py)
 
-# run against real MinIO/orchestrator, or scripts/dev_server_with_fakes.py
-# for a fully in-memory dev loop without either dependency
+# run against real MinIO/orchestrator (needs env vars, see Configuration below)
 python -m record_service.main
+
+# OR: fully in-memory dev loop, no MinIO/orchestrator needed at all --
+# useful for smoke-testing a gRPC client (agent, benchmark script) against
+# a real listener without standing up the rest of the stack:
+python scripts/dev_server_with_fakes.py [port] [max_wait_seconds]
+#   ^ exits automatically after the first recording.completed/.failed event
+#   (or max_wait_seconds) and prints a JSON summary -- fine for a quick
+#   smoke test, NOT for a sustained run (e.g. the benchmark script below
+#   needs a listener that stays up for the whole sweep).
 ```
+
+## Running as a deployed service (dev/prod)
+
+No Docker in dev/prod (PLAN.md D14) -- systemd on the host instead. Full
+install steps, template unit file, and env file examples:
+**`deploy/systemd/README.md`**.
+
+## Benchmarking (PLAN.md D13)
+
+```bash
+# terminal 1 -- the target (pin to its own core if benchmarking on one
+# machine, see the script's own docstring for why):
+taskset -c 0 python -m record_service.main
+
+# terminal 2:
+taskset -c 1 python scripts/benchmark_concurrency.py --sweep 10,25,50,100 --csv results.csv
+```
+Sweeps concurrency levels, feeding each simulated session real-cadence
+PCM16 silence, sampling the target process's CPU%/RSS to find where one
+instance/core starts to strain -- see `scripts/benchmark_concurrency.py`'s
+docstring for the full option list and `deploy/systemd/README.md` for how
+the result feeds into instance-count capacity planning.
 
 ## Tests
 
