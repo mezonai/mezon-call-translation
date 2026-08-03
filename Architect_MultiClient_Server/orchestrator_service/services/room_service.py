@@ -112,15 +112,30 @@ class RoomService:
                 status_code=404,
                 detail=f"No tracks found for room with ID '{room_id}'",
             )
-        
+
         file_results = []
         for track in tracks:
             audio_info = track.get("audio_info", {})
             if not audio_info:
                 continue
+            # "filename" here is the client-playable derivative (OGG/Opus),
+            # not the raw PCM capture (audio-ingestion PLAN.md D28) -- same
+            # field name/shape as before on purpose, so nothing downstream
+            # needs to change, it just now points at something the client
+            # can actually play instead of headerless raw PCM (D6). Written
+            # by audio-processing-service's derivative.completed report,
+            # see pg_track_repository.py::update_track_derivative. Skip the
+            # track entirely (rather than fall back to the raw filename) if
+            # the derivative isn't ready yet -- a raw PCM path isn't
+            # something the client can use either way, so there is nothing
+            # correct to show until it exists (D19: client polls this API
+            # again after room_record_done fires).
+            derivative_filename = audio_info.get("derivative_object_key")
+            if not derivative_filename:
+                continue
             file_results.append({
                 "participant_identity": track.get("participant_identity"),
-                "filename": audio_info.get("filename", ""),
+                "filename": derivative_filename,
                 "started_at_ns": audio_info.get("started_at_ns"),
                 "ended_at_ns": audio_info.get("ended_at_ns"),
             })
