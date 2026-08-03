@@ -21,7 +21,6 @@ from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
 from orchestrator_service.models.summary_models import (
-    ActionItemsResult,
     OverallContextResult,
     RetryType,
     RoomSummaryResponse,
@@ -32,7 +31,6 @@ from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.llm_factory import create_llm_service
 from orchestrator_service.services.llm.prompt import (
     build_overall_context_prompt,
-    build_prompt_action_items,
     build_prompt_summary,
 )
 from orchestrator_service.services.postgresql.models import RoomSectionSummary, TranscriptChunk
@@ -160,12 +158,10 @@ class SummaryService:
         if raw_data["key_discussions"]:
             summary_parts.append("Key Discussions\n" + "\n".join(raw_data["key_discussions"]))
 
-        if raw_data["detail"]:
-            summary_parts.append("Detail\n" + "\n".join(raw_data["detail"]))
-
         return {
             "summary": "\n\n".join(summary_parts) if summary_parts else "",
-            "action_items": raw_data["next_focus"]
+            "action_items": raw_data["next_focus"],
+            "detail": raw_data["detail"],
         }
 
     async def generate_overall_summary(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:  # type: ignore[explicit-any]
@@ -404,26 +400,17 @@ class SummaryService:
                 f"Room duration ({total_duration:.1f}s) <= {self.config.threshold_min} mins. Using Normal Summary flow."
             )
             summary_data_result = None
-            action_result = None
 
-            # Phase 1: Summary
             try:
                 summary_prompt = build_prompt_summary(full_text, self.config.language)
                 summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult)
             except Exception as e:
                 logger.warning(f"Summary task failed for room {room_id}: {e}")
 
-            # Phase 2: Action items
-            try:
-                action_prompt = build_prompt_action_items(full_text, self.config.language)
-                action_result = await self._call_llm_with_fallback(action_prompt, ActionItemsResult)
-            except Exception as e:
-                logger.warning(f"Action items task failed for room {room_id}: {e}")
-
-            # If all failed -> Outbox ALL
-            if not summary_data_result and not action_result:
+            # If summary failed -> Outbox SUMMARY
+            if not summary_data_result:
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id), retry_type=RetryType.ALL, error_msg="Both summary and action items failed"
+                    room_id=str(room_id), retry_type=RetryType.SUMMARY, error_msg="Summary failed"
                 )
                 return {**draft_summary, "id": saved_id}
 
@@ -439,23 +426,14 @@ class SummaryService:
 
                 if summary_data_result.next_focus:
                     summary_data_result.next_focus = sanitize_and_decode_list(summary_data_result.next_focus, alias_to_id, require_brackets=True)
-                    if summary_data_result.next_focus:
-                        summary_parts.append("Next Focus\n" + "\n".join(summary_data_result.next_focus))
 
                 if summary_data_result.detail:
                     summary_data_result.detail = sanitize_and_decode_list(summary_data_result.detail, alias_to_id, require_brackets=False)
-                    if summary_data_result.detail:
-                        summary_parts.append("Detail\n" + "\n".join(summary_data_result.detail))
-
 
             summary_data = {
                 "summary": "\n\n".join(summary_parts) if summary_parts else "",
-                "next_focus": group_next_focus_by_user(summary_data_result.next_focus) if summary_data_result else {},
-                "action_items": {
-                    item.participant_identity: item.participant_actions for item in action_result.action_items
-                }
-                if action_result
-                else {},
+                "action_items": group_next_focus_by_user(summary_data_result.next_focus) if summary_data_result else {},
+                "detail": summary_data_result.detail if summary_data_result and summary_data_result.detail else []
             }
 
             final_summary = dict(draft_summary)
@@ -472,30 +450,24 @@ class SummaryService:
             result["id"] = saved_id
 
             # Send notice to SSE
-            if summary_data_result and action_result:
+            if summary_data_result:
                 # ALL pass
                 metadata_channel = MetadataChannel()
                 await metadata_channel.push_room_summary_done(
                     room_id=str(room_id), room_name=room_doc.room_name or "Unknown"
                 )
             elif not summary_data_result:
-                # Only summary failed
+                # Summary failed
                 logger.warning(f"Summary failed for room {room_id}. Creating SUMMARY outbox task.")
                 await self.outbox_repo.add_retry_summarization_task_to_outbox(
                     room_id=str(room_id), retry_type=RetryType.SUMMARY, error_msg="Summary generation failed"
-                )
-            elif not action_result:
-                # Only Action items failed
-                logger.warning(f"Action items failed for room {room_id}. Creating ACTION_ITEMS outbox task.")
-                await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id), retry_type=RetryType.ACTION_ITEMS, error_msg="Action items generation failed"
                 )
 
             return result
 
     # TODO: Use `Any` type because `summary_data` response from this function has complex type
     async def retry_summary_from_full_text(  # type: ignore[explicit-any]
-        self, room_id: str, retry_type: RetryType = RetryType.ALL
+        self, room_id: str, retry_type: RetryType = RetryType.SUMMARY
     ) -> dict[str, Any] | None:
         """
         Hotfix: re-run LLM summarization by rebuilding full_text from messages stored in rooms_summary.
@@ -570,12 +542,6 @@ class SummaryService:
                 f"Retrying room ({total_duration:.1f}s) <= {self.config.threshold_min} mins. Using Normal Summary flow."
             )
 
-            # Extract existing summary_data to preserve fields that aren't being retried
-            existing_summary_data = summary_doc.summary_data or {}
-            existing_summary = existing_summary_data.get("summary", "")
-            existing_next_focus = existing_summary_data.get("next_focus", {})
-            existing_action_items = existing_summary_data.get("action_items", {})
-
             logger.info(f"Retrying LLM with type '{retry_type.value}' for room {room_id} ({len(full_text)} chars)")
 
             is_success = False
@@ -594,69 +560,17 @@ class SummaryService:
 
                     if result.next_focus:
                         result.next_focus = sanitize_and_decode_list(result.next_focus, alias_to_id, require_brackets=True)
-                        if result.next_focus:
-                            summary_parts.append("Next Focus\n" + "\n".join(result.next_focus))
 
                     if result.detail:
                         result.detail = sanitize_and_decode_list(result.detail, alias_to_id, require_brackets=False)
-                        if result.detail:
-                            summary_parts.append("Detail\n" + "\n".join(result.detail))
 
                     summary_data = {
                         "summary": "\n\n".join(summary_parts),
-                        "next_focus": group_next_focus_by_user(result.next_focus) if result else {},
-                        "action_items": existing_action_items,
+                        "action_items": group_next_focus_by_user(result.next_focus) if result else {},
+                        "detail": result.detail if result and result.detail else []
                     }
 
                     is_success = True
-
-                elif retry_type == RetryType.ACTION_ITEMS:
-                    prompt = build_prompt_action_items(full_text, self.config.language)
-                    action_result = await self._call_llm_with_fallback(prompt, ActionItemsResult)
-
-                    summary_data = {
-                        "summary": existing_summary,
-                        "next_focus": existing_next_focus,
-                        "action_items": {
-                            item.participant_identity: item.participant_actions for item in action_result.action_items
-                        },
-                    }
-
-                    is_success = True
-
-                else:  # RetryType.ALL
-                    summary_prompt = build_prompt_summary(full_text, self.config.language)
-                    summary_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult)
-                    action_prompt = build_prompt_action_items(full_text, self.config.language)
-                    action_result = await self._call_llm_with_fallback(action_prompt, ActionItemsResult)
-
-                    is_success = summary_result is not None and action_result is not None
-
-                    summary_parts = [f"Context\n{summary_result.context}"]
-
-                    if summary_result.key_discussions:
-                        summary_result.key_discussions = sanitize_and_decode_list(summary_result.key_discussions, alias_to_id, require_brackets=True)
-                        if summary_result.key_discussions:
-                            summary_parts.append("Key Discussions\n" + "\n".join(summary_result.key_discussions))
-
-                    if summary_result.next_focus:
-                        summary_result.next_focus = sanitize_and_decode_list(summary_result.next_focus, alias_to_id, require_brackets=True)
-                        if summary_result.next_focus:
-                            summary_parts.append("Next Focus\n" + "\n".join(summary_result.next_focus))
-
-                    if summary_result.detail:
-                        summary_result.detail = sanitize_and_decode_list(summary_result.detail, alias_to_id, require_brackets=False)
-                        if summary_result.detail:
-                            summary_parts.append("Detail\n" + "\n".join(summary_result.detail))
-
-
-                    summary_data = {
-                        "summary": "\n\n".join(summary_parts),
-                        "next_focus": group_next_focus_by_user(summary_result.next_focus) if summary_result else {},
-                        "action_items": {
-                            item.participant_identity: item.participant_actions for item in action_result.action_items
-                        },
-                    }
 
                 updated = await self.pg_summary_repo.update_room_summary(room_id, summary_data)
                 logger.info(f"Updated summary for room {room_id}")

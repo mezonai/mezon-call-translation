@@ -10,16 +10,9 @@ from pydantic import BaseModel, Field
 
 class RetryType(StrEnum):
     SUMMARY = "summary"
-    ACTION_ITEMS = "action_items"
-    ALL = "all"
 
     SECTIONS = "sections"
     OVERALL_CONTEXT = "overall_context"
-
-
-class ActionItemResult(BaseModel):  # type: ignore[explicit-any]
-    participant_identity: str = Field(description="Participant identity")
-    participant_actions: list[str] = Field(description="List of actions performed by the participant")
 
 
 class SummaryResult(BaseModel):  # type: ignore[explicit-any]
@@ -27,10 +20,6 @@ class SummaryResult(BaseModel):  # type: ignore[explicit-any]
     key_discussions: list[str] = Field(description="Main discussion details and viewpoints")
     next_focus: list[str] = Field(description="Expected next steps and priorities")
     detail: list[str] = Field(description="Detailed discussion points, decisions, and technical details")
-
-
-class ActionItemsResult(BaseModel):  # type: ignore[explicit-any]
-    action_items: list[ActionItemResult] = Field(description="List of action items for all participants")
 
 
 class LightSummaryResult(BaseModel):  # type: ignore[explicit-any]
@@ -45,13 +34,6 @@ class LightSummaryResult(BaseModel):  # type: ignore[explicit-any]
 
 class OverallContextResult(BaseModel):  # type: ignore[explicit-any]
     context: str = Field(description="Meeting purpose, context, and most important outcome")
-
-
-class SummaryActionItemsResult(BaseModel):  # type: ignore[explicit-any]
-    summary: str = Field(description="Combined summary text of the conversation")
-    action_items: list[ActionItemResult] = Field(description="List of action items for all participants")
-    summary_success: bool = Field(description="Whether summary task succeeded", default=True)
-    action_items_success: bool = Field(description="Whether action items task succeeded", default=True)
 
 
 class RoomSummaryResponse(BaseModel):  # type: ignore[explicit-any]
