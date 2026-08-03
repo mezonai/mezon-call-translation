@@ -5,7 +5,7 @@ import warnings
 
 from . import recording_pb2 as recording__pb2
 
-GRPC_GENERATED_VERSION = '1.81.1'
+GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class RecordingIngestStub:
+class RecordingIngestStub(object):
     """Agent -> record-service. Bidi so the server can ack/reject the session
     early (PLAN.md D5 tier 1: "báo ngược cho agent") instead of only replying
     after the whole call has ended, which a plain client-streaming RPC would
@@ -45,7 +45,7 @@ class RecordingIngestStub:
                 _registered_method=True)
 
 
-class RecordingIngestServicer:
+class RecordingIngestServicer(object):
     """Agent -> record-service. Bidi so the server can ack/reject the session
     early (PLAN.md D5 tier 1: "báo ngược cho agent") instead of only replying
     after the whole call has ended, which a plain client-streaming RPC would
@@ -74,7 +74,7 @@ def add_RecordingIngestServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class RecordingIngest:
+class RecordingIngest(object):
     """Agent -> record-service. Bidi so the server can ack/reject the session
     early (PLAN.md D5 tier 1: "báo ngược cho agent") instead of only replying
     after the whole call has ended, which a plain client-streaming RPC would

@@ -5,7 +5,7 @@ import warnings
 
 from . import recording_pb2 as recording__pb2
 
-GRPC_GENERATED_VERSION = '1.81.1'
+GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class RecordingIngestStub:
+class RecordingIngestStub(object):
     """KEPT IN SYNC MANUALLY with audio-ingestion/record-service/proto/recording.proto.
     Two independent deployables (agents, record-service) each generate their own
     stubs from their own copy of this file rather than sharing a package --
@@ -50,7 +50,7 @@ class RecordingIngestStub:
                 _registered_method=True)
 
 
-class RecordingIngestServicer:
+class RecordingIngestServicer(object):
     """KEPT IN SYNC MANUALLY with audio-ingestion/record-service/proto/recording.proto.
     Two independent deployables (agents, record-service) each generate their own
     stubs from their own copy of this file rather than sharing a package --
@@ -84,7 +84,7 @@ def add_RecordingIngestServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class RecordingIngest:
+class RecordingIngest(object):
     """KEPT IN SYNC MANUALLY with audio-ingestion/record-service/proto/recording.proto.
     Two independent deployables (agents, record-service) each generate their own
     stubs from their own copy of this file rather than sharing a package --
