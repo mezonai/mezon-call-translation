@@ -97,8 +97,18 @@ class RecordingEventService:
                 filename=payload.object_key,
                 location=f"s3://{payload.bucket}/{payload.object_key}",
                 duration=str(payload.duration_seconds or 0),
-                started_at=str(payload.started_at),
-                ended_at=str(payload.ended_at or payload.started_at),
+                # record-service's started_at/ended_at are time.time() epoch
+                # SECONDS (float) -- but audio_info stores them under
+                # started_at_ns/ended_at_ns (summary_service.py and
+                # room_service.py::get_audio_info() both parse/return them
+                # as nanosecond epoch integers, a convention that predates
+                # record-service and matched the old LiveKit-egress webhook
+                # payload). Convert here, once, at the single point these
+                # values enter orchestrator -- every downstream consumer
+                # already assumes nanoseconds, so this is the one place
+                # that needs the unit fix, not each consumer.
+                started_at=str(round(payload.started_at * 1_000_000_000)),
+                ended_at=str(round((payload.ended_at or payload.started_at) * 1_000_000_000)),
                 source=payload.source,
             )
             await self.audio_derivative_service.enqueue(
