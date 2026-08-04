@@ -31,7 +31,12 @@ pyaudio>=0.2.13                # Audio I/O (VAD processor)
 # ========================================
 motor>=3.3.0                   # Async MongoDB driver
 pymongo>=4.5.0                 # MongoDB Python driver (sync operations)
-boto3>=1.34.0                  # S3-compatible multipart upload (MinIO)
+boto3>=1.34.0                  # S3-compatible multipart upload (MinIO) -- old egress fallback, PLAN.md D2
+
+# ========================================
+# record-service forwarding (audio-ingestion/PLAN.md Phase 2)
+# ========================================
+grpcio>=1.62                   # gRPC client for forwarding raw PCM to record-service
 
 # ========================================
 # Configuration & Environment

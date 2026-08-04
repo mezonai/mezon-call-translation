@@ -267,19 +267,19 @@ class MetadataChannel:
         self, room_id: str, room_name: str
     ) -> Dict[str, Any]:
         """
-        Push room_record_done event to all connected bots.
-        Automatically fetches tracks from PostgreSQL and builds file_results.
+        Push room_record_done event to all connected bots -- a bare notice,
+        no file details (audio-ingestion PLAN.md D19: for security reasons,
+        subscribers call a separate authenticated API to fetch the actual
+        path; that API and its access control are out of scope here).
 
-        Args:
-            room_id: Room identifier
-            room_name: Room name
-
-        Returns:
-            Dictionary with push status
+        Fired exactly once per room, gated by
+        PgTranscriptRepository.check_and_notify_room_recordings_ready()
+        (room finalized AND every track's derivative_status terminal) --
+        callers must go through that check, this method does not re-check
+        anything, it only broadcasts.
         """
         context_key = self.CONTEXT_KEY
 
-        # Check if any bots are connected
         if not await self.manager.has_active_connections(
             self.CHANNEL_TYPE, context_key
         ):
@@ -287,53 +287,20 @@ class MetadataChannel:
                 f"[Metadata Channel] No active bot connections, room_record_done event may be lost"
             )
 
-        # Fetch tracks from PostgreSQL and build file_results
-        file_results = []
-        try:
-            tracks = await self.pg_repo.get_tracks_by_room(room_id)
-
-            for track in tracks:
-                audio_info = track.get("audio_info") or {}
-
-                started_at_ns = audio_info.get("started_at_ns")
-                ended_at_ns = audio_info.get("ended_at_ns")
-
-                file_result = {
-                    "participant_identity": track.get("participant_identity", ""),
-                    "filename": audio_info.get("filename", ""),
-                    "started_at_ns": started_at_ns,
-                    "ended_at_ns": ended_at_ns,
-                }
-                file_results.append(file_result)
-
-            logger.info(
-                f"[Metadata Channel] Built file_results from {len(tracks)} tracks for room {room_id}"
-            )
-        except Exception as e:
-            logger.error(
-                f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}"
-            )
-            # Continue with empty file_results
-
-        # Prepare metadata
-        metadata = {"file_results": file_results}
-
-        # Prepare event data
         event_data = self._create_base_event(
             event_type=MetadataEventType.ROOM_RECORD_DONE,
             room_id=room_id,
             room_name=room_name,
-            metadata=metadata,
+            metadata={},
         )
 
-        # Broadcast event
         broadcast_count = await self.manager.broadcast_message(
             self.CHANNEL_TYPE, context_key, event_data
         )
 
         logger.info(
             f"[Metadata Channel] Pushed room_record_done event to {broadcast_count} bots "
-            f"(room_id={room_id}, room_name={room_name}, files={len(file_results)})"
+            f"(room_id={room_id}, room_name={room_name})"
         )
 
         # Save event to PostgreSQL with TTL
@@ -345,7 +312,6 @@ class MetadataChannel:
             "event_id": event_data["event_id"],
             "room_id": room_id,
             "room_name": room_name,
-            "file_count": len(file_results),
             "timestamp": event_data["timestamp"],
             "active_connections": await self.manager.get_connection_count(
                 self.CHANNEL_TYPE, context_key

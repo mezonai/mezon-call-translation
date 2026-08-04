@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
 from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.utils.logger import get_logger
@@ -25,6 +26,7 @@ class TranscriptionService:
         self.api_url = f"http://{self.config.host}:{self.config.port}/api/transcribe"
         self.timeout = 30.0
         self.pg_repo = PgTranscriptRepository()
+        self.track_repo = PgTrackRepository()
         self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
         self.stream_key = "transcription:stream"
 
@@ -38,75 +40,74 @@ class TranscriptionService:
             await self._redis_producer.connect()
         return self._redis_producer
 
-    async def enqueue(self, egress_info: Dict) -> bool:
+    async def handle_recording_completed(
+        self,
+        *,
+        recording_id: str,
+        track_id: str,
+        room_ref_id: str,
+        participant_identity: str,
+        filename: str,
+        location: str,
+        duration: str,
+        started_at: str,
+        ended_at: str,
+        source: str = "",
+    ) -> bool:
         """
-        Send egress info directly to Redis Stream.
+        Raw capture done (record-service's recording.completed, audio-ingestion
+        PLAN.md D18) -- save track metadata (upserts: the row normally
+        already exists from `recording.started`, PLAN.md D26, but this must
+        still work standalone in case that event never made it) and kick off
+        Whisper STT via transcription:stream. Does NOT touch room_record_done
+        -- that fires on the separate, later derivative-completion path
+        (D19), not here.
 
-        Args:
-            egress_info: Dict with keys: egressId, filename, location,
-                        duration, startedAt, endedAt, source (optional)
-
-        Returns:
-            True if successful, False if failed
+        Replaces the old enqueue(egress_info: Dict) which took a
+        LiveKit-egress-webhook-shaped dict (audio-ingestion PLAN.md D2: no
+        egress-shaped contracts survive the migration).
         """
         try:
             try:
-                if not self.pg_repo.connected:
-                    await self.pg_repo.connect()
-                track_result = await self.pg_repo.save_track_metadata(
-                    egress_id=egress_info.get("egressId"),
+                track_result = await self.track_repo.save_track_metadata(
+                    record_id=recording_id,
+                    track_id=track_id,
+                    room_ref_id=room_ref_id,
+                    participant_identity=participant_identity,
                     audio_info={
-                        "filename": egress_info.get("filename"),
-                        "duration_sec": egress_info.get("duration"),
-                        "started_at_ns": egress_info.get("startedAt"),
-                        "ended_at_ns": egress_info.get("endedAt"),
-                        "location": egress_info.get("location"),
-                        "source": egress_info.get("source"),
+                        "filename": filename,
+                        "duration_sec": duration,
+                        "started_at_ns": started_at,
+                        "ended_at_ns": ended_at,
+                        "location": location,
+                        "source": source,
                     },
                     status="wait_process",
+                    derivative_status="pending",
                 )
+                if not track_result:
+                    logger.warning(f"Failed to save track metadata for recording_id={recording_id}")
 
-                if track_result and track_result.get("room_ref_id"):
-                    room = await self.pg_repo.check_event_record_done(
-                        track_result.get("room_ref_id")
-                    )
-                    if room:
-                        await metadata_channel.push_room_record_done(
-                            room_id=str(room.get("id")),
-                            room_name=room.get("room_name"),
-                        )
-                elif track_result:
-                    logger.warning(
-                        f"Track metadata saved but no room_ref_id found: {track_result}"
-                    )
-                else:
-                    logger.warning(
-                        "Failed to save track metadata: track_result is None"
-                    )
-
-                logger.info(
-                    f"✅ Track metadata updated: egress={egress_info.get('egressId')}"
-                )
+                logger.info(f"✅ Track metadata updated: recording_id={recording_id}")
             except Exception as e:
                 logger.warning(f"Failed to update track metadata: {e}")
                 # Continue processing even if metadata update fails
 
             producer = await self._get_producer()
 
-            # Create task object
             task = TranscriptionTask(
-                egress_id=egress_info["egressId"],
-                filename=egress_info["filename"],
-                location=egress_info["location"],
-                duration=egress_info["duration"],
-                started_at=egress_info["startedAt"],
-                ended_at=egress_info["endedAt"],
-                source=egress_info.get("source", ""),
+                egress_id=recording_id,
+                filename=filename,
+                location=location,
+                duration=duration,
+                started_at=started_at,
+                ended_at=ended_at,
+                source=source,
             )
 
             task_id = await producer.enqueue(task)
 
-            logger.info(f"✓ Queued to Redis: {egress_info['egressId']} → {task_id}")
+            logger.info(f"✓ Queued to Redis: {recording_id} → {task_id}")
             return True
 
         except Exception as e:
@@ -134,7 +135,12 @@ class TranscriptionService:
             if not updated:
                 return False
 
-            if await self.pg_repo.check_event_record_done(room_id):
+            # Second of the two call sites required by D19 -- the other is
+            # RecordingEventService.handle_derivative_event(). Whichever
+            # condition (room finalized vs. last track's derivative done)
+            # is satisfied last is the one that actually fires the event;
+            # the atomic UPDATE guard inside makes this safe to call from both.
+            if await self.pg_repo.check_and_notify_room_recordings_ready(room_id):
                 await metadata_channel.push_room_record_done(
                     room_id=str(room_id), room_name=room_name
                 )
@@ -198,68 +204,20 @@ class TranscriptionService:
 
     async def save_participants_batch(
         self, room_id: str, participants: List[Dict[str, Any]]
-    ) -> Dict[str, int]:
-        """
-        Save batch of participants to PostgreSQL
-        """
-        try:
-            if not self.pg_repo.connected:
-                await self.pg_repo.connect()
-            result = await self.pg_repo.save_batch_participants(
-                room_id=room_id, participants=participants
-            )
-            return result
-        except Exception as e:
-            logger.exception(f"Failed to save batch participants: {e}")
-            return {"success": False, "added_count": 0, "skipped_count": 0}
-
-    async def save_track_metadata(
-        self,
-        egress_id: str,
-        track_id: str,
-        room_ref_id: str,
-        participant_identity: str,
-        status: str = "pending",
     ) -> bool:
         """
-        Save track metadata to STT service
-
-        Args:
-            egress_id: Unique egress identifier (used as id)
-            track_id: Track identifier
-            room_ref_id: Reference to room document id
-            participant_identity: Participant identity
-            audio_info: Dict containing {filename, ...}
-            status: Track status (default: "pending")
-
-        Returns:
-            True if successful
+        Save batch of participants to PostgreSQL. Uses the race-safe
+        save_batch_participants_atomic (audio-ingestion PLAN.md D27) --
+        the older save_batch_participants has a TOCTOU race against
+        concurrent save_participant() calls from the participant_joined
+        webhook (see that method's docstring in pg_transcript_repository.py).
         """
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-
-            # Check if room exists
-            room = await self.pg_repo.get_room_by_id(room_ref_id)
-            if not room:
-                logger.error(f"Room with ID '{room_ref_id}' not found")
-                return False
-            track_result = await self.pg_repo.save_track_metadata(
-                egress_id=egress_id,
-                track_id=track_id,
-                room_ref_id=room_ref_id,
-                participant_identity=participant_identity,
-                status=status,
+            return await self.pg_repo.save_batch_participants_atomic(
+                room_id=room_id, participants=participants
             )
-
-            if not track_result:
-                logger.error(
-                    f"Failed to save track metadata for egress_id '{egress_id}'"
-                )
-                return False
-
-            return True
-
         except Exception as e:
-            logger.exception(f"Failed to save track metadata: {e}")
+            logger.exception(f"Failed to save batch participants: {e}")
             return False

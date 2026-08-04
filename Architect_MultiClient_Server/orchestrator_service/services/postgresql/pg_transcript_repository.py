@@ -8,8 +8,9 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any, Tuple, Set
 import uuid
 
-from sqlalchemy import text
+from sqlalchemy import text, update
 from orchestrator_service.services.postgresql.database import get_session_factory
+from orchestrator_service.services.postgresql.models import Room
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -1130,6 +1131,145 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to save track metadata: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # Kept here deliberately (not moved to pg_track_repository.py):
+    # mixes room state (rooms.record_notified_at/status) and track state
+    # (tracks.derivative_status) in one atomic statement, so it doesn't
+    # belong in a track-only repository. Placed at the very end of the
+    # class instead of alongside the other room-completion checks above --
+    # this file predates `develop`'s in-progress ORM migration for this
+    # layer, so new methods land here (appended, not interleaved) to
+    # minimize merge-conflict surface with that work (this hotfix branched
+    # off `main`, not `develop` -- see audio-ingestion/PLAN.md D26).
+    # ------------------------------------------------------------------
+    async def check_and_notify_room_recordings_ready(self, room_ref_id: str) -> bool:
+        """Room-level, fire-once gate for room_record_done (audio-ingestion PLAN.md D19).
+
+        True only when this call is the one that flips record_notified_at from
+        NULL -- i.e. the room is finalized AND every track in it has reached a
+        terminal derivative_status. Must be called from both places order can
+        arrive in (a track's derivative finishing, and room finalization)
+        since either can happen first; the atomic UPDATE...WHERE guard (same
+        technique as final_room_status()) ensures exactly one caller ever
+        sees True for a given room, regardless of which order or how many
+        times this is called concurrently.
+
+        This NOT EXISTS check is blind to a track that has no row at all --
+        relies on every track that starts recording eventually getting a row
+        (created eagerly off `recording.started`, PLAN.md D26 --
+        pg_track_repository.py::create_track_placeholder; previously rows
+        only appeared at `recording.completed`/`.failed`, which let this
+        fire before an in-flight track had ever been seen at all).
+
+        KNOWN GAP, not yet handled anywhere (flag if you're looking at this
+        because a room is stuck in status='final_room' with
+        record_notified_at still NULL): if a track's row gets created by
+        `recording.started` but record-service then crashes and loses its
+        local durable state before it can ever deliver `recording.completed`/
+        `.failed` for it (state_repo is local disk, PLAN.md D5 tier 3 -- an
+        already-called-out loss scenario), that track's row sits at
+        derivative_status='pending' forever and this NOT EXISTS never clears
+        for its room. There is no timeout/reconciliation on the orchestrator
+        side that force-terminates an abandoned track today -- would need
+        something like "track pending longer than N minutes with no live
+        record-service session -> mark derivative_status='failed'" before
+        this can be called fully closed.
+        """
+        uid = room_ref_id
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                result = await session.execute(
+                    text("""
+                        UPDATE rooms SET record_notified_at = :now
+                        WHERE id = :id AND record_notified_at IS NULL AND status = 'final_room'
+                          AND NOT EXISTS (
+                            SELECT 1 FROM tracks WHERE room_ref_id = :id
+                            AND derivative_status NOT IN ('completed', 'failed')
+                          )
+                        RETURNING id
+                    """),
+                    {"id": uid, "now": datetime.now(timezone.utc)},
+                )
+                await session.commit()
+                return result.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Failed check_and_notify_room_recordings_ready: {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Added as a new method rather than editing save_batch_participants in
+    # place, for the same "minimize merge-conflict surface with develop's
+    # ORM migration" reason as pg_track_repository.py -- appended at the
+    # end of the file/class instead of interleaved with existing methods.
+    # ------------------------------------------------------------------
+    async def save_batch_participants_atomic(
+        self, room_id: str, participants: List[Dict[str, Any]]
+    ) -> bool:
+        """Race-safe replacement for save_batch_participants above.
+
+        save_batch_participants has a real TOCTOU race: it SELECTs
+        `participants` to compute a dedup set in Python, then does an
+        unconditional `UPDATE ... SET participants = participants || :new`.
+        The `||` on the right always reads the row's *live* value at UPDATE
+        time, not the earlier SELECT -- so if a concurrent save_participant()
+        call (webhook path, already atomic -- see its docstring/pattern)
+        appends the same identity in between, the SELECT's dedup set won't
+        know about it, and this UPDATE appends it again on top of the
+        now-already-updated row. Result: a duplicated participant entry.
+        Not hypothetical -- can happen today whenever a `participant_joined`
+        webhook lands while /register's batch save (also awaiting a LiveKit
+        API call) is still in flight for the same room.
+
+        This version does the membership filter *inside* the same UPDATE
+        Postgres evaluates under the row lock, so there is no separate read
+        step for the dedup decision at all -- immune to the same race
+        regardless of how much the batch save's surrounding code is
+        reordered (e.g. moved onto a background task).
+        """
+        if not participants:
+            return True
+
+        candidates = []
+        for p in participants:
+            identity = p.get("participant_identity")
+            if not identity:
+                continue
+            ts = p.get("timestamp") or datetime.now(timezone.utc)
+            if isinstance(ts, datetime):
+                ts = ts.isoformat()
+            candidates.append({"participant_identity": identity, "timestamp": ts})
+
+        if not candidates:
+            return True
+
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                stmt = (
+                    update(Room)
+                    .where(Room.id == room_id)
+                    .values(
+                        participants=text(
+                            """
+                            COALESCE(participants, '[]'::jsonb) || (
+                                SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+                                FROM jsonb_array_elements(CAST(:candidates AS jsonb)) AS elem
+                                WHERE NOT (COALESCE(participants, '[]'::jsonb) @> jsonb_build_array(
+                                    jsonb_build_object('participant_identity', elem->>'participant_identity')
+                                ))
+                            )
+                            """
+                        ).bindparams(candidates=json.dumps(candidates))
+                    )
+                )
+                result = await session.execute(stmt)
+                await session.commit()
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Failed to save participants batch (atomic): {e}")
+            return False
 
 # --------------- Singleton ---------------
 _pg_transcript_repository: PgTranscriptRepository | None = None

@@ -10,14 +10,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from livekit import api
 
-from orchestrator_service.utils.participant_identity import parse_participant_identity
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-from orchestrator_service.api.webhook_api import egress_service
 
 router = APIRouter(prefix="/room-registry", tags=["Room Registry"])
 logger = get_logger(__name__)
@@ -43,6 +41,16 @@ class RoomUnregisterRequest(BaseModel):
     """Request model for room unregistration"""
 
     room_name: str = Field(..., description="Room name to unregister")
+    room_id: Optional[str] = Field(
+        None,
+        description=(
+            "Caller's own stable room UUID from registration (audio-ingestion "
+            "PLAN.md D27). If given, the registry entry for room_name is only "
+            "cleared when it still points to this exact room_id -- protects "
+            "against a late unregister clobbering a newer registration that "
+            "reused the same room_name in the meantime."
+        ),
+    )
 
 
 class RoomStatusResponse(BaseModel):
@@ -68,7 +76,6 @@ async def register_room(
 
     registry = get_room_registry()
     room_id = None
-    tracks_started = 0
 
     # 1. Start room in STT service FIRST
     try:
@@ -93,66 +100,19 @@ async def register_room(
             status_code=409, detail=f"Room '{request.room_name}' is already registered"
         )
 
-    # 3. Start recording for existing tracks (best effort)
-    try:
-        livekit_service = get_livekit_service()
-        if livekit_service.is_available:
-            client = livekit_service.get_client()
-
-            participants_response = await client.room.list_participants(
-                api.ListParticipantsRequest(room=request.room_name)
-            )
-
-            logger.info(f"Found {len(participants_response.participants)} participants")
-            participants_data = []
-            for participant in participants_response.participants:
-                participants_data.append(
-                    {
-                        "participant_identity": participant.identity,
-                        "timestamp": datetime.utcnow(),
-                    }
-                )
-                for track in participant.tracks:
-                    # Check if audio track
-                    is_audio = track.type == 0 or track.source == 4
-                    if is_audio:
-                        source_str = {4: "SCREEN_SHARE_AUDIO", 2: "MICROPHONE"}.get(
-                            track.source, "UNKNOWN"
-                        )
-
-                        participant_identity = parse_participant_identity(
-                            participant.identity
-                        )
-
-                        logger.info(
-                            f"Starting recording: track={track.sid}, "
-                            f"participant={participant_identity}, source={source_str}"
-                        )
-
-                        asyncio.create_task(
-                            egress_service.start_recording(
-                                request.room_name,
-                                track.sid,
-                                "AUDIO",
-                                source_str,
-                                participant_identity,
-                            )
-                        )
-                        tracks_started += 1
-
-            # Save all participants at once
-            if participants_data:
-                await transcription_service.save_participants_batch(
-                    room_id, participants_data
-                )
-
-            logger.info(f"Started {tracks_started} audio track recordings")
-        else:
-            logger.warning("LiveKit API not available")
-
-    except Exception as e:
-        logger.error(f"Error setting up recordings: {e}", exc_info=True)
-        # Continue - room is already registered
+    # 3. Save existing participants (best effort). Recording itself is driven
+    # by agents/record-service once the agent joins and subscribes tracks
+    # (audio-ingestion PLAN.md D3) -- no egress kick-off needed here anymore.
+    # Backgrounded (audio-ingestion PLAN.md D27): the LiveKit list_participants
+    # API call is the single biggest source of latency in this endpoint, and
+    # the caller (agent, registering *before* connecting to the room -- see
+    # main.py) doesn't need it to be done before getting room_id back. Not a
+    # correctness downgrade: this is still a live query against LiveKit made
+    # right after the registry entry goes active, same as before, just not
+    # blocking the response -- the participant_joined webhook (active from
+    # step 2 onward, same as before) still catches anyone who joins around
+    # this same window.
+    asyncio.create_task(_fetch_and_save_existing_participants(request.room_name, room_id))
 
     metadata_channel = MetadataChannel()
     asyncio.create_task(
@@ -164,8 +124,35 @@ async def register_room(
         "message": f"Room '{request.room_name}' registered successfully",
         "room_name": request.room_name,
         "room_id": str(room_id),
-        "tracks_started": tracks_started,
     }
+
+
+async def _fetch_and_save_existing_participants(room_name: str, room_id: str) -> None:
+    """Background half of register_room's step 3 -- see call site comment."""
+    try:
+        livekit_service = get_livekit_service()
+        if not livekit_service.is_available:
+            logger.warning("LiveKit API not available")
+            return
+
+        client = livekit_service.get_client()
+        participants_response = await client.room.list_participants(
+            api.ListParticipantsRequest(room=room_name)
+        )
+
+        logger.info(f"Found {len(participants_response.participants)} participants")
+        participants_data = [
+            {
+                "participant_identity": participant.identity,
+                "timestamp": datetime.utcnow(),
+            }
+            for participant in participants_response.participants
+        ]
+
+        if participants_data:
+            await transcription_service.save_participants_batch(room_id, participants_data)
+    except Exception as e:
+        logger.error(f"Error saving existing participants for room '{room_name}': {e}", exc_info=True)
 
 
 @router.post("/unregister", response_description="Unregister a room")
@@ -176,9 +163,10 @@ async def unregister_room(
     Unregister a room from the registry.
 
     After unregistering, the webhook will no longer process events for this room.
-    Additionally:
-    - Stop all running egress recordings
-    - Finalize room status in the STT service
+    Additionally finalizes room status in the STT service (which also drives
+    the recording-derivative lifecycle, audio-ingestion PLAN.md D18/D19 --
+    record-service/agents stop recording independently once the agent leaves
+    the room, not because of this call).
 
     **Example:**
     ```json
@@ -190,31 +178,42 @@ async def unregister_room(
     try:
         registry = get_room_registry()
 
-        # Get room_id from registry
-        room_id = await registry.get_room_id(request.room_name)
+        # Whichever registration currently owns this room_name right now
+        # (may differ from the caller's own room_id -- see below).
+        current_room_id = await registry.get_room_id(request.room_name)
+
+        # Prefer the caller's own room_id (audio-ingestion PLAN.md D27) --
+        # a worker captures this once at its own registration and it never
+        # changes for that worker's lifetime, unlike re-resolving by name
+        # here, which can point to a *different* room if room_name was
+        # already reused by a new call by the time this request lands.
+        room_id = request.room_id or current_room_id
         if not room_id:
             raise HTTPException(
                 status_code=404,
                 detail=f"Room '{request.room_name}' not found in registry",
             )
 
-        # Unregister room from registry
-        if not await registry.unregister_room(request.room_name):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Room '{request.room_name}' not found in registry",
+        if current_room_id == room_id:
+            # Registry still points to our own registration -- safe to clear.
+            if not await registry.unregister_room(request.room_name):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Room '{request.room_name}' not found in registry",
+                )
+        elif current_room_id is not None:
+            # room_name has already been re-registered under a different
+            # room_id (a new call reusing the same name) -- do NOT touch
+            # the registry, it belongs to that new call now. Still finalize
+            # *our* room below, by its own stable id, since that's unrelated
+            # to whoever currently owns the name.
+            logger.warning(
+                f"Unregister for room '{request.room_name}' (room_id={room_id}) arrived "
+                f"after the name was reused by room_id={current_room_id} -- "
+                f"leaving the registry entry alone, finalizing our room only"
             )
-
-        # Stop all active egress recordings for this room
-        egress_result = {"stopped": 0, "failed": 0}
-        try:
-            egress_result = await egress_service.stop_all_by_room(request.room_name)
-        except Exception as e:
-            logger.error(
-                f"Error stopping egresses for room '{request.room_name}': {e}",
-                exc_info=True,
-            )
-            # Don't fail unregistration if egress stopping fails
+        # else current_room_id is None: already unregistered (e.g. a retried
+        # call) -- nothing to clear, just proceed to finalize by room_id.
 
         try:
             asyncio.create_task(
@@ -235,8 +234,6 @@ async def unregister_room(
             "status": "ok",
             "message": f"Room '{request.room_name}' unregistered successfully",
             "room_name": request.room_name,
-            "egresses_stopped": egress_result["stopped"],
-            "egresses_failed": egress_result["failed"],
         }
 
     except HTTPException:

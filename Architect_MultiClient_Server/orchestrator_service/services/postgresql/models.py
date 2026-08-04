@@ -64,6 +64,11 @@ class Room(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Idempotency guard for room_record_done (audio-ingestion PLAN.md D19) --
+    # set exactly once, atomically, by check_and_notify_room_recordings_ready().
+    record_notified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_rooms_room_name", "room_name"),
@@ -92,7 +97,11 @@ class Track(Base):
         nullable=True
     )  # UUID of rooms.id
     participant_identity: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # STT (Whisper) pipeline state
+    # Client-playable derivative pipeline state -- independent of `status`
+    # above (audio-ingestion PLAN.md D18: STT does not wait on the
+    # derivative, they're two separate lifecycles for the same track).
+    derivative_status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     audio_info: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -107,6 +116,7 @@ class Track(Base):
         Index("ix_tracks_room_ref_id", "room_ref_id"),
         Index("ix_tracks_participant_identity", "participant_identity"),
         Index("ix_tracks_status", "status"),
+        Index("ix_tracks_derivative_status", "derivative_status"),
         Index("ix_tracks_created_at", "created_at"),
     )
 

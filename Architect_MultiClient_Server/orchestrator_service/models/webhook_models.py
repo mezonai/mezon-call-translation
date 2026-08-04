@@ -22,14 +22,3 @@ class TrackInfo(BaseModel):
     def track_type(self) -> str:
         return "AUDIO" if self.is_audio else "VIDEO"
 
-
-class EgressInfo(BaseModel):
-    """Egress information để gửi đi (simplified to match TranscriptionRequest)"""
-    egressId: str
-    filename: str
-    location: str
-    duration: str
-    startedAt: str
-    endedAt: str
-    source: Optional[str] = None
-

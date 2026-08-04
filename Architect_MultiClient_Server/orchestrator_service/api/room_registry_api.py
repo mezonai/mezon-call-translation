@@ -6,17 +6,11 @@ import asyncio
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from livekit import api
 
-from orchestrator_service.utils.participant_identity import parse_participant_identity
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.livekit_client import get_livekit_service
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
-
-# Import để có thể access egress_service
-from orchestrator_service.api.webhook_api import egress_service
 
 router = APIRouter(prefix="/api/room-registry", tags=["Room Registry"])
 logger = get_logger(__name__)
@@ -67,7 +61,6 @@ async def register_room(
 
     registry = get_room_registry()
     stt_room_id = None
-    tracks_started = 0
 
     # 1. Start room in STT service FIRST
     try:
@@ -92,55 +85,9 @@ async def register_room(
             status_code=409, detail=f"Room '{request.room_name}' is already registered"
         )
 
-    # 3. Start recording for existing tracks
-    try:
-        livekit_service = get_livekit_service()
-        if livekit_service.is_available:
-            client = livekit_service.get_client()
-
-            participants_response = await client.room.list_participants(
-                api.ListParticipantsRequest(room=request.room_name)
-            )
-
-            logger.info(f"Found {len(participants_response.participants)} participants")
-
-            for participant in participants_response.participants:
-                for track in participant.tracks:
-                    # Check if audio track
-                    is_audio = track.type == 0 or track.source == 4
-
-                    if is_audio:
-                        source_str = {4: "SCREEN_SHARE_AUDIO", 2: "MICROPHONE"}.get(
-                            track.source, "UNKNOWN"
-                        )
-
-                        participant_identity = parse_participant_identity(
-                            participant.identity
-                        )
-
-                        logger.info(
-                            f"Starting recording: track={track.sid}, "
-                            f"participant={participant_identity}, source={source_str}"
-                        )
-
-                        asyncio.create_task(
-                            egress_service.start_recording(
-                                request.room_name,
-                                track.sid,
-                                "AUDIO",
-                                source_str,
-                                participant_identity,
-                            )
-                        )
-                        tracks_started += 1
-
-            logger.info(f"Started {tracks_started} audio track recordings")
-        else:
-            logger.warning("LiveKit API not available")
-
-    except Exception as e:
-        logger.error(f"Error setting up recordings: {e}", exc_info=True)
-        # Continue - room is already registered
+    # Recording itself is driven by agents/record-service once the agent
+    # joins and subscribes tracks (audio-ingestion PLAN.md D3) -- orchestrator
+    # no longer needs to kick off egress for already-published tracks here.
 
     metadata_channel = MetadataChannel()
     asyncio.create_task(
@@ -152,7 +99,6 @@ async def register_room(
         "message": f"Room '{request.room_name}' registered successfully",
         "room_name": request.room_name,
         "room_id": str(stt_room_id),
-        "tracks_started": tracks_started,
     }
 
 
@@ -164,9 +110,10 @@ async def unregister_room(
     Unregister a room from the registry.
 
     After unregistering, the webhook will no longer process events for this room.
-    Additionally:
-    - Stop all running egress recordings
-    - Finalize room status in the STT service
+    Additionally finalizes room status in the STT service (which also drives
+    the recording-derivative lifecycle, audio-ingestion PLAN.md D18/D19 --
+    record-service/agents stop recording independently once the agent leaves
+    the room, not because of this call).
 
     **Example:**
     ```json
@@ -193,17 +140,6 @@ async def unregister_room(
                 detail=f"Room '{request.room_name}' not found in registry",
             )
 
-        # Stop all active egress recordings for this room
-        egress_result = {"stopped": 0, "failed": 0}
-        try:
-            egress_result = await egress_service.stop_all_by_room(request.room_name)
-        except Exception as e:
-            logger.error(
-                f"Error stopping egresses for room '{request.room_name}': {e}",
-                exc_info=True,
-            )
-            # Don't fail unregistration if egress stopping fails
-
         try:
             asyncio.create_task(
                 transcription_service.final_room(request.room_name, room_id)
@@ -223,8 +159,6 @@ async def unregister_room(
             "status": "ok",
             "message": f"Room '{request.room_name}' unregistered successfully",
             "room_name": request.room_name,
-            "egresses_stopped": egress_result["stopped"],
-            "egresses_failed": egress_result["failed"],
         }
 
     except HTTPException:

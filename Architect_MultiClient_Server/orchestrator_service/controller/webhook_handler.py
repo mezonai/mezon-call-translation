@@ -1,18 +1,8 @@
-import asyncio
-import json
-from datetime import datetime
 from typing import Dict, Any
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.egress_service import EgressService
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.livekit_client import get_livekit_service
-from orchestrator_service.utils.filepath import Filepath
-from orchestrator_service.models.webhook_models import (
-    WebhookResponse,
-    TrackInfo,
-    EgressInfo,
-)
+from orchestrator_service.models.webhook_models import WebhookResponse, TrackInfo
 from orchestrator_service.utils.participant_identity import parse_participant_identity
 
 
@@ -20,12 +10,17 @@ logger = get_logger(__name__)
 
 
 class WebhookHandler:
-    """Webhook event handler from LiveKit"""
+    """LiveKit webhook event handler.
 
-    def __init__(
-        self, egress_service: EgressService, transcription_service: TranscriptionService
-    ):
-        self.egress_service = egress_service
+    Recording/egress events no longer flow through here (audio-ingestion
+    PLAN.md D2/D18) -- record-service reports directly to
+    POST /api/v2/recordings/events (recording_event_service.py). This
+    handler is left with the generic room/participant/track lifecycle
+    events LiveKit's core SFU still emits regardless of how recording is
+    done.
+    """
+
+    def __init__(self, transcription_service: TranscriptionService):
         self.transcription_service = transcription_service
         self.room_registry = get_room_registry()
 
@@ -41,27 +36,15 @@ class WebhookHandler:
         """
         event_type = event.get("event", "unknown")
         logger.info(f"📥 Received: {event_type}")
-        if event_type not in {"egress_ended", "egress_started", "egress_updated", "participant_connection_aborted"}:
-            logger.info(f"  (skipping detailed processing for event type)")
-            # Get room name - different events have different structures
-            room_name = event.get("room", {}).get("name", "")
-            if not room_name:
-                # For egress events, room name is in egressInfo
-                room_name = event.get("egressInfo", {}).get("roomName", "")
 
-            # Check if room is registered
-            if room_name and not await self.room_registry.is_registered(room_name):
-                logger.info(f"  ⏭ Room '{room_name}' not registered, skipping event")
-                return WebhookResponse(received=True, action="room_not_registered")
+        room_name = event.get("room", {}).get("name", "")
+        if room_name and not await self.room_registry.is_registered(room_name):
+            logger.info(f"  ⏭ Room '{room_name}' not registered, skipping event")
+            return WebhookResponse(received=True, action="room_not_registered")
 
         handlers = {
             "participant_joined": self._handle_participant_joined,
             "track_published": self._handle_track_published,
-            "track_unpublished": self._handle_track_unpublished,
-            "egress_started": self._handle_egress_started,
-            "egress_ended": self._handle_egress_ended,
-            "egress_updated": self._handle_egress_updated,
-            "participant_connection_aborted": self._handle_participant_connection_aborted,
         }
 
         handler = handlers.get(event_type)
@@ -84,7 +67,8 @@ class WebhookHandler:
         return WebhookResponse(received=True, action="participant_joined_logged")
 
     async def _handle_track_published(self, event: Dict) -> WebhookResponse:
-        """Handle when a track is published"""
+        """Handle when a track is published -- logging only. Recording itself
+        is driven by agents/record-service (D3), not triggered from here."""
         room_name = event.get("room", {}).get("name", "unknown")
         identity = event.get("participant", {}).get("identity", "unknown")
         identity = parse_participant_identity(identity)
@@ -101,254 +85,6 @@ class WebhookHandler:
             f"  Track: {track.sid} (mime: {track.mime_type}, source: {track.source})"
         )
 
-        if track.is_audio:
-            asyncio.create_task(
-                self.egress_service.start_recording(
-                    room_name, track.sid, track.track_type, track.source, identity
-                )
-            )
-            return WebhookResponse(received=True, action="recording_started")
-
-        logger.info(f"  ⏭ Skipping {track.track_type}")
         return WebhookResponse(
-            received=True, action=f"skipped_{track.track_type.lower()}"
+            received=True, action=f"{track.track_type.lower()}_track_published_logged"
         )
-
-    async def _handle_track_unpublished(self, event: Dict) -> WebhookResponse:
-        """Handle when a track is unpublished"""
-        room_name = event.get("room", {}).get("name", "")
-        track_sid = event.get("track", {}).get("sid", "")
-
-        if await self.egress_service.mark_unpublished(room_name, track_sid):
-            logger.info(
-                f"  Track {track_sid} unpublished in room {room_name}, egress auto-stop"
-            )
-            return WebhookResponse(received=True, action="egress_removed")
-
-        return WebhookResponse(received=True, action="no_active_egress")
-
-    async def _handle_egress_started(self, event: Dict) -> WebhookResponse:
-        """Handle when an egress starts - create track metadata"""
-        egress_info = event.get("egressInfo")
-
-        egress_id = egress_info.get("egressId")
-        room_name = egress_info.get("roomName")
-
-        # Get trackId from nested track object
-        track_data = egress_info.get("track")
-        track_id = track_data.get("trackId")
-
-        # Parse participant identity from filepath
-        # Format: "room_name/identity__source-type-timestamp.ext"
-        filepath = track_data.get("file").get("filepath")
-        participant_identity = "unknown"
-
-        if filepath:
-            try:
-                parsed = Filepath.parse(filepath)
-                participant_identity = parsed.get("identity")
-                logger.debug(
-                    f"Parsed participant identity '{participant_identity}' from filepath: {filepath}"
-                )
-            except ValueError as e:
-                logger.warning(f"Failed to parse filepath '{filepath}': {e}")
-            except Exception as e:
-                logger.warning(f"Unexpected error parsing filepath '{filepath}': {e}")
-
-        logger.info(f"  Egress started: {egress_id} for room {room_name}")
-        logger.info(f"  Track: {track_id}, Participant: {participant_identity}")
-        logger.info(f"  Filepath: {filepath}")
-
-        # Get or create room to obtain room_ref_id
-        try:
-            room_ref_id = await self.room_registry.get_room_id(room_name)
-
-            # Save track metadata (filename will be updated later when egress ends)
-            asyncio.create_task(
-                self.transcription_service.save_track_metadata(
-                    egress_id=egress_id,
-                    track_id=track_id,
-                    room_ref_id=room_ref_id,
-                    participant_identity=participant_identity,
-                )
-            )
-
-            return WebhookResponse(received=True, action="track_metadata_saved")
-
-        except Exception as e:
-            logger.error(f"Error saving track metadata: {e}")
-            return WebhookResponse(received=True, action="egress_started_logged")
-
-    async def _handle_egress_updated(self, event: Dict) -> WebhookResponse:
-        """Handle when an egress is updated"""
-        egress_info = event.get("egressInfo", {})
-        egress_id = egress_info.get("egressId", "unknown")
-        status = egress_info.get("status", "unknown")
-        room_name = egress_info.get("roomName", "unknown")
-        logger.info(
-            f"egress_updated: room={room_name}, egress_id={egress_id}, status={status}"
-        )
-        return WebhookResponse(received=True, action="egress_updated_logged")
-
-    async def _handle_egress_ended(self, event: Dict) -> WebhookResponse:
-        """Handle when an egress ends"""
-        egress = event.get("egressInfo", {})
-        status = egress.get("status", "unknown")
-
-        room_name = egress.get("roomName", "unknown")
-        egress_id = egress.get("egressId", "unknown")
-        logger.info(
-            f"  Egress ended: {egress_id} for room {room_name} with status {status}"
-        )
-        if status != "EGRESS_COMPLETE":
-            if status in ["EGRESS_FAILED", "EGRESS_ABORTED"]:
-                error = egress.get("error", "no error info")
-                logger.error(f"Egress failed: {error}")
-                asyncio.create_task(
-                    self._attempt_egress_recovery(room_name, egress_id, error)
-                )
-                return WebhookResponse(received=True, action="egress_ended_failed")
-            logger.info(
-                f"Egress not completed: {status}, egress_ended full event: {event}"
-            )
-            return WebhookResponse(received=True, action="egress_ended_not_complete")
-
-        file_data = egress.get("file", {})
-
-        egress_info = self._build_egress_info(egress, file_data)
-        self._log_egress_info(egress_info)
-
-        # Enqueue for transcription
-        asyncio.create_task(self.transcription_service.enqueue(egress_info.dict()))
-
-        return WebhookResponse(received=True, action="egress_ending_logged")
-
-    async def _handle_participant_connection_aborted(self, event: Dict) -> WebhookResponse:
-        """Handle when a participant connection is aborted — log only."""
-        room_name = event.get("room", {}).get("name", "unknown")
-        egress_id = event.get("participant", {}).get("identity", "unknown")  # Actually egress_id
-        disconnect_reason = event.get("participant", {}).get("disconnectReason", "unknown")
-
-        logger.error(
-            f"🔴 Egress connection aborted: "
-            f"egress_id={egress_id}, room={room_name}, reason={disconnect_reason}"
-        )
-
-        return WebhookResponse(received=True, action="participant_connection_aborted_logged")
-
-    async def _attempt_egress_recovery(self, room_name: str, egress_id: str, error: str) -> None:
-        """
-        Attempt to restart recording after egress failure.
-        Checks if participant is still in room, then restarts egress for the track.
-        """
-        try:
-            pg_repo = self.transcription_service.pg_repo
-            if not pg_repo.connected:
-                await pg_repo.connect()
-
-            track = await pg_repo.get_track_by_id(track_id=egress_id)
-            if not track:
-                logger.error(f"[Recovery] No track found in DB for egress: {egress_id}")
-                return
-
-            participant_identity = track.get("participant_identity")
-            track_id = track.get("track_id")
-
-            logger.info(
-                f"[Recovery] Found track: egress={egress_id}, "
-                f"track_id={track_id}, participant={participant_identity}"
-            )
-
-            if not participant_identity:
-                logger.error(f"[Recovery] No participant_identity in track record for egress: {egress_id}")
-                return
-
-            livekit_service = get_livekit_service()
-            if not livekit_service.is_available:
-                logger.error("[Recovery] LiveKit service not available")
-                return
-
-            participant_detail = await livekit_service.get_participant_detail(
-                room_name=room_name,
-                identity=participant_identity
-            )
-
-            if not participant_detail or not participant_detail.get("found"):
-                logger.error(
-                    f"[Recovery] Participant '{participant_identity}' not found in room '{room_name}', "
-                    f"skipping recovery"
-                )
-                await pg_repo.save_track_metadata(
-                    egress_id=egress_id,
-                    error=error,
-                    status="failed",
-                )
-                return
-
-            logger.info(
-                f"[Recovery] Participant still in room: identity={participant_detail.get('identity')}, "
-                f"state={participant_detail.get('state')}"
-            )
-
-            tracks = participant_detail.get("tracks", [])
-            track_found = False
-            track_info = None
-            if track_id and tracks:
-                for t in tracks:
-                    if t.get("sid") == track_id:
-                        track_found = True
-                        track_info = t
-                        break
-
-            if track_found and track_info:
-                logger.info(
-                    f"[Recovery] Track found, restarting recording: "
-                    f"sid={track_info.get('sid')}, type={track_info.get('type')}, "
-                    f"source={track_info.get('source')}"
-                )
-                asyncio.create_task(
-                    self.egress_service.start_recording(
-                        room_name=room_name,
-                        track_sid=track_info.get("sid"),
-                        track_type=track_info.get("type"),
-                        source=track_info.get("source"),
-                        identity=participant_detail.get("identity"),
-                        force_update=True
-                    )
-                )
-            else:
-                logger.error(
-                    f"[Recovery] Track {track_id} not found in participant's tracks. "
-                    f"Available: {[t.get('sid') for t in tracks]}"
-                )
-                await pg_repo.save_track_metadata(
-                    egress_id=egress_id,
-                    error=error,
-                    status="failed",
-                )
-
-        except Exception as e:
-            logger.error(f"[Recovery] Error during egress recovery for {egress_id}: {e}")
-
-    def _build_egress_info(self, egress: Dict, file_data: Dict) -> EgressInfo:
-        """Build EgressInfo object from event data (simplified)"""
-        filepath = file_data.get("filename")
-        parsed = Filepath.parse(filepath)
-        return EgressInfo(
-            egressId=egress.get("egressId"),
-            filename=file_data.get("filename"),
-            source=parsed.get("source", ""),
-            location=file_data.get("location", ""),
-            duration=file_data.get("duration", 0),
-            startedAt=file_data.get("startedAt"),
-            endedAt=file_data.get("endedAt"),
-        )
-
-    def _log_egress_info(self, info: EgressInfo):
-        """Log egress information"""
-        logger.info(f"  Egress: {info.egressId}")
-        logger.info(f"  File: {info.filename}")
-        logger.info(f"  Location: {info.location}")
-        logger.info(f"  Duration: {info.duration}ns")
-        logger.info(f"  Started At: {info.startedAt}")
-        logger.info(f"  Ended At: {info.endedAt}")

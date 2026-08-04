@@ -20,10 +20,7 @@ from orchestrator_service.api.sse_agent_request_api import (
     router as sse_agent_request_router,
 )
 from orchestrator_service.api.sse.sse_manager import SSEManager
-from orchestrator_service.api.webhook_api import (
-    router as webhook_router,
-    egress_service,
-)
+from orchestrator_service.api.webhook_api import router as webhook_router
 from orchestrator_service.api.room_api import router as room_router
 from orchestrator_service.api.room_registry_api import router as room_registry_router
 from orchestrator_service.api.queue_api import router as queue_router
@@ -156,36 +153,31 @@ async def lifespan(app: FastAPI):
 
     # Step 2: Cleanup SSE manager (clear data structures)
     # SSE connections were already notified by signal handler
-    logger.info("Step 2/7: Cleaning up SSE manager...")
+    logger.info("Step 2/6: Cleaning up SSE manager...")
     await sse_manager.cleanup()
     logger.info("✅ SSE manager cleanup completed")
 
-    # Step 3: Cleanup egress service
-    logger.info("Step 3/7: Cleaning up egress service...")
-    await egress_service.cleanup()
-    logger.info("✅ Egress service cleanup completed")
-
-    # Step 4: Cleanup LiveKit service
-    logger.info("Step 4/7: Cleaning up LiveKit service...")
+    # Step 3: Cleanup LiveKit service
+    logger.info("Step 3/6: Cleaning up LiveKit service...")
     await cleanup_livekit_service()
     logger.info("✅ LiveKit service cleanup completed")
 
-    # Step 5: Disconnect Redis Connection Pool
+    # Step 4: Disconnect Redis Connection Pool
     try:
-        logger.info("Step 5/7: Disconnecting Redis connection pool...")
+        logger.info("Step 4/6: Disconnecting Redis connection pool...")
         redis_manager = get_connection_manager()
         await redis_manager.disconnect()
         logger.info("✅ Redis connection pool closed")
     except Exception as e:
         logger.error(f"Error closing Redis connection pool: {e}")
 
-    # Step 6: 🛑 FastAPI shutdown
-    logger.info("Step 6/7: 🛑 FastAPI shutdown")
+    # Step 5: 🛑 FastAPI shutdown
+    logger.info("Step 5/6: 🛑 FastAPI shutdown")
 
     # Dispose PostgreSQL engine
     await dispose_engine()
 
-    logger.info("Step 7/7: ✅ Cleanup complete")
+    logger.info("Step 6/6: ✅ Cleanup complete")
     logger.info("🎉 All services cleanup completed successfully")
 
 
