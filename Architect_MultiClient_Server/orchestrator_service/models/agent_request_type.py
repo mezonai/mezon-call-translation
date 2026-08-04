@@ -21,9 +21,6 @@ class AgentRequestType(StrEnum):
     SEND_CHAT_MESSAGE = "send_chat_message"
     """Send chat message to room participants"""
 
-    START_AUDIO_RECORDING = "start_audio_recording"
-    """Command agent to start audio recording (e.g., for call recording)"""
-
     @classmethod
     def values(cls) -> list[str]:
         """Get all enum values as strings."""

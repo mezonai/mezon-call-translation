@@ -45,6 +45,7 @@ class RoomSummaryResponse(BaseModel):  # type: ignore[explicit-any]
     summary_data: dict[str, Any] = Field(description="Summary Data", default={})  # type: ignore[explicit-any]
     messages: list[dict[str, Any]] = Field(description="Messages array", default=[])  # type: ignore[explicit-any]
     created_at: str = Field(description="Created At", default="")
+    finalized_at: str = Field(description="Finalized At", default="")
     completed_at: str = Field(description="Completed At", default="")
     total_segments: int = Field(description="Total Segments", default=0)
 

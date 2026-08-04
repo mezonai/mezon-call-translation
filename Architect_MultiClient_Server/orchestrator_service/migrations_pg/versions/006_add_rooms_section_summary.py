@@ -1,8 +1,19 @@
 """add rooms section summary table
 
 Revision ID: 005_add_rooms_section_summary
-Revises: 004_add_outbox_tasks_with_enums
+Revises: 005_add_derivative_tracking
 Create Date: 2026-07-01 00:00:00.000000
+
+Rebased onto 005_add_derivative_tracking (audio-ingestion hotfix) during the
+main->develop sync -- both were originally cut from 004 in parallel (two
+"005" migrations, a real fork, not just a naming collision), so applying
+`alembic upgrade head` would otherwise fail with "multiple heads". Only
+down_revision changed here; `revision` is left as-is (not renumbered to
+"006") since any dev DB that already ran this migration has that exact ID
+recorded in `alembic_version` -- renaming it would make alembic think it's
+an unapplied migration and re-run it, failing on the table already existing.
+The 006 in this file's *name* is cosmetic (directory ordering only, matches
+the file being renamed alongside this fix); it is not the revision ID.
 """
 
 import sqlalchemy as sa
@@ -10,7 +21,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "005_add_rooms_section_summary"
-down_revision = "004_add_outbox_tasks_with_enums"
+down_revision = "005_add_derivative_tracking"
 branch_labels = None
 depends_on = None
 
