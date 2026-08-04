@@ -103,7 +103,7 @@ async def get_summary_by_room_id(
 )
 async def retry_summary(
     room_id: str,
-    type: RetryType = Query(RetryType.ALL, description="Type of retry: 'summary', 'action_items', or 'all'"),
+    type: RetryType = Query(RetryType.SUMMARY, description="Type of retry: 'summary', 'sections', or 'overall_context'"),
 ):
     try:
         summary_data = await get_summary_service().retry_summary_from_full_text(room_id, retry_type=type)

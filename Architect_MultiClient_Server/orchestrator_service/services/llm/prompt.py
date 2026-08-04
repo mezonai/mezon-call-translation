@@ -1,5 +1,4 @@
 from orchestrator_service.models.summary_models import (
-    ActionItemsResult,
     LightSummaryResult,
     OverallContextResult,
     SummaryResult,
@@ -38,8 +37,9 @@ You are a professional Project Manager & Technical Writer. Your task is to conve
 * The structure must strictly follow this format: "[participant_id] Task content. Deadline (if any) and (timestamp)." (Example: "[user-1] Check the server logs (09:18:51)")
 4. **detail**:
 * This is the MOST DETAILED part of the document.
-* Each element should be a bullet point grouped by logical topics.
-* Preferred structure: Who + Content + Decision + Technical details + Timestamp.
+* Each element should be a summary bullet point of a logical topic/discussion.
+* Preferred structure: Topic Title: Who + Content + Decision + Technical details + Timestamp.
+* Example format: "Xác nhận thông số kỹ thuật ticket 81: [user-1] và team đã thảo luận... (00:02:28)."
 * Each bullet point can be 1-4 lines long.
 
 # OUTPUT FORMAT
@@ -61,10 +61,10 @@ Return only a valid JSON object matching the SummaryResult schema:
     "[user-2] Thiết kế UI bằng storyboard cho tính năng Guest User Invitation (09:31:20)."
   ],
   "detail": [
-    "[user-1] báo cáo task 3094 và ES-Link đã hoàn thành, sẵn sàng release và chuẩn bị insert data trên Prod (09:18:51).",
-    "[user-1] đang xử lý task 3103 do gặp lỗi search trên cloud dù chạy local bình thường (09:18:51).",
-    "[user-3] chỉ đạo dev test kỹ trên Staging và chủ động pin release cuốn chiếu các task nhỏ, ít impact (09:20:56).",
-    "[user-2] đã đọc spec Guest User Invitation và sẽ vẽ storyboard UI flow để trực quan hóa cho team review (09:31:20)."
+    "Kế hoạch release Task 3094: [user-1] báo cáo task 3094 và ES-Link đã hoàn thành, sẵn sàng release và chuẩn bị insert data trên Prod (09:18:51).",
+    "Sửa lỗi Task 3103 trên Cloud: [user-1] đang xử lý task 3103 do gặp lỗi search trên cloud dù chạy local bình thường (09:18:51).",
+    "Chỉ đạo quy trình Release Cuốn Chiếu: [user-3] chỉ đạo dev test kỹ trên Staging và chủ động pin release cuốn chiếu các task nhỏ, ít impact (09:20:56).",
+    "Thiết kế UI cho Guest User Invitation: [user-2] đã đọc spec Guest User Invitation và sẽ vẽ storyboard UI flow để trực quan hóa cho team review (09:31:20)."
   ]
 }}
 
@@ -76,8 +76,8 @@ Return only a valid JSON object matching the SummaryResult schema:
   ],
   "next_focus": [],
   "detail": [
-    "[user-1] báo cáo tỷ lệ tài khoản bị ban đã giảm rõ rệt sau khi tạm dừng tính năng Massadei từ ngày hôm qua (09:49:51).",
-    "[user-2] xác nhận hệ thống Notification trên Staging chạy ổn định và không phát sinh lỗi mới (09:50:38)."
+    "Cập nhật tỷ lệ khóa tài khoản hệ thống: [user-1] báo cáo tỷ lệ tài khoản bị ban đã giảm rõ rệt sau khi tạm dừng tính năng Massadei từ ngày hôm qua (09:49:51).",
+    "Kết quả kiểm thử tính năng Notification: [user-2] xác nhận hệ thống Notification trên Staging chạy ổn định và không phát sinh lỗi mới (09:50:38)."
   ]
 }}
 
@@ -94,9 +94,9 @@ Return only a valid JSON object matching the SummaryResult schema:
     "[Unknown] Sign up for a 3rd-party code scanning service to test integration into the CI/CD pipeline (09:32:56)."
   ],
   "detail": [
-    "[user-1] proposed automated security scans on every code commit to detect outdated packages (09:32:10).",
-    "[user-2] noted the need to audit open ports and excessive IAM permissions on GCP (09:34:31).",
-    "The team agreed that all members must review the new Vector Store architecture document on Notion prior to next week's sync (09:40:15)."
+    "Automated Security Scan Proposal: [user-1] proposed automated security scans on every code commit to detect outdated packages (09:32:10).",
+    "GCP Infrastructure Audit Requirements: [user-2] noted the need to audit open ports and excessive IAM permissions on GCP (09:34:31).",
+    "Vector Store Architecture Review Consensus: The team agreed that all members must review the new Vector Store architecture document on Notion prior to next week's sync (09:40:15)."
   ]
 }}
 
@@ -173,8 +173,9 @@ You need to perform 2 tasks within a single response:
 * The structure must strictly follow this format: "[participant_id] Task content. Deadline (if any) and (timestamp)." (Example: "[user-1] Check the server logs (09:18:51)")
 4. **detail**:
 * This is the MOST DETAILED part of the document.
-* Each element should be a bullet point grouped by logical topics.
-* Preferred structure: Who + Content + Decision + Technical details + Timestamp.
+* Each element should be a summary bullet point of a logical topic/discussion.
+* Preferred structure: Topic Title: Who + Content + Decision + Technical details + Timestamp.
+* Example format: "Xác nhận thông số kỹ thuật ticket 81: [user-1] và team đã thảo luận... (00:02:28)."
 * Each bullet point can be 1-4 lines long.
 
 # OUTPUT FORMAT
@@ -195,10 +196,10 @@ Only return a valid JSON object according to the schema:
     "[user-1] Fix lỗi search trên cloud cho task 3103 của Confident Project (09:18:51)."
   ],
   "detail": [
-    "[user-1] báo cáo task 3094 đã hoàn thành và sẵn sàng cho đợt release tiếp theo (09:18:51).",
-    "[user-1] đang xử lý task 3103 do gặp lỗi search trên cloud dù local hoạt động bình thường (09:18:51).",
-    "[user-2] đề xuất dev chủ động release các task nhỏ, rủi ro thấp để dễ kiểm soát lỗi (09:20:56).",
-    "[user-3] giải thích hai luồng release hiện tại và thống nhất phương án cho các task độc lập (09:22:37)."
+    "Tiến độ Task 3094: [user-1] báo cáo task 3094 đã hoàn thành và sẵn sàng cho đợt release tiếp theo (09:18:51).",
+    "Sửa lỗi Task 3103 trên Cloud: [user-1] đang xử lý task 3103 do gặp lỗi search trên cloud dù local hoạt động bình thường (09:18:51).",
+    "Đề xuất Quy trình Release: [user-2] đề xuất dev chủ động release các task nhỏ, rủi ro thấp để dễ kiểm soát lỗi (09:20:56).",
+    "Thống nhất Luồng Release: [user-3] giải thích hai luồng release hiện tại và thống nhất phương án cho các task độc lập (09:22:37)."
   ]
 }}
 
@@ -224,10 +225,10 @@ Only return a valid JSON object according to the schema:
     "[user-2] Share screenshots of the guest invitation UI design with management for review (09:30:54)."
   ],
   "detail": [
-    "[user-1] reported that security documents were sent and is currently working on the Filter UI (09:26:01).",
-    "[user-3] advised caution during deployments due to upcoming client holiday schedules (09:28:15).",
-    "[user-2] proposed sending direct invitation links to guest users to avoid email setup complexity (09:29:06).",
-    "[user-3] requested [user-2] to share screenshots of the proposed invitation UI for review (09:30:54)."
+    "Security Docs & Filter UI Progress: [user-1] reported that security documents were sent and is currently working on the Filter UI (09:26:01).",
+    "Deployment Caution Warning: [user-3] advised caution during deployments due to upcoming client holiday schedules (09:28:15).",
+    "Guest Invitation Workflow Proposal: [user-2] proposed sending direct invitation links to guest users to avoid email setup complexity (09:29:06).",
+    "Invitation UI Review Request: [user-3] requested [user-2] to share screenshots of the proposed invitation UI for review (09:30:54)."
   ]
 }}
 
@@ -264,163 +265,4 @@ Only return a valid JSON object according to the schema:
 ```json
 {OverallContextResult.model_json_schema()}
 ```
-"""
-
-
-def build_prompt_action_items(conversation_text: str, language: str) -> str:
-    return f"""
-# ROLE
-You are an AI assistant specialized in extracting action items from meeting and conversation transcripts.
-
-Your task uses a TWO-STAGE approach:
-1) Identify actionable tasks first (task-centric extraction)
-2) Then determine task ownership and deadlines
-
-# INPUT FORMAT
-Transcript format:
-[timestamp] participant_identity: transcript_text
-
-# CRITICAL RULES (NON-NEGOTIABLE)
-
-1. "participant_identity" is the EXACT identifier after the timestamp.
-2. Do NOT rename, normalize, translate, or modify participant identities.
-3. Preserve original meaning. Do NOT add new information.
-4. Extract ONLY real actionable tasks (not ideas, questions, or general discussion).
-5. Always write tasks in {language}, regardless of transcript language.
-6. If no valid tasks exist, return an empty list.
-7. Do NOT output meeting summaries.
-
----
-
-# EXTRACTION STRATEGY (STRICT TWO-STAGE PROCESS)
-
-## STAGE 1 — TASK IDENTIFICATION (OWNER-AGNOSTIC)
-
-First, scan the transcript and extract ALL actionable tasks WITHOUT considering ownership.
-
-A task is valid if:
-- It describes a concrete action that can be executed and tracked
-- It refers to a real deliverable, change, fix, implementation, or follow-up
-- It is discussed as something that needs to be done
-
-At this stage:
-- Ignore who will do it
-- Ignore priority and deadline
-- Focus only on WHAT needs to be done
-
-Do NOT extract:
-- Questions
-- Brainstorming ideas
-- Opinions or explanations
-- Status updates without actionable work
-
----
-
-## STAGE 2 — OWNERSHIP & DEADLINE MAPPING
-
-For EACH identified task:
-
-### A. OWNER ASSIGNMENT
-
-Determine the responsible participant_identity using evidence:
-
-1. Direct self-commitment:
-   - "I will...", "I'll handle...", "Em làm...", "Để em xử lý..."
-
-2. Assignment + acceptance in nearby dialogue:
-   - A assigns task to B
-   - B confirms: "ok", "vâng", "được", "got it", "em xử lý"
-
-3. First-person ownership in natural speech:
-   - "em fix rồi gửi PR"
-   - "hôm nay em làm phần này"
-
-If ownership is:
-- Clearly identifiable → assign exact participant_identity
-- Ambiguous or missing → set owner as: "unknown"
-
-### B. DEADLINE DETECTION
-
-If a deadline or time reference is explicitly mentioned for that task:
-Append to task:
-(Deadline: exact wording from transcript)
-
-Rules:
-- Must be explicitly stated
-- Must relate to the same task
-- Keep original wording
-- Do NOT convert to calendar dates
-
----
-
-# ACTION ITEM STRUCTURE (STRICT)
-
-Each action item must include:
-
-OWNER → participant_identity OR "unknown"
-TASK → clear, executable action description
-
-Task description:
-- Concise but complete sentence
-- Preserve technical terms, names, systems, features
-- Concrete and trackable
-
-If deadline exists:
-Append at end of task description.
-
----
-
-# OUTPUT FORMAT
-Return ONLY valid JSON matching this schema:
-```json
-{ActionItemsResult.model_json_schema()}
-```
----
-TRANSCRIPT
-{conversation_text}
----
-FINAL CHECK
-
-Were tasks extracted BEFORE assigning owners?
-
-Does every task have an owner or "unknown"?
-
-Are participant identities exact when assigned?
-
-Are deadlines included only if explicit?
-
-Are all tasks actionable and trackable?
-
-Is the output written in {language}?
-"""
-
-
-def build_simple_prompt_action_items(conversation_text: str, language: str) -> str:
-    return f"""
-# ROLE
-You are an AI assistant specialized in extracting action items from meeting transcripts.
-
-# INPUT FORMAT
-Transcript format: [timestamp] participant_identity: transcript_text
-
-# CRITICAL RULES (NON-NEGOTIABLE)
-1. "participant_identity" must be the EXACT identifier from the transcript. Do not modify, translate, or normalize it.
-2. Extract ONLY concrete, real actionable tasks (deliverables, fixes, implementations, follow-ups). Do NOT extract questions, brainstorming ideas, or status updates.
-3. Write all task descriptions in {language}.
-4. If a deadline or time reference is explicitly mentioned for a task, append it to the end of the task description in the format: "(Deadline: [exact wording])". Do not convert to calendar dates.
-5. If a task has no clear owner or ownership is ambiguous, set participant_identity as "unknown".
-6. If no valid tasks exist, return an empty list.
-
-# OUTPUT INSTRUCTION
-- You must perform the task-centric extraction and ownership mapping internally.
-- Do NOT output any introduction, explanation, stage breakdown, or final checklist.
-- Respond ONLY with a single, valid JSON object matching the schema below.
-
-# JSON SCHEMA
-{ActionItemsResult.model_json_schema()}
-
----
-TRANSCRIPT:
-{conversation_text}
----
 """
