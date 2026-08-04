@@ -1,6 +1,6 @@
 """add rooms section summary table
 
-Revision ID: 005_add_rooms_section_summary
+Revision ID: 006_add_rooms_section_summary
 Revises: 005_add_derivative_tracking
 Create Date: 2026-07-01 00:00:00.000000
 
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "005_add_rooms_section_summary"
+revision = "006_add_rooms_section_summary"
 down_revision = "005_add_derivative_tracking"
 branch_labels = None
 depends_on = None
