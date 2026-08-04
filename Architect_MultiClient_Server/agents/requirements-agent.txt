@@ -10,7 +10,13 @@ livekit-agents>=0.9.0          # LiveKit agents framework for real-time applicat
 livekit>=0.17.0                # LiveKit client SDK for WebRTC communication
 livekit-api>=0.7.0             # LiveKit server API for room/token management
 websockets>=11.0.0             # WebSocket client for STT/TTS server communication
-protobuf>=4.25.0               # Protocol buffers (for LiveKit)
+protobuf>=5.0,<7.0              # Protocol buffers (for LiveKit). Ceiling required: googleapis-common-protos
+                                # and opentelemetry-proto (both pulled in transitively, likely via LiveKit's
+                                # own tracing) declare protobuf<7.0 -- an unbounded floor here lets pip resolve
+                                # 7.x on a fresh install, breaking those two. See audio-ingestion/PLAN.md D31
+                                # for the incident (recording_pb2.py was regenerated at gencode 6.33.5 to match
+                                # this ceiling, not the other way around -- don't bump this without also
+                                # re-running scripts/gen_proto.sh at a protobuf version still <7.0).
 
 # ========================================
 # API
