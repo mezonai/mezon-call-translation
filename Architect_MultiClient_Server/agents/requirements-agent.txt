@@ -43,8 +43,3 @@ python-dotenv>=1.0.0           # Load environment variables from .env
 # ========================================
 PyJWT>=2.8.0                   # JSON Web Token for authentication
 
-# ========================================
-# Development & Quality
-# ========================================
-ruff>=0.4.0                    # Fast linter and code formatter
-mypy>=1.10.0                   # Static type checker
