@@ -1,0 +1,22 @@
+[project]
+name = "audio-processing-service"
+version = "0.1.0"
+description = "Non-critical async transcode worker: raw PCM capture -> client-playable OGG/Opus derivative (see ../PLAN.md section 4)"
+requires-python = ">=3.11"
+dependencies = [
+    "redis>=5.0",
+    "boto3>=1.34",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

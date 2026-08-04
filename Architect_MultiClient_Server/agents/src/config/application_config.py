@@ -414,6 +414,35 @@ class RecordingUploadConfig:
         return True
 
 # ============================================================================
+# record-service Configuration (audio-ingestion/record-service, see PLAN.md)
+# ============================================================================
+
+@dataclass
+class RecordServiceConfig:
+    """gRPC forwarding target for the new self-hosted recording pipeline.
+
+    No enabled/disabled switch: LiveKit Egress is already fully removed, so
+    there is no fallback to roll back to and no meaningful "off" state --
+    see audio-ingestion/PLAN.md D2/D24. Forwarding is always attempted; a
+    record-service that's unreachable in some environment fails soft per
+    track (RecordServiceClient.new_forwarder logs and returns None) rather
+    than taking down the agent.
+    """
+    grpc_addr: str = "record-service:50051"
+    max_queue_size: int = 200
+
+    @classmethod
+    def from_env(cls) -> 'RecordServiceConfig':
+        return cls(
+            grpc_addr=os.getenv('RECORD_SERVICE_GRPC_ADDR', 'record-service:50051'),
+            max_queue_size=int(os.getenv('RECORD_SERVICE_MAX_QUEUE_SIZE', '200')),
+        )
+
+    def validate(self) -> bool:
+        return self.max_queue_size > 0
+
+
+# ============================================================================
 # Logger Configuration
 # ============================================================================
 
@@ -463,6 +492,7 @@ class Config:
         self.tts_service = TTSConfig.from_env()
         self.minio = MinIOConfig.from_env()
         self.recording_upload = RecordingUploadConfig.from_env()
+        self.record_service = RecordServiceConfig.from_env()
         self.logger = LoggerConfig.from_env()
         
         self._initialized = True
@@ -484,6 +514,8 @@ class Config:
             raise ValueError("Invalid TTS service configuration")
         if not self.recording_upload.validate():
             raise ValueError("Invalid recording upload configuration")
+        if not self.record_service.validate():
+            raise ValueError("Invalid record-service configuration")
     
     @classmethod
     def get_instance(cls) -> 'Config':

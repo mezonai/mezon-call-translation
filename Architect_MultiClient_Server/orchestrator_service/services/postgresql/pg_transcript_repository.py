@@ -3,9 +3,10 @@ PostgreSQL repository for transcripts (replaces MongoDBService).
 Handles rooms, tracks, chunks, summary, and metadata events.
 """
 
+import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 from sqlalchemy import Select, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -182,83 +183,6 @@ class PgTranscriptRepository:
             logger.error(f"Failed to save participant: {e}")
             return False
 
-    async def save_batch_participants(
-        self, room_id: str, participants: list[dict[str, str | datetime]]
-    ) -> dict[str, int]:
-        if not participants:
-            return {"success": True, "added_count": 0, "skipped_count": 0}
-
-        session_factory = get_session_factory()
-
-        try:
-            async with session_factory() as session:
-                room = await session.get(Room, room_id)
-                if not room:
-                    logger.error(f"Room {room_id} not found")
-                    return {"success": False, "added_count": 0, "skipped_count": 0}
-
-                # TODO: Use `Any` because the `Room.participants` field in the database model is mapped as a generic `dict`
-                raw_participants = cast(Any, room.participants) or []  # type: ignore[explicit-any]
-
-                existing_participants: list[dict[str, Any]] = [  # type: ignore[explicit-any]
-                    p for p in raw_participants if isinstance(p, dict)
-                ]
-
-                existing_identities: set[str] = {
-                    str(p.get("participant_identity")) for p in existing_participants if p.get("participant_identity")
-                }
-
-                participants_to_add = []
-                skipped_count = 0
-
-                for p in participants:
-                    identity = p.get("participant_identity")
-
-                    if not identity:
-                        skipped_count += 1
-                        continue
-
-                    if identity in existing_identities:
-                        skipped_count += 1
-                        continue
-
-                    ts = p.get("timestamp") or datetime.now(UTC)
-                    if isinstance(ts, datetime):
-                        ts = ts.isoformat()
-
-                    participants_to_add.append(
-                        {
-                            "participant_identity": identity,
-                            "timestamp": ts,
-                        }
-                    )
-
-                if participants_to_add:
-                    added_count = len(participants_to_add)
-
-                    update_stmt = (
-                        update(Room)
-                        .where(Room.id == room_id)
-                        .values(participants=Room.participants.concat(participants_to_add))
-                    )
-
-                    await session.execute(update_stmt)
-                    await session.commit()
-                    logger.info(f"✅ Batch save to room {room_id}: Added {added_count}, Skipped {skipped_count}")
-
-                    return {
-                        "success": True,
-                        "added_count": added_count,
-                        "skipped_count": skipped_count,
-                    }
-                else:
-                    logger.info(f"No new participants to add to room {room_id}")
-                    return {"success": True, "added_count": 0, "skipped_count": skipped_count}
-
-        except Exception as e:
-            logger.error(f"❌ Error in save_batch_participants: {e}")
-            return {"success": False, "added_count": 0, "skipped_count": 0}
-
     # TODO: Use `Any` type because `room_participants` input field from generate_summary() in SummaryService
     # has list[dict[str, Any]] type
     async def update_room_participants(  # type: ignore[explicit-any]
@@ -325,31 +249,6 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to update track status: {e}")
             return {"success": False, "error": str(e)}
-
-    async def check_event_record_done(self, room_ref_id: str) -> Room | None:
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                stmt_room = select(Room).where(Room.id == room_ref_id, Room.status == "final_room")
-                room = await session.scalar(stmt_room)
-
-                if not room:
-                    logger.info(f"No room found for room_ref_id={room_ref_id} with status 'final_room'")
-                    return None
-
-                stmt_track = (
-                    select(func.count())
-                    .select_from(Track)
-                    .where(Track.room_ref_id == room_ref_id, Track.status == "pending")
-                )
-                pending_count = await session.scalar(stmt_track) or 0
-
-                if pending_count == 0:
-                    return room
-                return None
-        except Exception as e:
-            logger.error(f"Failed check event record done: {e}")
-            return None
 
     async def check_and_complete_room(self, room_ref_id: str) -> bool:
         session_factory = get_session_factory()
@@ -653,57 +552,145 @@ class PgTranscriptRepository:
             logger.error(f"Failed to get chunks by track ids: {e}")
             return []
 
-    async def save_track_metadata(
-        self,
-        *,
-        egress_id: str | None = None,
-        track_id: str | None = None,
-        room_ref_id: str | None = None,
-        participant_identity: str | None = None,
-        audio_info: dict[str, str | None] | None = None,
-        status: str = "pending",
-        error: str | None = None,
-    ) -> Track | None:
-        if not egress_id:
-            logger.error("egress_id is required")
-            return None
+    # ------------------------------------------------------------------
+    # Kept here deliberately (not moved to pg_track_repository.py):
+    # mixes room state (rooms.record_notified_at/status) and track state
+    # (tracks.derivative_status) in one atomic statement, so it doesn't
+    # belong in a track-only repository. Placed at the very end of the
+    # class instead of alongside the other room-completion checks above --
+    # this file predates `develop`'s in-progress ORM migration for this
+    # layer, so new methods land here (appended, not interleaved) to
+    # minimize merge-conflict surface with that work (this hotfix branched
+    # off `main`, not `develop` -- see audio-ingestion/PLAN.md D26).
+    # ------------------------------------------------------------------
+    async def check_and_notify_room_recordings_ready(self, room_ref_id: str) -> bool:
+        """Room-level, fire-once gate for room_record_done (audio-ingestion PLAN.md D19).
 
+        True only when this call is the one that flips record_notified_at from
+        NULL -- i.e. the room is finalized AND every track in it has reached a
+        terminal derivative_status. Must be called from both places order can
+        arrive in (a track's derivative finishing, and room finalization)
+        since either can happen first; the atomic UPDATE...WHERE guard (same
+        technique as final_room_status()) ensures exactly one caller ever
+        sees True for a given room, regardless of which order or how many
+        times this is called concurrently.
+
+        This NOT EXISTS check is blind to a track that has no row at all --
+        relies on every track that starts recording eventually getting a row
+        (created eagerly off `recording.started`, PLAN.md D26 --
+        pg_track_repository.py::create_track_placeholder; previously rows
+        only appeared at `recording.completed`/`.failed`, which let this
+        fire before an in-flight track had ever been seen at all).
+
+        KNOWN GAP, not yet handled anywhere (flag if you're looking at this
+        because a room is stuck in status='final_room' with
+        record_notified_at still NULL): if a track's row gets created by
+        `recording.started` but record-service then crashes and loses its
+        local durable state before it can ever deliver `recording.completed`/
+        `.failed` for it (state_repo is local disk, PLAN.md D5 tier 3 -- an
+        already-called-out loss scenario), that track's row sits at
+        derivative_status='pending' forever and this NOT EXISTS never clears
+        for its room. There is no timeout/reconciliation on the orchestrator
+        side that force-terminates an abandoned track today -- would need
+        something like "track pending longer than N minutes with no live
+        record-service session -> mark derivative_status='failed'" before
+        this can be called fully closed.
+        """
+        uid = room_ref_id
         session_factory = get_session_factory()
-        now = datetime.now(UTC)
-
         try:
             async with session_factory() as session:
-                track = await session.get(Track, egress_id)
-                if track:
-                    track.updated_at = now
-                    if status:
-                        track.status = status
-                    if audio_info is not None:
-                        track.audio_info = audio_info
-                    if error is not None:
-                        track.error = error
-                else:
-                    track = Track(
-                        id=egress_id,
-                        track_id=track_id,
-                        room_ref_id=room_ref_id,
-                        participant_identity=participant_identity,
-                        status=status,
-                        audio_info=audio_info,
-                        error=error,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    session.add(track)
+                result = await session.execute(
+                    text("""
+                        UPDATE rooms SET record_notified_at = :now
+                        WHERE id = :id AND record_notified_at IS NULL AND status = 'final_room'
+                          AND NOT EXISTS (
+                            SELECT 1 FROM tracks WHERE room_ref_id = :id
+                            AND derivative_status NOT IN ('completed', 'failed')
+                          )
+                        RETURNING id
+                    """),
+                    {"id": uid, "now": datetime.now(UTC)},
+                )
                 await session.commit()
-
-                logger.info(f"📝 Track metadata saved: id(egress)={egress_id}")
-
-                return track
+                return result.fetchone() is not None
         except Exception as e:
-            logger.error(f"Failed to save track metadata: {e}")
-            return None
+            logger.error(f"Failed check_and_notify_room_recordings_ready: {e}")
+            return False
 
+    # ------------------------------------------------------------------
+    # Added as a new method rather than editing save_batch_participants in
+    # place, for the same "minimize merge-conflict surface with develop's
+    # ORM migration" reason as pg_track_repository.py -- appended at the
+    # end of the file/class instead of interleaved with existing methods.
+    # ------------------------------------------------------------------
+    async def save_batch_participants_atomic(  # type: ignore[explicit-any]
+        self, room_id: str, participants: list[dict[str, Any]]
+    ) -> bool:
+        """Race-safe replacement for save_batch_participants above.
+
+        save_batch_participants has a real TOCTOU race: it SELECTs
+        `participants` to compute a dedup set in Python, then does an
+        unconditional `UPDATE ... SET participants = participants || :new`.
+        The `||` on the right always reads the row's *live* value at UPDATE
+        time, not the earlier SELECT -- so if a concurrent save_participant()
+        call (webhook path, already atomic -- see its docstring/pattern)
+        appends the same identity in between, the SELECT's dedup set won't
+        know about it, and this UPDATE appends it again on top of the
+        now-already-updated row. Result: a duplicated participant entry.
+        Not hypothetical -- can happen today whenever a `participant_joined`
+        webhook lands while /register's batch save (also awaiting a LiveKit
+        API call) is still in flight for the same room.
+
+        This version does the membership filter *inside* the same UPDATE
+        Postgres evaluates under the row lock, so there is no separate read
+        step for the dedup decision at all -- immune to the same race
+        regardless of how much the batch save's surrounding code is
+        reordered (e.g. moved onto a background task).
+        """
+        if not participants:
+            return True
+
+        candidates = []
+        for p in participants:
+            identity = p.get("participant_identity")
+            if not identity:
+                continue
+            ts = p.get("timestamp") or datetime.now(UTC)
+            if isinstance(ts, datetime):
+                ts = ts.isoformat()
+            candidates.append({"participant_identity": identity, "timestamp": ts})
+
+        if not candidates:
+            return True
+
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                stmt = (
+                    update(Room)
+                    .where(Room.id == room_id)
+                    .values(
+                        participants=text(
+                            """
+                            COALESCE(participants, '[]'::jsonb) || (
+                                SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+                                FROM jsonb_array_elements(CAST(:candidates AS jsonb)) AS elem
+                                WHERE NOT (COALESCE(participants, '[]'::jsonb) @> jsonb_build_array(
+                                    jsonb_build_object('participant_identity', elem->>'participant_identity')
+                                ))
+                            )
+                            """
+                        ).bindparams(candidates=json.dumps(candidates))
+                    )
+                    .returning(Room.id)
+                )
+                result = await session.execute(stmt)
+                await session.commit()
+                return result.scalar_one_or_none() is not None
+        except Exception as e:
+            logger.error(f"Failed to save participants batch (atomic): {e}")
+            return False
 
 # --------------- Singleton ---------------
 _pg_transcript_repository: PgTranscriptRepository | None = None

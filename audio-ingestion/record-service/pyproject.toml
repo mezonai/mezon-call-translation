@@ -1,0 +1,25 @@
+[project]
+name = "record-service"
+version = "0.1.0"
+description = "Critical-path raw audio capture service for call recordings (see ../PLAN.md)"
+requires-python = ">=3.11"
+dependencies = [
+    "grpcio>=1.62",
+    "protobuf>=4.25",       # runtime for recording_pb2.py, separate from grpcio-tools
+    "boto3>=1.34",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "grpcio-tools>=1.62",   # only needed to regenerate recording_pb2*.py, see scripts/gen_proto.sh
+    "psutil>=5.9",          # only needed by scripts/benchmark_concurrency.py
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

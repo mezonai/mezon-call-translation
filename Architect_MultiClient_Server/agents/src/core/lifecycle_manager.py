@@ -122,29 +122,34 @@ def create_cleanup_callback(
     session_id: str,
     event_handlers: EventHandlers,
     transcript_manager: TranscriptManager,
-    tts_manager: Optional[TTSManager]
+    tts_manager: Optional[TTSManager],
+    room_id: Optional[str] = None,
 ):
     """
     Create cleanup callback for agent shutdown.
-    
+
     Args:
         orchestrator: OrchestratorClient instance
         session_id: Session ID
-        room_id: Room ID from orchestrator
         event_handlers: EventHandlers instance
         transcript_manager: TranscriptManager instance
         tts_manager: TTSManager instance (optional)
-    
+        room_id: This worker's own stable room UUID from registration
+            (audio-ingestion PLAN.md D27), passed to unregister_room so
+            orchestrator can compare-and-delete instead of blind-deleting
+            by room_name -- protects against this call landing late, after
+            room_name has already been reused by a new call.
+
     Returns:
         Async cleanup function
     """
     async def cleanup():
         """Cleanup when agent shuts down"""
         logger.info("🧹 Agent shutdown: cleaning resources...")
-        
+
         # Unregister room and push session_ended event
         try:
-            await orchestrator.unregister_room(session_id)
+            await orchestrator.unregister_room(session_id, room_id)
         except Exception as e:
             logger.error(f"unregister or session_ended event failed: {e}")
         

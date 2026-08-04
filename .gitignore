@@ -1,7 +1,8 @@
 /models/
 *.py[cod]
 venv/
-*.venv/
+*venv/
+*venv-*/
 .env
 \logs
 *.mp3
@@ -16,3 +17,4 @@ Architect_MultiClient_Server/stress_test_server/
 .env.backup.*
 .vscode/
 \tests
+*benchmark/

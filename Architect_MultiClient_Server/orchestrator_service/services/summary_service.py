@@ -647,12 +647,18 @@ class SummaryService:
 
         summary_dict = {c.name: getattr(summary, c.name) for c in summary.__table__.columns}
         summary_dict["created_at"] = room.created_at
+        # bot/FE both read this field (confirmed in use, don't drop it --
+        # RoomSummaryResponse already declares it, this ORM rewrite just
+        # hadn't populated it yet from the Room row).
+        summary_dict["finalized_at"] = room.finalized_at
         summary_dict["completed_at"] = room.completed_at
 
         if summary_dict.get("room_id") is not None:
             summary_dict["room_id"] = str(summary_dict["room_id"])
         if summary_dict.get("created_at") is not None:
             summary_dict["created_at"] = convert_to_iso_8601(summary_dict["created_at"])
+        if summary_dict.get("finalized_at") is not None:
+            summary_dict["finalized_at"] = convert_to_iso_8601(summary_dict["finalized_at"])
         if summary_dict.get("completed_at") is not None:
             summary_dict["completed_at"] = convert_to_iso_8601(summary_dict["completed_at"])
 

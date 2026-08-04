@@ -8,15 +8,14 @@ import numpy as np
 from livekit import rtc
 
 from src.config.application_config import get_config
-from src.utils.generate_id import generate_id
-from src.services.orchestrator_client import EgressInfo, EgressWebhook, FileConfig, FileResult, OrchestratorClient, TrackInfo
+from src.services.orchestrator_client import OrchestratorClient
 from src.config import SAMPLE_RATE, CHANNELS
 from src.core.websocket.stt_client import STTWebSocketClient
 from src.core.transcript_manager import TranscriptManager
 from src.logger import get_logger
 from src.core.vad_processor import RealTimeVADProcessor
 from src.core.agent_control_state import AgentControlState
-from src.services.audio_recording_manager import AudioRecordingManager
+from src.services.record_service_client import get_record_service_client
 from src.utils.participant_identity import parse_participant_identity
 
 
@@ -30,24 +29,41 @@ class EventHandlers:
         ctx,
         transcript_manager: TranscriptManager,
         control_state: AgentControlState,
-        recording_manager: AudioRecordingManager,
         agent_manager=None,
+        room_id: str | None = None,
     ):
         self.ctx = ctx
         self.transcript_manager = transcript_manager
         self.control_state = control_state
-        self.recording_manager = recording_manager
         self.agent_manager = agent_manager
+        # Orchestrator's stable room UUID, captured once at registration
+        # (main.py registers before ctx.connect() specifically so this is
+        # available before any track can be subscribed). Used for
+        # record-service forwarding instead of ctx.room.name -- a LiveKit
+        # room name can be reused by a brand-new call shortly after this
+        # one ends, and orchestrator used to have to re-resolve name->id on
+        # every recording event, which could attribute a late event to the
+        # wrong (reused) room. May be None if registration failed/was still
+        # in flight; _forward_track_to_record_service falls back to
+        # ctx.room.name in that case (see its docstring).
+        self.room_id = room_id
         self.active_clients = {}  # {participant_id: WebSocketClient}
         self.transcription_tasks = {}  # {speaker_id: asyncio.Task}
         self.pending_tracks = {}  # {speaker_id: (track, publication, participant)}
         self.track_index = {}  # {track_id: (speaker_id, track, publication, participant)}
-        self.recording_tasks = {}  # {track_id: asyncio.Task}
-        self._egress_sessions = {}  # {track_id: {"egress_id": str, "room_id": str, "room_name": str, "track_id": str, "filepath": str, "start_ns": int}}
-        self.recording_metadata = {}  # {track_id: {"egress_id": str, "started_at": datetime, ...}}
-        self.cleanup_lock = asyncio.Lock()
+        self.record_forward_tasks = {}  # {track_id: asyncio.Task} -- record-service forwarding, tied to track/agent lifecycle (not STT toggle), see audio-ingestion/PLAN.md D3
+        # Two independent locks, not one shared lock: transcription and
+        # record-forwarding are unrelated subsystems with their own dicts
+        # (pending_tracks/active_clients/transcription_tasks vs.
+        # track_index/record_forward_tasks). Sharing one lock meant a slow
+        # operation in either path (e.g. safe_disconnect_all awaiting
+        # websocket disconnects) could stall the other's bookkeeping for no
+        # reason. See audio-ingestion/PLAN.md D24.
+        self._transcription_lock = asyncio.Lock()
+        self._record_lock = asyncio.Lock()
         self.logger = get_logger("event_handlers")
         self._orchestrator = OrchestratorClient.get_instance()
+        self._record_service_client = get_record_service_client()
         self.config = get_config()
 
     def session_id_from_room(self) -> str:
@@ -65,172 +81,69 @@ class EventHandlers:
             return track_sid
         return ""
 
-    async def has_track(self, track_id: str) -> bool:
-        """Check whether a track is currently known by the agent."""
-        async with self.cleanup_lock:
-            return track_id in self.track_index
+    async def _start_record_forwarding(
+        self,
+        track_id: str,
+        track: rtc.RemoteAudioTrack,
+        publication: rtc.TrackPublication,
+        participant: rtc.RemoteParticipant,
+    ) -> None:
+        """Start forwarding a track to record-service.
 
-    async def _handle_egress_start(self, track_id: str, file_output_path: str):
-        now = time.time_ns()
-        room_id = await self.ctx.room.sid
-        room_name = self.ctx.room.name
-        track_id = track_id
-
-        egress_id = generate_id("FALLBACK_", 12)
-
-        self._egress_sessions[track_id] = {
-            "egress_id": egress_id,
-            "room_id": room_id,
-            "room_name": room_name,
-            "track_id": track_id,
-            "filepath": file_output_path,
-            "start_ns": now,
-        }
-
-        file = FileConfig(
-            filepath=file_output_path,
-            s3={
-                "accessKey": "{access_key}",
-                "secret": "{secret}",
-                "region": self.config.minio.region,
-                "endpoint": self.config.minio.endpoint,
-                "bucket": self.config.minio.bucket,
-                "forcePathStyle": self.config.minio.force_path_style,
-            }
-        )
-
-        track_info_obj = TrackInfo(
-            roomName=room_name,
-            trackId=track_id,
-            file=file
-        )
-
-        egress_info_obj = EgressInfo(
-            egressId=egress_id,
-            roomId=room_id,
-            roomName=room_name,
-            startedAt=str(now),
-            updatedAt=str(now),
-            track=track_info_obj,
-            file=None,            
-            fileResults=[]
-        )
-
-        webhook = EgressWebhook(
-            event="egress_started",
-            egressInfo=egress_info_obj
-        )
-
-        await self._orchestrator.push_webhook(webhook)
-
-    async def _handle_egress_end(self, track_id: str):
-        session = self._egress_sessions.get(track_id)
-
-        if not session:
-            # Session might have been finalized by another concurrent cleanup path.
-            self.logger.info(f"Egress session already finalized or missing for track {track_id}")
-            return False
-
-        end_ns = time.time_ns()
-        start_ns = session["start_ns"]
-        duration = end_ns - start_ns
-
-        filepath = session["filepath"]
-
-        location = f"{self.config.minio.endpoint}/{self.config.minio.bucket}/{filepath}"
-
-        file_result = FileResult(
-            filename=filepath,
-            startedAt=str(start_ns),
-            endedAt=str(end_ns),
-            duration=str(duration),
-            size=None,
-            location=location
-        )
-
-        track_info_obj = TrackInfo(
-            roomName=session["room_name"],
-            trackId=session["track_id"],
-            file=FileConfig(
-                filepath=filepath,
-                s3={
-                    "accessKey": "{access_key}",
-                    "secret": "{secret}",
-                    "region": self.config.minio.region,
-                    "endpoint": self.config.minio.endpoint,
-                    "bucket": self.config.minio.bucket,
-                    "forcePathStyle": self.config.minio.force_path_style,
-                }
-            )
-        )
-
-        egress_info_obj = EgressInfo(
-            egressId=session["egress_id"],
-            roomId=session["room_id"],
-            roomName=session["room_name"],
-            startedAt=str(start_ns),
-            endedAt=str(end_ns),
-            updatedAt=str(end_ns),
-            status="EGRESS_COMPLETE",
-            details="End reason: Source closed",
-            track=track_info_obj,
-            file=file_result,
-            fileResults=[file_result]
-        )
-
-        webhook = EgressWebhook(
-            event="egress_ended",
-            egressInfo=egress_info_obj
-        )
-
-        await self._orchestrator.push_webhook(webhook)
-
-        del self._egress_sessions[track_id]
-
-        return True
-
-
-    async def start_audio_recording(self, track_id: str, file_output_path: str) -> bool:
-        """Start track recording and ensure there is an audio source feeding uploader."""
-        async with self.cleanup_lock:
-            track_context = self.track_index.get(track_id)
-
-        if not track_context:
-            logger.warning(f"Track '{track_id}' not found, cannot start recording")
-            return False
-
-        started = await self.recording_manager.start_recording(track_id, file_output_path)
-        if not started:
-            return False
-
-        speaker_id, track, publication, participant = track_context
-
-        async with self.cleanup_lock:
-            has_recording_task = track_id in self.recording_tasks
-
-            if has_recording_task:
-                return True
-            
+        Tied to track subscription (== agent presence), not to the realtime
+        STT enabled toggle: recording feeds the separate non-realtime Whisper
+        pipeline and must run whenever the agent is in the room, independent
+        of whether manage_speaker_transcription happens to be active for
+        this room. See audio-ingestion/PLAN.md D3.
+        """
+        if not track_id:
+            return
+        async with self._record_lock:
+            if track_id in self.record_forward_tasks:
+                return
             task = asyncio.create_task(
-                self._manage_track_recording(track_id, track, publication, participant),
-                name=f"recording-{track_id}",
+                self._forward_track_to_record_service(track_id, track, publication, participant),
+                name=f"record-forward-{track_id}",
             )
-            await self._handle_egress_start(track_id, file_output_path)
-            self.recording_tasks[track_id] = task
+            self.record_forward_tasks[track_id] = task
 
-        logger.info(f"Started dedicated recording stream task for track={track_id}")
-        return True
-
-    async def _manage_track_recording(
+    async def _forward_track_to_record_service(
         self,
         track_id: str,
         track: rtc.RemoteAudioTrack,
         publication: rtc.TrackPublication,
         participant: rtc.RemoteParticipant,
     ):
-        """Recording-only stream path used when transcription task is not active."""
-        speaker_id = self._speaker_id_from_publication(participant, publication)
-        logger.info(f"Starting recording-only stream for {speaker_id} (track={track_id})")
+        """Independent audio subscription feeding record-service. Deliberately
+        NOT shared with manage_speaker_transcription's stream -- that one only
+        runs when realtime STT is toggled on, and recording must not depend
+        on that (audio-ingestion/PLAN.md D3, corrected from the Phase 2 first
+        pass which wrongly reused it)."""
+        participant_identity = parse_participant_identity(participant.identity)
+        source = "screen" if publication.source == 4 else "mic"
+        logger.info(f"Starting record-service forwarding for {participant_identity} (track={track_id})")
+
+        # Prefer the stable orchestrator room UUID (audio-ingestion PLAN.md
+        # D27) over ctx.room.name -- falls back to the LiveKit room name
+        # only if registration with orchestrator failed/hadn't completed
+        # (main.py registers before connect, so self.room_id should
+        # normally already be set by the time any track can be forwarded).
+        # Orchestrator's recording_event_service also tolerates receiving a
+        # room name here (degrade path), just without the room-reuse
+        # protection a stable id gives.
+        room_id = self.room_id or self.ctx.room.name
+        forwarder = await self._record_service_client.new_forwarder(
+            room_id=room_id,
+            track_id=track_id,
+            participant_identity=participant_identity,
+            source=source,
+            sample_rate=SAMPLE_RATE,
+            channels=CHANNELS,
+        )
+        if forwarder is None:
+            async with self._record_lock:
+                self.record_forward_tasks.pop(track_id, None)
+            return
 
         try:
             stream = rtc.AudioStream.from_track(
@@ -238,23 +151,19 @@ class EventHandlers:
                 sample_rate=SAMPLE_RATE,
                 num_channels=CHANNELS,
             )
-
             async for event in stream:
-                if not await self.recording_manager.has_active_recording(track_id):
-                    break
-                await self.recording_manager.append_audio(track_id, bytes(event.frame.data))
+                forwarder.send_audio(bytes(event.frame.data))
 
         except asyncio.CancelledError:
-            logger.info(f"Recording-only task cancelled for track={track_id}")
+            logger.info(f"Record-service forwarding cancelled for track={track_id}")
             raise
         except Exception as e:
-            logger.error(f"Error in recording-only stream for track={track_id}: {e}")
+            logger.error(f"Error forwarding track={track_id} to record-service: {e}")
         finally:
-            await self.recording_manager.stop_recording(track_id)
-            async with self.cleanup_lock:
-                await self._handle_egress_end(track_id)
-                self.recording_tasks.pop(track_id, None)
-            logger.info(f"Recording-only stream ended for track={track_id}")
+            await forwarder.close()
+            async with self._record_lock:
+                self.record_forward_tasks.pop(track_id, None)
+            logger.info(f"Record-service forwarding ended for track={track_id}")
 
     def create_transcription_callback(self, participant_identity: str):
         """Factory to create callback for processing transcripts from Vosk server"""
@@ -332,7 +241,7 @@ class EventHandlers:
             logger.error(f"Failed to connect transcription client for {speaker_id}")
             return
 
-        async with self.cleanup_lock:
+        async with self._transcription_lock:
             self.active_clients[speaker_id] = ws_client
 
         # Metrics tracking
@@ -357,7 +266,7 @@ class EventHandlers:
                 
                 frame = event.frame
                 frame_bytes = bytes(frame.data)
-                
+
                 # Convert bytes -> float32 [-1.0, 1.0] cho VAD processing
                 audio_data = np.frombuffer(
                     frame_bytes,
@@ -405,7 +314,7 @@ class EventHandlers:
             except Exception:
                 pass
 
-            async with self.cleanup_lock:
+            async with self._transcription_lock:
                 self.active_clients.pop(speaker_id, None)
                 self.transcription_tasks.pop(speaker_id, None)
 
@@ -431,7 +340,7 @@ class EventHandlers:
 
     async def _start_transcription_for_speaker_id(self, speaker_id: str) -> bool:
         """Start transcription task for a pending speaker_id if available."""
-        async with self.cleanup_lock:
+        async with self._transcription_lock:
             if speaker_id in self.transcription_tasks:
                 return False
             pending = self.pending_tracks.get(speaker_id)
@@ -444,7 +353,7 @@ class EventHandlers:
 
     async def start_transcription_for_all_pending(self) -> int:
         """Start transcription for all currently pending tracks (best-effort)."""
-        async with self.cleanup_lock:
+        async with self._transcription_lock:
             speaker_ids = list(self.pending_tracks.keys())
         started = 0
         for sid in speaker_ids:
@@ -457,7 +366,7 @@ class EventHandlers:
 
     async def stop_transcription_for_all(self) -> int:
         """Stop all active transcription tasks (best-effort)."""
-        async with self.cleanup_lock:
+        async with self._transcription_lock:
             tasks = list(self.transcription_tasks.items())
             self.transcription_tasks.clear()
             # Also remove active clients so streams break quickly
@@ -474,7 +383,7 @@ class EventHandlers:
 
     async def get_gate_stats(self) -> dict:
         """Small helper for debug/log/health."""
-        async with self.cleanup_lock:
+        async with self._transcription_lock:
             pending = len(self.pending_tracks)
             active = len(self.active_clients)
             running_tasks = len(self.transcription_tasks)
@@ -499,13 +408,33 @@ class EventHandlers:
             logger.info(f"New audio track from {speaker_id} (registered; gated)")
 
             async def register_and_maybe_start():
-                async with self.cleanup_lock:
+                async with self._transcription_lock:
                     self.pending_tracks[speaker_id] = (track, publication, participant)
-                    if track_id:
+                if track_id:
+                    async with self._record_lock:
                         self.track_index[track_id] = (speaker_id, track, publication, participant)
-                enabled = await self.control_state.get_transcription_enabled()
-                if enabled:
-                    await self._start_transcription_for_speaker_id(speaker_id)
+
+                async def _maybe_start_transcription():
+                    try:
+                        enabled = await self.control_state.get_transcription_enabled()
+                        if enabled:
+                            await self._start_transcription_for_speaker_id(speaker_id)
+                    except Exception as e:
+                        logger.error(f"Failed to auto-start transcription for {speaker_id}: {e}")
+
+                async def _start_recording():
+                    try:
+                        await self._start_record_forwarding(track_id, track, publication, participant)
+                    except Exception as e:
+                        logger.error(f"Failed to start record forwarding for track={track_id}: {e}")
+
+                # Run concurrently, not one awaited after the other -- recording
+                # follows agent/track lifecycle, not the realtime-STT feature
+                # flag, so it must never be delayed by (or skipped because of
+                # an exception in) the transcription start path. Each inner
+                # coroutine catches its own errors so a failure in one can
+                # never prevent the other from running. See PLAN.md D24.
+                await asyncio.gather(_maybe_start_transcription(), _start_recording())
 
             asyncio.create_task(register_and_maybe_start())
 
@@ -522,19 +451,16 @@ class EventHandlers:
             logger.info(f"Audio track unsubscribed for {pid}")
             
             async def cleanup_client():
-                client = None
-                transcription_task = None
-                recording_task = None
-                should_finalize_egress = False
-
-                async with self.cleanup_lock:
+                async with self._transcription_lock:
                     self.pending_tracks.pop(pid, None)
                     client = self.active_clients.pop(pid, None)
                     transcription_task = self.transcription_tasks.pop(pid, None)
-                    if track_id:
+
+                record_forward_task = None
+                if track_id:
+                    async with self._record_lock:
                         self.track_index.pop(track_id, None)
-                        recording_task = self.recording_tasks.pop(track_id, None)
-                        should_finalize_egress = recording_task is None
+                        record_forward_task = self.record_forward_tasks.pop(track_id, None)
 
                 if client:
                     await client.disconnect()
@@ -543,19 +469,16 @@ class EventHandlers:
                 if transcription_task:
                     transcription_task.cancel()
 
-                if recording_task:
-                    recording_task.cancel()
+                if record_forward_task:
+                    record_forward_task.cancel()
 
                 wait_tasks = [
-                    task for task in (transcription_task, recording_task)
+                    task for task in (transcription_task, record_forward_task)
                     if task is not None
                 ]
                 if wait_tasks:
                     await asyncio.gather(*wait_tasks, return_exceptions=True)
 
-                if track_id and should_finalize_egress:
-                    await self._handle_egress_end(track_id)
-            
             asyncio.create_task(cleanup_client())
 
     def on_participant_disconnected(self, participant: rtc.RemoteParticipant):
@@ -567,10 +490,9 @@ class EventHandlers:
         async def cleanup_participant():
             clients_to_disconnect = []
             transcription_tasks = []
-            recording_tasks = []
-            tracks_to_finalize = []
+            record_forward_tasks = []
 
-            async with self.cleanup_lock:
+            async with self._transcription_lock:
                 # Cleanup pending tracks and tasks for this participant
                 self.pending_tracks.pop(pid, None)
                 self.pending_tracks.pop(f"{pid}-screen", None)
@@ -584,14 +506,13 @@ class EventHandlers:
                     if task:
                         transcription_tasks.append(task)
 
+            async with self._record_lock:
                 for track_id, (_, _, _, track_participant) in list(self.track_index.items()):
                     if getattr(track_participant, "identity", "") == participant_identity:
                         self.track_index.pop(track_id, None)
-                        rec_task = self.recording_tasks.pop(track_id, None)
-                        if rec_task:
-                            recording_tasks.append(rec_task)
-                        else:
-                            tracks_to_finalize.append(track_id)
+                        fwd_task = self.record_forward_tasks.pop(track_id, None)
+                        if fwd_task:
+                            record_forward_tasks.append(fwd_task)
 
             for key, client in clients_to_disconnect:
                 await client.disconnect()
@@ -600,59 +521,58 @@ class EventHandlers:
             for task in transcription_tasks:
                 task.cancel()
 
-            for task in recording_tasks:
+            for task in record_forward_tasks:
                 task.cancel()
 
-            wait_tasks = transcription_tasks + recording_tasks
+            wait_tasks = transcription_tasks + record_forward_tasks
             if wait_tasks:
                 await asyncio.gather(*wait_tasks, return_exceptions=True)
 
-            for track_id in tracks_to_finalize:
-                await self._handle_egress_end(track_id)
-        
         asyncio.create_task(cleanup_participant())
 
     async def safe_disconnect_all(self):
-        """Disconnect all clients with timeout protection"""
-        transcription_tasks = []
-        recording_tasks = []
+        """Disconnect all clients with timeout protection.
 
-        async with self.cleanup_lock:
-            if not self.active_clients and not self.recording_tasks and not self.transcription_tasks:
-                return
-                
-            logger.info(f"Disconnecting {len(self.active_clients)} active clients")
-            
-            # Create disconnect tasks for all clients
-            tasks = [
-                client.disconnect() 
-                for client in list(self.active_clients.values())
-            ]
-            
-            # Wait with timeout to avoid hanging
-            if tasks:
-                try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*tasks, return_exceptions=True), 
-                        timeout=10.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning("Some clients took too long to disconnect")
+        Snapshots + clears each subsystem's state under its own lock first
+        (record-forwarding tasks get cancelled immediately), then does the
+        slow network waits outside any lock -- record forwarding shutdown no
+        longer waits behind the (up to 10s) STT websocket disconnect budget.
+        See audio-ingestion/PLAN.md D24.
+        """
+        async with self._record_lock:
+            record_forward_tasks = list(self.record_forward_tasks.values())
+            self.record_forward_tasks.clear()
+            self.track_index.clear()
 
+        async with self._transcription_lock:
+            clients = list(self.active_clients.values())
             transcription_tasks = list(self.transcription_tasks.values())
-            recording_tasks = list(self.recording_tasks.values())
-
-            for task in transcription_tasks:
-                task.cancel()
-
-            for task in recording_tasks:
-                task.cancel()
-
             self.active_clients.clear()
             self.transcription_tasks.clear()
-            self.recording_tasks.clear()
+            self.pending_tracks.clear()
 
-        wait_tasks = transcription_tasks + recording_tasks
+        if not clients and not transcription_tasks and not record_forward_tasks:
+            return
+
+        logger.info(f"Disconnecting {len(clients)} active clients")
+
+        for task in record_forward_tasks:
+            task.cancel()
+        for task in transcription_tasks:
+            task.cancel()
+
+        # Create disconnect tasks for all clients, wait with timeout to avoid hanging
+        disconnect_tasks = [client.disconnect() for client in clients]
+        if disconnect_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*disconnect_tasks, return_exceptions=True),
+                    timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Some clients took too long to disconnect")
+
+        wait_tasks = transcription_tasks + record_forward_tasks
         if wait_tasks:
             try:
                 await asyncio.wait_for(
@@ -662,5 +582,4 @@ class EventHandlers:
             except asyncio.TimeoutError:
                 logger.warning("Some background tasks did not stop in time")
 
-        await self.recording_manager.stop_all_recordings()
         logger.info("All clients disconnected")

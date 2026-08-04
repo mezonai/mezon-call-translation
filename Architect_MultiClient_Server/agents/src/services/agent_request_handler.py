@@ -206,70 +206,6 @@ class AgentRequestHandler:
             )
             return False
 
-    async def handle_start_audio_recording(
-        self,
-        payload: Dict[str, Any],
-        event_handlers=None
-    ) -> bool:
-        """
-        Handle start_audio_recording request.
-
-        Args:
-            payload: Request payload with track_id and file_output_path
-            event_handlers: EventHandlers instance
-
-        Returns:
-            True if recording started successfully
-        """
-        try:
-            track_id = payload.get("track_id")
-            file_output_path = payload.get("file_output_path")
-
-            self.logger.info(
-                f"[Agent Request Handler] Start audio recording: "
-                f"track_id={track_id}, file_output_path={file_output_path}"
-            )
-
-            if not event_handlers:
-                self.logger.warning(
-                    "[Agent Request Handler] Event handlers not available, "
-                    "cannot start recording"
-                )
-                return False
-
-            if not track_id:
-                self.logger.warning("[Agent Request Handler] Missing track_id")
-                return False
-
-            if not file_output_path:
-                self.logger.warning("[Agent Request Handler] Missing file_output_path")
-                return False
-
-            if not await event_handlers.has_track(track_id):
-                self.logger.warning(
-                    f"[Agent Request Handler] Track '{track_id}' not found in current room"
-                )
-                return False
-
-            started = await event_handlers.start_audio_recording(track_id, file_output_path)
-            if not started:
-                self.logger.warning(
-                    f"[Agent Request Handler] Failed to start recording for track '{track_id}'"
-                )
-                return False
-
-            self.logger.info(
-                f"[Agent Request Handler] Recording started for track '{track_id}'"
-            )
-            return True
-
-        except Exception as e:
-            self.logger.error(
-                f"[Agent Request Handler] Error handling start audio recording: {e}",
-                exc_info=True
-            )
-            return False
-
 
 # Factory function to create handler wrappers with context
 def create_request_handlers(
@@ -301,8 +237,5 @@ def create_request_handlers(
         ),
         AgentRequestType.SEND_CHAT_MESSAGE.value: lambda payload: handler.handle_send_chat_message(
             payload, room_context
-        ),
-        AgentRequestType.START_AUDIO_RECORDING.value: lambda payload: handler.handle_start_audio_recording(
-            payload, event_handlers
         ),
     }

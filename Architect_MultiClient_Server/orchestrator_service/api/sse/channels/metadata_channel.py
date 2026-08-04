@@ -242,15 +242,16 @@ class MetadataChannel:
 
     async def push_room_record_done(self, room_id: str, room_name: str) -> SSEMessage:
         """
-        Push room_record_done event to all connected bots.
-        Automatically fetches tracks from PostgreSQL and builds file_results.
+        Push room_record_done event to all connected bots -- a bare notice,
+        no file details (audio-ingestion PLAN.md D19: for security reasons,
+        subscribers call a separate authenticated API to fetch the actual
+        path; that API and its access control are out of scope here).
 
-        Args:
-            room_id: Room identifier
-            room_name: Room name
-
-        Returns:
-            Dictionary with push status
+        Fired exactly once per room, gated by
+        PgTranscriptRepository.check_and_notify_room_recordings_ready()
+        (room finalized AND every track's derivative_status terminal) --
+        callers must go through that check, this method does not re-check
+        anything, it only broadcasts.
         """
         context_key = self.CONTEXT_KEY
 

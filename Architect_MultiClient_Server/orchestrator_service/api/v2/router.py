@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from orchestrator_service.api.v2.endpoints.auth_api import router as auth_router
 from orchestrator_service.api.v2.endpoints.dispatch_api import router as dispatch_router
 from orchestrator_service.api.v2.endpoints.queue_api import router as queue_router
+from orchestrator_service.api.v2.endpoints.recording_events_api import router as recording_events_router
 from orchestrator_service.api.v2.endpoints.room_api import router as room_router
 from orchestrator_service.api.v2.endpoints.room_registry_api import router as room_registry_router
 from orchestrator_service.api.v2.endpoints.sse_agent_request_api import router as sse_agent_request_router
@@ -28,6 +29,7 @@ api_router.include_router(queue_router)  # Has prefix="/api/queue"
 api_router.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
 api_router.include_router(room_registry_router)  # Has prefix="/api/room-registry"
 api_router.include_router(summary_client_router)
+api_router.include_router(recording_events_router, tags=["recording events"])
 
 
 __all__ = ["api_router"]

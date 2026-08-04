@@ -1,0 +1,62 @@
+[Unit]
+Description=audio-processing-service instance %i (audio-ingestion derivative transcode, PLAN.md D14/D28)
+Documentation=file:///opt/audio-processing-service/README.md
+After=network-online.target
+Wants=network-online.target
+# Optional: if Redis/MinIO/orchestrator run as systemd units on the same
+# host, uncomment to order startup after them. Does NOT retry on their
+# failure -- the Redis Stream consumer group already tolerates transient
+# unavailability (reconnect/orphan-recovery), this is just start ordering.
+# After=redis.service minio.service orchestrator.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=audio-processing-service
+Group=audio-processing-service
+
+WorkingDirectory=/opt/audio-processing-service
+
+# Shared config only -- unlike record-service, there is no per-instance
+# port or state directory to override (this service has no listening
+# port; consumer identity is a random uuid suffix generated per-process,
+# see infra/redis/redis_stream_service.py's _generate_consumer_id, and
+# durable job state lives in Redis's PEL, not on local disk). Every
+# instance can run off the exact same env file.
+EnvironmentFile=/etc/audio-processing-service/common.env
+
+ExecStart=/opt/audio-processing-service/.venv/bin/python -m audio_processing_service.main
+
+# main.py handles SIGTERM gracefully (stops the consumer loop, releases
+# pending tasks back to the stream, closes the HTTP client) -- give it
+# room to finish before systemd escalates to SIGKILL. Shorter than
+# record-service's 30s: no in-flight multipart upload to drain, worst
+# case is 1 ffmpeg subprocess to let finish or kill.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+Restart=on-failure
+RestartSec=5s
+
+# --- Resource limits (PLAN.md D13's cost model applies here too: 1 Python
+# process ~= 1 core, CPU-bound this time for real -- ffmpeg itself forks a
+# native subprocess so it isn't GIL-bound, but the consumer loop driving it
+# still is). PLACEHOLDERS, NOT MEASURED -- no benchmark script exists yet
+# for this service (unlike record-service's scripts/benchmark_concurrency.py),
+# tune after observing real transcode CPU/duration in dev/prod.
+CPUQuota=100%
+MemoryMax=512M
+MemoryHigh=384M
+
+# --- Hardening (standard systemd baseline) ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+# Logs go to the journal (main.py uses logging.basicConfig -> stdout,
+# no file logging configured) -- journalctl -u audio-processing-service@%i -f
+
+[Install]
+WantedBy=multi-user.target
