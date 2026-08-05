@@ -136,6 +136,7 @@ async def _fetch_and_save_existing_participants(room_name: str, room_id: str) ->
         participants_data = [
             {
                 "participant_identity": participant.identity,
+                "username": participant.name or participant.metadata,
                 "timestamp": datetime.utcnow(),
             }
             for participant in participants_response.participants

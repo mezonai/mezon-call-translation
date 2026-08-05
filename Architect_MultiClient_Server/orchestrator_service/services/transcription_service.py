@@ -172,7 +172,7 @@ class TranscriptionService:
         return None
 
     async def save_participant(
-        self, room_id: str, participant_identity: str, timestamp: datetime | None = None
+        self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None
     ) -> bool:
         """
         Save participant info to PostgreSQL
@@ -190,6 +190,7 @@ class TranscriptionService:
                 room_id=room_id,
                 participant_identity=participant_identity,
                 timestamp=timestamp,
+                username=username,
             )
             return result
         except Exception as e:
