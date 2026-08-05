@@ -159,12 +159,12 @@ class PgTranscriptRepository:
             return False
 
     async def save_participant(
-        self, room_id: str, participant_identity: str, timestamp: datetime | None = None
+        self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None
     ) -> bool:
         session_factory = get_session_factory()
         ts = timestamp or datetime.now(UTC)
 
-        new_participant = [{"participant_identity": participant_identity, "timestamp": ts.isoformat()}]
+        new_participant = [{"participant_identity": participant_identity, "username": username, "timestamp": ts.isoformat()}]
 
         try:
             async with session_factory() as session:
@@ -654,12 +654,13 @@ class PgTranscriptRepository:
         candidates = []
         for p in participants:
             identity = p.get("participant_identity")
+            username = p.get("username")
             if not identity:
                 continue
             ts = p.get("timestamp") or datetime.now(UTC)
             if isinstance(ts, datetime):
                 ts = ts.isoformat()
-            candidates.append({"participant_identity": identity, "timestamp": ts})
+            candidates.append({"participant_identity": identity, "username": username, "timestamp": ts})
 
         if not candidates:
             return True
