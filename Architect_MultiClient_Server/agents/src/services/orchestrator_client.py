@@ -21,6 +21,7 @@ from typing import Optional, Callable, Dict, Any, List
 import jwt
 from src.logger import get_logger
 from src.config.application_config import get_config
+from src.config.constants import TTS_COMPLETED_EVENT, TTS_TRANSCRIPT_EVENT
 
 logger = get_logger(__name__)
 config = get_config()
@@ -125,10 +126,15 @@ class OrchestratorClient:
                 )
                 return room_id
             elif response.status_code == 409:
-                # Room already registered, try to get room_id from response
+                # Room already registered -- FastAPI wraps HTTPException's
+                # detail under a top-level "detail" key, so a dict `detail`
+                # (room_registry_api.py's register_room, see its comment on
+                # the production bug this used to cause) lands at
+                # result["detail"]["room_id"], not result["room_id"].
                 try:
                     result = response.json()
-                    room_id = result.get("room_id")
+                    detail = result.get("detail")
+                    room_id = detail.get("room_id") if isinstance(detail, dict) else None
                     if room_id:
                         self.logger.warning(f"Room '{room_name}' already registered (room_id: {room_id})")
                         return room_id
@@ -323,6 +329,40 @@ class OrchestratorClient:
         except Exception as e:
             self.logger.error(f"[API] Failed to push text via API: {e}")
             return False
+
+    async def _post_recording_event(self, payload: dict) -> bool:
+        """POSTs to the same dispatcher record-service/audio-processing-service
+        use (audio-ingestion PLAN.md D3x) -- used for tts.transcript/.completed,
+        the agent's own TTS track reporting itself in place of a Whisper job.
+        Best-effort: caller treats False as "not recorded this segment", not
+        a fatal error (must never break TTS playback)."""
+        try:
+            url = f"{self.config.orchestrator.base_url}/api/v2/recordings/events"
+            headers = {}
+            if self.config.orchestrator.api_key:
+                headers["Authorization"] = f"Bearer {self.config.orchestrator.api_key}"
+            resp = await self._http_client.post(url, json=payload, headers=headers, timeout=3.0)
+            return resp.status_code < 400
+        except Exception as e:
+            self.logger.warning(f"Failed to post recording event {payload.get('event')}: {e}")
+            return False
+
+    async def report_tts_transcript(self, room_id: str, track_id: str, text: str, start: float, end: float) -> bool:
+        return await self._post_recording_event({
+            "event": TTS_TRANSCRIPT_EVENT,
+            "room_id": room_id,
+            "track_id": track_id,
+            "text": text,
+            "start": start,
+            "end": end,
+        })
+
+    async def report_tts_completed(self, room_id: str, track_id: str) -> bool:
+        return await self._post_recording_event({
+            "event": TTS_COMPLETED_EVENT,
+            "room_id": room_id,
+            "track_id": track_id,
+        })
 
     async def push_event_session_started(
         self,

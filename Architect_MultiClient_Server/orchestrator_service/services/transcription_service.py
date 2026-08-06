@@ -51,6 +51,7 @@ class TranscriptionService:
         started_at: str,
         ended_at: str,
         source: str = "",
+        skip_stt: bool = False,
     ) -> bool:
         """
         Raw capture done (record-service's recording.completed, audio-ingestion
@@ -60,6 +61,11 @@ class TranscriptionService:
         Whisper STT via transcription:stream. Does NOT touch room_record_done
         -- that fires on the separate, later derivative-completion path
         (D19), not here.
+
+        skip_stt: the agent's own TTS track (PLAN.md D3x) -- still needs the
+        track row (room-completion gating counts it), just not a Whisper job;
+        RecordingEventService.handle_tts_transcript_event is what eventually
+        flips this row to "completed" instead.
 
         Replaces the old enqueue(egress_info: Dict) which took a
         LiveKit-egress-webhook-shaped dict (audio-ingestion PLAN.md D2: no
@@ -90,6 +96,10 @@ class TranscriptionService:
             except Exception as e:
                 logger.warning(f"Failed to update track metadata: {e}")
                 # Continue processing even if metadata update fails
+
+            if skip_stt:
+                logger.info(f"Skipping Whisper STT enqueue for recording_id={recording_id} (agent TTS track)")
+                return True
 
             producer = await self._get_producer()
 

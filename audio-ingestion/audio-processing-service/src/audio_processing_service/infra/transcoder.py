@@ -21,8 +21,19 @@ class TranscodeError(Exception):
 
 
 async def transcode_pcm_to_ogg(
-    input_path: Path, output_path: Path, config: TranscodeConfig
+    input_path: Path,
+    output_path: Path,
+    config: TranscodeConfig,
+    sample_rate: int | None = None,
+    channels: int | None = None,
 ) -> None:
+    """sample_rate/channels declare the *input* raw PCM's actual format
+    (ffmpeg needs this -- raw PCM has no header to sniff it from) and default
+    to config's values for callers that don't have a per-task rate. Pass the
+    task's own capture rate here instead of relying on the global default --
+    it only holds for one capture source (audio-ingestion PLAN.md D28 point 1
+    hardcoded it before a second real rate, the agent's 24kHz TTS track
+    D3x, existed)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     args = [
@@ -31,8 +42,8 @@ async def transcode_pcm_to_ogg(
         "-loglevel", "error",
         "-y",
         "-f", "s16le",
-        "-ar", str(config.sample_rate),
-        "-ac", str(config.channels),
+        "-ar", str(sample_rate or config.sample_rate),
+        "-ac", str(channels or config.channels),
         "-i", str(input_path),
         "-c:a", "libopus",
         "-b:a", f"{config.opus_bitrate_kbps}k",

@@ -28,6 +28,12 @@ class AudioDerivativeStreamTask(BaseStreamTask):
     room_id: str = ""       # rooms.id (UUID)
     bucket: str = ""
     object_key: str = ""    # raw PCM source object to transcode
+    # Raw capture's actual format. Defaults (16000/1) are the fallback for
+    # messages enqueued before this field existed -- previously every
+    # object was hardcoded to this rate regardless of source, see
+    # TranscodeConfig's docstring in config.py.
+    sample_rate: int = 16000
+    channels: int = 1
     created_at: float = field(default_factory=time.time)
 
     # Local processing-tracking fields, not part of the producer's wire format.
@@ -41,6 +47,8 @@ class AudioDerivativeStreamTask(BaseStreamTask):
             "room_id": self.room_id,
             "bucket": self.bucket,
             "object_key": self.object_key,
+            "sample_rate": str(self.sample_rate),
+            "channels": str(self.channels),
             "created_at": str(self.created_at),
         })
         return data
@@ -62,5 +70,7 @@ class AudioDerivativeStreamTask(BaseStreamTask):
             room_id=decoded.get("room_id", ""),
             bucket=decoded.get("bucket", ""),
             object_key=decoded.get("object_key", ""),
+            sample_rate=int(decoded.get("sample_rate", 16000)),
+            channels=int(decoded.get("channels", 1)),
             created_at=float(decoded.get("created_at", time.time())),
         )

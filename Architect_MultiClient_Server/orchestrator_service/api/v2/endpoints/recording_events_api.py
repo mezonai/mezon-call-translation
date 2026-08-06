@@ -17,8 +17,10 @@ from orchestrator_service.models.recording_event_models import (
     DerivativeEventRequest,
     RecordingEventRequest,
     RecordingEventResponse,
+    TtsTranscriptEventRequest,
 )
 from orchestrator_service.services.recording_event_service import RecordingEventService
+from orchestrator_service.utils.constants import TTS_COMPLETED_EVENT, TTS_TRANSCRIPT_EVENT
 from orchestrator_service.utils.logger import get_logger
 
 router = APIRouter(prefix="/recordings", tags=["recording events"])
@@ -28,6 +30,7 @@ recording_event_service = RecordingEventService()
 
 _RECORDING_EVENTS = {"recording.started", "recording.completed", "recording.failed"}
 _DERIVATIVE_EVENTS = {"derivative.completed", "derivative.failed"}
+_TTS_EVENTS = {TTS_TRANSCRIPT_EVENT, TTS_COMPLETED_EVENT}
 
 
 @router.post("/events", response_model=RecordingEventResponse)
@@ -51,6 +54,10 @@ async def recording_events_endpoint(  # type: ignore[explicit-any]
         if event in _DERIVATIVE_EVENTS:
             derivative_payload = DerivativeEventRequest.model_validate(body)
             return await recording_event_service.handle_derivative_event(derivative_payload)
+
+        if event in _TTS_EVENTS:
+            tts_payload = TtsTranscriptEventRequest.model_validate(body)
+            return await recording_event_service.handle_tts_transcript_event(tts_payload)
 
     except Exception as e:
         logger.error(f"Failed to process recording event '{event}': {e}")
