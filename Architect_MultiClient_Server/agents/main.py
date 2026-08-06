@@ -77,7 +77,7 @@ async def entrypoint(ctx: agents.JobContext):
     ctx.room.on("participant_disconnected", event_handlers.on_participant_disconnected)
 
     # Initialize TTS Manager (optional)
-    tts_manager = await initialize_tts_manager(ctx, session_id)
+    tts_manager = await initialize_tts_manager(ctx, session_id, room_id=room_id)
 
     # Register cleanup callback
     cleanup = create_cleanup_callback(

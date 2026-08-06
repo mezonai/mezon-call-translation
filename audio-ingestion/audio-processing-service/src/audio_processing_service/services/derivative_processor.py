@@ -50,8 +50,17 @@ class DerivativeProcessor:
                 logger.info(f"⬇️  Downloading {task.bucket}/{task.object_key}")
                 await self._storage.download_to_file(task.bucket, task.object_key, raw_path)
 
-                logger.info(f"🎛️  Transcoding {task.object_key} -> OGG/Opus")
-                await transcode_pcm_to_ogg(raw_path, derivative_path, self._config.transcode)
+                logger.info(
+                    f"🎛️  Transcoding {task.object_key} -> OGG/Opus "
+                    f"({task.sample_rate}Hz/{task.channels}ch)"
+                )
+                await transcode_pcm_to_ogg(
+                    raw_path,
+                    derivative_path,
+                    self._config.transcode,
+                    sample_rate=task.sample_rate,
+                    channels=task.channels,
+                )
 
                 derivative_key = build_derivative_key(task.object_key)
                 logger.info(f"⬆️  Uploading {task.bucket}/{derivative_key}")

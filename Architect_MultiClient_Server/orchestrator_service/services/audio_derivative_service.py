@@ -36,7 +36,16 @@ class AudioDerivativeService:
             await self._redis_producer.connect()
         return self._redis_producer
 
-    async def enqueue(self, *, track_id: str, room_id: str, bucket: str, object_key: str) -> bool:
+    async def enqueue(
+        self,
+        *,
+        track_id: str,
+        room_id: str,
+        bucket: str,
+        object_key: str,
+        sample_rate: int = 16000,
+        channels: int = 1,
+    ) -> bool:
         try:
             producer = await self._get_producer()
             task = AudioDerivativeTask(
@@ -44,6 +53,8 @@ class AudioDerivativeService:
                 room_id=room_id,
                 bucket=bucket,
                 object_key=object_key,
+                sample_rate=sample_rate,
+                channels=channels,
             )
             task_id = await producer.enqueue(task)
             logger.info(f"✓ Queued for derivative transcode: {track_id} → {task_id}")

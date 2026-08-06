@@ -54,6 +54,24 @@ class DerivativeEventRequest(BaseModel):
     error: Optional[str] = None
 
 
+class TtsTranscriptEventRequest(BaseModel):
+    """Posted directly by the agent for its own TTS track (audio-ingestion
+    PLAN.md D3x) -- text is already known (came from orchestrator's own
+    agent-control call in the first place), so this replaces a Whisper STT
+    round-trip entirely for this one track. event: "tts.transcript" (a single
+    utterance segment) | "tts.completed" (track_id's transcript is done --
+    there's no Whisper "completed" marker for this track, so the agent must
+    send this itself for check_and_complete_room to ever see it as finished).
+    """
+
+    event: str
+    room_id: str
+    track_id: str
+    text: Optional[str] = None
+    start: Optional[float] = None
+    end: Optional[float] = None
+
+
 class RecordingEventResponse(BaseModel):
     received: bool
     action: Optional[str] = None
