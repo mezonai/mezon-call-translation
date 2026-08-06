@@ -25,6 +25,13 @@ class AudioDerivativeTask(BaseProducerTask):
     room_id: str = ""       # rooms.id (UUID, already resolved -- not the room name)
     bucket: str = ""
     object_key: str = ""    # raw PCM source object to transcode
+    # Raw capture's actual format (record-service's RecordingEventRequest.sample_rate/
+    # channels -- see HttpEventReporter._to_payload). Previously not threaded
+    # through here at all; audio-processing-service just hardcoded 16000/1 for
+    # every track (audio-ingestion PLAN.md D28 point 1), which broke once a
+    # second real capture rate (the agent's own 24kHz TTS track, D3x) existed.
+    sample_rate: int = 16000
+    channels: int = 1
 
     def to_dict(self) -> dict[str, str]:
         """Convert to dict for Redis XADD. All values are strings as required by Redis."""
@@ -34,5 +41,7 @@ class AudioDerivativeTask(BaseProducerTask):
             "room_id": self.room_id,
             "bucket": self.bucket,
             "object_key": self.object_key,
+            "sample_rate": str(self.sample_rate),
+            "channels": str(self.channels),
         })
         return data

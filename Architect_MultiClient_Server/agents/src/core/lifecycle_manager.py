@@ -15,21 +15,24 @@ from src.services.agent_request_handler import create_request_handlers
 logger = logging.getLogger(__name__)
 
 
-async def initialize_tts_manager(ctx: agents.JobContext, session_id: str) -> Optional[TTSManager]:
+async def initialize_tts_manager(
+    ctx: agents.JobContext, session_id: str, room_id: Optional[str] = None
+) -> Optional[TTSManager]:
     """
     Initialize TTS Manager.
-    
+
     Args:
         ctx: Agent JobContext
         session_id: Session ID
-    
+        room_id: Orchestrator's stable room UUID (see TTSManager docstring)
+
     Returns:
         TTSManager instance or None if initialization fails
     """
     try:
         logger.info("Initializing TTS Manager...")
-        
-        tts_manager = TTSManager(ctx=ctx, session_id=session_id)
+
+        tts_manager = TTSManager(ctx=ctx, session_id=session_id, room_id=room_id)
         
         if await tts_manager.initialize():
             logger.info("✅ TTS Manager initialized successfully")
