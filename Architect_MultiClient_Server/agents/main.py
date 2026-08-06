@@ -2,6 +2,7 @@
 LiveKit Agent entrypoint - Starts Vosk transcription agent + TTS
 """
 import asyncio
+import uuid
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -51,6 +52,14 @@ async def entrypoint(ctx: agents.JobContext):
     # Setup core components
     session_id = ctx.room.name
 
+    # This worker's own stable session identity (audio-ingestion PLAN.md
+    # D27x): generated once, here, regardless of how long a previous
+    # session's cleanup for this same room name takes to finish. A process
+    # crash+redispatch for the same LiveKit room generates a *new* id here
+    # too, by design -- treated the same as a participant disconnecting and
+    # rejoining, not as resuming the old session.
+    agent_room_id = str(uuid.uuid4())
+
     # Register with orchestrator BEFORE connecting to the room (audio-ingestion
     # PLAN.md D27). Previously this ran after ctx.connect()+
     # subscribe_existing_tracks(), so a track already live when the agent
@@ -63,7 +72,7 @@ async def entrypoint(ctx: agents.JobContext):
     # unreachable, room_id stays None and downstream code falls back to
     # ctx.room.name (see event_handlers.py) -- same behavior as before,
     # not a hard dependency.
-    room_id = await register_with_orchestrator(orchestrator, session_id)
+    room_id = await register_with_orchestrator(orchestrator, session_id, agent_room_id)
 
     transcript_manager = TranscriptManager(ctx)
     control_state = AgentControlState(transcription_enabled=False)

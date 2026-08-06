@@ -54,30 +54,25 @@ class RoomRegistryRepository(BaseHashRepository):
 
     # Domain-specific methods with business semantics
 
-    async def register_room(self, room_name: str, room_id: str) -> bool:
+    async def register_room(self, room_name: str, room_id: str) -> None:
         """
-        Register a room.
+        Register a room, always overwriting whatever room_id (if any) this
+        room_name previously pointed to.
 
-        Business logic: A room can only be registered once.
+        Postgres is the source of truth for room sessions (audio-ingestion
+        PLAN.md D27x); this hash is just a "latest known room_id for this
+        name" cache used to resolve webhook events by name. The caller
+        (room_registry_api.py's /register) is responsible for force-finalizing
+        whatever room previously owned this name before calling this -- by
+        the time we get here, the old entry (if any) is already superseded
+        and safe to overwrite unconditionally.
 
         Args:
-            room_name: Unique room name
-            room_id: Associated room ID
-
-        Returns:
-            True if registered successfully, False if already exists
+            room_name: Room name
+            room_id: New room ID to associate with it
         """
-        success = await self.set(self.HASH_KEY, self.STATS_KEY, room_name, room_id)
-
-        if success:
-            # Update domain-specific stats
-            await self._increment_stat(self.STATS_KEY, "total_registered")
-            await self._update_stat(self.STATS_KEY, "last_registered_at", str(__import__("time").time()))
-            logger.info(f"✅ Room '{room_name}' registered with ID '{room_id}'")
-        else:
-            logger.warning(f"⚠️ Room '{room_name}' already registered")
-
-        return success
+        await self.set_overwrite(self.HASH_KEY, self.STATS_KEY, room_name, room_id)
+        logger.info(f"✅ Room '{room_name}' registered with ID '{room_id}'")
 
     async def unregister_room(self, room_name: str) -> bool:
         """
