@@ -235,7 +235,22 @@ class RecordingEventService:
                     from orchestrator_service.services.summary_service import get_summary_service
                     await get_summary_service().generate_summary(room_ref_id)
             else:
-                logger.warning(f"Failed to mark tts track completed: {track_ref_id}")
+                # Known race (not yet fixed, monitoring only for now): this
+                # agent-reported event can beat record-service's own
+                # recording.completed (which creates the track row) to
+                # orchestrator if record-service's report_event retries are
+                # still exhausting when close() returns -- see tts_manager.py
+                # cleanup(). If success_res.error == "Not found", the row
+                # never got this update and NOTHING will retry it (this event
+                # only fires once), leaving the track stuck at "wait_process"
+                # and the whole room's summary blocked on
+                # check_and_complete_room forever. Logged as ERROR (not
+                # warning) specifically so this is alertable/greppable.
+                logger.error(
+                    f"tts.completed failed to update track status -- room may get stuck at "
+                    f"wait_process: track_ref_id={track_ref_id} room_id={payload.room_id} "
+                    f"track_id={payload.track_id} reason={success_res.get('error')}"
+                )
             return RecordingEventResponse(received=True, action="tts_completed")
 
         logger.warning(f"Unknown tts event type: {payload.event}")
