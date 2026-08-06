@@ -97,7 +97,22 @@ class BaseHashRepository(ABC):
                 f"[{self.__class__.__name__}] Failed to set '{key}': {e}"
             )
             raise
-    
+
+    async def set_overwrite(self, hash_key: str, stats_key: Optional[str], key: str, value: str) -> None:
+        """Unconditional set -- always overwrites, never fails because the key
+        already exists. For domains where the DB (not Redis) is the source of
+        truth and this hash is purely a "latest known value" cache (audio-ingestion
+        PLAN.md D27x: RoomRegistryRepository.register_room), so the last writer
+        for a given key is always correct to win."""
+        redis = await self._get_redis()
+        await redis.hset(hash_key, key, value)
+
+        if stats_key:
+            await self._increment_stat(stats_key, self.STAT_TOTAL_SET)
+            await self._update_stat(stats_key, self.STAT_LAST_SET_AT, str(time.time()))
+
+        logger.info(f"[{self.__class__.__name__}] Set (overwrite) '{key}' = '{value}'")
+
     async def get(self, hash_key: str, key: str) -> Optional[str]:
         """
         Get value for a key.
