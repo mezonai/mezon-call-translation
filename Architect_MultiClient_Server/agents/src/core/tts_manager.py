@@ -3,16 +3,40 @@ TTS Manager - Manages Text-to-Speech lifecycle and LiveKit audio integration
 Coordinates TTS engine, DataChannel communication, and audio track management
 """
 import asyncio
+import contextlib
 import json
 import time
 from typing import Optional
 import numpy as np
 from livekit import rtc, agents
 
+from ..config import get_config
+from ..config.constants import AGENT_TTS_TRACK_ID
 from ..logger import get_logger
+from ..services.orchestrator_client import OrchestratorClient
+from ..services.record_service_client import get_record_service_client
 from ..services.tts_client import process_text_to_audio
 
 logger = get_logger(__name__)
+
+# audio-ingestion PLAN.md D3 only forwards tracks the agent *subscribes* to
+# (on_track_subscribed never fires for the agent's own published track), so
+# the agent's TTS output never reached record-service. Tapped directly here
+# instead of via rtc.AudioStream.from_track(local_track) -- whether that even
+# reads back a LocalAudioTrack's own frames is unverified, and this way the
+# record-service session can open before the (lazily-published) LiveKit
+# track exists at all, so `started_at` isn't skewed by TTS's lazy init.
+#
+# record-service is a dumb pass-through (D6): PCM chunks carry no timestamp,
+# so received-byte-count IS the timeline. TTS only calls capture_frame() while
+# actually speaking (no silence between turns), and in this interview flow
+# gaps of 30s-4min (the candidate's turn) are the norm -- left unfilled, the
+# recorded file would compress out all silence and drift out of sync with
+# every other track once downstream merges them. This ticker tops up the
+# exact elapsed gap on a coarse cadence; correctness doesn't depend on the
+# interval (it always computes real elapsed time, never assumes a fixed
+# duration), so it can stay cheap.
+_SILENCE_TICK_INTERVAL_S = 2.0
 
 
 class TTSManager:
@@ -25,24 +49,46 @@ class TTSManager:
         self,
         ctx: agents.JobContext,
         session_id: str,
-        sample_rate: int = 24000
+        sample_rate: int = 24000,
+        room_id: Optional[str] = None
     ):
         """
         Initialize TTS Manager
-        
+
         Args:
             ctx: LiveKit job context
             session_id: Unique session identifier
             sample_rate: Audio sample rate in Hz (default: 24000 for Kokoro)
+            room_id: Orchestrator's stable room UUID (falls back to session_id
+                if registration hadn't completed -- same degrade path as
+                event_handlers.py's record forwarding)
         """
         self.ctx = ctx
         self.session_id = session_id
         self.sample_rate = sample_rate
-        
+        self._room_id = room_id
+
         # Audio track management (persistent track)
         self.audio_source: Optional[rtc.AudioSource] = None
         self.audio_track: Optional[rtc.LocalAudioTrack] = None
         self.track_published = False
+
+        # record-service forwarding for the agent's own TTS output (see
+        # module docstring above). Opened once in initialize(), lives for
+        # the whole session.
+        self._record_forwarder = None  # RecordForwarder | None
+        self._record_track_id = AGENT_TTS_TRACK_ID
+        self._record_last_sent_at: float = 0.0
+        self._record_speaking = False
+        self._record_ticker_task: Optional[asyncio.Task] = None
+        # Wall-clock (time.time(), not monotonic -- needs to be comparable
+        # to record-service's own started_at) anchor for reporting each TTS
+        # utterance's [start, end] as a transcript segment (D3x), and the
+        # epoch time the current/last utterance actually began sending real
+        # frames (set in _publish_audio).
+        self._record_session_started_epoch: float = 0.0
+        self._record_utterance_start_epoch: float = 0.0
+        self._orchestrator = OrchestratorClient.get_instance()
         
         # DataChannel handler registered flag
         self.handler_registered = False
@@ -92,7 +138,64 @@ class TTSManager:
         except Exception as e:
             logger.error(f"Failed to initialize TTS Manager: {e}", exc_info=True)
             return False
-    
+
+    async def _start_record_forwarding(self) -> None:
+        """Best-effort: failure here must never break TTS itself (mirrors
+        record_service_client's own contract -- None means "no recording
+        this session", not an error to propagate)."""
+        try:
+            config = get_config()
+            client = get_record_service_client()
+            forwarder = await client.new_forwarder(
+                room_id=self._room_id or self.session_id,
+                track_id=self._record_track_id,
+                participant_identity=config.livekit.agent_name,
+                source="mic",
+                sample_rate=self.sample_rate,
+                channels=1,
+            )
+            if forwarder is None:
+                return
+            self._record_forwarder = forwarder
+            self._record_last_sent_at = time.monotonic()
+            self._record_session_started_epoch = time.time()
+            self._record_ticker_task = asyncio.create_task(
+                self._record_silence_ticker(), name="tts-record-silence-ticker"
+            )
+            logger.info("Started record-service forwarding for agent TTS track")
+        except Exception as e:
+            logger.error(f"Failed to start record-service forwarding for TTS: {e}", exc_info=True)
+
+    async def _record_silence_ticker(self) -> None:
+        """Tops up real elapsed silence on a coarse cadence so the recorded
+        file's duration tracks wall-clock time through long gaps (the agent
+        sits quiet for the candidate's whole answer). Skips entirely while
+        _publish_audio is actively sending real frames, which does its own
+        gap top-up right before it starts -- see module docstring."""
+        try:
+            while True:
+                await asyncio.sleep(_SILENCE_TICK_INTERVAL_S)
+                if self._record_speaking or self._record_forwarder is None:
+                    continue
+                self._send_record_silence_gap()
+        except asyncio.CancelledError:
+            pass
+
+    def _send_record_silence_gap(self) -> None:
+        """Non-blocking (send_audio only queues, see record_service_client.py)
+        -- safe to call right before real audio without delaying it."""
+        if self._record_forwarder is None:
+            return
+        now = time.monotonic()
+        gap_s = now - self._record_last_sent_at
+        self._record_last_sent_at = now
+        if gap_s <= 0:
+            return
+        num_bytes = int(gap_s * self.sample_rate) * 2  # mono int16
+        if num_bytes <= 0:
+            return
+        self._record_forwarder.send_audio(bytes(num_bytes))
+
     async def _process_request_queue(self):
         """
         Background worker that processes TTS requests sequentially from queue
@@ -258,6 +361,10 @@ class TTSManager:
                 logger.info("🎬 First TTS request - setting up audio track...")
                 if not await self._setup_audio_track():
                     raise RuntimeError("Failed to setup audio track for TTS")
+                # Actually being asked to speak is the strongest signal this
+                # session needs a recorded track at all (D3x) -- opened here,
+                # not in initialize(), see that method's comment.
+                await self._start_record_forwarding()
                 logger.info("✅ Audio track ready for TTS output")
             
             # Step 1: Synthesize text to audio
@@ -280,7 +387,15 @@ class TTSManager:
             audio_duration = len(audio_data) / self.sample_rate
             self.stats["total_audio_duration"] += audio_duration
             self.stats["successful_requests"] += 1
-            
+
+            # Report this utterance as a transcript segment (D3x) -- text is
+            # already known (it came from orchestrator's own agent-control
+            # call), so this replaces a Whisper STT round-trip for this
+            # track entirely. Uses the epoch _publish_audio captured right
+            # as real frames started (not request_start, which also
+            # includes synthesis latency).
+            await self._report_tts_transcript(text, audio_duration)
+
             logger.info(
                 f"✅ TTS request completed "
                 f"(synthesis={synthesis_time:.2f}s, "
@@ -308,6 +423,25 @@ class TTSManager:
                 "sender": sender_identity
             })
     
+    async def _report_tts_transcript(self, text: str, audio_duration: float) -> None:
+        """Best-effort: an orchestrator hiccup here must never fail TTS
+        playback itself (mirrors _send_tts_status's own fire-and-forget
+        posture)."""
+        if self._record_forwarder is None or not self._record_session_started_epoch:
+            return
+        try:
+            start = self._record_utterance_start_epoch - self._record_session_started_epoch
+            end = start + audio_duration
+            await self._orchestrator.report_tts_transcript(
+                room_id=self._room_id or self.session_id,
+                track_id=self._record_track_id,
+                text=text,
+                start=start,
+                end=end,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to report TTS transcript segment: {e}")
+
     async def _publish_audio(self, audio_data: np.ndarray):
         """
         Publish audio to LiveKit room using AudioByteStream for proper chunking
@@ -350,9 +484,17 @@ class TTSManager:
             logger.error(f"Failed to validate track state: {e}")
             raise RuntimeError(f"Invalid track state: {e}")
         
+        # Mark "speaking" before the silence ticker can interleave a stray
+        # chunk mid-utterance, and flush whatever gap has accumulated since
+        # the last chunk (real or silence) so it lands *before* real audio
+        # in the forwarder's queue -- both calls are non-blocking (queue
+        # puts only), so this adds no wall-clock delay to sending real audio.
+        self._record_speaking = True
+        self._record_utterance_start_epoch = time.time()
+        self._send_record_silence_gap()
         try:
             from livekit.agents import utils
-            
+
             # Convert float32 to PCM 16-bit (as bytes)
             # This is the standard format LiveKit expects
             audio_int16 = np.clip(audio_data * 32767, -32768, 32767).astype(np.int16)
@@ -384,11 +526,13 @@ class TTSManager:
             for frame in frames:
                 try:
                     await self.audio_source.capture_frame(frame)
+                    if self._record_forwarder is not None:
+                        self._record_forwarder.send_audio(bytes(frame.data))
                     frame_count += 1
                 except Exception as e:
                     logger.error(f"Failed to capture frame {frame_count + 1}/{len(frames)}: {e}")
                     raise
-            
+
             # Flush any remaining data in buffer
             remaining_frames = audio_bstream.flush()
             if remaining_frames:
@@ -396,17 +540,25 @@ class TTSManager:
                 for frame in remaining_frames:
                     try:
                         await self.audio_source.capture_frame(frame)
+                        if self._record_forwarder is not None:
+                            self._record_forwarder.send_audio(bytes(frame.data))
                         frame_count += 1
                     except Exception as e:
                         logger.error(f"Failed to capture flush frame: {e}")
                         raise
-            
+
             logger.debug(f"Audio streaming completed successfully: {frame_count} frames sent")
-            
+
         except Exception as e:
             logger.error(f"Failed to publish audio: {e}", exc_info=True)
             raise
-    
+        finally:
+            # Real frames just sent already represent elapsed time up to
+            # now -- reset the gap anchor so the ticker's next tick (or the
+            # next utterance's pre-flush) only accounts for time from here.
+            self._record_last_sent_at = time.monotonic()
+            self._record_speaking = False
+
     def get_stats(self) -> dict:
         """
         Get TTS statistics
@@ -476,6 +628,28 @@ class TTSManager:
                 except Exception as e:
                     logger.warning(f"Failed to flush audio buffer: {e}")
 
+            # Stop the silence ticker and close the record-service session,
+            # backfilling any trailing silence first so the file's duration
+            # covers up to the actual end of the session, not just the last
+            # real utterance.
+            if self._record_ticker_task:
+                self._record_ticker_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._record_ticker_task
+            if self._record_forwarder is not None:
+                self._send_record_silence_gap()
+                await self._record_forwarder.close()
+                # No Whisper job ever runs for this track (skip_stt on
+                # orchestrator's side, D3x) -- this is the only thing that
+                # tells check_and_complete_room this track is done.
+                try:
+                    await self._orchestrator.report_tts_completed(
+                        room_id=self._room_id or self.session_id,
+                        track_id=self._record_track_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to report TTS track completed: {e}")
+
             # Log final stats
             stats = self.get_stats()
             logger.info(
@@ -484,6 +658,6 @@ class TTSManager:
                 f"success_rate={stats['success_rate']:.1%}, "
                 f"total_audio={stats['total_audio_duration']:.1f}s"
             )
-            
+
         except Exception as e:
             logger.error(f"Error during TTS cleanup: {e}", exc_info=True)

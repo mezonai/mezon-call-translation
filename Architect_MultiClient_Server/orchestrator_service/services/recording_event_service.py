@@ -16,6 +16,7 @@ from orchestrator_service.models.recording_event_models import (
     DerivativeEventRequest,
     RecordingEventRequest,
     RecordingEventResponse,
+    TtsTranscriptEventRequest,
 )
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
@@ -23,6 +24,12 @@ from orchestrator_service.services.transcription_service import TranscriptionSer
 from orchestrator_service.services.audio_derivative_service import get_audio_derivative_service
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.api.sse_metadata_api import metadata_channel
+from orchestrator_service.utils.constants import (
+    AGENT_TTS_TRACK_ID,
+    TTS_COMPLETED_EVENT,
+    TTS_TRANSCRIPT_EVENT,
+    make_track_ref_id,
+)
 
 logger = get_logger(__name__)
 
@@ -110,12 +117,21 @@ class RecordingEventService:
                 started_at=str(round(payload.started_at * 1_000_000_000)),
                 ended_at=str(round((payload.ended_at or payload.started_at) * 1_000_000_000)),
                 source=payload.source,
+                # The agent's own TTS track (PLAN.md D3x): text is already
+                # known, transcribing its own synthesized voice back into
+                # text via Whisper would be redundant -- and wrong, since
+                # Whisper's feature extractor is fixed at 16kHz vs TTS's
+                # 24kHz capture. The agent reports segments directly via
+                # tts.transcript/.completed instead (handle_tts_transcript_event below).
+                skip_stt=(payload.track_id == AGENT_TTS_TRACK_ID),
             )
             await self.audio_derivative_service.enqueue(
                 track_id=payload.recording_id,
                 room_id=room_ref_id,
                 bucket=payload.bucket,
                 object_key=payload.object_key,
+                sample_rate=payload.sample_rate,
+                channels=payload.channels,
             )
             return RecordingEventResponse(received=True, action="recording_completed")
 
@@ -180,3 +196,47 @@ class RecordingEventService:
                 )
 
         return RecordingEventResponse(received=True, action=f"derivative_{derivative_status}")
+
+    async def handle_tts_transcript_event(self, payload: TtsTranscriptEventRequest) -> RecordingEventResponse:
+        """Agent-reported transcript for its own TTS track (PLAN.md D3x) --
+        no Whisper job runs for this track (skip_stt above), so this is the
+        only source for both its transcript segments and its terminal
+        status. Mirrors redis_save_transcription_service.py's
+        _process_save_task handling of "pending w/ segments" and "completed"
+        exactly, so this track flows through check_and_complete_room /
+        generate_summary identically to a Whisper-transcribed one."""
+        if not self.pg_repo.connected:
+            await self.pg_repo.connect()
+
+        track_ref_id = make_track_ref_id(payload.room_id, payload.track_id)
+
+        if payload.event == TTS_TRANSCRIPT_EVENT:
+            if not payload.text or payload.start is None or payload.end is None:
+                logger.warning(f"tts.transcript missing text/start/end for {track_ref_id}, skipping")
+                return RecordingEventResponse(received=True, action="tts_transcript_skipped")
+
+            await self.pg_repo.append_transcript_chunk(
+                track_ref_id=track_ref_id,
+                new_segments=[{
+                    "start": payload.start,
+                    "end": payload.end,
+                    "text": payload.text,
+                    "confidence": 1.0,
+                    "metadata": {"source": "tts"},
+                }],
+            )
+            return RecordingEventResponse(received=True, action="tts_transcript_saved")
+
+        if payload.event == TTS_COMPLETED_EVENT:
+            success_res = await self.pg_repo.update_track_status(track_ref_id=track_ref_id, status="completed")
+            if success_res.get("success"):
+                room_ref_id = success_res.get("track", {}).get("room_ref_id")
+                if room_ref_id and await self.pg_repo.check_and_complete_room(room_ref_id):
+                    from orchestrator_service.services.summary_service import get_summary_service
+                    await get_summary_service().generate_summary(room_ref_id)
+            else:
+                logger.warning(f"Failed to mark tts track completed: {track_ref_id}")
+            return RecordingEventResponse(received=True, action="tts_completed")
+
+        logger.warning(f"Unknown tts event type: {payload.event}")
+        return RecordingEventResponse(received=True, action="ignored")
