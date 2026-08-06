@@ -18,18 +18,18 @@ from orchestrator_service.models.recording_event_models import (
     TtsTranscriptEventRequest,
 )
 from orchestrator_service.services.audio_derivative_service import get_audio_derivative_service
+from orchestrator_service.services.postgresql.models import Track
 from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.utils.constants import (
     AGENT_TTS_TRACK_ID,
     TTS_COMPLETED_EVENT,
     TTS_TRANSCRIPT_EVENT,
     make_track_ref_id,
 )
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -222,7 +222,6 @@ class RecordingEventService:
                     "end": payload.end,
                     "text": payload.text,
                     "confidence": 1.0,
-                    "metadata": {"source": "tts"},
                 }],
             )
             return RecordingEventResponse(received=True, action="tts_transcript_saved")
@@ -230,7 +229,11 @@ class RecordingEventService:
         if payload.event == TTS_COMPLETED_EVENT:
             success_res = await self.pg_repo.update_track_status(track_ref_id=track_ref_id, status="completed")
             if success_res.get("success"):
-                room_ref_id = success_res.get("track", {}).get("room_ref_id")
+                # update_track_status returns the ORM Track row, not a dict
+                # -- matches redis_save_transcription_service.py's own
+                # handling of the same return shape.
+                track_data = success_res.get("track")
+                room_ref_id = str(track_data.room_ref_id) if isinstance(track_data, Track) and track_data.room_ref_id else None
                 if room_ref_id and await self.pg_repo.check_and_complete_room(room_ref_id):
                     from orchestrator_service.services.summary_service import get_summary_service
                     await get_summary_service().generate_summary(room_ref_id)

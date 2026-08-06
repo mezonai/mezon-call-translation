@@ -28,11 +28,21 @@ class RoomRegisterRequest(BaseModel):  # type: ignore[explicit-any]
     """Request model for room registration"""
 
     room_name: str = Field(..., description="Room name to register")
+    room_id: str = Field(
+        ...,
+        description=(
+            "Agent-generated stable UUID for this session (audio-ingestion "
+            "PLAN.md D27x -- the agent owns its own session identity; "
+            "orchestrator no longer generates it). Retrying the same "
+            "room_id for the same room_name is idempotent."
+        ),
+    )
 
     class Config:
         json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "room_name": "my-room-123",
+                "room_id": "b3f1c2a4-4e5d-4a1b-9c3e-7a2f6d8e9c10",
             }
         }
 
@@ -67,34 +77,51 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, str | bool
     **Example:**
     ```json
     {
-        "room_name": "my-room-123"
+        "room_name": "my-room-123",
+        "room_id": "b3f1c2a4-4e5d-4a1b-9c3e-7a2f6d8e9c10"
     }
     ```
     """
 
     registry = get_room_registry()
-    room_id = None
 
-    # 1. Start room in STT service FIRST
-    try:
-        stt_response = await transcription_service.start_room(request.room_name)
-        if stt_response:
-            if stt_response.get("success"):
-                room_id = stt_response.get("room_id")
-                logger.info(f"✅ Room '{request.room_name}' started in STT service")
-        else:
-            logger.warning("⚠️ Failed to start room in STT service")
-    except Exception as e:
-        logger.error(f"Error starting room in STT: {e}", exc_info=True)
+    # 1. A new registration always supersedes whatever this room_name
+    # currently points to (audio-ingestion PLAN.md D27x): Mezon's meeting
+    # channels are a fixed, reused pool, so the *name* alone was never a
+    # reliable identity -- the agent joining is what defines a session now.
+    # An agent process crash+redispatch for the same LiveKit room is itself
+    # defined as a new session here (same as a participant disconnecting and
+    # rejoining), so there's no status/liveness check to make -- force-finalize
+    # unconditionally, reusing the exact same finalize path a normal
+    # end-of-call /unregister uses. That path's atomic
+    # UPDATE ... WHERE status='pending' guard (final_room_status) is what
+    # makes this safe if the superseded session's own delayed
+    # cleanup/unregister call lands around the same time -- whichever call
+    # actually matches the WHERE clause wins, the other is a no-op, not a race.
+    current_room_id = await registry.get_room_id(request.room_name)
+    if current_room_id and current_room_id != request.room_id:
+        logger.warning(
+            f"Room '{request.room_name}' re-registered (room_id={request.room_id}), "
+            f"superseding room_id={current_room_id} -- force-finalizing it"
+        )
+        try:
+            await transcription_service.final_room(request.room_name, current_room_id)
+        except Exception as e:
+            logger.error(
+                f"Failed to force-finalize superseded room_id={current_room_id} "
+                f"for '{request.room_name}': {e}",
+                exc_info=True,
+            )
+            # Not fatal -- proceed with the new registration regardless.
 
-    # 2. Register room in registry
-    if room_id is None:
-        raise HTTPException(status_code=400, detail="Failed to obtain room_id from STT service")
+    # 2. Create the room row for the agent's own id.
+    if not await transcription_service.start_room(request.room_id, request.room_name):
+        raise HTTPException(status_code=500, detail=f"Failed to create room record for '{request.room_name}'")
 
-    if not await registry.register_room(request.room_name, str(room_id)):
-        raise HTTPException(status_code=409, detail=f"Room '{request.room_name}' is already registered")
+    # 3. Point the name -> id cache at this session (always overwrites).
+    await registry.register_room(request.room_name, request.room_id)
 
-    # 3. Save existing participants (best effort). Recording itself is driven
+    # 4. Save existing participants (best effort). Recording itself is driven
     # by agents/record-service once the agent joins and subscribes tracks
     # (audio-ingestion PLAN.md D3) -- no egress kick-off needed here anymore.
     # Backgrounded (audio-ingestion PLAN.md D27): the LiveKit list_participants
@@ -104,18 +131,18 @@ async def register_room(request: RoomRegisterRequest, auth: dict[str, str | bool
     # correctness downgrade: this is still a live query against LiveKit made
     # right after the registry entry goes active, same as before, just not
     # blocking the response -- the participant_joined webhook (active from
-    # step 2 onward, same as before) still catches anyone who joins around
+    # step 3 onward, same as before) still catches anyone who joins around
     # this same window.
-    asyncio_create_task_safety(_fetch_and_save_existing_participants(request.room_name, str(room_id)))
+    asyncio_create_task_safety(_fetch_and_save_existing_participants(request.room_name, request.room_id))
 
     metadata_channel = MetadataChannel()
-    asyncio_create_task_safety(metadata_channel.push_room_started(str(room_id), request.room_name))
+    asyncio_create_task_safety(metadata_channel.push_room_started(request.room_id, request.room_name))
 
     return {
         "status": "ok",
         "message": f"Room '{request.room_name}' registered successfully",
         "room_name": request.room_name,
-        "room_id": str(room_id),
+        "room_id": request.room_id,
     }
 
 

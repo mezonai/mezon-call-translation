@@ -49,25 +49,30 @@ async def initialize_tts_manager(
 
 async def register_with_orchestrator(
     orchestrator: OrchestratorClient,
-    session_id: str
+    session_id: str,
+    room_id: str
 ) -> Optional[str]:
     """
     Register room with orchestrator and push session_started event.
-    
+
     Args:
         orchestrator: OrchestratorClient instance
         session_id: Session ID (room name)
-    
+        room_id: This worker's own stable UUID, generated once by the caller
+            (audio-ingestion PLAN.md D27x -- the agent owns its own session
+            identity now, orchestrator no longer generates it)
+
     Returns:
-        room_id from orchestrator or None if registration fails
+        room_id if registration succeeded, None if it failed (downstream
+        code falls back to session_id/ctx.room.name -- see event_handlers.py)
     """
-    room_id = await orchestrator.register_room(session_id)
-    if room_id:
+    ok = await orchestrator.register_room(session_id, room_id)
+    if ok:
         logger.info(f"✅ Room registered with orchestrator (room_id: {room_id})")
+        return room_id
     else:
-        logger.warning("⚠️ Failed to get room_id from orchestrator")
-    
-    return room_id
+        logger.warning("⚠️ Failed to register room with orchestrator")
+        return None
 
 
 async def start_agent_request_listener(
