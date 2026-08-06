@@ -49,7 +49,7 @@ class TTSManager:
         self,
         ctx: agents.JobContext,
         session_id: str,
-        sample_rate: int = 24000,
+        sample_rate: int = 16000,
         room_id: Optional[str] = None
     ):
         """
@@ -58,7 +58,14 @@ class TTSManager:
         Args:
             ctx: LiveKit job context
             session_id: Unique session identifier
-            sample_rate: Audio sample rate in Hz (default: 24000 for Kokoro)
+            sample_rate: Audio sample rate in Hz -- MUST match the actual TTS
+                service's real output rate (prod config: SAMPLE_RATE=16000),
+                not just LiveKit/record-service's own assumption. Used both
+                for the LiveKit publish track (AudioSource/AudioByteStream)
+                and for what's declared to record-service -- a mismatch here
+                distorts pitch/speed and skews recorded/derivative duration
+                (previously hardcoded 24000 for "Kokoro", never verified
+                against the real service; production bug, fixed 2026-08-06).
             room_id: Orchestrator's stable room UUID (falls back to session_id
                 if registration hadn't completed -- same degrade path as
                 event_handlers.py's record forwarding)
@@ -512,7 +519,7 @@ class TTSManager:
                 sample_rate=self.sample_rate,
                 num_channels=1,
                 # samples_per_channel defaults to sample_rate // 10 (100ms)
-                # For 24000 Hz: 2400 samples = 100ms chunks
+                # For 16000 Hz: 1600 samples = 100ms chunks
             )
             
             # Push audio data through bytestream
