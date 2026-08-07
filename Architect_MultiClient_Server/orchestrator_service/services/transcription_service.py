@@ -164,28 +164,17 @@ class TranscriptionService:
             logger.exception("Failed to end room transcription: %s", e)
             return False
 
-    async def start_room(self, room_name: str) -> Optional[dict]:
-        """
-        Notify transcription service to start room
-
-        Returns:
-            dict response if success, None if failed
-        """
+    async def start_room(self, room_id: str, room_name: str) -> bool:
+        """Create the room row for an agent-supplied session id (audio-ingestion
+        PLAN.md D27x). Idempotent (see create_room_session) -- a retried
+        /register with the same room_id is a no-op, not an error."""
         try:
             if not self.pg_repo.connected:
                 await self.pg_repo.connect()
-            room_id = await self.pg_repo.create_room_session(
-                room_name=room_name
-            )
-            return {
-                "success": True,
-                "message": f"Room {room_name} started successfully",
-                "room_id": room_id,
-            }
+            return await self.pg_repo.create_room_session(room_id=room_id, room_name=room_name)
         except Exception as e:
             logger.exception(f"✗ Unexpected error starting room: {e}")
-
-        return None
+            return False
 
     async def save_participant(
         self, room_id: str, participant_identity: str, timestamp: datetime = None

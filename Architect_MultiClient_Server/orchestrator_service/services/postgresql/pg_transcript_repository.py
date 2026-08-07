@@ -146,26 +146,33 @@ class PgTranscriptRepository:
             logger.error(f"Failed to get room by id: {e}")
             return None
 
-    async def create_room_session(
-        self, room_name: str, status: str = "pending"
-    ) -> Optional[str]:
+    async def create_room_session(self, room_id: str, room_name: str, status: str = "pending") -> bool:
+        """room_id is agent-generated (audio-ingestion PLAN.md D27x -- the
+        agent owns its own session identity, not this DB) and passed in
+        explicitly rather than generated here.
+
+        ON CONFLICT DO NOTHING rather than upsert/error: the agent may retry
+        the same /register call (e.g. after a network blip) with the exact
+        same room_id, which must be a harmless no-op, not a duplicate-row
+        crash.
+        """
         session_factory = get_session_factory()
         now = datetime.now(timezone.utc)
-        uid = str(uuid.uuid4())
         try:
             async with session_factory() as session:
                 await session.execute(
                     text("""
                     INSERT INTO rooms (id, room_name, status, participants, created_at)
                     VALUES (:id, :name, :status, CAST('[]' AS jsonb), :now)
+                    ON CONFLICT (id) DO NOTHING
                 """),
-                    {"id": uid, "name": room_name, "status": status, "now": now},
+                    {"id": room_id, "name": room_name, "status": status, "now": now},
                 )
                 await session.commit()
-            return str(uid)
+                return True
         except Exception as e:
             logger.error(f"Failed to create room: {e}")
-            return None
+            return False
 
     async def final_room_status(self, room_name: str, room_id: str) -> bool:
         uid = room_id

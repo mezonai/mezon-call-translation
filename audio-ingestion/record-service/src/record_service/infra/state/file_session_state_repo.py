@@ -25,18 +25,34 @@ at the same time.
 
 FUTURE: this correctness argument depends on every caller remembering to
 hold the per-session lock before calling save() -- it isn't enforced here.
-If that ever stops being true (a new call site, a refactor), the failure
-mode is silently losing whichever concurrent write lost the race (rename is
-still atomic, so no corruption) -- not a crash. If that risk stops being
-acceptable, switch to a per-session_id keyed lock here (same refcounted
-pattern as SessionRegistry.creation_lock in application/session_registry.py)
-rather than reintroducing one shared lock for every session.
+If that ever stops being true (a new call site, a refactor), the intent is
+"silently losing whichever concurrent write lost the race (rename is still
+atomic, so no corruption) -- not a crash". Two hardenings make that actually
+true instead of just documented (production incident 2026-08-06: a shared
+fixed `.tmp` name meant the loser's `os.replace()` source had already been
+consumed by the winner, raising FileNotFoundError -- which then propagated
+out of save() into callers like AppendAudio/StartRecording, and from there
+into ingest_server.py's StreamAudio loop, where it got misread as the gRPC
+stream itself having broken, dropping otherwise-healthy sessions into the
+abrupt-disconnect/grace-period path):
+1. `_write_atomic` now uses a per-call-unique tmp name (uuid4 suffix), so two
+   concurrent writers never share one intermediate file -- the loser's own
+   rename always succeeds, it just gets overwritten a moment later by
+   whichever write actually lands last (last-write-wins, matching the
+   documented "silently losing a write" intent, no exception either way).
+2. `save()` itself never lets a write failure (this race or any other, e.g.
+   disk full, permissions) escape as an exception -- logged and swallowed,
+   since this file is a crash-recovery convenience (S3 already durably holds
+   every uploaded byte), not something any caller's control flow should
+   depend on succeeding.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 
@@ -48,6 +64,8 @@ from record_service.domain.models import (
 )
 from record_service.domain.ports import SessionStateRepository
 
+logger = logging.getLogger(__name__)
+
 
 class FileSessionStateRepository(SessionStateRepository):
     def __init__(self, directory: str) -> None:
@@ -58,15 +76,35 @@ class FileSessionStateRepository(SessionStateRepository):
         return self._dir / f"{session_id.replace('/', '_')}.json"
 
     async def save(self, session: RecordingSession) -> None:
-        path = self._path_for(session.session_id)
-        payload = json.dumps(_to_dict(session))
-        await asyncio.to_thread(self._write_atomic, path, payload)
+        # Never lets a write failure propagate -- this file is a crash-recovery
+        # convenience (PLAN.md D5 tier 3), not something callers' control flow
+        # should depend on. A caller that treats a save() failure as "the gRPC
+        # stream broke" (ingest_server.py's StreamAudio, historically) would
+        # drop an otherwise-healthy session into abrupt-disconnect handling.
+        try:
+            path = self._path_for(session.session_id)
+            payload = json.dumps(_to_dict(session))
+            await asyncio.to_thread(self._write_atomic, path, payload)
+        except Exception as exc:  # noqa: BLE001 - best-effort persistence boundary
+            logger.error("Failed to save session state for %s: %s", session.session_id, exc)
 
     @staticmethod
     def _write_atomic(path: Path, payload: str) -> None:
-        tmp_path = path.with_suffix(".tmp")
-        tmp_path.write_text(payload)
-        tmp_path.replace(path)  # atomic on POSIX -- never leaves a half-written state file
+        # Per-call-unique tmp name: two concurrent writers for the same
+        # session (a documented-but-not-enforced invariant violation, see
+        # class docstring) must never share one intermediate file. With a
+        # shared name, the loser's os.replace() source would already have
+        # been consumed by the winner's rename -- FileNotFoundError. With a
+        # unique name, both renames succeed independently; whichever lands
+        # last just overwrites `path` a moment later (last-write-wins, no
+        # exception either way).
+        tmp_path = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
+            tmp_path.write_text(payload)
+            tmp_path.replace(path)  # atomic on POSIX -- never leaves a half-written state file
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     async def delete(self, session_id: str) -> None:
         path = self._path_for(session_id)

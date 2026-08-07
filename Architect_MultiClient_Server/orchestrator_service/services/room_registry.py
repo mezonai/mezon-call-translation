@@ -51,33 +51,29 @@ class RoomRegistry:
 
     async def register_room(self, room_name: str, room_id: str) -> bool:
         """
-        Register a room in the registry.
+        Register a room in the registry, overwriting whatever room_id (if
+        any) this room_name previously pointed to (audio-ingestion PLAN.md
+        D27x -- Postgres is the source of truth, this is just a name->id
+        cache; the caller is responsible for force-finalizing the superseded
+        room, if any, before calling this).
 
         Args:
             room_name: Name of the room to register
             room_id: str of the room
 
         Returns:
-            True if registration is successful, False if the room already exists
+            True if registered, False only if room_id itself is invalid
 
         Raises:
             ConnectionError: If Redis operation fails
         """
-        try:
-            room_id_str = str(room_id)
-            if not room_id_str or room_id_str == "None":
-                logger.error(
-                    f"Cannot register room '{room_name}': room_id converts to invalid string '{room_id_str}'"
-                )
-                return False
-        except Exception as e:
-            logger.error(
-                f"Cannot register room '{room_name}': failed to convert room_id to string: {e}"
-            )
+        if not room_id or room_id == "None":
+            logger.error(f"Cannot register room '{room_name}': invalid room_id '{room_id}'")
             return False
 
         repository = self._get_repository()
-        return await repository.register_room(room_name, room_id_str)
+        await repository.register_room(room_name, room_id)
+        return True
 
     async def unregister_room(self, room_name: str) -> bool:
         """

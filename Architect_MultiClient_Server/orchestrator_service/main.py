@@ -22,7 +22,6 @@ from orchestrator_service.api.sse_agent_request_api import (
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.webhook_api import router as webhook_router
 from orchestrator_service.api.room_api import router as room_router
-from orchestrator_service.api.room_registry_api import router as room_registry_router
 from orchestrator_service.api.queue_api import router as queue_router
 from orchestrator_service.services.livekit_client import cleanup_livekit_service
 from orchestrator_service.services.room_registry import get_room_registry
@@ -200,7 +199,6 @@ app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent req
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
 app.include_router(queue_router)  # Has prefix="/api/queue"
 app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
-app.include_router(room_registry_router)  # Has prefix="/api/room-registry"
 app.include_router(summary_client_router)
 
 
