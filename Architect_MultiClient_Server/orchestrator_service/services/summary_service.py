@@ -45,7 +45,7 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import (
 )
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
-    generate_participant_alias_maps,
+    build_username_maps,
     group_next_focus_by_user,
     sanitize_and_decode_list,
 )
@@ -285,7 +285,13 @@ class SummaryService:
 
         # 4. Collect Full Text and Participants
         unique_participants = {seg["participant_id"] for seg in all_segments}
-        id_to_alias, alias_to_id = generate_participant_alias_maps(list(unique_participants))
+        room_participants_raw = room_doc.participants
+        # TODO: Use `Any` type because the `room_participant_raw` data to insert into `room_participants` has complex type
+        room_participants: list[dict[str, Any]] = (  # type: ignore[explicit-any]
+            room_participants_raw if isinstance(room_participants_raw, list) else []
+        )
+        id_to_username, username_to_id = build_username_maps(list(unique_participants), room_participants)
+
         turns = []
         current_turn = None
 
@@ -306,14 +312,6 @@ class SummaryService:
         if current_turn:
             turns.append(current_turn)
 
-        # Update room participants list in-place with their calculated speech durations and save
-        room_participants_raw = room_doc.participants
-
-        # TODO: Use `Any` type because the `room_participant_raw` data to insert into `room_participants` has complex type
-        room_participants: list[dict[str, Any]] = (  # type: ignore[explicit-any]
-            room_participants_raw if isinstance(room_participants_raw, list) else []
-        )
-
         for p in room_participants:
             user_id = p.get("participant_identity")
             if user_id:
@@ -328,7 +326,7 @@ class SummaryService:
         # It can be a long string, but we keep it as is for now since it's needed for the summary generation step.
         # In the future, we could consider storing it in a more efficient way if we find performance issues with very long conversations.
         full_text = "\n".join(
-            f"[{t['timestamp']}] {id_to_alias.get(t['participant_id'], t['participant_id'])}: {t['content']}"
+            f"[{t['timestamp']}] {id_to_username.get(t['participant_id'], t['participant_id'])}: {t['content']}"
             for t in turns
         )
 
@@ -420,15 +418,15 @@ class SummaryService:
                 summary_parts.append(f"Context\n{summary_data_result.context}")
 
                 if summary_data_result.key_discussions:
-                    summary_data_result.key_discussions = sanitize_and_decode_list(summary_data_result.key_discussions, alias_to_id, require_brackets=True)
+                    summary_data_result.key_discussions = sanitize_and_decode_list(summary_data_result.key_discussions, {}, require_brackets=True)
                     if summary_data_result.key_discussions:
                         summary_parts.append("Key Discussions\n" + "\n".join(summary_data_result.key_discussions))
 
                 if summary_data_result.next_focus:
-                    summary_data_result.next_focus = sanitize_and_decode_list(summary_data_result.next_focus, alias_to_id, require_brackets=True)
+                    summary_data_result.next_focus = sanitize_and_decode_list(summary_data_result.next_focus, username_to_id, require_brackets=True)
 
                 if summary_data_result.detail:
-                    summary_data_result.detail = sanitize_and_decode_list(summary_data_result.detail, alias_to_id, require_brackets=False)
+                    summary_data_result.detail = sanitize_and_decode_list(summary_data_result.detail, {}, require_brackets=False)
 
             summary_data = {
                 "summary": "\n\n".join(summary_parts) if summary_parts else "",
@@ -493,9 +491,11 @@ class SummaryService:
             raise ValueError(f"messages is empty for room_id: {room_id}")
 
         unique_participants = {t["participant_id"] for t in messages}
-        id_to_alias, alias_to_id = generate_participant_alias_maps(list(unique_participants))
+        room_participants = room_doc.participants if isinstance(room_doc.participants, list) else []
+        id_to_username, username_to_id = build_username_maps(list(unique_participants), room_participants)
+
         full_text = "\n".join(
-            f"[{t['timestamp']}] {id_to_alias.get(str(t['participant_id']), str(t['participant_id']))}: {t['content']}"
+            f"[{t['timestamp']}] {id_to_username.get(str(t['participant_id']), str(t['participant_id']))}: {t['content']}"
             for t in messages
         )
 
@@ -554,15 +554,15 @@ class SummaryService:
                     summary_parts = [f"Context\n{result.context}"]
 
                     if result.key_discussions:
-                        result.key_discussions = sanitize_and_decode_list(result.key_discussions, alias_to_id, require_brackets=True)
+                        result.key_discussions = sanitize_and_decode_list(result.key_discussions, {}, require_brackets=True)
                         if result.key_discussions:
                             summary_parts.append("Key Discussions\n" + "\n".join(result.key_discussions))
 
                     if result.next_focus:
-                        result.next_focus = sanitize_and_decode_list(result.next_focus, alias_to_id, require_brackets=True)
+                        result.next_focus = sanitize_and_decode_list(result.next_focus, username_to_id, require_brackets=True)
 
                     if result.detail:
-                        result.detail = sanitize_and_decode_list(result.detail, alias_to_id, require_brackets=False)
+                        result.detail = sanitize_and_decode_list(result.detail, {}, require_brackets=False)
 
                     summary_data = {
                         "summary": "\n\n".join(summary_parts),
