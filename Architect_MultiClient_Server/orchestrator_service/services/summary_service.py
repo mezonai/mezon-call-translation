@@ -253,8 +253,11 @@ class SummaryService:
                 track_start_ns = int(audio_info.get("started_at_ns", 0) or 0)
                 chunks = chunks_by_track[track.id]
 
-                # Calculate duration for this track/participant using start_time and end_time of chunks
-                track_duration = sum((c.end_time or 0.0) - (c.start_time or 0.0) for c in chunks)
+                vad_duration = audio_info.get("duration_after_vad_sec")
+                if vad_duration is not None:
+                    track_duration = float(vad_duration)
+                else:
+                    track_duration = sum((c.end_time or 0.0) - (c.start_time or 0.0) for c in chunks)
                 if participant != "Unknown":
                     participant_durations[participant] = participant_durations.get(participant, 0.0) + track_duration
 

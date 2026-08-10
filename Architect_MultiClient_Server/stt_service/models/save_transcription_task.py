@@ -7,7 +7,7 @@ Multiple tasks are sent for a single transcription (batched approach).
 
 import json
 from dataclasses import dataclass, field
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 from .stream_base import BaseProducerTask
 
@@ -40,6 +40,7 @@ class SaveTranscriptionTask(BaseProducerTask):
     end_time: float = field(kw_only=True)
     item_count: int = field(kw_only=True)
     is_final: bool = field(kw_only=True)
+    duration_after_vad_sec: Optional[float] = field(default=None, kw_only=True)
     
     # Optional fields with defaults
     status: str = "pending"
@@ -66,6 +67,9 @@ class SaveTranscriptionTask(BaseProducerTask):
             "status": self.status,
         })
         
+        if self.duration_after_vad_sec is not None:
+            base_dict["duration_after_vad_sec"] = str(self.duration_after_vad_sec)
+
         return base_dict
     
     def __repr__(self) -> str:
@@ -76,5 +80,6 @@ class SaveTranscriptionTask(BaseProducerTask):
             f"chunk={self.chunk_index}, "
             f"items={self.item_count}, "
             f"time={self.start_time:.1f}-{self.end_time:.1f}s, "
+            f"duration_after_vad={self.duration_after_vad_sec}, "
             f"final={self.is_final})"
         )

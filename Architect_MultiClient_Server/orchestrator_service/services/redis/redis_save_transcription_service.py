@@ -242,8 +242,9 @@ class RedisSaveTranscriptionService:
                     f"🏁 Completion marker received for track {task.track_ref_id}, updating status to 'completed'"
                 )
 
-                success_res = await self._pg_repo.update_track_status(
-                    track_ref_id=task.track_ref_id, status="completed"
+                success_res = await self._pg_repo.complete_track_with_vad_duration(
+                    track_ref_id=task.track_ref_id,
+                    duration_after_vad_sec=task.duration_after_vad_sec,
                 )
 
                 if success_res and success_res.get("success"):
@@ -267,6 +268,10 @@ class RedisSaveTranscriptionService:
                         await service.generate_summary(str(room_ref_id))
                 else:
                     logger.warning(f"Failed to update status for track {task.track_ref_id}")
+                    error = success_res.get("error", "Unknown error") if success_res else "no response"
+                    raise RuntimeError(
+                        f"Failed to complete track {task.track_ref_id}: {error}"
+                    )
 
                 # ACK the task
                 await self._redis_service.acknowledge(task)

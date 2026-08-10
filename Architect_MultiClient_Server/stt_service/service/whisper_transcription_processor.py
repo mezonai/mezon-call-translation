@@ -24,8 +24,8 @@ from faster_whisper import WhisperModel
 from stt_service.service.redis.redis_producer_service import RedisProducerService
 from stt_service.utils.decorator import singleton
 
-from ..config import get_config
-from ..models import TranscriptionStreamTask, SaveTranscriptionTask
+from stt_service.config import get_config
+from stt_service.models import TranscriptionStreamTask, SaveTranscriptionTask
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +335,12 @@ class WhisperTranscriptionProcessor:
                 
                 # Signal completion
                 asyncio.run_coroutine_threadsafe(
-                    batch_queue.put(('done', None)),
+                    batch_queue.put((
+                        'done',
+                        {
+                            "duration_after_vad_sec": float(info.duration_after_vad)
+                        }
+                    )),
                     loop
                 )
                 
@@ -397,6 +402,7 @@ class WhisperTranscriptionProcessor:
                         item_count=0,
                         is_final=True,
                         status="completed",
+                        duration_after_vad_sec=data["duration_after_vad_sec"],
                     )
                     await self._redis_producer.enqueue(final_task)
                     

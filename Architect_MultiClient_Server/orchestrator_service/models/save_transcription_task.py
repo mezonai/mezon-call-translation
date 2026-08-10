@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass, field
 
 from .stream_base import BaseProducerTask, TaskPriority, parse_priority
-
+from typing import Optional
 
 @dataclass
 class SaveTranscriptionTask(BaseProducerTask):
@@ -39,6 +39,7 @@ class SaveTranscriptionTask(BaseProducerTask):
     end_time: float = field(kw_only=True)
     item_count: int = field(kw_only=True)
     is_final: bool = field(kw_only=True)
+    duration_after_vad_sec: Optional[float] = field(default=None, kw_only=True)
 
     # Optional fields with defaults
     status: str = "pending"
@@ -69,6 +70,8 @@ class SaveTranscriptionTask(BaseProducerTask):
                 "status": self.status,
             }
         )
+        if self.duration_after_vad_sec is not None:
+            base_dict["duration_after_vad_sec"] = str(self.duration_after_vad_sec)
 
         return base_dict
 
@@ -97,6 +100,14 @@ class SaveTranscriptionTask(BaseProducerTask):
         # Parse boolean
         is_final = decoded.get("is_final", "False").lower() in ("true", "1")
 
+        # Parse duration
+        duration_after_raw = decoded.get("duration_after_vad_sec")
+        duration_after_vad_sec = (
+            float(duration_after_raw)
+            if duration_after_raw not in (None, "")
+            else None
+        )
+
         return cls(
             task_id=decoded.get("task_id", ""),
             message_id=message_id,  # Set Redis stream message ID
@@ -111,6 +122,7 @@ class SaveTranscriptionTask(BaseProducerTask):
             priority=parse_priority(decoded.get("priority", TaskPriority.NORMAL)),
             retry_count=int(decoded.get("retry_count", 0)),
             created_at=float(decoded.get("created_at", 0.0)),
+            duration_after_vad_sec=duration_after_vad_sec
         )
 
     def __repr__(self) -> str:
@@ -121,5 +133,6 @@ class SaveTranscriptionTask(BaseProducerTask):
             f"chunk={self.chunk_index}, "
             f"items={self.item_count}, "
             f"time={self.start_time:.1f}-{self.end_time:.1f}s, "
+            f"duration_after_vad={self.duration_after_vad_sec}, "
             f"final={self.is_final})"
         )
