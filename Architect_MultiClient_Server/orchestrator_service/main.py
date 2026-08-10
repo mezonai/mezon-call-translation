@@ -178,5 +178,4 @@ app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent req
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
 app.include_router(summary_client_router)
 
-
 app.include_router(api_router_v2, prefix="/api/v2")
