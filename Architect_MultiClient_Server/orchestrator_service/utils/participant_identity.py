@@ -48,33 +48,22 @@ def parse_participant_identity(participant_identity: str) -> str:
         logger.debug("Not JSON format, keeping original participant_identity")
         return participant_identity
 
-def generate_participant_alias_maps(participants: list[str]) -> tuple[dict[str, str], dict[str, str]]:
-    id_to_alias = {}
-    alias_to_id = {}
-    for idx, p_id in enumerate(participants or []):
-        alias = f"user-{idx+1}"
-        id_to_alias[str(p_id)] = alias
-        alias_to_id[alias] = str(p_id)
-
-    return id_to_alias, alias_to_id
-
-
-def mask_messages(messages: list[dict[str, Any]], id_to_alias: dict[str, str]) -> list[dict[str, Any]]: # type: ignore[explicit-any]
+def mask_messages(messages: list[dict[str, Any]], id_to_username: dict[str, str]) -> list[dict[str, Any]]: # type: ignore[explicit-any]
     masked = copy.deepcopy(messages)
     for msg in masked:
         p_id = str(msg.get("participant_id"))
-        if p_id in id_to_alias:
-            msg["participant_id"] = id_to_alias[p_id]
+        if p_id in id_to_username:
+            msg["participant_id"] = id_to_username[p_id]
     return masked
 
-def decode_aliases(text: str, alias_to_id: dict[str, str]) -> str:
+def decode_aliases(text: str, username_to_id: dict[str, str]) -> str:
     if not text:
         return text
-    for alias, real_id in sorted(alias_to_id.items(), key=lambda x: len(x[0]), reverse=True):
+    for alias, real_id in sorted(username_to_id.items(), key=lambda x: len(x[0]), reverse=True):
         text = text.replace(alias, real_id)
     return text
 
-def sanitize_and_decode_list(items: list[str], alias_to_id: dict[str, str], require_brackets: bool = False) -> list[str]:
+def sanitize_and_decode_list(items: list[str], username_to_id: dict[str, str], require_brackets: bool = False) -> list[str]:
     if not items:
         return []
 
@@ -93,7 +82,7 @@ def sanitize_and_decode_list(items: list[str], alias_to_id: dict[str, str], requ
             if len(cleaned) <= 5 and not cleaned.isalnum():
                 continue
 
-        decoded = decode_aliases(cleaned, alias_to_id)
+        decoded = decode_aliases(cleaned, username_to_id)
         result.append(decoded)
 
     return result
@@ -121,3 +110,30 @@ def group_next_focus_by_user(next_focus_list: list[str]) -> dict[str, list[str]]
             grouped["general"].append(cleaned_item)
 
     return dict(grouped)
+
+def build_username_maps( # type: ignore[explicit-any]
+    unique_participants: list[str],
+    room_participants: list[dict[str, Any]]
+) -> tuple[dict[str, str], dict[str, str]]:
+
+    identity_username_lookup = {}
+    for p in (room_participants or []):
+        pid = p.get("participant_identity")
+        uname = p.get("username")
+        if pid and uname:
+            identity_username_lookup[pid] = uname
+
+    id_to_username = {}
+    username_to_id = {}
+    fallback_idx = 0
+
+    for p_id in unique_participants:
+        p_id_str = str(p_id)
+        username = identity_username_lookup.get(p_id_str)
+        if not username:
+            fallback_idx += 1
+            username = f"user-{fallback_idx}"
+        id_to_username[p_id_str] = username
+        username_to_id[username] = p_id_str
+
+    return id_to_username, username_to_id

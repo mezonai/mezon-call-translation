@@ -57,9 +57,8 @@ class WebhookHandler:
     async def _handle_participant_joined(self, event: dict[str, Any]) -> WebhookResponse:  # type: ignore[explicit-any]
         """Handle when a participant joins - currently just logs the event"""
         room_name = event.get("room", {}).get("name", "unknown")
-        participant_data = event.get("participant", {})
-        identity = participant_data.get("identity", "unknown")
-        username = participant_data.get("name") or participant_data.get("metadata")
+        identity = event.get("participant", {}).get("identity", "unknown")
+        username = event.get("participant", {}).get("name") or event.get("participant", {}).get("metadata")
         room_id = await self.room_registry.get_room_id(room_name)
         if not room_id:
             # Shouldn't happen in practice -- handle_event() already checked

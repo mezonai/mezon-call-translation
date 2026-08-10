@@ -19,7 +19,7 @@ from orchestrator_service.services.llm.prompt import build_light_summary_prompt
 from orchestrator_service.services.postgresql.pg_summary_repository import PgSummaryRepository
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
-    generate_participant_alias_maps,
+    build_username_maps,
     group_next_focus_by_user,
     mask_messages,
     sanitize_and_decode_list,
@@ -62,17 +62,17 @@ class LightSummaryService:
         room_id: str,
         room_name: str,
         messages: list[dict[str, Any]],
-        id_to_alias: dict[str, str] | None = None,
-        alias_to_id: dict[str, str] | None = None,
+        id_to_username: dict[str, str] | None = None,
+        username_to_id: dict[str, str] | None = None,
         language: str = "Vietnamese",
         target_duration: int | None = None,
         resume_from_section: int = 0,
     ) -> int:
-        id_to_alias = id_to_alias or {}
-        alias_to_id = alias_to_id or {}
+        id_to_username = id_to_username or {}
+        username_to_id = username_to_id or {}
 
         real_messages = messages
-        working_messages = mask_messages(messages, id_to_alias)
+        working_messages = mask_messages(messages, id_to_username)
 
 
         start_idx = 0
@@ -98,7 +98,7 @@ class LightSummaryService:
                         break
                 section_index = last_section.section_index + 1
 
-                masked_prev = mask_messages(last_section.messages or [], id_to_alias)
+                masked_prev = mask_messages(last_section.messages or [], id_to_username)
                 previous_context = json.dumps(masked_prev, ensure_ascii=False, indent=2)
                 logger.info(
                     f"Resuming from section {section_index}, start_idx={start_idx}, previous_context loaded from DB"
@@ -131,11 +131,11 @@ class LightSummaryService:
                     summary_result = await self._call_llm(prompt, LightSummaryResult)
 
                     if summary_result.key_discussions:
-                        summary_result.key_discussions = sanitize_and_decode_list(summary_result.key_discussions, alias_to_id, require_brackets=True)
+                        summary_result.key_discussions = sanitize_and_decode_list(summary_result.key_discussions, {}, require_brackets=True)
                     if summary_result.next_focus:
-                        summary_result.next_focus = sanitize_and_decode_list(summary_result.next_focus, alias_to_id, require_brackets=True)
+                        summary_result.next_focus = sanitize_and_decode_list(summary_result.next_focus, username_to_id, require_brackets=True)
                     if summary_result.detail:
-                        summary_result.detail = sanitize_and_decode_list(summary_result.detail, alias_to_id, require_brackets=False)
+                        summary_result.detail = sanitize_and_decode_list(summary_result.detail, {}, require_brackets=False)
 
                 except Exception as api_err:
                     logger.error(
@@ -180,7 +180,7 @@ class LightSummaryService:
                 "detail": summary_result.detail or [],
             }
 
-            masked_section_messages = mask_messages(section_messages, id_to_alias)
+            masked_section_messages = mask_messages(section_messages, id_to_username)
             previous_context = json.dumps(masked_section_messages, ensure_ascii=False, indent=2)
 
             section_start_time = section_messages[0]["timestamp"]
@@ -231,7 +231,8 @@ class LightSummaryService:
             raise ValueError(f"Not found room summary doc for room: {room_id}")
 
         messages = summary.messages
-        id_to_alias, alias_to_id = generate_participant_alias_maps(summary.participants or [])
+        room_participants = room.participants if isinstance(room.participants, list) else []
+        id_to_username, username_to_id = build_username_maps(summary.participants or [], room_participants)
 
         if resume_from_section == 0:
             await self.pg_repo.delete_section_summaries_by_room_id(room_id)
@@ -240,8 +241,8 @@ class LightSummaryService:
             room_id=room_id,
             room_name=room.room_name or "Unknow",
             messages=messages or [],
-            id_to_alias=id_to_alias,
-            alias_to_id=alias_to_id,
+            id_to_username=id_to_username,
+            username_to_id=username_to_id,
             language=language,
             target_duration=target_duration,
             resume_from_section=resume_from_section,
