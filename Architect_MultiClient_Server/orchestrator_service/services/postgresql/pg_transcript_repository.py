@@ -6,7 +6,7 @@ Handles rooms, tracks, chunks, summary, and metadata events.
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any, TypeVar, Optional
+from typing import Any, TypeVar
 
 from sqlalchemy import Select, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -260,63 +260,6 @@ class PgTranscriptRepository:
                 return {"success": False, "error": "Not found"}
         except Exception as e:
             logger.error(f"Failed to update track status: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def complete_track_with_vad_duration(
-        self,
-        track_ref_id: str,
-        duration_after_vad_sec: Optional[float],
-    ) -> dict[str, str | Track | bool]:
-        session_factory = get_session_factory()
-
-        try:
-            async with session_factory() as session:
-                if duration_after_vad_sec is None:
-                    query = text("""
-                        UPDATE tracks
-                        SET status = 'completed',
-                            updated_at = :now
-                        WHERE id = :id
-                        RETURNING id
-                    """)
-                    params = {
-                        "id": track_ref_id,
-                        "now": datetime.now(UTC),
-                    }
-                else:
-                    query = text("""
-                        UPDATE tracks
-                        SET status = 'completed',
-                            updated_at = :now,
-                            audio_info = COALESCE(audio_info, '{}'::jsonb)
-                                || jsonb_build_object(
-                                    'duration_after_vad_sec',
-                                    CAST(:vad_duration AS double precision)
-                                )
-                        WHERE id = :id
-                        RETURNING id
-                    """)
-                    params = {
-                        "id": track_ref_id,
-                        "vad_duration": duration_after_vad_sec,
-                        "now": datetime.now(UTC),
-                    }
-
-                result = await session.execute(query, params)
-                updated_id = result.scalar_one_or_none()
-
-                if updated_id is None:
-                    return {"success": False, "error": "Not found"}
-
-                updated_track = await session.get(Track, updated_id)
-                if updated_track is None:
-                    return {"success": False, "error": "Track disappeared after update"}
-
-                await session.commit()
-                return {"success": True, "track": updated_track}
-
-        except Exception as e:
-            logger.error(f"Failed to complete track with VAD duration: {e}")
             return {"success": False, "error": str(e)}
 
     async def check_and_complete_room(self, room_ref_id: str) -> bool:

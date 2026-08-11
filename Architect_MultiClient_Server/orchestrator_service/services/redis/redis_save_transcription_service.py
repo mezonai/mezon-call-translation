@@ -10,7 +10,7 @@ import contextlib
 import time
 
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
-from orchestrator_service.services.postgresql.models import Track
+from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.redis.redis_stream_service import (
     RedisStreamService,
@@ -63,6 +63,7 @@ class RedisSaveTranscriptionService:
     def __init__(self):
         self._redis_service: RedisStreamService[SaveTranscriptionTask] = get_save_stream_service()
         self._pg_repo: PgTranscriptRepository = PgTranscriptRepository()
+        self._pg_track_repo: PgTrackRepository = PgTrackRepository()
         self._consumer_task: asyncio.Task[None] | None = None
         self._orphan_recovery_task: asyncio.Task[None] | None = None
         self._running = False
@@ -242,15 +243,14 @@ class RedisSaveTranscriptionService:
                     f"🏁 Completion marker received for track {task.track_ref_id}, updating status to 'completed'"
                 )
 
-                success_res = await self._pg_repo.complete_track_with_vad_duration(
+                updated_track = await self._pg_track_repo.complete_track_with_vad_duration(
                     track_ref_id=task.track_ref_id,
                     duration_after_vad_sec=task.duration_after_vad_sec,
                 )
 
-                if success_res and success_res.get("success"):
+                if updated_track is not None:
                     # Get room_ref_id from updated track
-                    track_data = success_res.get("track")
-                    room_ref_id = track_data.room_ref_id if isinstance(track_data, Track) else None
+                    room_ref_id = updated_track.room_ref_id
 
                     # Log final summary
                     logger.info(
@@ -268,9 +268,8 @@ class RedisSaveTranscriptionService:
                         await service.generate_summary(str(room_ref_id))
                 else:
                     logger.warning(f"Failed to update status for track {task.track_ref_id}")
-                    error = success_res.get("error", "Unknown error") if success_res else "no response"
                     raise RuntimeError(
-                        f"Failed to complete track {task.track_ref_id}: {error}"
+                        f"Failed to complete track {task.track_ref_id}: Track not found or DB error"
                     )
 
                 # ACK the task

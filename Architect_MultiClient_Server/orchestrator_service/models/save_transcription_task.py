@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass, field
 
 from .stream_base import BaseProducerTask, TaskPriority, parse_priority
-from typing import Optional
+
 
 @dataclass
 class SaveTranscriptionTask(BaseProducerTask):
@@ -39,7 +39,7 @@ class SaveTranscriptionTask(BaseProducerTask):
     end_time: float = field(kw_only=True)
     item_count: int = field(kw_only=True)
     is_final: bool = field(kw_only=True)
-    duration_after_vad_sec: Optional[float] = field(default=None, kw_only=True)
+    duration_after_vad_sec: float | None = field(default=None, kw_only=True)
 
     # Optional fields with defaults
     status: str = "pending"
