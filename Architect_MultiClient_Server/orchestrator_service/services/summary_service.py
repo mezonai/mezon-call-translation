@@ -217,9 +217,6 @@ class SummaryService:
         8. Update summary in DB.
         9. Notify clients via SSE.
         """
-        if not self.pg_transcript_repo.connected:
-            await self.pg_transcript_repo.connect()
-
         # 1. Verify room exists
         room_doc = await self.pg_transcript_repo.get_room_by_id(room_id)
         if not room_doc:
@@ -364,9 +361,14 @@ class SummaryService:
                 await self.light_summary_service.process_room_by_id(room_id, language=self.config.language)
             except Exception as e:
                 logger.warning(f"Section processing failed for room {room_id}: {e}. Creating outbox task.")
-                await self.outbox_repo.add_retry_summarization_task_to_outbox(
+                outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
                     room_id=str(room_id), retry_type=RetryType.SECTIONS, error_msg=str(e)
                 )
+                if not outbox_created:
+                    logger.critical(
+                        f"Room {room_id} has NO summary AND outbox retry task creation FAILED "
+                        f"(retry_type={RetryType.SECTIONS}) - needs manual re-trigger"
+                    )
                 return {**draft_summary, "id": saved_id}
 
             try:
@@ -374,9 +376,14 @@ class SummaryService:
                 summary_data = await self.generate_overall_summary(room_id, language=self.config.language)
             except Exception as e:
                 logger.warning(f"Overall summary failed for room {room_id}: {e}. Creating outbox task.")
-                await self.outbox_repo.add_retry_summarization_task_to_outbox(
+                outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
                     room_id=str(room_id), retry_type=RetryType.OVERALL_CONTEXT, error_msg=str(e)
                 )
+                if not outbox_created:
+                    logger.critical(
+                        f"Room {room_id} has NO summary AND outbox retry task creation FAILED "
+                        f"(retry_type={RetryType.OVERALL_CONTEXT}) - needs manual re-trigger"
+                    )
                 return {**draft_summary, "id": saved_id}
 
             # Success
@@ -407,9 +414,14 @@ class SummaryService:
 
             # If summary failed -> Outbox SUMMARY
             if not summary_data_result:
-                await self.outbox_repo.add_retry_summarization_task_to_outbox(
+                outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
                     room_id=str(room_id), retry_type=RetryType.SUMMARY, error_msg="Summary failed"
                 )
+                if not outbox_created:
+                    logger.critical(
+                        f"Room {room_id} has NO summary AND outbox retry task creation FAILED "
+                        f"(retry_type={RetryType.SUMMARY}) - needs manual re-trigger"
+                    )
                 return {**draft_summary, "id": saved_id}
 
             # Concate data
@@ -457,9 +469,14 @@ class SummaryService:
             elif not summary_data_result:
                 # Summary failed
                 logger.warning(f"Summary failed for room {room_id}. Creating SUMMARY outbox task.")
-                await self.outbox_repo.add_retry_summarization_task_to_outbox(
+                outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
                     room_id=str(room_id), retry_type=RetryType.SUMMARY, error_msg="Summary generation failed"
                 )
+                if not outbox_created:
+                    logger.critical(
+                        f"Room {room_id} has NO summary AND outbox retry task creation FAILED "
+                        f"(retry_type={RetryType.SUMMARY}) - needs manual re-trigger"
+                    )
 
             return result
 
@@ -477,9 +494,6 @@ class SummaryService:
         Raises:
             ValueError: If document not found or messages is empty.
         """
-        if not self.pg_summary_repo.connected:
-            await self.pg_summary_repo.connect()
-
         summary_doc, room_doc = await self.pg_summary_repo.get_summary_by_room_id(room_id)
         if not summary_doc:
             raise ValueError(f"Not found summary_doc for room_id: {room_id}")
@@ -596,9 +610,6 @@ class SummaryService:
     async def get_summary_by_room_name(
         self, room_name: str, start_time: datetime | None, end_time: datetime | None, auth: AuthContext
     ) -> tuple[list[RoomSummaryResponse], int]:
-        if not self.pg_summary_repo.connected:
-            await self.pg_summary_repo.connect()
-
         if auth.can_view_all_rooms:
             summaries, rooms = await self.pg_summary_repo.get_summary_by_room_name(room_name, start_time, end_time)
         else:
@@ -630,11 +641,6 @@ class SummaryService:
         return summary_models, len(summary_models)
 
     async def get_summary_by_room_id(self, room_id: str, auth: AuthContext) -> RoomSummaryResponse:
-        if not self.pg_summary_repo.connected:
-            await self.pg_summary_repo.connect()
-        if not self.pg_transcript_repo.connected:
-            await self.pg_transcript_repo.connect()
-
         if not auth.can_view_all_rooms:
             has_access = await self.pg_transcript_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:

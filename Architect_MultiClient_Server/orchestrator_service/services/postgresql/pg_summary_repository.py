@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
@@ -13,25 +13,6 @@ logger = get_logger(__name__)
 
 
 class PgSummaryRepository:
-    def __init__(self):
-        self.connected = True  # Always "connected" via connection pool
-
-    async def connect(self):
-        self.connected = True
-        return True
-
-    async def disconnect(self):
-        pass
-
-    async def ping(self):
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                await session.execute(text("SELECT 1"))
-            return True
-        except Exception:
-            return False
-
     # ------------------------------------------------------------------
     # SUMMARY
     # ------------------------------------------------------------------

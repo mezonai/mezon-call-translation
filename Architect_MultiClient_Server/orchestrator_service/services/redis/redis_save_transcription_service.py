@@ -78,15 +78,9 @@ class RedisSaveTranscriptionService:
         logger.info("RedisSaveTranscriptionService initialized")
 
     async def connect(self) -> None:
-        """Connect to Redis and PostgreSQL."""
-        # Connect to Redis
+        """Connect to Redis."""
         await self._redis_service.connect()
         logger.info("✅ RedisSaveTranscriptionService connected to Redis")
-
-        # Connect to PostgreSQL
-        if not self._pg_repo.connected:
-            await self._pg_repo.connect()
-        logger.info("✅ RedisSaveTranscriptionService connected to PostgreSQL")
 
     async def start(self) -> None:
         """
@@ -141,7 +135,6 @@ class RedisSaveTranscriptionService:
 
         await self._redis_service.stop_background_tasks()
         await self._redis_service.disconnect()
-        await self._pg_repo.disconnect()
 
         logger.info("✅ RedisSaveTranscriptionService stopped")
 
