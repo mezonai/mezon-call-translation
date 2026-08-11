@@ -241,8 +241,6 @@ async def list_metadata_events(
 
     try:
         pg_repo = PgTranscriptRepository()
-        if not pg_repo.connected:
-            await pg_repo.connect()
 
         # Get events and count
         events = await pg_repo.get_metadata_events(
@@ -286,8 +284,6 @@ async def get_metadata_event_by_id(
     """
     try:
         pg_repo = PgTranscriptRepository()
-        if not pg_repo.connected:
-            await pg_repo.connect()
 
         event = await pg_repo.get_metadata_event_by_event_id(event_id)
 

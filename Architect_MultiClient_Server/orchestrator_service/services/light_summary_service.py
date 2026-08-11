@@ -92,20 +92,31 @@ class LightSummaryService:
             if existing_sections:
                 last_section = existing_sections[-1]
 
-                for idx, msg in enumerate(working_messages):
-                    if msg.get("timestamp") == last_section.end_time:
-                        start_idx = idx + 1
-                        break
-                section_index = last_section.section_index + 1
-
-                masked_prev = mask_messages(last_section.messages or [], id_to_username)
-                previous_context = json.dumps(masked_prev, ensure_ascii=False, indent=2)
-                logger.info(
-                    f"Resuming from section {section_index}, start_idx={start_idx}, previous_context loaded from DB"
+                resume_idx = next(
+                    (idx + 1 for idx, msg in enumerate(working_messages)
+                     if msg.get("timestamp") == last_section.end_time),
+                    None,
                 )
+
+                if resume_idx is None:
+                    logger.error(
+                        f"Resume failed for room_id={room_id}: no message timestamp matches "
+                        f"last_section.end_time={last_section.end_time!r}. Restarting from section 1 "
+                        f"instead of a silent partial resume."
+                    )
+                else:
+                    start_idx = resume_idx
+                    section_index = last_section.section_index + 1
+                    masked_prev = mask_messages(last_section.messages or [], id_to_username)
+                    previous_context = json.dumps(masked_prev, ensure_ascii=False, indent=2)
+                    logger.info(
+                        f"Resuming from section {section_index}, start_idx={start_idx}, previous_context loaded from DB"
+                    )
 
         while start_idx < len(working_messages):
             current_duration = base_duration
+            summary_result = None
+            candidate_end_idx = start_idx
 
             while current_duration <= max_duration:
                 candidate_end_idx = self.get_candidate_end_idx(

@@ -176,6 +176,9 @@ app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat exte
 app.include_router(sse_metadata_router, prefix="/api", tags=["sse metadata"])
 app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent requests"])
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
+# TODO: legacy summary API, mounted with no auth (unlike /api/v2/summary which
+# requires ROOMS_VIEW_ALL/ROOMS_VIEW_OWN). Confirm no downstream still calls this,
+# then remove this router and its module (api/summary_api.py).
 app.include_router(summary_client_router)
 
 app.include_router(api_router_v2, prefix="/api/v2")

@@ -65,9 +65,6 @@ class RecordingEventService:
         return raw_room_id if room else None
 
     async def handle_recording_event(self, payload: RecordingEventRequest) -> RecordingEventResponse:
-        if not self.pg_repo.connected:
-            await self.pg_repo.connect()
-
         room_ref_id = await self._resolve_room_ref_id(payload.room_id)
         if not room_ref_id:
             logger.error(
@@ -162,9 +159,6 @@ class RecordingEventService:
         return RecordingEventResponse(received=True, action="ignored")
 
     async def handle_derivative_event(self, payload: DerivativeEventRequest) -> RecordingEventResponse:
-        if not self.pg_repo.connected:
-            await self.pg_repo.connect()
-
         track = await self.pg_repo.get_track_by_id(payload.recording_id)
         if not track:
             logger.error(f"Unknown track for derivative event: {payload.recording_id}")
@@ -205,9 +199,6 @@ class RecordingEventService:
         _process_save_task handling of "pending w/ segments" and "completed"
         exactly, so this track flows through check_and_complete_room /
         generate_summary identically to a Whisper-transcribed one."""
-        if not self.pg_repo.connected:
-            await self.pg_repo.connect()
-
         track_ref_id = make_track_ref_id(payload.room_id, payload.track_id)
 
         if payload.event == TTS_TRANSCRIPT_EVENT:

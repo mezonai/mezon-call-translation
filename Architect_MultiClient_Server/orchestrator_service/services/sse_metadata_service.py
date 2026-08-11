@@ -10,6 +10,7 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import (
     get_pg_transcript_repository,
 )
 from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
 
@@ -89,7 +90,7 @@ class SseMetadataService:
                 room_name=event.room_name,
                 metadata=event.event_metadata,
                 timestamp=event.timestamp,
-                created_at=event.created_at.isoformat() + "Z" if isinstance(event.created_at, datetime) else None,
+                created_at=convert_to_iso_8601(event.created_at) if isinstance(event.created_at, datetime) else None,
             )
 
             events.append(e)
@@ -109,7 +110,7 @@ class SseMetadataService:
             room_name=event_obj.room_name,
             metadata=event_obj.event_metadata,
             timestamp=event_obj.timestamp,
-            created_at=event_obj.created_at.isoformat() + "Z" if isinstance(event_obj.created_at, datetime) else None,
+            created_at=convert_to_iso_8601(event_obj.created_at) if isinstance(event_obj.created_at, datetime) else None,
         )
 
 

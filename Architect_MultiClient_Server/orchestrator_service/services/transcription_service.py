@@ -134,8 +134,6 @@ class TranscriptionService:
             True if successful
         """
         try:
-            if not self.pg_repo.connected:
-                await self.pg_repo.connect()
             updated = await self.pg_repo.final_room_status(room_name=room_name, room_id=room_id)
 
             if not updated:
@@ -165,8 +163,6 @@ class TranscriptionService:
         PLAN.md D27x). Idempotent (see create_room_session) -- a retried
         /register with the same room_id is a no-op, not an error."""
         try:
-            if not self.pg_repo.connected:
-                await self.pg_repo.connect()
             return await self.pg_repo.create_room_session(room_id=room_id, room_name=room_name)
         except Exception as e:
             logger.exception(f"✗ Unexpected error starting room: {e}")
@@ -185,8 +181,6 @@ class TranscriptionService:
             True if successful, False otherwise
         """
         try:
-            if not self.pg_repo.connected:
-                await self.pg_repo.connect()
             result = await self.pg_repo.save_participant(
                 room_id=room_id,
                 participant_identity=participant_identity,
@@ -209,8 +203,6 @@ class TranscriptionService:
         webhook (see that method's docstring in pg_transcript_repository.py).
         """
         try:
-            if not self.pg_repo.connected:
-                await self.pg_repo.connect()
             return await self.pg_repo.save_batch_participants_atomic(
                 room_id=room_id, participants=participants
             )
