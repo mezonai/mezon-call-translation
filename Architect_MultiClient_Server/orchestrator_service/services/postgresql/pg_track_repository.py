@@ -27,6 +27,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import func, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
@@ -201,3 +202,41 @@ class PgTrackRepository:
         except Exception as e:
             logger.error(f"Failed to save track metadata: {e}")
             return None
+
+    async def complete_track_with_vad_duration(
+        self,
+        track_ref_id: str,
+        duration_after_vad_sec: float | None
+    ) -> Track | None:
+        session_factory = get_session_factory()
+
+        async with session_factory() as session:
+            stmt = (
+                update(Track)
+                .where(Track.id == track_ref_id)
+                .values(
+                    status="completed",
+                    updated_at=datetime.now(UTC)
+                )
+            )
+            if duration_after_vad_sec is not None:
+                new_json = func.jsonb_build_object(
+                    "duration_after_vad_sec",
+                    duration_after_vad_sec
+                )
+                stmt = stmt.values(
+                    audio_info=func.coalesce(Track.audio_info,
+                        text("'{}'::jsonb")).concat(new_json)
+                )
+            stmt = stmt.returning(Track)
+
+            try:
+                result = await session.execute(stmt)
+                updated_track = result.scalar_one_or_none()
+
+                await session.commit()
+                return updated_track
+
+            except Exception:
+                logger.error("Failed to complete track with VAD duration")
+                return None
