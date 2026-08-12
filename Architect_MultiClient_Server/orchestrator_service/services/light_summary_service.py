@@ -150,9 +150,12 @@ class LightSummaryService:
 
                 except Exception as api_err:
                     logger.error(
-                        f"LLM Error after all retries at start_idx={start_idx} room={room_id}. Error: {api_err}"
+                        f"LLM Error after all retries at start_idx={start_idx} room={room_id}. "
+                        f"Error type={type(api_err).__name__}, detail={api_err!r}"
                     )
-                    raise ValueError(f"Failed to process section due to LLM error: {api_err}") from api_err
+                    raise ValueError(
+                        f"Failed to process section due to LLM error: {type(api_err).__name__}: {api_err}"
+                    ) from api_err
 
                 end_message_time = summary_result.end_message_time
 
