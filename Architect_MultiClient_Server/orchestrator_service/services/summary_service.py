@@ -48,6 +48,7 @@ from orchestrator_service.utils.participant_identity import (
     build_username_maps,
     group_next_focus_by_user,
     sanitize_and_decode_list,
+    format_key_discussions,
 )
 from orchestrator_service.utils.retry_utils import WaitCustomStrategy
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
@@ -434,6 +435,7 @@ class SummaryService:
 
                 if summary_data_result.key_discussions:
                     summary_data_result.key_discussions = sanitize_and_decode_list(summary_data_result.key_discussions, {}, require_brackets=True)
+                    summary_data_result.key_discussions = format_key_discussions(summary_data_result.key_discussions)
                     if summary_data_result.key_discussions:
                         summary_parts.append("Key Discussions\n" + "\n".join(summary_data_result.key_discussions))
 
@@ -572,6 +574,7 @@ class SummaryService:
 
                     if result.key_discussions:
                         result.key_discussions = sanitize_and_decode_list(result.key_discussions, {}, require_brackets=True)
+                        result.key_discussions = format_key_discussions(result.key_discussions)
                         if result.key_discussions:
                             summary_parts.append("Key Discussions\n" + "\n".join(result.key_discussions))
 

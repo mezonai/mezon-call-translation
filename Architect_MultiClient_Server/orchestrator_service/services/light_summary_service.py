@@ -23,6 +23,7 @@ from orchestrator_service.utils.participant_identity import (
     group_next_focus_by_user,
     mask_messages,
     sanitize_and_decode_list,
+    format_key_discussions,
 )
 from orchestrator_service.utils.retry_utils import WaitCustomStrategy
 from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
@@ -143,6 +144,7 @@ class LightSummaryService:
 
                     if summary_result.key_discussions:
                         summary_result.key_discussions = sanitize_and_decode_list(summary_result.key_discussions, {}, require_brackets=True)
+                        summary_result.key_discussions = format_key_discussions(summary_result.key_discussions)
                     if summary_result.next_focus:
                         summary_result.next_focus = sanitize_and_decode_list(summary_result.next_focus, username_to_id, require_brackets=True)
                     if summary_result.detail:
