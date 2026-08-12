@@ -11,4 +11,5 @@ RETRYABLE_EXCEPTIONS = (
     ValueError,
     ValidationError,
     RuntimeError,
+    TimeoutError,
 )
