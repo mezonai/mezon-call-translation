@@ -14,7 +14,6 @@ class RetryType(StrEnum):
     SECTIONS = "sections"
     OVERALL_CONTEXT = "overall_context"
 
-
 class SummaryResult(BaseModel):  # type: ignore[explicit-any]
     context: str = Field(description="Meeting context and participant permissions")
     key_discussions: list[str] = Field(description="Main discussion details and viewpoints")

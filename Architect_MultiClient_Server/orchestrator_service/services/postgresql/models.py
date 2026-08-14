@@ -22,6 +22,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class OutboxUseCase(enum.StrEnum):
     RETRY_SUMMARIZATION = "retry_summarization"
+    RETRY_TRANSCRIPT_CORRECTION = "retry_transcript_correction"
 
 
 class OutboxStatus(enum.StrEnum):
@@ -158,6 +159,10 @@ class RoomSummary(Base):
     # TODO: Use `Any` type because `summary_data` and `messages` has JSON format and complex value type hints
     summary_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)  # type: ignore[explicit-any]
     messages: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)  # type: ignore[explicit-any]
+
+    # Lightweight progress tracker for transcript correction (resume support).
+    # Schema: {"last_corrected_idx": int, "status": "in_progress"|"completed", "updated_at": str}
+    correction_progress: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)  # type: ignore[explicit-any]
 
     total_segments: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

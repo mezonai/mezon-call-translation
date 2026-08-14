@@ -58,6 +58,49 @@ class PgOutboxRepository:
                         updated_at=now,
                     )
                     session.add(new_task)
+                await session.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to add summarization outbox task: {e}")
+            return False
+
+    async def add_retry_transcript_correction_task_to_outbox(
+        self,
+        room_id: str,
+        retry_type: str,
+        error_msg: str,
+    ) -> bool:
+        session_factory = get_session_factory()
+        now = datetime.now(UTC)
+        configs = {"room_id": room_id, "retry_type": retry_type}
+
+        try:
+            async with session_factory() as session:
+                stmt = (
+                    select(OutboxTask)
+                    .where(OutboxTask.use_case == OutboxUseCase.RETRY_TRANSCRIPT_CORRECTION)
+                    .where(OutboxTask.status == OutboxStatus.PENDING)
+                    .where(OutboxTask.configs["room_id"].astext == room_id)
+                    .where(OutboxTask.configs["retry_type"].astext == retry_type)
+                    .limit(1)
+                )
+                res = await session.execute(stmt)
+                existing_task = res.scalar_one_or_none()
+
+                if existing_task:
+                    existing_task.last_error = error_msg
+                    existing_task.updated_at = now
+                else:
+                    new_task = OutboxTask(
+                        id=uuid.uuid4(),
+                        use_case=OutboxUseCase.RETRY_TRANSCRIPT_CORRECTION,
+                        status=OutboxStatus.PENDING,
+                        configs=configs,
+                        last_error=error_msg,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(new_task)
 
                 await session.commit()
                 return True

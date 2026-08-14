@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.models.summary_models import RetryType
-from orchestrator_service.services.postgresql.models import OutboxStatus, OutboxUseCase
+from orchestrator_service.services.postgresql.models import OutboxStatus
 from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository
 from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.utils.decorator import singleton
@@ -59,6 +59,25 @@ async def handle_retry_summarization(configs: dict[str, Any]) -> None:  # type: 
 
 # Register default handler
 OutboxHandlerRegistry.register("retry_summarization", handle_retry_summarization)
+
+async def handle_retry_transcript_correction(configs: dict[str, Any]) -> None:  # type: ignore[explicit-any]
+    from orchestrator_service.services.transcript_correction_service import get_correction_service
+    from orchestrator_service.models.transcript_models import TranscriptCorrectionRetryType
+    
+    room_id = configs.get("room_id")
+    if not room_id:
+        raise ValueError("Missing room_id in outbox task configs")
+        
+    retry_type_str = configs.get("retry_type")
+    if not retry_type_str:
+        raise ValueError("Missing retry_type in outbox task configs")
+        
+    retry_type = TranscriptCorrectionRetryType(retry_type_str)
+
+    logger.info(f"Retrying transcript correction for room {room_id} with type {retry_type.value}")
+    await get_correction_service().correct_transcript_for_room(room_id, retry_type=retry_type)
+
+OutboxHandlerRegistry.register("retry_transcript_correction", handle_retry_transcript_correction)
 
 
 @singleton
@@ -125,7 +144,7 @@ class SummaryOutboxWorker:
     async def _process_batch(self) -> None:
         """Fetch and process up to 5 pending tasks sorted by oldest first."""
         tasks = await self.outbox_repo.fetch_pending_outbox_tasks(
-            limit=self._batch_limit, use_case=OutboxUseCase.RETRY_SUMMARIZATION
+            limit=self._batch_limit
         )
         if not tasks:
             logger.info("No pending outbox tasks found to process.")
