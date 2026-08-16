@@ -5,33 +5,13 @@ Single ConnectionPool per process for all Redis usage (hash repos, streams, prod
 Uses decode_responses=False so stream workflows keep raw Redis behavior.
 """
 
-from typing import Any, Dict, Optional
-
 from redis.asyncio import ConnectionPool, Redis
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.utils.decorator import singleton
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-def _pool_connection_kwargs(cfg) -> Dict[str, Any]:
-    """
-    Per-connection kwargs for ConnectionPool (host, timeouts, decode_responses, etc.).
-
-    ``max_connections`` is passed separately at the ``ConnectionPool(...)`` call site
-    so pool sizing stays visible next to pool construction.
-    """
-    return {
-        "host": cfg.host,
-        "port": cfg.port,
-        "password": cfg.password or None,
-        "db": cfg.db,
-        "socket_timeout": cfg.socket_timeout,
-        "socket_connect_timeout": cfg.socket_connect_timeout,
-        "decode_responses": False,
-    }
 
 
 @singleton
@@ -45,7 +25,7 @@ class RedisConnectionManager:
     def __init__(self):
         """Initialize connection manager."""
         self._config = get_config().redis
-        self._pool: Optional[ConnectionPool] = None
+        self._pool: ConnectionPool | None = None
         self._connected = False
 
         logger.info("RedisConnectionManager initialized")
@@ -63,12 +43,18 @@ class RedisConnectionManager:
 
         try:
             self._pool = ConnectionPool(
+                host=self._config.host,
+                port=self._config.port,
+                password=self._config.password or None,
+                db=self._config.db,
+                socket_timeout=self._config.socket_timeout,
+                socket_connect_timeout=self._config.socket_connect_timeout,
+                decode_responses=False,
                 max_connections=self._config.max_connections,
-                **_pool_connection_kwargs(self._config),
             )
 
             redis_client = Redis(connection_pool=self._pool)
-            await redis_client.ping()
+            await redis_client.ping()  # type: ignore[misc]
             await redis_client.close()
 
             self._connected = True
@@ -81,7 +67,7 @@ class RedisConnectionManager:
             logger.error(f"✗ Failed to create Redis connection pool: {e}")
             self._pool = None
             self._connected = False
-            raise ConnectionError(f"Redis connection failed: {e}")
+            raise ConnectionError(f"Redis connection failed: {e}") from e
 
     async def disconnect(self) -> None:
         """Close the shared connection pool."""
@@ -100,9 +86,7 @@ class RedisConnectionManager:
             RuntimeError: If connect() has not completed successfully.
         """
         if not self._pool:
-            raise RuntimeError(
-                "Redis connection pool not initialized. Call await connect() first."
-            )
+            raise RuntimeError("Redis connection pool not initialized. Call await connect() first.")
         return self._pool
 
     def get_client(self) -> Redis:
@@ -131,7 +115,7 @@ class RedisConnectionManager:
 
         try:
             client = self.get_client()
-            await client.ping()
+            await client.ping()  # type: ignore[misc]
             await client.close()
             return True
         except Exception as e:

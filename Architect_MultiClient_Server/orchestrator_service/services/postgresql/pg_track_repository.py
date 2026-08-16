@@ -24,9 +24,10 @@ the same value as record-service's `recording_id`/`session_id`.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
+from sqlalchemy import func, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
@@ -36,7 +37,7 @@ from orchestrator_service.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def _track_to_dict(track: Track) -> Dict[str, Any]:
+def _track_to_dict(track: Track) -> dict[str, Any]:  # type: ignore[explicit-any]
     return {
         "id": track.id,
         "track_id": track.track_id,
@@ -62,9 +63,9 @@ class PgTrackRepository:
         self,
         *,
         record_id: str,
-        track_id: Optional[str],
-        room_ref_id: Optional[str],
-        participant_identity: Optional[str],
+        track_id: str | None,
+        room_ref_id: str | None,
+        participant_identity: str | None,
     ) -> None:
         """Eagerly registers a track that has started recording but not yet
         finished (audio-ingestion PLAN.md D26, `recording.started`).
@@ -80,7 +81,7 @@ class PgTrackRepository:
         regardless of arrival order or duplicate delivery.
         """
         session_factory = get_session_factory()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             async with session_factory() as session:
                 stmt = (
@@ -102,19 +103,19 @@ class PgTrackRepository:
         except Exception as e:
             logger.error(f"Failed to create track placeholder: {e}")
 
-    async def update_track_derivative(
+    async def update_track_derivative(  # type: ignore[explicit-any]
         self,
         record_id: str,
         derivative_status: str,
-        derivative_error: Optional[str] = None,
-        derivative_object_key: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+        derivative_error: str | None = None,
+        derivative_object_key: str | None = None,
+    ) -> dict[str, Any] | None:
         """Updates a track's derivative pipeline state (audio-ingestion
         PLAN.md D18). Independent of `status` (STT) -- see
         save_track_metadata's derivative_status param below.
         """
         session_factory = get_session_factory()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             async with session_factory() as session:
                 track = await session.get(Track, record_id)
@@ -142,18 +143,18 @@ class PgTrackRepository:
             logger.error(f"Failed to update track derivative status: {e}")
             return None
 
-    async def save_track_metadata(
+    async def save_track_metadata(  # type: ignore[explicit-any]
         self,
         *,
         record_id: str,
-        track_id: Optional[str] = None,
-        room_ref_id: Optional[str] = None,
-        participant_identity: Optional[str] = None,
-        audio_info: Optional[Dict[str, Any]] = None,
+        track_id: str | None = None,
+        room_ref_id: str | None = None,
+        participant_identity: str | None = None,
+        audio_info: dict[str, Any] | None = None,
         status: str = "pending",
-        derivative_status: Optional[str] = None,
-        error: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+        derivative_status: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
         """Upsert on `tracks.id` -- creates the row if `recording.started`
         (D26) never made it in first (e.g. still-open delivery retry), or
         updates whatever fields are given (only `status` is unconditional --
@@ -166,7 +167,7 @@ class PgTrackRepository:
             return None
 
         session_factory = get_session_factory()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             async with session_factory() as session:
                 track = await session.get(Track, record_id)
@@ -201,3 +202,41 @@ class PgTrackRepository:
         except Exception as e:
             logger.error(f"Failed to save track metadata: {e}")
             return None
+
+    async def complete_track_with_vad_duration(
+        self,
+        track_ref_id: str,
+        duration_after_vad_sec: float | None
+    ) -> Track | None:
+        session_factory = get_session_factory()
+
+        async with session_factory() as session:
+            stmt = (
+                update(Track)
+                .where(Track.id == track_ref_id)
+                .values(
+                    status="completed",
+                    updated_at=datetime.now(UTC)
+                )
+            )
+            if duration_after_vad_sec is not None:
+                new_json = func.jsonb_build_object(
+                    "duration_after_vad_sec",
+                    duration_after_vad_sec
+                )
+                stmt = stmt.values(
+                    audio_info=func.coalesce(Track.audio_info,
+                        text("'{}'::jsonb")).concat(new_json)
+                )
+            stmt = stmt.returning(Track)
+
+            try:
+                result = await session.execute(stmt)
+                updated_track = result.scalar_one_or_none()
+
+                await session.commit()
+                return updated_track
+
+            except Exception:
+                logger.error("Failed to complete track with VAD duration")
+                return None

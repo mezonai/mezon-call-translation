@@ -1,43 +1,39 @@
+import signal
+from contextlib import asynccontextmanager
+from types import FrameType
+
 from dotenv import load_dotenv
-
-load_dotenv()
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.postgresql.database import get_engine, dispose_engine
-from orchestrator_service.config.application_config import get_config
-from contextlib import asynccontextmanager
+load_dotenv()
 
-from orchestrator_service.api.dispatch_api import router as dispatch_router
-from orchestrator_service.api.sse_transcript_api import router as stream_router
+from orchestrator_service.api.sse.sse_manager import SSEManager
+from orchestrator_service.api.sse_agent_request_api import (
+    router as sse_agent_request_router,
+)
 from orchestrator_service.api.sse_chat_external_api import (
     router as sse_chat_external_router,
 )
 from orchestrator_service.api.sse_metadata_api import router as sse_metadata_router
-from orchestrator_service.api.sse_agent_request_api import (
-    router as sse_agent_request_router,
-)
-from orchestrator_service.api.sse.sse_manager import SSEManager
-from orchestrator_service.api.webhook_api import router as webhook_router
-from orchestrator_service.api.room_api import router as room_router
-from orchestrator_service.api.queue_api import router as queue_router
-from orchestrator_service.services.livekit_client import cleanup_livekit_service
-from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.redis.connection_pool import get_connection_manager
+from orchestrator_service.api.sse_transcript_api import router as stream_router
 from orchestrator_service.api.summary_api import client_router as summary_client_router
-from orchestrator_service.services.redis.redis_save_transcription_service import (
-    RedisSaveTranscriptionService,
-)
-from orchestrator_service.services.notification_worker import NotificationWorker
-from orchestrator_service.services.summary_outbox_worker import SummaryOutboxWorker
-
 from orchestrator_service.api.v2.router import (
     api_router as api_router_v2,
 )  # Import the v2 API router
-
-import signal
+from orchestrator_service.api.webhook_api import (
+    router as webhook_router,
+)
+from orchestrator_service.config.application_config import get_config
+from orchestrator_service.services.livekit_client import cleanup_livekit_service
+from orchestrator_service.services.postgresql.database import dispose_engine, get_engine
+from orchestrator_service.services.redis.connection_pool import get_connection_manager
+from orchestrator_service.services.redis.redis_save_transcription_service import (
+    RedisSaveTranscriptionService,
+)
+from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.summary_outbox_worker import SummaryOutboxWorker
+from orchestrator_service.utils.logger import get_logger
 
 # Load config
 config = get_config()
@@ -47,7 +43,7 @@ original_sigint = signal.getsignal(signal.SIGINT)
 original_sigterm = signal.getsignal(signal.SIGTERM)
 
 
-def signal_exit(signum, frame):
+def signal_exit(signum: int, frame: FrameType | None):
     """
     Signal handler for SIGINT (Ctrl+C) and SIGTERM.
 
@@ -86,8 +82,6 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Failed to initialize PostgreSQL engine: {e}")
         raise
 
-
-
     # Connect Redis Connection Pool (shared by all repositories)
     try:
         redis_manager = get_connection_manager()
@@ -95,18 +89,13 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Redis connection pool created")
 
         # Initialize Room Registry (auto-connects to Redis pool)
-        room_registry = get_room_registry()
+        _ = get_room_registry()
         logger.info("✅ Room Registry initialized")
 
         # Initialize Save Transcription consumer service
         save_transcription_service = RedisSaveTranscriptionService()
         await save_transcription_service.start()
         logger.info("✅ Save Transcription consumer service started")
-        
-        # Initialize Notification worker
-        notification_worker = NotificationWorker()
-        await notification_worker.start()
-        logger.info("✅ Notification worker started")
 
         # Initialize Summary Outbox worker
         summary_outbox_worker = SummaryOutboxWorker()
@@ -123,18 +112,9 @@ async def lifespan(app: FastAPI):
     # We just need to cleanup resources after generators are cancelled
     logger.info("🛑 FastAPI shutting down, cleaning up resources...")
 
-    # Step 0: Stop notification worker
+    # Step 0: Stop summary outbox worker
     try:
-        logger.info("Step 0/7: Stopping Notification worker...")
-        notification_worker = NotificationWorker()
-        await notification_worker.stop()
-        logger.info("✅ Notification worker stopped")
-    except Exception as e:
-        logger.error(f"Error stopping Notification worker: {e}")
-
-    # Stop summary outbox worker
-    try:
-        logger.info("Stopping Summary Outbox worker...")
+        logger.info("Step 0/6: Stopping Summary Outbox worker...")
         summary_outbox_worker = SummaryOutboxWorker()
         await summary_outbox_worker.stop()
         logger.info("✅ Summary Outbox worker stopped")
@@ -143,7 +123,7 @@ async def lifespan(app: FastAPI):
 
     # Step 1: Stop save transcription service
     try:
-        logger.info("Step 1/7: Stopping Save Transcription service...")
+        logger.info("Step 1/6: Stopping Save Transcription service...")
         save_transcription_service = RedisSaveTranscriptionService()
         await save_transcription_service.stop()
         logger.info("✅ Save Transcription service stopped")
@@ -191,15 +171,14 @@ app.add_middleware(
 
 
 # Include routers
-app.include_router(dispatch_router, prefix="/api")
 app.include_router(stream_router, prefix="/api", tags=["sse transcript"])
 app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat external"])
 app.include_router(sse_metadata_router, prefix="/api", tags=["sse metadata"])
 app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent requests"])
 app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
-app.include_router(queue_router)  # Has prefix="/api/queue"
-app.include_router(room_router)  # Has prefix="/api/transcripts/rooms"
+# TODO: legacy summary API, mounted with no auth (unlike /api/v2/summary which
+# requires ROOMS_VIEW_ALL/ROOMS_VIEW_OWN). Confirm no downstream still calls this,
+# then remove this router and its module (api/summary_api.py).
 app.include_router(summary_client_router)
-
 
 app.include_router(api_router_v2, prefix="/api/v2")

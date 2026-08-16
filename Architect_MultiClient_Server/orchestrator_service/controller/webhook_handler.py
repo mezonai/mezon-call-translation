@@ -1,10 +1,10 @@
-from typing import Dict, Any
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.transcription_service import TranscriptionService
-from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.models.webhook_models import WebhookResponse, TrackInfo
-from orchestrator_service.utils.participant_identity import parse_participant_identity
+from typing import Any
 
+from orchestrator_service.models.webhook_models import TrackInfo, WebhookResponse
+from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.utils.participant_identity import parse_participant_identity
 
 logger = get_logger(__name__)
 
@@ -24,7 +24,7 @@ class WebhookHandler:
         self.transcription_service = transcription_service
         self.room_registry = get_room_registry()
 
-    async def handle_event(self, event: Dict[str, Any]) -> WebhookResponse:
+    async def handle_event(self, event: dict[str, Any]) -> WebhookResponse:  # type: ignore[explicit-any]
         """
         Route event to appropriate handler
 
@@ -51,22 +51,30 @@ class WebhookHandler:
         if handler:
             return await handler(event)
 
-        logger.info(f"  (ignored)")
+        logger.info("  (ignored)")
         return WebhookResponse(received=True, action="ignored")
 
-    async def _handle_participant_joined(self, event: Dict) -> WebhookResponse:
+    async def _handle_participant_joined(self, event: dict[str, Any]) -> WebhookResponse:  # type: ignore[explicit-any]
         """Handle when a participant joins - currently just logs the event"""
         room_name = event.get("room", {}).get("name", "unknown")
         identity = event.get("participant", {}).get("identity", "unknown")
+        username = event.get("participant", {}).get("name") or event.get("participant", {}).get("metadata")
         room_id = await self.room_registry.get_room_id(room_name)
-        await self.transcription_service.save_participant(room_id, identity)
+        if not room_id:
+            # Shouldn't happen in practice -- handle_event() already checked
+            # is_registered() for this room_name before routing here -- but
+            # the registry entry could theoretically disappear in the gap
+            # between that check and this call.
+            logger.warning(f"  ⚠ No room_id for '{room_name}', skipping participant save")
+            return WebhookResponse(received=True, action="room_not_registered")
+        await self.transcription_service.save_participant(room_id, identity, username=username)
 
         logger.info(f"  Room: {room_name}")
         logger.info(f"  Participant joined: {identity}")
 
         return WebhookResponse(received=True, action="participant_joined_logged")
 
-    async def _handle_track_published(self, event: Dict) -> WebhookResponse:
+    async def _handle_track_published(self, event: dict[str, Any]) -> WebhookResponse:  # type: ignore[explicit-any]
         """Handle when a track is published -- logging only. Recording itself
         is driven by agents/record-service (D3), not triggered from here."""
         room_name = event.get("room", {}).get("name", "unknown")
@@ -81,10 +89,6 @@ class WebhookHandler:
 
         logger.info(f"  Room: {room_name}")
         logger.info(f"  Participant: {identity}")
-        logger.info(
-            f"  Track: {track.sid} (mime: {track.mime_type}, source: {track.source})"
-        )
+        logger.info(f"  Track: {track.sid} (mime: {track.mime_type}, source: {track.source})")
 
-        return WebhookResponse(
-            received=True, action=f"{track.track_type.lower()}_track_published_logged"
-        )
+        return WebhookResponse(received=True, action=f"{track.track_type.lower()}_track_published_logged")

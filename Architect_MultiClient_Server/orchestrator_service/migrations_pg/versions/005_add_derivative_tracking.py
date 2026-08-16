@@ -15,8 +15,8 @@ pattern already used by `final_room_status()`).
 
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '005_add_derivative_tracking'

@@ -4,20 +4,20 @@ Agent Request Type Enum
 Defines the types of requests that can be sent from orchestrator to agent via SSE.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class AgentRequestType(str, Enum):
+class AgentRequestType(StrEnum):
     """
     Enum for agent request types.
     """
-    
+
     TRANSCRIPT_CONTROL = "transcript_control"
     """Control transcription (enable/disable)"""
-    
+
     TTS_PLAY = "tts_play"
     """Play TTS audio"""
-    
+
     SEND_CHAT_MESSAGE = "send_chat_message"
     """Send chat message to room participants"""
 
@@ -25,7 +25,7 @@ class AgentRequestType(str, Enum):
     def values(cls) -> list[str]:
         """Get all enum values as strings."""
         return [e.value for e in cls]
-    
+
     @classmethod
     def has_value(cls, value: str) -> bool:
         """Check if value is a valid request type."""

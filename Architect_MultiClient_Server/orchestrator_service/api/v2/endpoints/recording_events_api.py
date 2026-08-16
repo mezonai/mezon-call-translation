@@ -8,7 +8,7 @@ Path matches record-service's default OrchestratorConfig.events_path
 (record-service/src/record_service/config.py).
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -34,9 +34,9 @@ _TTS_EVENTS = {TTS_TRANSCRIPT_EVENT, TTS_COMPLETED_EVENT}
 
 
 @router.post("/events", response_model=RecordingEventResponse)
-async def recording_events_endpoint(
-    body: Dict[str, Any],
-    auth: Dict[str, Any] = Depends(verify_api_key),
+async def recording_events_endpoint(  # type: ignore[explicit-any]
+    body: dict[str, Any],
+    auth: dict[str, str | bool] = Depends(verify_api_key),
 ) -> RecordingEventResponse:
     """
     Single entrypoint for both event families, dispatched on `event`.
@@ -61,7 +61,7 @@ async def recording_events_endpoint(
 
     except Exception as e:
         logger.error(f"Failed to process recording event '{event}': {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     logger.warning(f"Unknown recording event type: {event!r}")
     raise HTTPException(status_code=400, detail=f"Unknown event type: {event!r}")

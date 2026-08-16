@@ -4,12 +4,13 @@ Configuration for Transcript API
 Contains validation constants and patterns for transcript-related data.
 """
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 
 # Try to load .env file if dotenv is available
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -19,10 +20,11 @@ except ImportError:
 # Validation Constants
 # ============================================================================
 
+
 @dataclass
 class TranscriptValidationConfig:
     """Validation constraints for transcript API"""
-    
+
     # String length limits
     MIN_ROOM_NAME_LENGTH: int = 1
     MAX_ROOM_NAME_LENGTH: int = 128
@@ -36,11 +38,11 @@ class TranscriptValidationConfig:
     MAX_SEARCH_QUERY_LENGTH: int = 500
     MIN_STATUS_LENGTH: int = 1
     MAX_STATUS_LENGTH: int = 50
-    
+
     # Regex patterns
     OBJECT_ID_PATTERN: str = r"^[a-fA-F0-9]{24}$"
     ROOM_NAME_PATTERN: str = r"^[a-zA-Z0-9_\-\.]+$"
-    
+
     # Numeric limits
     MIN_LIMIT: int = 1
     MAX_LIMIT: int = 500
@@ -55,18 +57,18 @@ class TranscriptValidationConfig:
     MAX_TIME_SECONDS: float = 86400.0  # 24 hours
     MIN_CONFIDENCE: float = 0.0
     MAX_CONFIDENCE: float = 1.0
-    
+
     @classmethod
-    def from_env(cls) -> 'TranscriptValidationConfig':
+    def from_env(cls) -> "TranscriptValidationConfig":
         """Create config from environment variables"""
         return cls(
-            MAX_ROOM_NAME_LENGTH=int(os.getenv('TRANSCRIPT_MAX_ROOM_NAME_LENGTH', '128')),
-            MAX_EGRESS_ID_LENGTH=int(os.getenv('TRANSCRIPT_MAX_EGRESS_ID_LENGTH', '128')),
-            MAX_PARTICIPANT_ID_LENGTH=int(os.getenv('TRANSCRIPT_MAX_PARTICIPANT_ID_LENGTH', '256')),
-            MAX_SEARCH_QUERY_LENGTH=int(os.getenv('TRANSCRIPT_MAX_SEARCH_QUERY_LENGTH', '500')),
-            DEFAULT_LIMIT=int(os.getenv('TRANSCRIPT_DEFAULT_LIMIT', '100')),
-            MAX_LIMIT=int(os.getenv('TRANSCRIPT_MAX_LIMIT', '500')),
-            MAX_SKIP=int(os.getenv('TRANSCRIPT_MAX_SKIP', '100000')),
+            MAX_ROOM_NAME_LENGTH=int(os.getenv("TRANSCRIPT_MAX_ROOM_NAME_LENGTH", "128")),
+            MAX_EGRESS_ID_LENGTH=int(os.getenv("TRANSCRIPT_MAX_EGRESS_ID_LENGTH", "128")),
+            MAX_PARTICIPANT_ID_LENGTH=int(os.getenv("TRANSCRIPT_MAX_PARTICIPANT_ID_LENGTH", "256")),
+            MAX_SEARCH_QUERY_LENGTH=int(os.getenv("TRANSCRIPT_MAX_SEARCH_QUERY_LENGTH", "500")),
+            DEFAULT_LIMIT=int(os.getenv("TRANSCRIPT_DEFAULT_LIMIT", "100")),
+            MAX_LIMIT=int(os.getenv("TRANSCRIPT_MAX_LIMIT", "500")),
+            MAX_SKIP=int(os.getenv("TRANSCRIPT_MAX_SKIP", "100000")),
         )
 
 

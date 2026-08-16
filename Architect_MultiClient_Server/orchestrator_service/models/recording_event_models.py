@@ -8,18 +8,17 @@ record-service's HttpEventReporter._to_payload() exactly
 (record-service/src/record_service/infra/reporting/http_event_reporter.py).
 """
 
-from typing import List, Optional
 
 from pydantic import BaseModel
 
 
-class QualityAnnotationModel(BaseModel):
+class QualityAnnotationModel(BaseModel):  # type: ignore[explicit-any]
     start_offset_ms: int
-    end_offset_ms: Optional[int] = None
+    end_offset_ms: int | None = None
     reason: str
 
 
-class RecordingEventRequest(BaseModel):
+class RecordingEventRequest(BaseModel):  # type: ignore[explicit-any]
     """Posted by record-service. event: "recording.started" | "recording.completed" | "recording.failed"."""
 
     event: str
@@ -37,24 +36,24 @@ class RecordingEventRequest(BaseModel):
     object_key: str
     status: str
     started_at: float
-    ended_at: Optional[float] = None
-    duration_seconds: Optional[float] = None
+    ended_at: float | None = None
+    duration_seconds: float | None = None
     raw_bytes_received: int = 0
     dropped_frame_count: int = 0
-    quality_annotations: List[QualityAnnotationModel] = []
+    quality_annotations: list[QualityAnnotationModel] = []
 
 
-class DerivativeEventRequest(BaseModel):
+class DerivativeEventRequest(BaseModel):  # type: ignore[explicit-any]
     """Posted by audio-processing-service (Phase 5). event: "derivative.completed" | "derivative.failed"."""
 
     event: str
     recording_id: str          # matches tracks.id from the originating RecordingEventRequest
-    bucket: Optional[str] = None
-    object_key: Optional[str] = None
-    error: Optional[str] = None
+    bucket: str | None = None
+    object_key: str | None = None
+    error: str | None = None
 
 
-class TtsTranscriptEventRequest(BaseModel):
+class TtsTranscriptEventRequest(BaseModel):  # type: ignore[explicit-any]
     """Posted directly by the agent for its own TTS track (audio-ingestion
     PLAN.md D3x) -- text is already known (came from orchestrator's own
     agent-control call in the first place), so this replaces a Whisper STT
@@ -67,12 +66,12 @@ class TtsTranscriptEventRequest(BaseModel):
     event: str
     room_id: str
     track_id: str
-    text: Optional[str] = None
-    start: Optional[float] = None
-    end: Optional[float] = None
+    text: str | None = None
+    start: float | None = None
+    end: float | None = None
 
 
-class RecordingEventResponse(BaseModel):
+class RecordingEventResponse(BaseModel):  # type: ignore[explicit-any]
     received: bool
-    action: Optional[str] = None
-    error: Optional[str] = None
+    action: str | None = None
+    error: str | None = None

@@ -5,13 +5,11 @@ Now backed by Redis via Repository pattern.
 Delegates all operations to RoomRegistryRepository.
 """
 
-from typing import Optional, Dict
+from typing import Optional
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.redis.room_registry_repository import (
-    RoomRegistryRepository,
-)
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
+from orchestrator_service.services.redis.room_registry_repository import RoomRegistryRepository, RoomRegistryStats
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -29,6 +27,7 @@ class RoomRegistry:
     """
 
     _instance: Optional["RoomRegistry"] = None
+    _initialized: bool = False
 
     def __new__(cls):
         if cls._instance is None:
@@ -107,7 +106,7 @@ class RoomRegistry:
         repository = self._get_repository()
         return await repository.is_registered(room_name)
 
-    async def get_room_id(self, room_name: str) -> Optional[str]:
+    async def get_room_id(self, room_name: str) -> str | None:
         """
         Get the room_id of a room.
 
@@ -129,14 +128,12 @@ class RoomRegistry:
 
         # Validate the string format before converting
         if room_id_str == "None" or room_id_str == "null":
-            logger.error(
-                f"Room '{room_name}' has invalid room_id in Redis: '{room_id_str}'"
-            )
+            logger.error(f"Room '{room_name}' has invalid room_id in Redis: '{room_id_str}'")
             return None
 
         return room_id_str
 
-    async def list_rooms(self) -> Dict[str, str]:
+    async def list_rooms(self) -> dict[str, str]:
         """
         Get a list of all active rooms.
 
@@ -175,7 +172,7 @@ class RoomRegistry:
         repository = self._get_repository()
         return await repository.clear_all_rooms()
 
-    async def get_stats(self) -> Dict:
+    async def get_stats(self) -> RoomRegistryStats:
         """
         Get registry statistics.
 
@@ -192,15 +189,12 @@ class RoomRegistry:
         Returns:
             True if healthy, False otherwise
         """
-        if self._repository is None:
-            return False
-
         connection_manager = get_connection_manager()
         return await connection_manager.health_check()
 
 
 # Global singleton instance
-_room_registry: Optional[RoomRegistry] = None
+_room_registry: RoomRegistry | None = None
 
 
 def get_room_registry() -> RoomRegistry:

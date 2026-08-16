@@ -2,20 +2,20 @@
 Room Registry API - Manager active rooms for webhook processing
 """
 
-import asyncio
 from datetime import datetime
+from typing import ClassVar
 
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException
 from livekit import api
+from pydantic import BaseModel, Field
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.livekit_client import get_livekit_service
-from orchestrator_service.services.transcription_service import TranscriptionService
-from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
+from orchestrator_service.auth.transcript_auth import verify_api_key
+from orchestrator_service.services.livekit_client import get_livekit_service
+from orchestrator_service.services.room_registry import get_room_registry
+from orchestrator_service.services.transcription_service import TranscriptionService
+from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
+from orchestrator_service.utils.logger import get_logger
 
 router = APIRouter(prefix="/room-registry", tags=["Room Registry"])
 logger = get_logger(__name__)
@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 transcription_service = TranscriptionService()
 
 
-class RoomRegisterRequest(BaseModel):
+class RoomRegisterRequest(BaseModel):  # type: ignore[explicit-any]
     """Request model for room registration"""
 
     room_name: str = Field(..., description="Room name to register")
@@ -39,7 +39,7 @@ class RoomRegisterRequest(BaseModel):
     )
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "room_name": "my-room-123",
                 "room_id": "b3f1c2a4-4e5d-4a1b-9c3e-7a2f6d8e9c10",
@@ -47,11 +47,11 @@ class RoomRegisterRequest(BaseModel):
         }
 
 
-class RoomUnregisterRequest(BaseModel):
+class RoomUnregisterRequest(BaseModel):  # type: ignore[explicit-any]
     """Request model for room unregistration"""
 
     room_name: str = Field(..., description="Room name to unregister")
-    room_id: Optional[str] = Field(
+    room_id: str | None = Field(
         None,
         description=(
             "Caller's own stable room UUID from registration (audio-ingestion "
@@ -63,18 +63,16 @@ class RoomUnregisterRequest(BaseModel):
     )
 
 
-class RoomStatusResponse(BaseModel):
+class RoomStatusResponse(BaseModel):  # type: ignore[explicit-any]
     """Response model for room status"""
 
     room_name: str
     registered: bool
-    room_id: Optional[str] = None
+    room_id: str | None = None
 
 
 @router.post("/register", response_description="Register a room for webhook processing")
-async def register_room(
-    request: RoomRegisterRequest, auth: Dict[str, Any] = Depends(verify_api_key)
-):
+async def register_room(request: RoomRegisterRequest, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """Register a room in the registry so that webhooks can handle events for that room.
     **Example:**
     ```json
@@ -135,12 +133,10 @@ async def register_room(
     # blocking the response -- the participant_joined webhook (active from
     # step 3 onward, same as before) still catches anyone who joins around
     # this same window.
-    asyncio.create_task(_fetch_and_save_existing_participants(request.room_name, request.room_id))
+    asyncio_create_task_safety(_fetch_and_save_existing_participants(request.room_name, request.room_id))
 
     metadata_channel = MetadataChannel()
-    asyncio.create_task(
-        metadata_channel.push_room_started(request.room_id, request.room_name)
-    )
+    asyncio_create_task_safety(metadata_channel.push_room_started(request.room_id, request.room_name))
 
     return {
         "status": "ok",
@@ -167,6 +163,7 @@ async def _fetch_and_save_existing_participants(room_name: str, room_id: str) ->
         participants_data = [
             {
                 "participant_identity": participant.identity,
+                "username": participant.name or participant.metadata,
                 "timestamp": datetime.utcnow(),
             }
             for participant in participants_response.participants
@@ -179,9 +176,7 @@ async def _fetch_and_save_existing_participants(room_name: str, room_id: str) ->
 
 
 @router.post("/unregister", response_description="Unregister a room")
-async def unregister_room(
-    request: RoomUnregisterRequest, auth: Dict[str, Any] = Depends(verify_api_key)
-):
+async def unregister_room(request: RoomUnregisterRequest, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     Unregister a room from the registry.
 
@@ -239,19 +234,13 @@ async def unregister_room(
         # call) -- nothing to clear, just proceed to finalize by room_id.
 
         try:
-            asyncio.create_task(
-                transcription_service.final_room(request.room_name, room_id)
-            )
+            asyncio_create_task_safety(transcription_service.final_room(request.room_name, room_id))
         except Exception as e:
-            logger.error(
-                f"Error finalizing room '{request.room_name}': {e}", exc_info=True
-            )
+            logger.error(f"Error finalizing room '{request.room_name}': {e}", exc_info=True)
             # Don't fail unregistration if finalization fails
 
         metadata_channel = MetadataChannel()
-        asyncio.create_task(
-            metadata_channel.push_room_ended(str(room_id), request.room_name)
-        )
+        asyncio_create_task_safety(metadata_channel.push_room_ended(room_id, request.room_name))
 
         return {
             "status": "ok",
@@ -263,15 +252,11 @@ async def unregister_room(
         raise
     except Exception as e:
         logger.error(f"Error unregistering room: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to unregister room: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to unregister room: {e!s}") from e
 
 
 @router.get("/status/{room_name}", response_model=RoomStatusResponse)
-async def get_room_status(
-    room_name: str, auth: Dict[str, Any] = Depends(verify_api_key)
-):
+async def get_room_status(room_name: str, auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     Check status registration for a room.
 
@@ -283,18 +268,14 @@ async def get_room_status(
         is_registered = await registry.is_registered(room_name)
         room_id = await registry.get_room_id(room_name) if is_registered else None
 
-        return RoomStatusResponse(
-            room_name=room_name, registered=is_registered, room_id=room_id
-        )
+        return RoomStatusResponse(room_name=room_name, registered=is_registered, room_id=room_id)
     except Exception as e:
         logger.error(f"Error getting room status: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get room status: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to get room status: {e!s}") from e
 
 
 @router.get("/list", response_description="List all registered rooms")
-async def list_registered_rooms(auth: Dict[str, Any] = Depends(verify_api_key)):
+async def list_registered_rooms(auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     Get a list of all currently registered rooms.
 
@@ -307,11 +288,11 @@ async def list_registered_rooms(auth: Dict[str, Any] = Depends(verify_api_key)):
         return {"status": "ok", "total": await registry.count_rooms(), "rooms": rooms}
     except Exception as e:
         logger.error(f"Error listing rooms: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list rooms: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list rooms: {e!s}") from e
 
 
 @router.delete("/clear-all", response_description="Clear all registered rooms")
-async def clear_all_rooms(auth: Dict[str, Any] = Depends(verify_api_key)):
+async def clear_all_rooms(auth: dict[str, str | bool] = Depends(verify_api_key)):
     """
     clear all registered rooms from the registry.
 
@@ -319,7 +300,6 @@ async def clear_all_rooms(auth: Dict[str, Any] = Depends(verify_api_key)):
     """
     try:
         registry = get_room_registry()
-        count = await registry.count_rooms()
         cleared = await registry.clear_all()
 
         return {
@@ -329,4 +309,4 @@ async def clear_all_rooms(auth: Dict[str, Any] = Depends(verify_api_key)):
         }
     except Exception as e:
         logger.error(f"Error clearing rooms: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to clear rooms: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear rooms: {e!s}") from e

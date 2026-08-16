@@ -5,13 +5,12 @@ In-memory cache preserved for performance.
 permissions stored as JSONB array of strings.
 """
 
-import uuid
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any, Set
+from datetime import UTC, datetime
 
-from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
+from orchestrator_service.services.postgresql.models import User
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -22,13 +21,13 @@ class PgUserPermissionRepository:
 
     def __init__(self):
         # In-memory cache: user_id -> Set[str]
-        self._cache: Dict[str, Set[str]] = {}
+        self._cache: dict[str, set[str]] = {}
 
     # ------------------------------------------------------------------
     # Permission queries
     # ------------------------------------------------------------------
 
-    async def get_user_permissions(self, user_id: str) -> Set[str]:
+    async def get_user_permissions(self, user_id: str) -> set[str]:
         """Return flat permission set for a user (uses cache)."""
         if user_id in self._cache:
             return self._cache[user_id]
@@ -36,18 +35,15 @@ class PgUserPermissionRepository:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                result = await session.execute(
-                    text("SELECT permissions FROM users WHERE id = :id"),
-                    {"id": user_id},
-                )
-                row = result.fetchone()
-            if row and row[0]:
-                permissions = set(row[0])
+                user = await session.get(User, user_id)
+                if not user:
+                    logger.debug(f"No user found for user_id={user_id}")
+                    return set()
+                permissions_list = user.permissions or []
+                permissions = set(permissions_list)
                 self._cache[user_id] = permissions
                 logger.debug(f"Loaded {len(permissions)} permissions for user_id={user_id}")
                 return permissions
-            logger.debug(f"No user found for user_id={user_id}")
-            return set()
         except Exception as e:
             logger.error(f"Failed to get user permissions: {e}")
             return set()
@@ -60,49 +56,38 @@ class PgUserPermissionRepository:
         self,
         user_id: str,
         username: str,
-        display_name: Optional[str] = None,
-        permissions: Optional[List[str]] = None,
-        avatar_url: Optional[str] = None,
+        display_name: str | None = None,
+        permissions: list[str] | None = None,
+        avatar_url: str | None = None,
     ) -> bool:
         """Upsert a user record."""
-        now = datetime.now(timezone.utc)
-        import json
-
+        now = datetime.now(UTC)
         session_factory = get_session_factory()
 
-        insert_params = {
+        insert_values = {
             "id": user_id,
             "username": username,
             "display_name": display_name,
             "avatar_url": avatar_url,
-            "permissions": json.dumps(permissions if permissions is not None else []),
-            "now": now,
+            "permissions": permissions if permissions is not None else [],
+            "created_at": now,
+            "updated_at": now,
         }
 
-        update_clauses = ["username = EXCLUDED.username", "updated_at = EXCLUDED.updated_at"]
-
-        if display_name is not None:
-            update_clauses.append("display_name = EXCLUDED.display_name")
-
-        if avatar_url is not None:
-            update_clauses.append("avatar_url = EXCLUDED.avatar_url")
-
-        if permissions is not None:
-            update_clauses.append("permissions = EXCLUDED.permissions")
-
-        update_sql = ", ".join(update_clauses)
-
-        query = f"""
-            INSERT INTO users (id, username, display_name, avatar_url, permissions, created_at, updated_at)
-            VALUES (:id, :username, :display_name, :avatar_url, CAST(:permissions AS jsonb), :now, :now)
-            ON CONFLICT (id) DO UPDATE 
-            SET {update_sql}
-        """
         try:
             async with session_factory() as session:
-                await session.execute(text(query), insert_params)
+                stmt = insert(User).values(**insert_values)
+                update_dict = {"username": stmt.excluded.username, "updated_at": stmt.excluded.updated_at}
+                if display_name is not None:
+                    update_dict["display_name"] = stmt.excluded.display_name
+                if avatar_url is not None:
+                    update_dict["avatar_url"] = stmt.excluded.avatar_url
+                if permissions is not None:
+                    update_dict["permissions"] = stmt.excluded.permissions
+                stmt = stmt.on_conflict_do_update(index_elements=[User.id], set_=update_dict)
+                await session.execute(stmt)
                 await session.commit()
-                
+
             logger.info(f"Created/updated user user_id={user_id}, username={username}")
             self._cache.pop(user_id, None)
             return True
@@ -110,31 +95,21 @@ class PgUserPermissionRepository:
             logger.error(f"Failed to create/update user: {e}")
             return False
 
-    async def get_user_info(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def get_user_info(self, user_id: str) -> User | None:
         """Return full user document or None."""
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                result = await session.execute(
-                    text("""
-                        SELECT id, username, display_name, avatar_url,
-                               permissions, created_at, updated_at
-                        FROM users WHERE id = :id
-                    """),
-                    {"id": user_id},
-                )
-                row = result.fetchone()
-            if row:
-                doc = dict(row._mapping)
-                doc["user_id"] = doc["id"]   # backward compat
-                return doc
-            return None
+                user_obj = await session.get(User, user_id)
+                return user_obj
         except Exception as e:
             logger.error(f"Failed to get user info: {e}")
             return None
 
+
 # --------------- Singleton ---------------
 _pg_user_permission_repository: PgUserPermissionRepository | None = None
+
 
 def get_pg_user_permission_repository() -> PgUserPermissionRepository:
     global _pg_user_permission_repository

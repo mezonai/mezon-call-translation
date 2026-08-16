@@ -10,14 +10,13 @@ Features:
 - Extract user information from token claims
 """
 
-from typing import Optional, Dict, Any
-from fastapi import HTTPException, Security
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
+from fastapi import HTTPException, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.jwt_utils import verify_jwt_token
 from orchestrator_service.services.postgresql.pg_token_blacklist_repository import PgTokenBlacklistRepository
+from orchestrator_service.utils.jwt_utils import JWTPayload, verify_jwt_token
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -25,9 +24,7 @@ logger = get_logger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-async def verify_jwt(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security)
-) -> Dict[str, Any]:
+async def verify_jwt(credentials: HTTPAuthorizationCredentials | None = Security(security)) -> JWTPayload:
     """
     Verify JWT token issued by orchestrator after Mezon OAuth2 authentication.
 
@@ -57,7 +54,7 @@ async def verify_jwt(
         raise HTTPException(
             status_code=401,
             detail="Missing Authorization header. Please login with Mezon.",
-            headers={"WWW-Authenticate": "Bearer"}
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     token = credentials.credentials
@@ -67,52 +64,41 @@ async def verify_jwt(
         payload = verify_jwt_token(token)
 
         # Extract JTI for blacklist check
-        jti = payload.get("jti")
+        jti = payload.jti
 
         if not jti:
             logger.warning("JWT token missing JTI claim")
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid token format.",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
+            raise HTTPException(status_code=401, detail="Invalid token format.", headers={"WWW-Authenticate": "Bearer"})
 
         # Check if token is blacklisted
         blacklist_repo = PgTokenBlacklistRepository()
         is_blacklisted = await blacklist_repo.is_blacklisted(jti)
 
         if is_blacklisted:
-            logger.warning(f"Blacklisted token used: jti={jti}, user_id={payload.get('user_id')}")
+            logger.warning(f"Blacklisted token used: jti={jti}, user_id={payload.user_id}")
             raise HTTPException(
                 status_code=401,
                 detail="Token has been revoked. Please login again.",
-                headers={"WWW-Authenticate": "Bearer"}
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
-        logger.debug(f"JWT authentication successful for user_id={payload.get('user_id')}, jti={jti}")
+        logger.debug(f"JWT authentication successful for user_id={payload.user_id}, jti={jti}")
 
         return payload
 
-    except jwt.ExpiredSignatureError:
+    except jwt.ExpiredSignatureError as e:
         logger.warning("JWT token has expired")
         raise HTTPException(
-            status_code=401,
-            detail="Token has expired. Please login again.",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
+            status_code=401, detail="Token has expired. Please login again.", headers={"WWW-Authenticate": "Bearer"}
+        ) from e
     except jwt.InvalidTokenError as e:
         logger.warning(f"Invalid JWT token: {e}")
         raise HTTPException(
-            status_code=401,
-            detail="Invalid authentication token.",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
+            status_code=401, detail="Invalid authentication token.", headers={"WWW-Authenticate": "Bearer"}
+        ) from e
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
         logger.error(f"Unexpected error during JWT verification: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Authentication verification failed."
-        )
+        raise HTTPException(status_code=500, detail="Authentication verification failed.") from e

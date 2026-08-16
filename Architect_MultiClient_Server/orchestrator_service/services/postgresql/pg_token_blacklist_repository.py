@@ -5,12 +5,14 @@ Mirrors TokenBlacklistService (MongoDB) interface exactly.
 
 import hashlib
 import uuid
-from datetime import datetime, timezone
-from typing import Optional, Literal
+from datetime import UTC, datetime
+from typing import Literal
 
-from sqlalchemy import text
+from sqlalchemy import exists, select
+from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
+from orchestrator_service.services.postgresql.models import TokenBlacklist
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,33 +32,25 @@ class PgTokenBlacklistRepository:
         user_id: str,
         expires_at: datetime,
         reason: BlacklistReason = "logout",
-        token: Optional[str] = None,
+        token: str | None = None,
     ) -> bool:
         """Add a token to the blacklist."""
         token_hash = self._hash_token(token) if token else None
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                await session.execute(
-                    text("""
-                        INSERT INTO token_blacklist
-                            (id, jti, user_id, token_hash, blacklisted_at, expires_at, reason)
-                        VALUES
-                            (:id, :jti, :user_id, :token_hash,
-                             :blacklisted_at, :expires_at, :reason)
-                        ON CONFLICT (jti) DO NOTHING
-                    """),
-                    {
-                        "id": str(uuid.uuid4()),
-                        "jti": jti,
-                        "user_id": user_id,
-                        "token_hash": token_hash,
-                        "blacklisted_at": now,
-                        "expires_at": expires_at,
-                        "reason": reason,
-                    },
+                stmt = insert(TokenBlacklist).values(
+                    id=uuid.uuid4(),
+                    jti=jti,
+                    user_id=user_id,
+                    token_hash=token_hash,
+                    blacklisted_at=now,
+                    expires_at=expires_at,
+                    reason=reason,
                 )
+                stmt = stmt.on_conflict_do_nothing(index_elements=[TokenBlacklist.jti])
+                await session.execute(stmt)
                 await session.commit()
             logger.info(f"Blacklisted token jti={jti}, user_id={user_id}, reason={reason}")
             return True
@@ -69,22 +63,20 @@ class PgTokenBlacklistRepository:
         session_factory = get_session_factory()
         try:
             async with session_factory() as session:
-                result = await session.execute(
-                    text("SELECT 1 FROM token_blacklist WHERE jti = :jti LIMIT 1"),
-                    {"jti": jti},
-                )
-                row = result.fetchone()
-            is_bl = row is not None
+                stmt = select(exists().where(TokenBlacklist.jti == jti))
+                is_bl = await session.scalar(stmt)
             if is_bl:
                 logger.debug(f"Token jti={jti} is blacklisted")
-            return is_bl
+            return bool(is_bl)
         except Exception as e:
             logger.error(f"Failed to check blacklist: {e}")
             # Fail closed — treat as blacklisted if DB unavailable
             return True
 
+
 # --------------- Singleton ---------------
 _pg_token_blacklist_repository: PgTokenBlacklistRepository | None = None
+
 
 def get_pg_token_blacklist_repository() -> PgTokenBlacklistRepository:
     global _pg_token_blacklist_repository

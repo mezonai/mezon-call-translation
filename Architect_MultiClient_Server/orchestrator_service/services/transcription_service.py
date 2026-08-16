@@ -1,18 +1,17 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
-from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
+from typing import Any
+
 from orchestrator_service.api.sse_metadata_api import metadata_channel
-from orchestrator_service.services.summary_service import get_summary_service
-from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.models.transcription_task import TranscriptionTask
+from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
+from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
 from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
 )
-from orchestrator_service.models.transcription_task import TranscriptionTask
+from orchestrator_service.services.summary_service import get_summary_service
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -27,7 +26,7 @@ class TranscriptionService:
         self.timeout = 30.0
         self.pg_repo = PgTranscriptRepository()
         self.track_repo = PgTrackRepository()
-        self._redis_producer: Optional[RedisProducerService[TranscriptionTask]] = None
+        self._redis_producer: RedisProducerService[TranscriptionTask] | None = None
         self.stream_key = "transcription:stream"
 
     async def _get_producer(self) -> RedisProducerService[TranscriptionTask]:
@@ -37,7 +36,6 @@ class TranscriptionService:
                 task_class=TranscriptionTask,
                 stream_key=self.stream_key,
             )
-            await self._redis_producer.connect()
         return self._redis_producer
 
     async def handle_recording_completed(
@@ -136,11 +134,7 @@ class TranscriptionService:
             True if successful
         """
         try:
-            if not self.pg_repo.connected:
-                await self.pg_repo.connect()
-            updated = await self.pg_repo.final_room_status(
-                room_name=room_name, room_id=room_id
-            )
+            updated = await self.pg_repo.final_room_status(room_name=room_name, room_id=room_id)
 
             if not updated:
                 return False
@@ -169,15 +163,13 @@ class TranscriptionService:
         PLAN.md D27x). Idempotent (see create_room_session) -- a retried
         /register with the same room_id is a no-op, not an error."""
         try:
-            if not self.pg_repo.connected:
-                await self.pg_repo.connect()
             return await self.pg_repo.create_room_session(room_id=room_id, room_name=room_name)
         except Exception as e:
             logger.exception(f"✗ Unexpected error starting room: {e}")
             return False
 
     async def save_participant(
-        self, room_id: str, participant_identity: str, timestamp: datetime = None
+        self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None
     ) -> bool:
         """
         Save participant info to PostgreSQL
@@ -189,20 +181,19 @@ class TranscriptionService:
             True if successful, False otherwise
         """
         try:
-            if not self.pg_repo.connected:
-                await self.pg_repo.connect()
             result = await self.pg_repo.save_participant(
                 room_id=room_id,
                 participant_identity=participant_identity,
                 timestamp=timestamp,
+                username=username,
             )
             return result
         except Exception as e:
             logger.exception(f"Failed to save participant: {e}")
             return False
 
-    async def save_participants_batch(
-        self, room_id: str, participants: List[Dict[str, Any]]
+    async def save_participants_batch(  # type: ignore[explicit-any]
+        self, room_id: str, participants: list[dict[str, Any]]
     ) -> bool:
         """
         Save batch of participants to PostgreSQL. Uses the race-safe
@@ -212,8 +203,6 @@ class TranscriptionService:
         webhook (see that method's docstring in pg_transcript_repository.py).
         """
         try:
-            if not self.pg_repo.connected:
-                await self.pg_repo.connect()
             return await self.pg_repo.save_batch_participants_atomic(
                 room_id=room_id, participants=participants
             )

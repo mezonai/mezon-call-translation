@@ -6,44 +6,35 @@ Room API endpoints for querying room data from PostgreSQL
 """
 
 from datetime import datetime
-from typing import Optional, Any
-from fastapi import APIRouter, HTTPException, Query, Depends
 
-from orchestrator_service.auth.authorization import require_any_permission, AuthContext
-from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
-from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.services.room_service import RoomService, get_room_service
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
+from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
+from orchestrator_service.services.livekit_client import AudioTrackInfo
+from orchestrator_service.services.room_service import RoomService, get_room_service
+from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.transcript_validators import (
-    StatusQuery,
     LimitQuery,
     SkipQuery,
+    StatusQuery,
 )
 
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
 logger = get_logger(__name__)
 
-def _serialize_room(room: dict) -> dict:
-    serialized_room = dict(room)
-    if serialized_room.get("id") is not None:
-        serialized_room["id"] = str(serialized_room["id"])
-    return serialized_room
-
 
 @router.get("", response_description="List all rooms")
 async def list_rooms(
     status: StatusQuery = None,
-    search: Optional[str] = Query(
+    search: str | None = Query(
         default=None,
         max_length=VC.MAX_SEARCH_QUERY_LENGTH,
         description="Search by room name or participant identity",
     ),
-    from_utc: Optional[datetime] = Query(
-        default=None, description="Start of time range (UTC, ISO 8601)"
-    ),
-    to_utc: Optional[datetime] = Query(
-        default=None, description="End of time range (UTC, ISO 8601)"
-    ),
+    from_utc: datetime | None = Query(default=None, description="Start of time range (UTC, ISO 8601)"),
+    to_utc: datetime | None = Query(default=None, description="End of time range (UTC, ISO 8601)"),
     limit: LimitQuery = VC.DEFAULT_LIMIT,
     skip: SkipQuery = VC.DEFAULT_SKIP,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
@@ -90,14 +81,14 @@ async def list_rooms(
         raise
     except Exception as e:
         logger.error(f"Failed to list rooms: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/id/{room_id}", response_description="Get room by ID")
 async def get_room_by_id(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
-    room_service: RoomService = Depends(get_room_service)
+    room_service: RoomService = Depends(get_room_service),
 ):
     """
     Get room details by room ID.
@@ -111,16 +102,14 @@ async def get_room_by_id(
         raise
     except Exception as e:
         logger.error(f"Failed to get room: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get(
-    "/id/{room_id}/statistics", response_description="Get room statistics by ID"
-)
+@router.get("/id/{room_id}/statistics", response_description="Get room statistics by ID")
 async def get_room_statistics_by_id(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
-    room_service: RoomService = Depends(get_room_service)
+    room_service: RoomService = Depends(get_room_service),
 ):
     """
     Get detailed statistics for a specific room by ID.
@@ -139,17 +128,15 @@ async def get_room_statistics_by_id(
         raise
     except Exception as e:
         logger.error(f"Failed to get room statistics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get(
-    "/audio_info/{room_id}", response_description="Get all audio info for a room"
-)
+@router.get("/audio_info/{room_id}", response_description="Get all audio info for a room")
 async def get_audio_info(
     room_id: str,
     auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, ROOMS_VIEW_OWN)),
-    room_service: RoomService = Depends(get_room_service)
-) -> dict[str, Any]:
+    room_service: RoomService = Depends(get_room_service),
+) -> dict[str, str | list[AudioTrackInfo]]:
     """
     Get all audio info for a specific room by ID.
 
@@ -163,10 +150,8 @@ async def get_audio_info(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}"
-        )
+        logger.error(f"[Metadata Channel] Failed to fetch tracks for room {room_id}: {e}")
         return {
             "status": "error",
-            "message": f"Failed to fetch audio info for room {room_id}: {str(e)}",
+            "message": f"Failed to fetch audio info for room {room_id}: {e!s}",
         }

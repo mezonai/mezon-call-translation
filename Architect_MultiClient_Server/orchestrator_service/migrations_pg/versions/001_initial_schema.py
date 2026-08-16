@@ -6,8 +6,8 @@ Create Date: 2026-05-16 10:00:00.000000
 
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
@@ -25,9 +25,7 @@ def upgrade() -> None:
         sa.Column("mongo_id", sa.Text(), nullable=True),
         sa.Column("room_name", sa.Text(), nullable=True),
         sa.Column("status", sa.Text(), nullable=True),
-        sa.Column(
-            "participants", postgresql.JSONB(astext_type=sa.Text()), nullable=True
-        ),
+        sa.Column("participants", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finalized_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
@@ -75,9 +73,7 @@ def upgrade() -> None:
         sa.Column("segments", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_chunks_track_ref_id", "transcript_chunks", ["track_ref_id"], unique=False
-    )
+    op.create_index("ix_chunks_track_ref_id", "transcript_chunks", ["track_ref_id"], unique=False)
     op.create_index(
         "ix_chunks_track_chunk_index",
         "transcript_chunks",
@@ -91,24 +87,16 @@ def upgrade() -> None:
         sa.Column("id", sa.UUID(as_uuid=True), nullable=False),
         sa.Column("room_id", sa.UUID(as_uuid=True), nullable=True),
         sa.Column("room_name", sa.Text(), nullable=True),
-        sa.Column(
-            "participants", postgresql.JSONB(astext_type=sa.Text()), nullable=True
-        ),
-        sa.Column(
-            "summary_data", postgresql.JSONB(astext_type=sa.Text()), nullable=True
-        ),
+        sa.Column("participants", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("summary_data", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("full_text", sa.Text(), nullable=True),
         sa.Column("messages", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("total_segments", sa.Integer(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_rooms_summary_room_id", "rooms_summary", ["room_id"], unique=False
-    )
-    op.create_index(
-        "ix_rooms_summary_room_name", "rooms_summary", ["room_name"], unique=False
-    )
+    op.create_index("ix_rooms_summary_room_id", "rooms_summary", ["room_id"], unique=False)
+    op.create_index("ix_rooms_summary_room_name", "rooms_summary", ["room_name"], unique=False)
 
     # metadata_events
     op.create_table(
@@ -123,13 +111,9 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_events_event_type", "metadata_events", ["event_type"], unique=False
-    )
+    op.create_index("ix_events_event_type", "metadata_events", ["event_type"], unique=False)
     op.create_index("ix_events_room_id", "metadata_events", ["room_id"], unique=False)
-    op.create_index(
-        "ix_events_created_at", "metadata_events", ["created_at"], unique=False
-    )
+    op.create_index("ix_events_created_at", "metadata_events", ["created_at"], unique=False)
     op.create_index("ix_events_event_id", "metadata_events", ["event_id"], unique=True)
 
     # users
@@ -139,9 +123,7 @@ def upgrade() -> None:
         sa.Column("username", sa.Text(), nullable=True),
         sa.Column("display_name", sa.Text(), nullable=True),
         sa.Column("avatar_url", sa.Text(), nullable=True),
-        sa.Column(
-            "permissions", postgresql.JSONB(astext_type=sa.Text()), nullable=True
-        ),
+        sa.Column("permissions", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
@@ -161,15 +143,9 @@ def upgrade() -> None:
         sa.Column("is_revoked", sa.Boolean(), nullable=False, server_default="false"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_refresh_tokens_hash", "refresh_tokens", ["refresh_token_hash"], unique=False
-    )
-    op.create_index(
-        "ix_refresh_tokens_user_id", "refresh_tokens", ["user_id"], unique=False
-    )
-    op.create_index(
-        "ix_refresh_tokens_expires_at", "refresh_tokens", ["expires_at"], unique=False
-    )
+    op.create_index("ix_refresh_tokens_hash", "refresh_tokens", ["refresh_token_hash"], unique=False)
+    op.create_index("ix_refresh_tokens_user_id", "refresh_tokens", ["user_id"], unique=False)
+    op.create_index("ix_refresh_tokens_expires_at", "refresh_tokens", ["expires_at"], unique=False)
 
     # token_blacklist
     op.create_table(
@@ -184,9 +160,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_blacklist_jti", "token_blacklist", ["jti"], unique=True)
-    op.create_index(
-        "ix_blacklist_expires_at", "token_blacklist", ["expires_at"], unique=False
-    )
+    op.create_index("ix_blacklist_expires_at", "token_blacklist", ["expires_at"], unique=False)
 
 
 def downgrade() -> None:

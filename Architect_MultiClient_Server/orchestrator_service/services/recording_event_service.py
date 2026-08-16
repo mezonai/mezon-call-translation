@@ -9,9 +9,8 @@ the new, clean entrypoint.
 """
 
 import uuid
-from typing import Optional
 
-from orchestrator_service.utils.logger import get_logger
+from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.models.recording_event_models import (
     DerivativeEventRequest,
     RecordingEventRequest,
@@ -19,11 +18,11 @@ from orchestrator_service.models.recording_event_models import (
     TtsTranscriptEventRequest,
 )
 from orchestrator_service.services.audio_derivative_service import get_audio_derivative_service
+from orchestrator_service.services.postgresql.models import Track
 from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
-from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.api.sse_metadata_api import metadata_channel
+from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.utils.constants import (
     AGENT_TTS_TRACK_ID,
     TTS_COMPLETED_EVENT,
@@ -42,7 +41,7 @@ class RecordingEventService:
         self.transcription_service = TranscriptionService()
         self.audio_derivative_service = get_audio_derivative_service()
 
-    async def _resolve_room_ref_id(self, raw_room_id: str) -> Optional[str]:
+    async def _resolve_room_ref_id(self, raw_room_id: str) -> str | None:
         """record-service sends whatever the agent gave it as room_id
         (audio-ingestion PLAN.md D27). Normally that's the agent's own
         stable orchestrator room UUID, captured once at registration --
@@ -66,9 +65,6 @@ class RecordingEventService:
         return raw_room_id if room else None
 
     async def handle_recording_event(self, payload: RecordingEventRequest) -> RecordingEventResponse:
-        if not self.pg_repo.connected:
-            await self.pg_repo.connect()
-
         room_ref_id = await self._resolve_room_ref_id(payload.room_id)
         if not room_ref_id:
             logger.error(
@@ -155,7 +151,7 @@ class RecordingEventService:
                 room = await self.pg_repo.get_room_by_id(room_ref_id)
                 if room:
                     await metadata_channel.push_room_record_done(
-                        room_id=room_ref_id, room_name=room.get("room_name")
+                        room_id=room_ref_id, room_name=room.room_name or ""
                     )
             return RecordingEventResponse(received=True, action="recording_failed")
 
@@ -163,9 +159,6 @@ class RecordingEventService:
         return RecordingEventResponse(received=True, action="ignored")
 
     async def handle_derivative_event(self, payload: DerivativeEventRequest) -> RecordingEventResponse:
-        if not self.pg_repo.connected:
-            await self.pg_repo.connect()
-
         track = await self.pg_repo.get_track_by_id(payload.recording_id)
         if not track:
             logger.error(f"Unknown track for derivative event: {payload.recording_id}")
@@ -188,12 +181,12 @@ class RecordingEventService:
         # (this call catches it) or this track's derivative finishes last
         # (this call catches it); the atomic UPDATE guard makes it safe to
         # check from both without double-firing.
-        room_ref_id: Optional[str] = track.get("room_ref_id")
+        room_ref_id: str | None = str(track.room_ref_id) if track.room_ref_id else None
         if room_ref_id and await self.pg_repo.check_and_notify_room_recordings_ready(room_ref_id):
             room = await self.pg_repo.get_room_by_id(room_ref_id)
             if room:
                 await metadata_channel.push_room_record_done(
-                    room_id=str(room_ref_id), room_name=room.get("room_name")
+                    room_id=str(room_ref_id), room_name=room.room_name or ""
                 )
 
         return RecordingEventResponse(received=True, action=f"derivative_{derivative_status}")
@@ -206,9 +199,6 @@ class RecordingEventService:
         _process_save_task handling of "pending w/ segments" and "completed"
         exactly, so this track flows through check_and_complete_room /
         generate_summary identically to a Whisper-transcribed one."""
-        if not self.pg_repo.connected:
-            await self.pg_repo.connect()
-
         track_ref_id = make_track_ref_id(payload.room_id, payload.track_id)
 
         if payload.event == TTS_TRANSCRIPT_EVENT:
@@ -230,12 +220,11 @@ class RecordingEventService:
         if payload.event == TTS_COMPLETED_EVENT:
             success_res = await self.pg_repo.update_track_status(track_ref_id=track_ref_id, status="completed")
             if success_res.get("success"):
-                # update_track_status returns {"track": dict(row._mapping)}
-                # on this branch (this repo's raw-SQL style, not the ORM Track
-                # row develop's version returns) -- plain dict .get() access.
-                track_data = success_res.get("track") or {}
-                raw_room_ref_id = track_data.get("room_ref_id")
-                room_ref_id = str(raw_room_ref_id) if raw_room_ref_id else None
+                # update_track_status returns the ORM Track row, not a dict
+                # -- matches redis_save_transcription_service.py's own
+                # handling of the same return shape.
+                track_data = success_res.get("track")
+                room_ref_id = str(track_data.room_ref_id) if isinstance(track_data, Track) and track_data.room_ref_id else None
                 if room_ref_id and await self.pg_repo.check_and_complete_room(room_ref_id):
                     from orchestrator_service.services.summary_service import get_summary_service
                     await get_summary_service().generate_summary(room_ref_id)

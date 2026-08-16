@@ -8,7 +8,6 @@ transcription_task.py's shape/pattern -- consumed by audio-processing-service
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict
 
 from orchestrator_service.models.stream_base import BaseProducerTask
 
@@ -34,7 +33,7 @@ class AudioDerivativeTask(BaseProducerTask):
     sample_rate: int = 16000
     channels: int = 1
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, str]:
         """Convert to dict for Redis XADD. All values are strings as required by Redis."""
         data = super().to_dict()
         data.update({

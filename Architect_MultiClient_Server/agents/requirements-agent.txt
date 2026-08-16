@@ -54,4 +54,3 @@ python-dotenv>=1.0.0           # Load environment variables from .env
 # ========================================
 PyJWT>=2.8.0                   # JSON Web Token for authentication
 
-

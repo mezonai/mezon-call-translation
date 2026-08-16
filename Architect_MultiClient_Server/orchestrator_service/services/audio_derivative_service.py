@@ -8,14 +8,13 @@ audio-processing-service (Phase 5) is the consumer; this service only
 produces.
 """
 
-from typing import Optional
 
-from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.models.audio_derivative_task import AudioDerivativeTask
 from orchestrator_service.services.redis.redis_producer_service import (
     RedisProducerService,
     create_producer_service,
 )
+from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -24,7 +23,7 @@ class AudioDerivativeService:
     """Producer-only service for the audio_derivative:stream Redis Stream."""
 
     def __init__(self):
-        self._redis_producer: Optional[RedisProducerService[AudioDerivativeTask]] = None
+        self._redis_producer: RedisProducerService[AudioDerivativeTask] | None = None
         self.stream_key = "audio_derivative:stream"
 
     async def _get_producer(self) -> RedisProducerService[AudioDerivativeTask]:
@@ -33,7 +32,6 @@ class AudioDerivativeService:
                 task_class=AudioDerivativeTask,
                 stream_key=self.stream_key,
             )
-            await self._redis_producer.connect()
         return self._redis_producer
 
     async def enqueue(
@@ -64,7 +62,7 @@ class AudioDerivativeService:
             return False
 
 
-_audio_derivative_service: Optional[AudioDerivativeService] = None
+_audio_derivative_service: AudioDerivativeService | None = None
 
 
 def get_audio_derivative_service() -> AudioDerivativeService:
