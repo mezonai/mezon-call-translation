@@ -82,10 +82,10 @@ class TranscriptManager:
     def create_transcription_callback(self, participant_identity: str, participant_name: str):
         """
         Factory to create callback for WebSocket transcription client
-        Vosk server -> callback -> send_transcript_entry()
+        Nemotron server -> callback -> send_transcript_entry()
         """
         async def transcription_callback(text: str, segments: list = None):
-            """Handle transcript from Vosk server (text + optional segments)"""
+            """Handle transcript from Nemotron server (text + optional segments)"""
             if not text or not text.strip():
                 return
             

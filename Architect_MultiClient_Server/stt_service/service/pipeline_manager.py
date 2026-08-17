@@ -9,9 +9,8 @@ import threading
 import time
 from typing import Dict, List, Optional, Any, Callable
 from collections import defaultdict
-from vosk import Model
-
 from .client_pipeline import ClientInferencePipeline, PipelineState
+from .nemotron_stream import NemotronModel
 from ..config import get_config
 from ..service.result_dispatcher import get_result_dispatcher
 
@@ -35,10 +34,14 @@ class PipelineManager:
         self.config = get_config()
         self.result_callback = result_callback
         
-        # Load Vosk model
-        logger.info(f"Loading Vosk model from {model_path}")
-        self.model = Model(model_path)
-        logger.info("Vosk model loaded successfully")
+        # Load the heavyweight model once; every client gets independent stream state.
+        logger.info(f"Loading Nemotron model from {model_path}")
+        self.model = NemotronModel(model_path)
+        logger.info(
+            "Nemotron model loaded successfully: sample_rate=%s, chunk_samples=%s",
+            self.model.sample_rate,
+            self.model.chunk_samples,
+        )
         
         # Pipeline storage
         self.pipelines: Dict[str, ClientInferencePipeline] = {}  # client_key -> pipeline

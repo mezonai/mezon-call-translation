@@ -24,7 +24,7 @@ AGENTS_DIR="$ARCH_DIR/agents"
 
 # Model directories
 MODELS_DIR="$PROJECT_ROOT/models"
-VOSK_MODEL_DIR="$MODELS_DIR/vosk-model"
+NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 
 # Counters
@@ -95,21 +95,18 @@ fi
 # ============================================================================
 print_section "Models"
 
-# Check Vosk models
-if [ -d "$VOSK_MODEL_DIR" ]; then
-    vosk_models=$(find "$VOSK_MODEL_DIR" -maxdepth 1 -type d -name "vosk-model-*" | wc -l)
-    if [ "$vosk_models" -gt 0 ]; then
-        check_pass "Vosk models found: $vosk_models model(s)"
-        find "$VOSK_MODEL_DIR" -maxdepth 1 -type d -name "vosk-model-*" -exec basename {} \; | while read model; do
-            print_info "  - $model"
-        done
+# Check Nemotron model
+if [ -d "$NEMOTRON_MODEL_DIR" ]; then
+    nemotron_config=$(find "$NEMOTRON_MODEL_DIR" -maxdepth 2 -type f -name "genai_config.json" | head -n 1)
+    if [ -n "$nemotron_config" ]; then
+        check_pass "Nemotron model found: $(dirname "$nemotron_config")"
     else
-        check_fail "No Vosk models found in $VOSK_MODEL_DIR"
-        print_info "  Run: ./scripts/download-vosk-model.sh"
+        check_fail "No Nemotron genai_config.json found in $NEMOTRON_MODEL_DIR"
+        print_info "  Run: python scripts/download-nemotron-model.py"
     fi
 else
-    check_fail "Vosk model directory not found: $VOSK_MODEL_DIR"
-    print_info "  Run: ./scripts/download-vosk-model.sh"
+    check_fail "Nemotron model directory not found: $NEMOTRON_MODEL_DIR"
+    print_info "  Run: python scripts/download-nemotron-model.py"
 fi
 
 # Check Kokoro model

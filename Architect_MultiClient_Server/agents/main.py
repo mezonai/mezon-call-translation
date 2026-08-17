@@ -1,5 +1,5 @@
 """
-LiveKit Agent entrypoint - Starts Vosk transcription agent + TTS
+LiveKit Agent entrypoint - Starts Nemotron transcription agent + TTS
 """
 import asyncio
 from dotenv import load_dotenv
@@ -115,9 +115,9 @@ async def entrypoint(ctx: agents.JobContext):
     
     # Log readiness status
     if tts_manager:
-        logger.info("🎤🔊 Vosk + TTS Agent ready and waiting for participants...")
+        logger.info("🎤🔊 Nemotron + TTS Agent ready and waiting for participants...")
     else:
-        logger.info("🎤 Vosk Agent ready and waiting for participants...")
+        logger.info("🎤 Nemotron Agent ready and waiting for participants...")
     
     # Keep agent alive forever (cleanup callback will be called on shutdown)
     await asyncio.Future()

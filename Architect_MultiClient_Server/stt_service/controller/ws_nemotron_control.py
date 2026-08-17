@@ -12,8 +12,8 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.websocket("/ws/vosk/")
-async def websocket_vosk(
+@router.websocket("/ws/nemotron/")
+async def websocket_nemotron(
     websocket: WebSocket,
     client_id: str = Query(...),
     session_id: str = Query(...),

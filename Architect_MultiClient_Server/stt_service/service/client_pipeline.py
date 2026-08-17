@@ -1,6 +1,5 @@
 
 import asyncio
-import json
 import threading
 import time
 import logging
@@ -8,10 +7,11 @@ import queue
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass
 from enum import Enum
-from vosk import Model, KaldiRecognizer
+import numpy as np
 
 from ..utils.circuit_breaker import get_stt_circuit_breaker
 from ..config import get_config
+from .nemotron_stream import NemotronModel
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +44,11 @@ class ClientInferencePipeline:
     Each client gets:
     - Dedicated thread for continuous processing
     - Separate audio buffer/queue
-    - Own Vosk recognizer instance
+    - Own Nemotron streaming state
     - Independent processing state
     """
     
-    def __init__(self, client_id: str, session_id: str, model: Model, 
+    def __init__(self, client_id: str, session_id: str, model: NemotronModel,
                  result_callback: Callable[[str, Dict], None], pipeline_manager=None,
                  result_dispatcher=None):  # NEW parameter
         self.client_id = client_id
@@ -68,9 +68,25 @@ class ClientInferencePipeline:
         # Get configuration
         self.config = get_config()
         
-        # Initialize Vosk recognizer (DEDICATED per client)
-        self.recognizer = KaldiRecognizer(self.model, self.config.audio.sample_rate)
-        logger.info(f"Created dedicated Vosk recognizer for client {client_id}")
+        # Initialize cache-aware Nemotron state (DEDICATED per client).
+        self.nemotron_stream = self.model.create_stream(
+            language_id=self.config.stt.nemotron_language_id,
+            empty_piece_limit=self.config.stt.nemotron_empty_piece_limit,
+        )
+        self.model_chunk_samples = self.model.chunk_samples
+        self.model_chunk_bytes = self.model_chunk_samples * 2  # PCM16
+        self.model_audio_buffer = bytearray()
+
+        if self.model.sample_rate != self.config.audio.sample_rate:
+            raise ValueError(
+                f"Nemotron sample rate {self.model.sample_rate} does not match "
+                f"configured audio sample rate {self.config.audio.sample_rate}"
+            )
+
+        logger.info(
+            f"Created dedicated Nemotron stream for client {client_id} "
+            f"({self.model_chunk_samples} samples per model block)"
+        )
         
         # Pipeline state
         self.state = PipelineState.INITIALIZING
@@ -174,7 +190,7 @@ class ClientInferencePipeline:
                     f"   Failure Count: {failure_count}/{self._circuit_breaker.config.failure_threshold}\n"
                     f"   Time Since Last Failure: {time_since_failure:.1f}s\n"
                     f"   Timeout Required: {self._circuit_breaker.config.timeout}s\n"
-                    f"   Pipeline Issues: Check Vosk processing errors, audio format issues, or model problems\n"
+                    f"   Pipeline Issues: Check Nemotron processing errors, audio format issues, or model problems\n"
                     f"   ⚠️  This client's audio processing is suspended until circuit recovers"
                 )
                 return False
@@ -291,15 +307,15 @@ class ClientInferencePipeline:
                 logger.error(
                     f"🚫 PIPELINE CIRCUIT BREAKER FAILURE for client {self.client_id}\n"
                     f"   Exception during chunk processing: {type(e).__name__}: {e}\n"
-                    f"   Possible causes: Vosk processing error, audio format issue, memory error\n"
+                    f"   Possible causes: Nemotron processing error, audio format issue, memory error\n"
                     f"   Current failures: {self._circuit_breaker.failure_count + 1}/{self._circuit_breaker.config.failure_threshold}"
                 )
                 self._circuit_breaker.record_failure()
                 raise
     
-    def _process_accumulated_chunks(self):
+    def _process_accumulated_chunks(self, pad_to_model_chunk: bool = False):
         """Process all accumulated chunks"""
-        if not self.accumulated_chunks:
+        if not self.accumulated_chunks and not (pad_to_model_chunk and self.model_audio_buffer):
             logger.warning(f"Client {self.client_id}: No accumulated chunks to process")
             return
         
@@ -312,65 +328,66 @@ class ClientInferencePipeline:
             self.accumulated_chunks.clear()
             self.accumulated_size = 0
             
+            # The Agent can keep sending short chunks. The model receives only
+            # exact 8,960-sample / 560 ms blocks from this second-stage buffer.
+            self.model_audio_buffer.extend(merged_chunk)
+            if pad_to_model_chunk and self.model_audio_buffer:
+                remainder = len(self.model_audio_buffer) % self.model_chunk_bytes
+                if remainder:
+                    self.model_audio_buffer.extend(
+                        b'\x00' * (self.model_chunk_bytes - remainder)
+                    )
+
             start_time = time.time()
-            # Process with Vosk (DIRECT call in dedicated thread)
-            is_final = self.recognizer.AcceptWaveform(merged_chunk)
-            
+            while len(self.model_audio_buffer) >= self.model_chunk_bytes:
+                model_block = bytes(self.model_audio_buffer[:self.model_chunk_bytes])
+                del self.model_audio_buffer[:self.model_chunk_bytes]
+
+                samples = (
+                    np.frombuffer(model_block, dtype=np.int16).astype(np.float32)
+                    / 32768.0
+                )
+                text, is_final = self.nemotron_stream.process(samples)
+                self._handle_transcription_result(text, is_final)
+
             chunk_size = len(merged_chunk)
-            duration_ms = (chunk_size *1000)/ (self.config.audio.sample_rate* 2) 
+            duration_ms = (chunk_size * 1000) / (self.config.audio.sample_rate * 2)
             processing_ms = (time.time() - start_time) * 1000
             logger.debug(
                 f"Client {self.client_id} | Chunk Size: {chunk_size} bytes | "
                 f"Duration: {duration_ms:.2f} ms | Processing: {processing_ms:.2f} ms | buffer audio: {self.audio_queue.qsize()}"
             )
-            if(duration_ms < processing_ms):
+            if duration_ms > 0 and duration_ms < processing_ms:
                 logger.warning(f"Client {self.client_id}: Audio processing time exceeded chunk duration! {processing_ms:.2f} ms > {duration_ms:.2f} ms")
-            STOP_WORDS = {
-                    "the", "a", "an", "uh", "um", "ah", "eh", "huh"
-                }
-            if is_final:
-                # Final result
-                result = json.loads(self.recognizer.Result())
-                text = result.get("text", "").strip()
-
-                if text not in STOP_WORDS:
-                    # Format phù hợp với client
-                    result_payload = {
-                        "text": text,
-                        "is_final": True,
-                        "client_id": self.client_id,
-                        "session_id": self.session_id,
-                        "timestamp": time.time()
-                    }
-                    if self.last_chunk_id is not None:
-                        result_payload["chunk_id"] = self.last_chunk_id
-
-                    self._emit_result("transcript", result_payload)
-                    logger.debug(f"Emitting final result for client {self.client_id}: {text[:50]}...")
-                    self.stats.final_results += 1
-            else:
-                # Partial result
-                partial = json.loads(self.recognizer.PartialResult())
-                text = partial.get("partial", "").strip()
-                if text not in STOP_WORDS:
-                    # Format phù hợp với client
-                    result_payload = {
-                        "text": text,
-                        "is_final": False,
-                        "client_id": self.client_id,
-                        "session_id": self.session_id,
-                        "timestamp": time.time()
-                    }
-                    if self.last_chunk_id is not None:
-                        result_payload["chunk_id"] = self.last_chunk_id
-
-                    self._emit_result("transcript", result_payload)
-                    logger.debug(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
-                    self.stats.partial_results += 1
         
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error processing accumulated chunks: {e}", exc_info=True)
             raise
+
+    def _handle_transcription_result(self, text: str, is_final: bool):
+        """Emit Nemotron text using the existing client response contract."""
+        stop_words = {"the", "a", "an", "uh", "um", "ah", "eh", "huh"}
+        text = text.strip()
+        if not text or text in stop_words:
+            return
+
+        result_payload = {
+            "text": text,
+            "is_final": is_final,
+            "client_id": self.client_id,
+            "session_id": self.session_id,
+            "timestamp": time.time()
+        }
+        if self.last_chunk_id is not None:
+            result_payload["chunk_id"] = self.last_chunk_id
+
+        self._emit_result("transcript", result_payload)
+        if is_final:
+            logger.debug(f"Emitting final result for client {self.client_id}: {text[:50]}...")
+            self.stats.final_results += 1
+        else:
+            logger.debug(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
+            self.stats.partial_results += 1
     
     def _emit_result(self, result_type: str, payload: Dict):
         """Emit processing result using optimized dispatcher (thread-safe)"""
@@ -441,6 +458,10 @@ class ClientInferencePipeline:
         try:
             if self.accumulated_chunks:
                 self._process_accumulated_chunks()
+            if self.model_audio_buffer:
+                # Process the last short block with silence padding. Do not call
+                # processor.flush(), matching the selected disconnect behavior.
+                self._process_accumulated_chunks(pad_to_model_chunk=True)
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error processing final chunks: {e}")
         
