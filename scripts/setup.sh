@@ -235,8 +235,8 @@ if [ "$SKIP_MODELS" = false ]; then
         if ! "$PYTHON_CMD" -c "import huggingface_hub" >/dev/null 2>&1; then
             "$PYTHON_CMD" -m pip install huggingface-hub
         fi
-        "$PYTHON_CMD" "$SCRIPT_DIR/download-nemotron-model.py" \
-            --model-name "$NEMOTRON_MODEL" \
+        bash "$SCRIPT_DIR/download-nemotron-model.sh" \
+            --model "$NEMOTRON_MODEL" \
             --output "$NEMOTRON_MODEL_DIR"
     fi
     

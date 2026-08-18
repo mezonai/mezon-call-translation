@@ -102,11 +102,11 @@ if [ -d "$NEMOTRON_MODEL_DIR" ]; then
         check_pass "Nemotron model found: $(dirname "$nemotron_config")"
     else
         check_fail "No Nemotron genai_config.json found in $NEMOTRON_MODEL_DIR"
-        print_info "  Run: python scripts/download-nemotron-model.py"
+        print_info "  Run: bash scripts/download-nemotron-model.sh"
     fi
 else
     check_fail "Nemotron model directory not found: $NEMOTRON_MODEL_DIR"
-    print_info "  Run: python scripts/download-nemotron-model.py"
+    print_info "  Run: bash scripts/download-nemotron-model.sh"
 fi
 
 # Check Kokoro model
