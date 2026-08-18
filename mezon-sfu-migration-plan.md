@@ -1,0 +1,130 @@
+# mezon-sfu migration — Kế hoạch thực thi
+
+> Đọc `mezon-sfu-migration-summary.md` trước nếu chưa có context. File này là **việc cần làm**, theo thứ tự, để 1 session mới bắt tay vào code ngay không cần hỏi lại từ đầu. Cập nhật trạng thái từng task khi làm xong — không xoá, chỉ đánh dấu.
+
+## 0. Trước khi code — 3 việc phải chốt xong (blocking)
+
+**[CẬP NHẬT 2026-08-17]** Đã hỏi lại team mezon, đủ rõ để bắt đầu code — chi tiết xem mục 1 (trigger) và ghi chú dưới đây:
+
+- [x] **"API" stop agent** — **[ĐẢO NGƯỢC quyết định cũ]** Không dùng API nữa. Cả start lẫn stop đều là **event NATS tường minh do BE mezon bắn**, đối xứng nhau ngay từ đầu — không còn rủi ro "agent chạy mãi không dừng" vì thiếu stop signal. Xem mục 1.
+- [x] **`jwt_secret`** — team mezon-sfu sẽ share secret thật sau, hiện **chưa validate chữ ký** phía `mezon-sfu` nên cứ tự ký JWT với secret placeholder (giữ trong config, dễ swap khi có secret thật). Không block code/test local.
+- [x] **Topology mạng / TURN** — thuộc hạ tầng, IT helpdesk xử lý riêng, không phải việc của `mezon-call-translation`. Giả định LAN/VPC cho dev.
+
+## 1. Kiến trúc trigger
+
+**[CẬP NHẬT 2026-08-17 — ĐẢO NGƯỢC quyết định cũ]** Quyết định cũ (orchestrator tự expose REST API, BE mezon gọi trực tiếp) đã bị thay bằng NATS, theo xác nhận từ team mezon:
+
+```
+FE mezon (bấm nút) → BE mezon → publish NATS event (start) → orchestrator subscribe
+  → gọi agent worker manager → spawn Go agent subprocess → agent tự mở WS join mezon-sfu
+
+FE mezon (bấm nút dừng) → BE mezon → publish NATS event (stop) → orchestrator subscribe
+  → gọi agent worker manager → kill Go agent subprocess theo room_id
+```
+
+Điểm quan trọng: đây là **event NATS riêng do BE mezon bắn tường minh** (không phải suy luận từ `SFU_HOOK_EVENT`/`join` của `mezon-sfu` — event đó vẫn còn vấn đề cũ: bắn sớm trước khi media hoạt động, không phân biệt người đầu/người sau). Vì là event tường minh có chủ đích (giống gọi API nhưng qua message queue) nên 2 vấn đề đó **không còn áp dụng** — BE mezon biết chính xác khi nào cần start/stop. Subject/tên event NATS cụ thể **chưa chốt tên chính thức** — tạm đặt tên khi code (vd. `mezon.agent.start`/`mezon.agent.stop`), sẽ chỉnh nhỏ sau khi đồng bộ với BE mezon. Từ orchestrator trở đi (subscribe → spawn/kill) là phần **hoàn toàn chủ động phía `mezon-call-translation`**.
+
+**[CẬP NHẬT 2026-08-17, đảo ngược lần 2]** "Task orchestrator" bên dưới ban đầu viết giả định worker manager nằm trong `orchestrator_service` (Python) — chưa từng chốt tường minh, chỉ trôi theo quán tính từ lúc còn bàn kiến trúc "orchestrator API". Đã bàn lại và quyết định: **worker manager viết bằng Go, sống chung repo/module với `agent`** (`agents/cmd/worker-manager`), không phải module trong `orchestrator_service`. Lý do (chi tiết ở `agents/internal/workermanager` package doc):
+- `orchestrator_service` có room registry backed by Redis → là bằng chứng service đó được thiết kế chạy nhiều instance. NATS start/stop event queue-group tới nhiều instance sẽ cần thêm tầng điều phối để route đúng lệnh "stop" về instance đang giữ PID — phức tạp không cần thiết nếu tách riêng.
+- `orchestrator_service` (tầng API/webhook) deploy thường xuyên hơn vòng đời 1 agent — gộp chung rủi ro agent bị kill giữa cuộc gọi mỗi lần deploy API.
+- Tư tưởng giống LiveKit's `agents` framework: worker (dispatch/process management) và agent (job behavior) sống chung 1 codebase.
+
+Task worker manager (đã xong bản đầu — `agents/cmd/worker-manager`, `agents/internal/workermanager`) — **[XONG 2026-08-17]**:
+- [x] Tạm đặt tên subject NATS cho start/stop (`mezon.agent.start`/`mezon.agent.stop`, override qua env `AGENT_START_SUBJECT`/`AGENT_STOP_SUBJECT`) — **vẫn chưa chốt chính thức với BE mezon**, chỉ là placeholder để code trước.
+- [x] Payload tối thiểu: `StartEvent{room_id, agent_user_id, role?}`, `StopEvent{room_id}` (`internal/workermanager/events.go`) — cũng là placeholder, `agent_user_id` đặc biệt còn treo (xem `mezon-sfu-migration-checklist.md` B1: ai cấp user_id cho bot). Manager từ chối start (log lỗi, không tự bịa id) nếu thiếu field này.
+- [x] NATS subscriber (`internal/workermanager/subscriber.go`), dùng `QueueSubscribe` với queue group — sẵn sàng cho việc scale worker-manager ra nhiều instance sau này mà không double-spawn.
+- [x] Worker manager (`internal/workermanager/manager.go`): spawn/kill Go agent subprocess theo `room_id` (1 subprocess = 1 room), idempotent (start trùng room đang chạy → no-op có log), stop có timeout SIGTERM→SIGKILL, tự "reap" khi agent tự thoát (hết budget reconnect chẳng hạn) để dọn registry không cần đợi lệnh stop.
+- [ ] **Chưa làm, biết trước là gap**: không có state trên disk — worker-manager restart thì mất khả năng `Stop()` theo room_id các agent đã spawn trước đó (agent vẫn sống, tự process group riêng, không bị chết theo, nhưng thành "không quản được" cho tới khi có ai kill tay). Cố tình không làm nửa vời (persist + reconcile PID lúc startup) trước khi biết rõ topology deploy thật.
+- [ ] (Optional, không block) Subscribe thêm NATS `SFU_HOOK_EVENT` của `mezon-sfu` song song để làm tín hiệu phụ (observability/dedupe/fallback), không dùng làm trigger chính.
+
+**Chưa test được với NATS server thật** — máy dev không có `nats-server` local. `go build`/`go vet` sạch nhưng end-to-end (subscribe thật, nhận event thật, spawn thật) còn treo — xem mục 3.
+
+## 2. Agent Go — khung việc theo lớp
+
+### 2.1 Bootstrap & auth — **[XONG 2026-08-17]**
+- [x] Sinh JWT HS256 lúc agent khởi động (claims: `identity`=user_id của agent, `room`, `roomJoin:true`, `exp`, `nbf`) — `internal/sfuauth/jwt.go`, dùng `golang-jwt/jwt/v5`.
+- [x] Đọc `jwt_secret`, `room_id`, `role` (mặc định `"audience"`), `agent_user_id` từ env — `internal/config/config.go`. `jwt_secret` hiện là placeholder swappable (SFU chưa validate chữ ký, xem mục 0).
+
+### 2.2 WS signaling client — **[XONG 2026-08-17]** (`internal/signaling/`)
+- [x] Kết nối WS tới `mezon-sfu` (`SFU_WS_URL`, mặc định `ws://127.0.0.1:8000/ws`).
+- [x] Gửi `join` → xử lý `joined`/`offer`/`error`.
+- [x] Set remote offer vào `pion.PeerConnection`, tạo answer, gửi `answer` (qua callback `OnOffer`, implement ở `internal/rtcagent`).
+- [x] Lắng nghe liên tục: `room_snapshot`, `peer_joined`, `peer_left`, `peer_updated`, offer renegotiate mới (answer lại mỗi lần vì cùng 1 callback `OnOffer` xử lý cả offer đầu lẫn renegotiate).
+- [x] `ping`/`pong` keepalive — server bắn `ping` mỗi 10s (`SFU_SIGNALING_PING_INTERVAL_MS`), idle timeout 20s; agent reply `pong` ngay khi nhận `ping`.
+- [x] **Quyết định disconnect/reconnect — [ĐẢO NGƯỢC 2026-08-17]**: quyết định ban đầu (agent không tự reconnect, thoát process ngay, để worker manager respawn) đã đổi sau khi thảo luận lại. Chốt cuối: **agent tự reconnect trong process, có giới hạn + backoff** (`internal/reconnect`, gọi từ `cmd/agent/main.go` `run()`).
+  - Lý do đổi: dù WS rớt luôn là join lại từ đầu (JWT/SDP/ICE/DTLS mới — `mezon-sfu` gắn chặt phiên media với WS, không có "resume"), agent tự làm việc đó **nhanh hơn** kill+spawn lại qua worker manager, không cần round-trip qua tầng ngoài cho 1 glitch mạng ngắn.
+  - Không phải retry vô hạn: sau `AGENT_RECONNECT_MAX_ATTEMPTS` (mặc định 8, backoff mũ base 1s/cap 30s) liên tiếp fail, agent thoát hẳn (`os.Exit(1)`) để tầng supervise (worker manager) xử lý — tránh 1 agent lỗi thật (secret sai, room bị xoá, SFU down) cứ âm thầm retry mãi không ai biết.
+  - An toàn với path stop mới (NATS): backoff loop tôn trọng `ctx.Done()` — worker manager gửi SIGTERM để stop thì dừng reconnect ngay, không join lại vào room đang bị bảo rời đi.
+  - Counter reset nếu 1 phiên sống đủ lâu (`AGENT_RECONNECT_STABLE_AFTER_SECONDS`, mặc định 30s) trước khi rớt — glitch ngắn thỉnh thoảng không làm cạn dần budget retry.
+
+### 2.3 WebRTC transport (pion) — **[XONG bản đầu 2026-08-17]** (`internal/rtcagent/peer.go`)
+
+> **Cập nhật 2026-08-16**: layout `mid` đổi (mỗi peer giờ 3 slot audio/camera/screen, base=3 thay vì 2), và có 2 nguồn mới giúp việc này dễ hơn hẳn — xem D2 checklist.
+
+- [x] Setup `pion.PeerConnection` — không cần config ICE-lite riêng phía agent: `mezon-sfu` gửi `a=ice-lite`, pion mặc định đã là full ICE agent (chủ động check connectivity), không cần `SettingEngine` gì thêm.
+- [x] Nhận `OnTrack` → xây bảng runtime `mid → {user_id, peer_id, kind}`:
+  - Đọc `user_id`/`peer_id` **trực tiếp từ `TrackRemote.StreamID()`** (pion tự parse `a=msid:u<user_id>-p<peer_id>` cho mình, không cần tự parse SDP tay lẫn không cần cross-reference `peer_joined`).
+  - Vị trí `mid` (offset so với `remoteMidBase=3`) → biết ngay track là audio/camera/screen (`kindForMid`).
+  - Vẫn giữ `room_snapshot`/`peer_joined`/`peer_updated` (`UpsertRoster`/`RemovePeer`) để có `role`/`is_mute` — không dùng để suy ra user_id nữa.
+  - **[Đơn giản hoá so với plan gốc]** Không đọc `mid` từ RTP header extension: ở tầng pion, việc demux theo mid/SSRC đã được pion tự lo qua đàm phán SDP (mỗi `TrackRemote` từ `OnTrack` đã gắn đúng 1 mid/transceiver) — khuyến nghị "ưu tiên đọc mid extension hơn SSRC tĩnh" trong tài liệu SFU nhắm tới người tự viết demuxer UDP thô, không áp dụng khi dùng pion ở mức API này. Sẽ quay lại nếu thực tế thấy pion demux sai qua renegotiate.
+  - Cập nhật lại bảng khi `OnTrack` mới / khi `peer_left` (`RemovePeer` dọn cả roster lẫn midTable).
+- [x] Decode Opus → PCM — **[XONG 2026-08-17]**, xem mục 2.4 bên dưới (`internal/recording`). Dùng `pion/opus` (pure Go, không cgo/libopus) thay vì `hraban/opus` — máy dev không có `libopus` cài sẵn (`pkg-config opus` fail), và `pion/opus` decode thẳng ra 16kHz mono (`NewDecoderWithOutput(16000, 1)`), không cần resample riêng.
+- [x] ~~Chưa phân biệt được `source: mic|screen`~~ — **đã giải quyết**, set trực tiếp theo vị trí slot (audio slot → `"mic"`, screen slot → `"screen"`).
+
+**Chưa test với `mezon-sfu` thật** — máy dev hiện thiếu dependency build (`libuv`, `libsrtp2`, `liburing`, BoringSSL, `nats.c`, `nats-server`), chưa build được `mezon-sfu` để chạy local. `go build`/`go vet` sạch, nhưng end-to-end (mục 3 bên dưới) còn treo tới khi có môi trường test.
+
+### 2.4 Forward sang record-service (Hướng A — giữ nguyên record-service) — **[XONG 2026-08-17]**
+- [x] Regenerate Go gRPC stub từ `audio-ingestion/record-service/proto/recording.proto` — copy vào `agents/proto/recording.proto` (thêm `option go_package`, nội dung message/service giữ nguyên, so sánh `diff` để xác nhận không lệch), generate ra `agents/internal/recordpb/*.pb.go` bằng `protoc` + `protoc-gen-go`/`protoc-gen-go-grpc` (cả 2 đã có sẵn máy dev).
+- [x] Port lại logic `RecordForwarder`/`RecordServiceClient` sang Go — `agents/internal/recordclient/{client,forwarder}.go`. Giữ nguyên semantics Python bản gốc: non-blocking (`select`+`default` thay `asyncio.Queue.put_nowait`/`QueueFull`), best-effort, drop-and-report qua `DroppedFrames` khi queue đầy, 5s timeout đợi writer/reader loop lúc `Close()`.
+- [x] `participant_identity` trong `SessionStart` dùng `user_id` (đọc thẳng từ `msid`, không qua bảng ssrc→user_id nữa — xem 2.3) thay vì identity string parse như code cũ.
+- [x] Cầu nối Opus decode + gọi `Forwarder` — `agents/internal/recording/bridge.go`. Điểm thiết kế quan trọng: mỗi track's `readLoop` (rtcagent) là **goroutine duy nhất** gọi cả `OnAudioPacket` lẫn `OnTrackEnded` cho track đó, tuần tự — nên `Bridge` giữ 1 decoder + 1 `Forwarder` mỗi mid mà không cần lock nội bộ (chỉ lock map dùng chung giữa các track). Cố tình **không** đóng forwarder từ `peer_left` (khác goroutine, sẽ race với `SendPCM`) — dựa hẳn vào track tự kết thúc (`track.ReadRTP()` lỗi) để đóng, cùng goroutine.
+- [x] Recording là best-effort đúng nghĩa: dial `record-service` fail lúc agent khởi động → log lỗi, tiếp tục join room bình thường, không recording; 1 track fail start forwarder → log, track đó không được ghi, các track khác không ảnh hưởng.
+
+### 2.5 TTS publish ngược vào room — **[XONG bản đầu 2026-08-17]** (`internal/ttsplayer`, `internal/ttsclient`, `internal/opusenc`)
+- [x] Join với `role:"speaker"` khi `AGENT_ROLE=speaker` — `rtcagent.New` giờ nhận thêm `publishTrack webrtc.TrackLocal` (nil cho audience), phải `pc.AddTrack()` **trước** `SetRemoteDescription`/`CreateAnswer` lần đầu để pion khớp đúng track vào mid 0 (uplink audio) — xem doc trong `peer.go`.
+- [x] Tạo `pion.TrackLocalStaticSample`, `WriteSample()` mỗi 20ms frame — `internal/ttsplayer/player.go`. Có hàng đợi request giống `_request_queue` bên Python (chỉ 1 utterance phát tại 1 thời điểm, không block SSE listener khi đang phát).
+- [x] TTS HTTP client (`process_text_to_audio` cũ) — `internal/ttsclient`, gọi `{TTS_SERVICE_BASE_URL}/api/tts/process`, trả PCM S16LE thô.
+- [x] Best-effort forward audio TTS của chính agent sang record-service (giống Python `_start_record_forwarding` cho track TTS) — dùng lại `recordclient.Forwarder`, tạo lười lúc phát utterance đầu tiên.
+- [ ] **Gap đã biết, chưa giải quyết**: **chưa có Opus encoder thật** (`internal/opusenc` chỉ là interface + lỗi `ErrUnavailable`). `pion/opus` (dùng để decode ở 2.3/2.4) **chỉ decode, không có encoder public** ở bản v0.1.0. `hraban/opus` (cgo/libopus) là lựa chọn đúng nhưng máy dev không có `libopus-dev` (`pkg-config opus` fail), không build/test được tại đây. → TTS hiện **join room + track publish hoạt động, nhưng `Speak()` sẽ lỗi ngay ở bước encode** cho tới khi có encoder thật. Việc join/track-setup/HTTP-client/hàng đợi đều đã xong và sẵn sàng cắm encoder vào.
+- [ ] **[MỞ RỘNG so với plan gốc]** Trigger để gọi `Speak()` **không** qua data channel (mezon-sfu chưa có) — port lại cơ chế thật của Python: **SSE từ orchestrator** (`GET /api/v2/sse/agent-requests`, request_type `tts_play`) — xem 2.6 bên dưới, dùng chung `internal/orchestratorclient`.
+
+### 2.6 STT client — **[XONG 2026-08-17]** (`internal/sttclient`, `internal/orchestratorclient`, `internal/audiopipeline`)
+- [x] Port `STTWebSocketClient` (`agents/src/core/websocket/stt_client.py`) sang Go — `internal/sttclient`, dùng `gorilla/websocket`, giữ nguyên giao thức JSON/text hiện có với Vosk service. Bỏ phần batching/rate-limit/circuit-breaker của bản Python (PCM đã tới sẵn theo khung ~20ms từ Opus decode, không cần gộp) và bỏ auth header (grep code cũ xác nhận chưa từng thực sự gắn vào connection).
+- [x] **[MỞ RỘNG so với plan gốc]** Port luôn phần điều khiển bật/tắt transcription + trigger TTS, vì thiếu nó thì STT/TTS không có cách nào được kích hoạt thật (không phải phần `2.5`/`2.6` gốc yêu cầu, nhưng cần thiết để tính năng "sống"):
+  - `internal/orchestratorclient` — port `OrchestratorClient` SSE listener (`agents/src/services/orchestrator_client.py`) + phần liên quan của `AgentRequestHandler` (`tts_play`, `transcript_control` — bỏ `send_chat_message` vì đó là DataChannel, không có ở mezon-sfu). Reconnect vô hạn với backoff (khác `internal/reconnect` của phiên mezon-sfu chính — đây chỉ là kênh phụ, không nên làm agent thoát process chỉ vì orchestrator tạm không tới được).
+  - Port `AgentControlState` (`agents/src/core/agent_control_state.py`) thành `audiopipeline.Bridge.SetSTTEnabled` — **mặc định OFF** giống bản gốc, bật/tắt qua request `transcript_control` (`{action:"enable"|"disable"}`), tác động cả track đang chạy lẫn track mới xuất hiện sau đó (không chỉ track tương lai).
+  - `push_transcript` (`OrchestratorClient.push_transcript` → `TranscriptManager.send_transcript_entry`, thực chất gửi ngay không batch dù tên class là "Manager") — port nguyên trạng vào `orchestratorclient.PushTranscript`.
+- [ ] **Gap đã biết, chưa giải quyết**: `room_name` — API cũ của orchestrator (`push_transcript`, SSE `agent-requests`) được thiết kế quanh khái niệm LiveKit "room name" (mã cuộc gọi, string) tách biệt với "room_id" (UUID nội bộ orchestrator). `mezon-sfu` chỉ có 1 `room_id` số nguyên. Code hiện **dùng `room_id` (dạng chuỗi số) thay cho `room_name` ở mọi chỗ** — là suy đoán hợp lý duy nhất hiện có, **chưa xác nhận với phía orchestrator** có tương thích không.
+- [ ] Chưa port: `register_room`/`unregister_room`, `push_event_session_started`/`_ended`, `report_tts_transcript`/`report_tts_completed` — đều gắn với pipeline ghi âm/luồng phỏng vấn cụ thể của orchestrator, không thuộc scope "STT/TTS client capability" của 2.5/2.6, và phụ thuộc luôn vào gap `room_name` ở trên.
+
+### 2.7 VAD — **[BỎ, quyết định 2026-08-17]**
+Không port. Code Python hiện tại chạy với `enable_vad=False` (tắt hẳn, xác nhận qua `event_handlers.py` — `RealTimeVADProcessor(..., enable_vad=False)`) — VAD không được dùng trong production hiện tại, nên không có gì để giữ hành vi tương đương. Port logic chết theo không mang lại giá trị.
+
+## 3. Testing / validate
+
+- [ ] Test local: dùng `config.ini` mặc định của `mezon-sfu` (`jwt_secret=default`) để tự sinh token test, join thử bằng agent Go, xác nhận nhận được `room_snapshot`.
+- [ ] Test song song với `tools/webrtc_test_client.html` (browser) làm "người thật" trong room — agent Go join sau, xác nhận nhận đúng audio + map đúng `user_id`.
+- [ ] Test renegotiate: người thứ 2 join giữa chừng → xác nhận agent nhận offer mới, answer lại đúng, cập nhật bảng ssrc→user_id không làm rớt audio của người cũ.
+- [ ] Test teardown: người rời room → xác nhận `peer_left` nhận đúng, dọn forwarder tương ứng, không leak goroutine/connection.
+- [ ] Test TTS: **chặn bởi gap Opus encoder** (xem 2.5) — không test được cho tới khi có encoder thật. Khi có: agent join `role:speaker`, publish audio, xác nhận `webrtc_test_client.html` nghe được.
+- [ ] Test STT/transcript_control: gửi request `transcript_control` (`action:"enable"`) qua SSE giả lập → xác nhận agent bắt đầu forward PCM sang Vosk, nhận transcript, POST đúng `push_transcript`. Cần xác nhận trước tiên gap `room_name` ở 2.6 không làm orchestrator từ chối/lệch dữ liệu.
+- [ ] End-to-end: FE mezon → BE mezon → NATS start event (xem mục 1) → worker manager spawn agent → agent join → nói vào mic (test client) → thấy transcript ra đúng qua pipeline STT hiện có.
+
+## 4. Known limitations chấp nhận cho MVP (không block, ghi lại để không quên)
+
+- Agent hiện như 1 participant thật trong `room_snapshot`/`peer_joined` phía client (không có "kind" bot).
+- Không có data channel — chat/text (phục vụ luồng phỏng vấn) làm ở bước sau, khi SFU team bổ sung.
+- Không có REST/admin API từ `mezon-sfu` (list room, kick, mute...) — không cần cho MVP.
+- TURN chưa hoạt động thật ở `mezon-sfu` — chỉ OK nếu topology mạng cùng LAN/VPC (xem mục 0).
+- **Chưa có Opus encoder** (2.5) — nhánh `speaker`/TTS join được nhưng không phát được âm thanh thật cho tới khi cắm 1 encoder thật vào `internal/opusenc` (khuyến nghị: `hraban/opus` sau build tag `cgo`, cần môi trường có `libopus-dev`).
+- **`room_name` cho STT/transcript push** (2.6) là suy đoán (dùng `room_id` dạng chuỗi) — chưa xác nhận với phía orchestrator.
+- VAD không port (2.7) — đã tắt sẵn (`enable_vad=False`) trong code Python hiện tại, không phải regression.
+
+## 5. Tham chiếu
+
+- Kiến trúc/giao thức đầy đủ `mezon-sfu`: `../mezon-sfu/CLAUDE.md`
+- So sánh chi tiết + quyết định kiến trúc: `mezon-sfu-migration-checklist.md` (đặc biệt Phần C — catalog message/event, Phần D — quyết định đã chốt)
+- Bối cảnh/tóm tắt nhanh: `mezon-sfu-migration-summary.md`
+- Proto ghi âm (không đổi): `audio-ingestion/record-service/proto/recording.proto`
+- Logic cũ cần port sang Go (tham chiếu, không xoá cho tới khi Go thay thế hoàn toàn): `Architect_MultiClient_Server/agents/src/`
+- **Code Go mới** (nằm ngang cấp `Architect_MultiClient_Server/`, đặt tên `agents/` theo quyết định 2026-08-17): `agents/` — module `github.com/mezonai/mezon-call-translation/agents`, 2 entrypoint `agents/cmd/agent/main.go` (job/agent) và `agents/cmd/worker-manager/main.go` (dispatch/spawn). Toàn bộ env var + mô tả từng package: `agents/README.md`.
