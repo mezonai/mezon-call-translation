@@ -78,13 +78,16 @@ class NemotronStream:
     def _clean_piece(self, piece: str) -> str:
         """Remove mistaken leading punctuation like , . <en-es>"""
         piece = _LOCALE_TAG_RE.sub("", piece)
+        # xóa những chunk của nemotron tạo ra như <EN-es> , <VI-vi> etc
         if not self.current_text:
             piece = _UTTERANCE_PREFIX_RE.sub("", piece)
+            # xóa các dấu , . bị lỗi đứng đầu câu
         return piece
 
     def process(self, samples: np.ndarray) -> Tuple[str, bool]:
-        samples = np.ascontiguousarray(samples, dtype=np.float32)
-        piece = self._clean_piece(self._decode(self.processor.process(samples)))
+        model_inputs = self.processor.process(np.ascontiguousarray(samples, dtype=np.float32))
+        decoded_piece = self._decode(model_inputs)
+        piece = self._clean_piece(decoded_piece)
 
         if piece == "":
             self.empty_piece_count += 1

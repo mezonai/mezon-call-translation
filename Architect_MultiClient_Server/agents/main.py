@@ -1,5 +1,5 @@
 """
-LiveKit Agent entrypoint - Starts Nemotron transcription agent + TTS
+LiveKit Agent entrypoint - Starts speech-to-text transcription agent + TTS
 """
 import asyncio
 from dotenv import load_dotenv

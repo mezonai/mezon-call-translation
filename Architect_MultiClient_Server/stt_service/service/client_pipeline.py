@@ -76,6 +76,7 @@ class ClientInferencePipeline:
         self.model_chunk_samples = self.model.chunk_samples
         self.model_chunk_bytes = self.model_chunk_samples * 2  # PCM16
         self.model_audio_buffer = bytearray()
+        # contains audio already moved from accumulated_chunks, but not yet processed 
 
         if self.model.sample_rate != self.config.audio.sample_rate:
             raise ValueError(
@@ -314,7 +315,7 @@ class ClientInferencePipeline:
                 raise
     
     def _process_accumulated_chunks(self, pad_to_model_chunk: bool = False):
-        """Process all accumulated chunks"""
+        """Process all accumulated chunks; pad_to_model_chunk controls what happens to the final incomplete audio when the client disconnects."""
         if not self.accumulated_chunks and not (pad_to_model_chunk and self.model_audio_buffer):
             logger.warning(f"Client {self.client_id}: No accumulated chunks to process")
             return
@@ -331,14 +332,18 @@ class ClientInferencePipeline:
             # The Agent can keep sending short chunks. The model receives only
             # exact 8,960-sample / 560 ms blocks from this second-stage buffer.
             self.model_audio_buffer.extend(merged_chunk)
+            
             if pad_to_model_chunk and self.model_audio_buffer:
+                # used when the WebSocket/client shuts down.
                 remainder = len(self.model_audio_buffer) % self.model_chunk_bytes
+                
                 if remainder:
                     self.model_audio_buffer.extend(
                         b'\x00' * (self.model_chunk_bytes - remainder)
                     )
+                    # calculates the missing number of bytes and appends zeros.
+                    
 
-            start_time = time.time()
             while len(self.model_audio_buffer) >= self.model_chunk_bytes:
                 model_block = bytes(self.model_audio_buffer[:self.model_chunk_bytes])
                 del self.model_audio_buffer[:self.model_chunk_bytes]
@@ -347,47 +352,48 @@ class ClientInferencePipeline:
                     np.frombuffer(model_block, dtype=np.int16).astype(np.float32)
                     / 32768.0
                 )
-                text, is_final = self.nemotron_stream.process(samples)
-                self._handle_transcription_result(text, is_final)
 
-            chunk_size = len(merged_chunk)
-            duration_ms = (chunk_size * 1000) / (self.config.audio.sample_rate * 2)
-            processing_ms = (time.time() - start_time) * 1000
-            logger.debug(
-                f"Client {self.client_id} | Chunk Size: {chunk_size} bytes | "
-                f"Duration: {duration_ms:.2f} ms | Processing: {processing_ms:.2f} ms | buffer audio: {self.audio_queue.qsize()}"
-            )
-            if duration_ms > 0 and duration_ms < processing_ms:
-                logger.warning(f"Client {self.client_id}: Audio processing time exceeded chunk duration! {processing_ms:.2f} ms > {duration_ms:.2f} ms")
+                start_time = time.time()
+                text, is_final = self.nemotron_stream.process(samples)
+                processing_ms = (time.time() - start_time) * 1000
+
+                chunk_size = len(model_block)
+                duration_ms = (chunk_size * 1000) / (self.config.audio.sample_rate * 2)
+                logger.debug(
+                    f"Client {self.client_id} | Chunk Size: {chunk_size} bytes | "
+                    f"Duration: {duration_ms:.2f} ms | Processing: {processing_ms:.2f} ms | buffer audio: {self.audio_queue.qsize()}"
+                )
+                if processing_ms > duration_ms:
+                    logger.warning(
+                        f"Client {self.client_id}: Audio processing time exceeded chunk duration! "
+                        f"{processing_ms:.2f} ms > {duration_ms:.2f} ms"
+                    )
+
+                text = text.strip()
+                if not text:
+                    continue
+
+                result_payload = {
+                    "text": text,
+                    "is_final": is_final,
+                    "client_id": self.client_id,
+                    "session_id": self.session_id,
+                    "timestamp": time.time()
+                }
+                if self.last_chunk_id is not None:
+                    result_payload["chunk_id"] = self.last_chunk_id
+
+                self._emit_result("transcript", result_payload)
+                if is_final:
+                    logger.debug(f"Emitting final result for client {self.client_id}: {text[:50]}...")
+                    self.stats.final_results += 1
+                else:
+                    logger.debug(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
+                    self.stats.partial_results += 1
         
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error processing accumulated chunks: {e}", exc_info=True)
             raise
-
-    def _handle_transcription_result(self, text: str, is_final: bool):
-        """Emit Nemotron text using the existing client response contract."""
-        stop_words = {"the", "a", "an", "uh", "um", "ah", "eh", "huh"}
-        text = text.strip()
-        if not text or text in stop_words:
-            return
-
-        result_payload = {
-            "text": text,
-            "is_final": is_final,
-            "client_id": self.client_id,
-            "session_id": self.session_id,
-            "timestamp": time.time()
-        }
-        if self.last_chunk_id is not None:
-            result_payload["chunk_id"] = self.last_chunk_id
-
-        self._emit_result("transcript", result_payload)
-        if is_final:
-            logger.debug(f"Emitting final result for client {self.client_id}: {text[:50]}...")
-            self.stats.final_results += 1
-        else:
-            logger.debug(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
-            self.stats.partial_results += 1
     
     def _emit_result(self, result_type: str, payload: Dict):
         """Emit processing result using optimized dispatcher (thread-safe)"""
@@ -459,8 +465,8 @@ class ClientInferencePipeline:
             if self.accumulated_chunks:
                 self._process_accumulated_chunks()
             if self.model_audio_buffer:
-                # Process the last short block with silence padding. Do not call
-                # processor.flush(), matching the selected disconnect behavior.
+                # But when a speaker disconnects, the remaining audio might be shorter: eg 300 ms remaining,
+                # Without padding, that audio cannot form a complete 560 ms Nemotron block and would never be transcribed.
                 self._process_accumulated_chunks(pad_to_model_chunk=True)
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error processing final chunks: {e}")

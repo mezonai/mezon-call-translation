@@ -12,7 +12,7 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.websocket("/ws/nemotron/")
+@router.websocket("/ws/transcription/")
 async def websocket_nemotron(
     websocket: WebSocket,
     client_id: str = Query(...),
