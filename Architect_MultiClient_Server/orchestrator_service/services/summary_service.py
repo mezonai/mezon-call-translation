@@ -390,6 +390,20 @@ class SummaryService:
                     )
                 return {**draft_summary, "id": saved_id}
 
+            # Save result to DB
+            updated = await self.pg_summary_repo.update_room_summary_data(room_id, summary_data)
+            if not updated:
+                logger.error(f"Failed to update generated light summary for room {room_id}")
+                outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
+                    room_id=str(room_id), retry_type=RetryType.OVERALL_CONTEXT, error_msg="Failed to save light summary to DB"
+                )
+                if not outbox_created:
+                    logger.critical(
+                        f"Room {room_id} has NO summary AND outbox retry task creation FAILED "
+                        f"(retry_type={RetryType.OVERALL_CONTEXT}) - needs manual re-trigger"
+                    )
+                return {**draft_summary, "id": saved_id}
+
             # Success
             final_summary = dict(draft_summary)
             final_summary["summary_data"] = summary_data

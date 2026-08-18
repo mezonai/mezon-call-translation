@@ -119,3 +119,23 @@ async def retry_summary(
         "type": type.value,
         "summary_data": summary_data,
     }
+
+
+@client_router.post(
+    "/generate/{room_id}",
+    response_description="Generate a room summary from raw transcript (normal or light flow)",
+)
+async def generate_summary(room_id: str):
+    result = await get_summary_service().generate_summary(room_id)
+
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Room/tracks/transcript segments not found, or failed to save summary to DB",
+        )
+
+    return {
+        "status": "ok",
+        "room_id": room_id,
+        "data": result,
+    }
