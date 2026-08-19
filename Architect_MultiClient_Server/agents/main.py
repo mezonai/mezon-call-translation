@@ -115,9 +115,9 @@ async def entrypoint(ctx: agents.JobContext):
     
     # Log readiness status
     if tts_manager:
-        logger.info("🎤🔊 Nemotron + TTS Agent ready and waiting for participants...")
+        logger.info("🎤🔊 STT + TTS Agent ready and waiting for participants...")
     else:
-        logger.info("🎤 Nemotron Agent ready and waiting for participants...")
+        logger.info("🎤 STT Agent ready and waiting for participants...")
     
     # Keep agent alive forever (cleanup callback will be called on shutdown)
     await asyncio.Future()
