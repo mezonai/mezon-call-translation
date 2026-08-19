@@ -322,8 +322,8 @@ ${CYAN}${BOLD}Useful Commands:${NC}
   ${CYAN}sudo systemctl disable mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
 
   # View logs
-  ${CYAN}sudo journalctl -u mezon-stt-service -u mezon-agents-service -f${NC}
-  ${CYAN}sudo journalctl -u mezon-stt-service -n 50${NC}
+  ${CYAN}sudo journalctl -u mezon-server-vosk-service -u mezon-agents-service -f${NC}
+  ${CYAN}sudo journalctl -u mezon-server-vosk-service -n 50${NC}
   ${CYAN}sudo journalctl -u mezon-agents-service -b${NC}
 
 EOF

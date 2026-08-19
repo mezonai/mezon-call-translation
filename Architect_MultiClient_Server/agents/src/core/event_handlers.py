@@ -166,7 +166,7 @@ class EventHandlers:
             logger.info(f"Record-service forwarding ended for track={track_id}")
 
     def create_transcription_callback(self, participant_identity: str):
-        """Factory to create callback for processing transcripts from realtime speech-to-text server"""
+        """Factory to create callback for processing transcripts from Vosk server"""
         async def transcription_callback(message: str):
             try:
                 # Parse JSON hoặc plain text
@@ -208,14 +208,14 @@ class EventHandlers:
     ):
         """
         Core audio processing pipeline:
-        LiveKit track -> VAD processor -> WebSocket -> Realtime speech-to-text server
+        LiveKit track -> VAD processor -> WebSocket -> Vosk server
         """
         speaker_id = self._speaker_id_from_publication(participant, publication)
 
         sid = self.session_id_from_room()
         logger.info(f"Starting transcription for {speaker_id} (session={sid})")
 
-        # WebSocket client connects to Realtime speech-to-text server
+        # WebSocket client connects to Vosk server
         ws_client = STTWebSocketClient(
             client_id=speaker_id,
             session_id=sid,
@@ -275,7 +275,7 @@ class EventHandlers:
                 
                 processor.add_audio_chunk(audio_data)
                 
-                # Get batched chunks (5 chunks = 50ms) to send to Speech-to-text transcribing model
+                # Get batched chunks (5 chunks = 50ms) to send to Vosk
                 batched_chunks = processor.get_batched_chunks(chunks_per_batch=5)
                 for batch in batched_chunks:
                     # Convert back to int16 for sending

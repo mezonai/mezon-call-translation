@@ -1,12 +1,12 @@
 """
-New Per-Client Nemotron STT Service
+New Per-Client Vosk STT Service
 Replaces the shared worker pool with dedicated inference pipelines per client.
 """
 
+import os
 import time
 import asyncio
 import logging
-from pathlib import Path
 from typing import Dict, Optional
 
 from .pipeline_manager import PipelineManager, ClientLimitExceededError
@@ -17,24 +17,20 @@ from ..config import get_config
 logger = logging.getLogger(__name__)
 
 
-class NewSTTNemotronService:
-    """Nemotron STT service with per-client inference pipelines."""
+class NewSTTVoskService:
+    """New STT Vosk Service with per-client inference pipelines"""
     
     def __init__(self, model_path: Optional[str] = None):
-        logger.info("Initializing Nemotron STT Service with per-client pipelines...")
+        logger.info("Initializing New STT Vosk Service with per-client pipelines...")
         
         # Get configuration
         self.config = get_config()
         
-        # A relative configuration value is resolved under the project model folder.
-        configured_path = model_path or self.config.stt.nemotron_model_path
-        resolved_path = Path(configured_path)
-        if not resolved_path.is_absolute():
-            project_root = Path(__file__).resolve().parents[3]
-            resolved_path = project_root / "models" / "nemotron-model" / resolved_path
-
-        if not resolved_path.exists():
-            raise FileNotFoundError(f"Nemotron model not found at {resolved_path}")
+        # Use config for model path
+        model_path = os.getenv('VOSK_MODEL_PATH', 'model/Transcription/en-model')
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"VOSK model not found at {model_path}")
         
         # Result handling
         self.result_dispatcher = None  # NEW: For optimized dispatch
@@ -43,7 +39,7 @@ class NewSTTNemotronService:
         
         # Initialize pipeline manager with dispatcher callback
         self.pipeline_manager = PipelineManager(
-            model_path=str(resolved_path),
+            model_path=model_path,
             result_callback=self._emit_result_via_dispatcher  # Changed to new method
         )
         
@@ -53,7 +49,7 @@ class NewSTTNemotronService:
         # Service state
         self._started = False
         
-        logger.info("Nemotron STT Service initialized successfully")
+        logger.info("New STT Vosk Service initialized successfully")
     
     async def start(self):
         """Start the service"""
@@ -66,7 +62,7 @@ class NewSTTNemotronService:
         # Register health checks
         register_stt_health_checks(self)
         
-        logger.info("Nemotron STT Service started")
+        logger.info("New STT Vosk Service started")
     
     def set_result_dispatcher(self, dispatcher):
         """Set the optimized result dispatcher"""
@@ -291,16 +287,16 @@ class NewSTTNemotronService:
     
     async def shutdown(self):
         """Shutdown the service gracefully"""
-        logger.info("Shutting down Nemotron STT Service...")
+        logger.info("Shutting down New STT Vosk Service...")
         
         try:
             await self.pipeline_manager.shutdown(timeout=10.0)
             self._started = False
-            logger.info("Nemotron STT Service shutdown complete")
+            logger.info("New STT Vosk Service shutdown complete")
         except Exception as e:
             logger.error(f"Error during service shutdown: {e}")
             raise
 
 
 # Create service instance
-stt_service_new = NewSTTNemotronService()
+stt_service_new = NewSTTVoskService()
