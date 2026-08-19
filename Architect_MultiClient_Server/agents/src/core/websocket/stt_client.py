@@ -1,7 +1,7 @@
 """
-Speech-to-Text WebSocket Client - Vosk transcription service
+Speech-to-Text WebSocket Client - Realtime speech-to-text transcription service
 
-This client handles audio streaming to Vosk transcription server
+This client handles audio streaming to Realtime speech-to-text transcription server
 with optimized batching and rate limiting for real-time performance.
 """
 import asyncio
@@ -48,7 +48,7 @@ class STTWebSocketClient(BaseWebSocketClient):
         
         # Build WebSocket URL
         url = (
-            f"ws://{self.config.host}:{self.config.port}/ws/vosk/"
+            f"ws://{self.config.host}:{self.config.port}/ws/transcription/"
             f"?client_id={client_id}&session_id={session_id}"
         )
         

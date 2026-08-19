@@ -1,6 +1,6 @@
 # ============================================================================
 # STT Service Requirements
-# WebSocket-based Speech-to-Text service with Vosk and Whisper
+# WebSocket-based Speech-to-Text service with Nemotron and Whisper
 # ============================================================================
 
 # ========================================
@@ -14,7 +14,8 @@ pydantic>=2.0.0                # Data validation and settings management
 # ========================================
 # Speech-to-Text Engines
 # ========================================
-vosk>=0.3.45                   # Real-time Vosk STT engine
+onnxruntime-genai==0.14.0      # Nemotron streaming ONNX runtime
+huggingface-hub>=0.24.0        # Nemotron model download
 faster-whisper>=1.0.0          # Whisper transcription (post-processing)
 
 # ========================================
@@ -40,11 +41,10 @@ psutil>=5.9.0                  # System resource monitoring (CPU, memory)
 # Configuration & Environment
 # ========================================
 python-dotenv>=1.0.0           # Load environment variables from .env
-# Server-specific requirements (FastAPI + Vosk)
+# Server-specific requirements (FastAPI + Nemotron)
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 websockets>=11.0.3
-vosk>=0.3.45
 python-dotenv>=1.0.0
 numpy>=1.24.0
 PyJWT>=2.10.1
