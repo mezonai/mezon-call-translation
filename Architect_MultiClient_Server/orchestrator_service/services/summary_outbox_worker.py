@@ -61,17 +61,17 @@ async def handle_retry_summarization(configs: dict[str, Any]) -> None:  # type: 
 OutboxHandlerRegistry.register("retry_summarization", handle_retry_summarization)
 
 async def handle_retry_transcript_correction(configs: dict[str, Any]) -> None:  # type: ignore[explicit-any]
-    from orchestrator_service.services.transcript_correction_service import get_correction_service
     from orchestrator_service.models.transcript_models import TranscriptCorrectionRetryType
-    
+    from orchestrator_service.services.transcript_correction_service import get_correction_service
+
     room_id = configs.get("room_id")
     if not room_id:
         raise ValueError("Missing room_id in outbox task configs")
-        
+
     retry_type_str = configs.get("retry_type")
     if not retry_type_str:
         raise ValueError("Missing retry_type in outbox task configs")
-        
+
     retry_type = TranscriptCorrectionRetryType(retry_type_str)
 
     logger.info(f"Retrying transcript correction for room {room_id} with type {retry_type.value}")

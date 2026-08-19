@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
+from orchestrator_service.api.exception_handlers import register_exception_handlers
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse_agent_request_api import (
     router as sse_agent_request_router,
@@ -162,6 +163,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LiveKit Orchestrator API", lifespan=lifespan)
+register_exception_handlers(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

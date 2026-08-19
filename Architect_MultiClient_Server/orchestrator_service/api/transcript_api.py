@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from orchestrator_service.models.summary_models import RetryType
 from orchestrator_service.models.transcript_models import TranscriptCorrectionRetryType
 from orchestrator_service.services.postgresql.pg_outbox_repository import get_pg_outbox_repository
 from orchestrator_service.services.transcript_correction_service import get_correction_service
