@@ -29,12 +29,14 @@ import (
 
 type Config struct {
 	NATSURL string
-	// StartSubject/StopSubject/QueueGroup: subject names are NOT finalized
-	// with BE mezon yet (mezon-sfu-migration-plan.md section 1) -- these are
-	// placeholders to unblock coding, expect to change.
-	StartSubject string
-	StopSubject  string
-	QueueGroup   string
+	// Subject: confirmed 2026-08-19 against BE mezon's real dispatch code --
+	// BOTH add and delete are published on this single subject
+	// ("SFU_HOOK_EVENT", the same one mezon-sfu's own C hook events use),
+	// distinguished by the "action" field, not by subject. See
+	// dispatchEvent's doc in events.go and mezon-sfu-migration-checklist.md
+	// D4.
+	Subject    string
+	QueueGroup string
 	// AgentBinPath is the path to the built `agent` binary (cmd/agent) this
 	// manager spawns per room.
 	AgentBinPath string
@@ -43,9 +45,24 @@ type Config struct {
 	StopTimeout time.Duration
 	// BaseAgentEnv is applied to every spawned agent (mezon-sfu connection
 	// details, reconnect tuning...) -- same for every room in a given
-	// deployment. Per-room fields (ROOM_ID/AGENT_USER_ID/AGENT_ROLE) come
-	// from the NATS event and are added on top at spawn time.
+	// deployment. Per-room fields (ROOM_ID/AGENT_USER_ID/AGENT_ROLE) are
+	// added on top at spawn time -- ROOM_ID and (optionally) AGENT_ROLE
+	// from the dispatch event, AGENT_USER_ID always derived from
+	// AgentUserIDBase below, never from the event.
 	BaseAgentEnv []string
+	// AgentUserIDBase: interim, explicitly configured workaround for the
+	// still-unresolved agent_user_id gap (mezon-sfu-migration-checklist.md
+	// D4/B1) -- the real dispatch event never carries agent_user_id, so
+	// every spawned agent uses this one fixed id instead (checked: nothing
+	// in mezon-sfu enforces user_id uniqueness across rooms -- it's scoped
+	// per WS connection/room, not global -- so one shared id for every
+	// concurrently running agent is fine, same as a normal bot account
+	// having one identity across every channel it's in). Leave at 0
+	// (default) to keep the old hard-fail behavior. Must be picked to not
+	// collide with real Mezon user ids -- coordinate the actual value with
+	// BE mezon, this is not a final decision, just enough to unblock local
+	// testing.
+	AgentUserIDBase int64
 }
 
 // agentPassthroughEnvKeys are copied from this process's environment into
@@ -75,8 +92,7 @@ var agentPassthroughEnvKeys = []string{
 func FromEnv() (Config, error) {
 	cfg := Config{
 		NATSURL:      getEnv("NATS_URL", "nats://127.0.0.1:4222"),
-		StartSubject: getEnv("AGENT_START_SUBJECT", "mezon.agent.start"),
-		StopSubject:  getEnv("AGENT_STOP_SUBJECT", "mezon.agent.stop"),
+		Subject:      getEnv("AGENT_DISPATCH_SUBJECT", "SFU_HOOK_EVENT"),
 		QueueGroup:   getEnv("AGENT_WORKER_QUEUE_GROUP", "agent-worker-manager"),
 		AgentBinPath: getEnv("AGENT_BIN_PATH", defaultAgentBinPath()),
 	}
@@ -86,6 +102,13 @@ func FromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("workermanager: invalid AGENT_STOP_TIMEOUT_SECONDS: %w", err)
 	}
 	cfg.StopTimeout = time.Duration(stopTimeoutSec) * time.Second
+
+	agentUserIDBase, err := strconv.ParseInt(getEnv("AGENT_USER_ID_BASE", "0"), 10, 64)
+	if err != nil {
+		return Config{}, fmt.Errorf("workermanager: invalid AGENT_USER_ID_BASE: %w", err)
+	}
+	cfg.AgentUserIDBase = agentUserIDBase
+
 	cfg.BaseAgentEnv = passthroughEnv(agentPassthroughEnvKeys)
 
 	return cfg, nil

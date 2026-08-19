@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.53.1
 	github.com/pion/opus v0.1.0
@@ -11,10 +12,10 @@ require (
 	github.com/pion/webrtc/v4 v4.2.18
 	google.golang.org/grpc v1.83.0
 	google.golang.org/protobuf v1.36.12
+	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
 )
 
 require (
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/nats-io/nkeys v0.4.15 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect

@@ -35,12 +35,12 @@
 
 - **`ufrag`**: username fragment của ICE — định danh 1 phiên ICE, `mezon-sfu` dùng làm khoá chính để tra session.
 - **SDP offer/answer/renegotiate**: `mezon-sfu` luôn là bên gửi offer trước (khác chiều so với nhiều hệ khác); renegotiate = làm lại vòng offer/answer giữa chừng phiên khi room có thay đổi (người vào/ra/đổi role) — client phải answer lại mỗi lần.
-- **`mid` numbering cố định**: `mid:0`/`mid:1` = uplink audio/video của chính client; `mid:2/3`, `4/5`... = downlink audio/video của từng remote peer, cấp phát tăng dần khi có peer mới.
+- **`mid` numbering cố định** — **[SỬA, layout đổi từ 08-16, số cũ ở đây đã lỗi thời]**: mỗi peer 3 slot (audio/camera/screen tách riêng, không gộp "video"): `mid:0/1/2` = uplink audio/camera/screen của chính client; `mid:3,4,5` = downlink audio/camera/screen của remote peer #1, `mid:6,7,8` của remote peer #2... (base=3, cấp phát tăng dần). Chi tiết + lý do luôn xem `../mezon-sfu/CLAUDE.md` mục 2 (file đó cập nhật theo mỗi lần giao thức đổi, không lặp lại số liệu ở đây nữa để tránh lệch).
 - **RTP vs SRTP**: RTP là định dạng gói media (có SSRC, sequence, timestamp); SRTP = RTP + mã hoá/xác thực, khoá derive từ DTLS handshake.
 - **SSRC**: id 32-bit gắn với 1 luồng media, dùng để demux khi nhiều luồng đi chung 1 transport (BUNDLE) — `mezon-sfu` forward nguyên SSRC gốc của publisher, không đổi lại.
 - **1 phiên WS + 1 phiên UDP/SRTP gắn chặt nhau**: UDP không phải bước độc lập — nó là hệ quả tự động của việc hoàn tất SDP answer qua WS (ICE/DTLS bootstrap từ ufrag/pwd/fingerprint có trong SDP). WS phải sống suốt phiên (để nhận offer renegotiate), không chỉ dùng lúc đầu.
 - **"join" (NATS) bắn rất sớm**: ngay khi JWT hợp lệ ở message `join`, **trước** khi SDP/ICE/DTLS/SRTP bắt đầu — không đảm bảo peer đó sau này có media thật. Tín hiệu "chắc chắn" hơn (`peer_joined`/`room_snapshot`) chỉ tồn tại ở kênh WS, không có ở NATS.
-- **Recipe lấy audio người khác để record**: parse SDP offer lấy `{mid, ssrc}`, join với `{mid_audio, user_id}` từ `peer_joined`/`room_snapshot` → ra bảng `ssrc → user_id` runtime → dùng để gắn nhãn khi demux RTP thật.
+- **Recipe lấy audio người khác để record** — **[SỬA, bản cũ ở đây dựa vào SSRC đọc từ SDP, không còn đúng]**: SDP downlink hiện **không có SSRC** (chỉ `a=msid:u<user_id>-p<peer_id>`, dòng `a=ssrc` từng được thêm 08-17 rồi bị revert 08-18 vì gây lỗi renegotiate) — đọc `user_id` thẳng từ `msid`, dùng `mid` RTP header extension (SFU tự stamp mỗi gói) để demux runtime thay vì SSRC. Recipe đầy đủ, luôn cập nhật: `mezon-sfu-migration-checklist.md` mục D2.
 
 ## Đọc gì tiếp theo (thứ tự khuyến nghị)
 

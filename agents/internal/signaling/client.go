@@ -55,7 +55,12 @@ type Client struct {
 // cb must be fully populated before calling Dial since OnOffer/OnJoined can
 // fire before Dial returns.
 func Dial(ctx context.Context, wsURL, token string, role string, cb Callbacks) (*Client, error) {
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	// 5s: guards against mezon-sfu/network being slow, not genuinely
+	// necessary work -- a local WS handshake normally completes in well
+	// under 1s, so this only ever matters when something's actually wrong,
+	// in which case failing fast (and letting the worker manager's own
+	// retry/backoff take over) beats a long silent wait.
+	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
 	conn, resp, err := dialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("signaling: dial %s: %w", wsURL, err)

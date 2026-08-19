@@ -137,9 +137,18 @@ func (f *Forwarder) readLoop() {
 	}
 }
 
+// closeGrace bounds how long Close waits for the write/read loops to finish
+// flushing to record-service. Deliberately small and shared across both
+// loops (one deadline, not two sequential ones): this guards against
+// record-service/network being slow or down, not against genuinely
+// necessary work -- if it's actually down, waiting longer doesn't help, and
+// whatever's still buffered locally is already best-effort (SendPCM already
+// drops under backpressure, see its doc).
+const closeGrace = 2 * time.Second
+
 // Close flushes any pending drop count, signals the write loop to stop, and
-// waits (briefly) for both loops to finish. Must be called from the same
-// goroutine as SendPCM -- see the Forwarder doc.
+// waits (briefly, see closeGrace) for both loops to finish. Must be called
+// from the same goroutine as SendPCM -- see the Forwarder doc.
 func (f *Forwarder) Close() {
 	if f.closed {
 		return
@@ -155,12 +164,14 @@ func (f *Forwarder) Close() {
 	}
 	close(f.queue)
 
+	deadline := time.After(closeGrace)
 	select {
 	case <-f.writerDone:
-	case <-time.After(5 * time.Second):
+	case <-deadline:
+		return
 	}
 	select {
 	case <-f.readerDone:
-	case <-time.After(5 * time.Second):
+	case <-deadline:
 	}
 }

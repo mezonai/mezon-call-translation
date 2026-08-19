@@ -8,10 +8,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -20,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/mezonai/mezon-call-translation/agents/internal/audiopipeline"
@@ -31,10 +30,18 @@ import (
 	"github.com/mezonai/mezon-call-translation/agents/internal/rtcagent"
 	"github.com/mezonai/mezon-call-translation/agents/internal/sfuauth"
 	"github.com/mezonai/mezon-call-translation/agents/internal/signaling"
-	"github.com/mezonai/mezon-call-translation/agents/internal/sttclient"
+	"github.com/mezonai/mezon-call-translation/agents/internal/tracksink"
 	"github.com/mezonai/mezon-call-translation/agents/internal/ttsclient"
 	"github.com/mezonai/mezon-call-translation/agents/internal/ttsplayer"
 )
+
+// orchestratorCallTimeout bounds the register/unregister-room HTTP calls.
+// Small on purpose: guards against orchestrator/network being slow, not
+// genuinely necessary work -- a call that would succeed in 5s but not 3s
+// isn't worth optimizing for, and one to a genuinely down orchestrator won't
+// succeed no matter how long we wait (both calls already degrade gracefully
+// on failure rather than blocking startup/shutdown, see their call sites).
+const orchestratorCallTimeout = 3 * time.Second
 
 func main() {
 	cfg, err := config.FromEnv()
@@ -204,8 +211,7 @@ func run(ctx context.Context, cfg config.Config, recClient *recordclient.Client,
 
 // runSession performs one full join: sign a fresh JWT, dial, complete the
 // handshake, and block until the session ends (WS error/close) or ctx is
-// cancelled. Every call builds brand new session state (rtcagent.PeerAgent,
-// audiopipeline.Bridge, ttsplayer.Player if speaking) -- mezon-sfu ties the
+// cancelled. Every call builds a brand new session -- mezon-sfu ties the
 // media session to the WS connection 1:1, so there is nothing to resume
 // from a previous attempt, and mid numbering restarts from scratch too.
 func runSession(ctx context.Context, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs) error {
@@ -214,210 +220,236 @@ func runSession(ctx context.Context, cfg config.Config, recClient *recordclient.
 		return err
 	}
 
-	// peerAgent/player are set by OnJoined once mezon-sfu returns
-	// iceServers, and read by OnOffer/roster callbacks. Safe without
-	// locking: all signaling.Callbacks run sequentially on
-	// signaling.Client's single read-loop goroutine, and OnJoined always
-	// fires before offer per the join handshake order
-	// (mezon-sfu-migration-checklist.md C.2).
-	var peerAgent *rtcagent.PeerAgent
-	var player *ttsplayer.Player
+	// roomName: see orchestratorclient's package doc -- mezon-sfu's own
+	// numeric room_id, used as room_name everywhere the old contract wanted
+	// one. roomID: orchestrator's own UUID for this session, minted and
+	// registered below (or roomName itself as a degrade fallback) -- these
+	// are two different identifiers, do not conflate them.
+	roomName := strconv.FormatUint(cfg.RoomID, 10)
+	roomID := registerRoomWithOrchestrator(ctx, orch, roomName)
 
-	cb := signaling.Callbacks{
-		OnJoined: func(room uint64, iceServers []signaling.ICEServer) {
-			logging.L.Info("signaling: joined", "room", room, "ice_servers", len(iceServers))
+	sess := newSession(cfg, recClient, orch, refs, roomName, roomID)
 
-			var publishTrack *webrtc.TrackLocalStaticSample
-			if cfg.Role == config.RoleSpeaker {
-				track, err := webrtc.NewTrackLocalStaticSample(
-					webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 1},
-					"tts-audio", "agent-tts",
-				)
-				if err != nil {
-					logging.L.Error("ttsplayer: failed to create publish track, joining as audience instead", logging.ErrAttrs(err)...)
-				} else {
-					publishTrack = track
-				}
-			}
-
-			pa, err := rtcagent.New(iceServers, publishTrack)
-			if err != nil {
-				logging.L.Error("rtcagent: failed to create peer connection", logging.ErrAttrs(err)...)
-				return
-			}
-
-			bridge := audiopipeline.NewBridge(newRecordSinkFactory(recClient, cfg), newSTTSinkFactory(cfg, orch))
-			pa.OnAudioPacket = bridge.HandlePacket
-			pa.OnTrackEnded = bridge.HandleTrackEnded
-
-			if publishTrack != nil && orch != nil {
-				p, err := ttsplayer.New(publishTrack, ttsclient.New(cfg.TTSService.BaseURL), cfg.TTSService.SampleRate,
-					recClient, cfg.RoomID, cfg.AgentUserID, cfg.TTSService.MaxQueueSize)
-				if err != nil {
-					// Best-effort: no working Opus encoder yet (see
-					// internal/opusenc) -- still join and record/transcribe
-					// normally, just can't speak this session.
-					logging.L.Warn("ttsplayer: unavailable this session", logging.ErrAttrs(err)...)
-				} else {
-					player = p
-				}
-			}
-
-			peerAgent = pa
-			refs.set(bridge, player)
-		},
-		OnOffer: func(sdp string) (string, error) {
-			if peerAgent == nil {
-				return "", errNoPeerAgent
-			}
-			return peerAgent.HandleOffer(sdp)
-		},
-		OnRoomSnapshot: func(selfPeerID uint64, participantCount int, members []signaling.Member) {
-			logging.L.Info("signaling: room_snapshot", "self_peer_id", selfPeerID, "participant_count", participantCount)
-			if peerAgent == nil {
-				return
-			}
-			for _, m := range members {
-				peerAgent.UpsertRoster(m)
-			}
-		},
-		OnPeerJoined: func(participantCount int, peer signaling.Member) {
-			logging.L.Info("signaling: peer_joined", "user_id", peer.UserID, "role", peer.Role, "participant_count", participantCount)
-			if peerAgent != nil {
-				peerAgent.UpsertRoster(peer)
-			}
-		},
-		OnPeerLeft: func(ev signaling.PeerLeftEvent) {
-			logging.L.Info("signaling: peer_left", "user_id", ev.UserID, "participant_count", ev.ParticipantCount)
-			if peerAgent != nil {
-				peerAgent.RemovePeer(ev.UserID)
-			}
-		},
-		OnPeerUpdated: func(peer signaling.Member) {
-			logging.L.Info("signaling: peer_updated", "user_id", peer.UserID, "role", peer.Role, "is_mute", peer.IsMute)
-			if peerAgent != nil {
-				peerAgent.UpsertRoster(peer)
-			}
-		},
-	}
-
-	client, err := signaling.Dial(ctx, cfg.SFUWebSocketURL, token, string(cfg.Role), cb)
+	client, err := signaling.Dial(ctx, cfg.SFUWebSocketURL, token, string(cfg.Role), sess.callbacks())
 	if err != nil {
 		return err
 	}
 	defer func() {
-		refs.set(nil, nil)
+		sess.close()
 		_ = client.Close()
-		if peerAgent != nil {
-			_ = peerAgent.Close()
-		}
-		if player != nil {
-			player.Close()
-		}
 	}()
 
 	logging.L.Info("agent: dialed mezon-sfu, awaiting handshake",
-		"ws_url", cfg.SFUWebSocketURL, "room_id", cfg.RoomID, "role", cfg.Role, "agent_user_id", cfg.AgentUserID)
+		"ws_url", cfg.SFUWebSocketURL, "room_id", cfg.RoomID, "orchestrator_room_id", roomID, "role", cfg.Role, "agent_user_id", cfg.AgentUserID)
 
 	return client.Run(ctx)
 }
 
-// newRecordSinkFactory returns nil if recording is disabled for this run
-// (recClient nil), so audiopipeline.NewBridge treats it as "no record sink
-// for any track" without a nil-check at every call site.
-func newRecordSinkFactory(recClient *recordclient.Client, cfg config.Config) func(info rtcagent.TrackInfo) audiopipeline.Sink {
-	if recClient == nil {
-		return nil
+// registerRoomWithOrchestrator mints a fresh UUID and registers it with
+// orchestrator as this session's stable room_id (see
+// orchestratorclient.Client.RegisterRoom's doc for why this matters -- it's
+// what lets record-service's recording events for this session resolve to
+// a real room instead of getting silently dropped). Mirrors the old Python
+// agent's main.go: called before dialing mezon-sfu, so room_id is already
+// in hand before any track can possibly start recording.
+//
+// orch nil (ORCHESTRATOR_BASE_URL unset) or a failed/unreachable register
+// call both degrade to using roomName itself as the room_id, matching the
+// old Python agent's fallback ("room_id stays None, downstream code falls
+// back to ctx.room.name") -- recording still proceeds, just without a shot
+// at resolving through orchestrator's registry either, same as before.
+func registerRoomWithOrchestrator(ctx context.Context, orch *orchestratorclient.Client, roomName string) string {
+	if orch == nil {
+		return roomName
 	}
-	return func(info rtcagent.TrackInfo) audiopipeline.Sink {
-		fwd, err := recordclient.NewForwarder(recClient, recordclient.SessionMeta{
-			RoomID: strconv.FormatUint(cfg.RoomID, 10),
-			// mezon-sfu has no persistent track SID like LiveKit's
-			// publication SID (mezon-sfu-migration-checklist.md A3.6) --
-			// peer_id+kind is unique for the life of that remote peer's WS
-			// session, as stable an identifier as the protocol offers.
-			TrackID:             fmt.Sprintf("peer%d-%s", info.PeerID, info.Kind),
-			ParticipantIdentity: strconv.FormatInt(info.UserID, 10),
-			Source:              string(info.Kind), // always "mic": OnAudioPacket only fires for KindAudio, see rtcagent
-			SampleRate:          audiopipeline.PCMSampleRate,
-			Channels:            audiopipeline.PCMChannels,
-		}, cfg.RecordService.MaxQueueSize)
-		if err != nil {
-			// Best-effort per audio-ingestion/PLAN.md D5 -- no recording
-			// for this track must never be fatal to the call/STT.
-			logging.L.Error("recordclient: failed to start forwarder", append(logging.ErrAttrs(err), "mid", info.Mid)...)
-			return nil
-		}
-		return fwd
+	agentRoomID := uuid.NewString()
+	rctx, cancel := context.WithTimeout(ctx, orchestratorCallTimeout)
+	defer cancel()
+	if err := orch.RegisterRoom(rctx, roomName, agentRoomID); err != nil {
+		logging.L.Warn("orchestratorclient: register_room failed, recording events for this session may not resolve",
+			append(logging.ErrAttrs(err), "room_name", roomName)...)
+		return roomName
+	}
+	return agentRoomID
+}
+
+// session holds the mutable state of a single mezon-sfu join --
+// rtcagent.PeerAgent and (if speaking) ttsplayer.Player -- and is the
+// receiver for every signaling.Callbacks hook. Bundling these as fields
+// instead of closure-captured locals means the state each handler reads is
+// explicit and the handlers are independently readable/testable, rather
+// than a block of nested funcs all reaching into the same captured
+// variables.
+//
+// No locking needed: every signaling.Callbacks hook runs sequentially on
+// signaling.Client's single read-loop goroutine, and onJoined always fires
+// before onOffer per the join handshake order
+// (mezon-sfu-migration-checklist.md C.2).
+type session struct {
+	cfg       config.Config
+	recClient *recordclient.Client
+	orch      *orchestratorclient.Client
+	refs      *sessionRefs
+	// roomName/roomID: see runSession's comment at the call site and
+	// orchestratorclient's package doc -- two different identifiers, roomID
+	// is what record-service/TTS forwarding need, roomName is what
+	// push_transcript/SSE/STT use.
+	roomName string
+	roomID   string
+
+	peerAgent *rtcagent.PeerAgent
+	player    *ttsplayer.Player
+}
+
+func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs, roomName, roomID string) *session {
+	return &session{cfg: cfg, recClient: recClient, orch: orch, refs: refs, roomName: roomName, roomID: roomID}
+}
+
+func (s *session) callbacks() signaling.Callbacks {
+	return signaling.Callbacks{
+		OnJoined:       s.onJoined,
+		OnOffer:        s.onOffer,
+		OnRoomSnapshot: s.onRoomSnapshot,
+		OnPeerJoined:   s.onPeerJoined,
+		OnPeerLeft:     s.onPeerLeft,
+		OnPeerUpdated:  s.onPeerUpdated,
 	}
 }
 
-// newSTTSinkFactory returns nil if STT can't do anything useful this run
-// (no STT host configured, or no orchestrator to push transcripts to and
-// no way it could ever be enabled -- see registerRequestHandlers, which
-// only registers transcript_control when orch is non-nil).
-func newSTTSinkFactory(cfg config.Config, orch *orchestratorclient.Client) func(info rtcagent.TrackInfo) audiopipeline.Sink {
-	if cfg.STT.Host == "" || orch == nil {
-		return nil
-	}
-	roomName := strconv.FormatUint(cfg.RoomID, 10) // see orchestratorclient's package doc re: room_name vs room_id
+func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
+	logging.L.Info("signaling: joined", "room", room, "ice_servers", len(iceServers))
 
-	return func(info rtcagent.TrackInfo) audiopipeline.Sink {
-		clientID := fmt.Sprintf("peer%d-%s", info.PeerID, info.Kind)
-		participantIdentity := strconv.FormatInt(info.UserID, 10)
-		wsURL := fmt.Sprintf("ws://%s:%d/ws/vosk/?client_id=%s&session_id=%s",
-			cfg.STT.Host, cfg.STT.Port, url.QueryEscape(clientID), url.QueryEscape(roomName))
-
-		onMessage := func(raw []byte) {
-			text, isFinal, ok := parseTranscriptMessage(raw)
-			if !ok || text == "" {
-				return
-			}
-			messageType := "PARTIAL"
-			if isFinal {
-				messageType = "FINAL"
-			}
-			// Fire-and-forget, off the STT client's own read-loop goroutine
-			// -- pushing to orchestrator must never delay reading the next
-			// transcription result.
-			go func() {
-				pctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := orch.PushTranscript(pctx, roomName, text, participantIdentity, messageType); err != nil {
-					logging.L.Warn("orchestratorclient: push_transcript failed", logging.ErrAttrs(err)...)
-				}
-			}()
-		}
-
-		c, err := sttclient.Dial(context.Background(), wsURL, cfg.STT.MaxQueueSize, onMessage)
+	var publishTrack *webrtc.TrackLocalStaticSample
+	if s.cfg.Role == config.RoleSpeaker {
+		// Channels must be 2 here per RFC 7587 (Opus RTP payload format):
+		// the SDP rtpmap always declares 2 channels regardless of actual
+		// mono/stereo content -- mezon-sfu's offer says "opus/48000/2"
+		// (sdp.c) and so does pion's own default Opus registration
+		// (mediaengine.go). Actual mono output is unaffected: that's
+		// controlled by the (absent, so default) fmtp "stereo" param, not
+		// this field. Declaring Channels:1 here made pion's codec fuzzy
+		// match (internal/fmtp.ChannelsEqual) fail against the negotiated
+		// "opus/48000/2" codec -- Bind() would return ErrUnsupportedCodec
+		// even with a working encoder.
+		track, err := webrtc.NewTrackLocalStaticSample(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2},
+			"tts-audio", "agent-tts",
+		)
 		if err != nil {
-			logging.L.Error("sttclient: failed to dial", append(logging.ErrAttrs(err), "mid", info.Mid)...)
-			return nil
+			logging.L.Error("ttsplayer: failed to create publish track, joining as audience instead", logging.ErrAttrs(err)...)
+		} else {
+			publishTrack = track
 		}
-		return c
+	}
+
+	pa, err := rtcagent.New(iceServers, publishTrack)
+	if err != nil {
+		logging.L.Error("rtcagent: failed to create peer connection", logging.ErrAttrs(err)...)
+		return
+	}
+
+	// recordFactory/sttFactory are nil when that consumer is disabled for
+	// this run (see tracksink's constructors); newRecordSink/newSTTSink must
+	// stay nil funcs (not a method value bound to a nil receiver) in that
+	// case -- Bridge nil-checks the func itself before calling it.
+	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID)
+	sttFactory := tracksink.NewSTTSinkFactory(s.cfg, s.orch)
+	var newRecordSink, newSTTSink func(info rtcagent.TrackInfo) audiopipeline.Sink
+	if recordFactory != nil {
+		newRecordSink = recordFactory.NewSink
+	}
+	if sttFactory != nil {
+		newSTTSink = sttFactory.NewSink
+	}
+
+	bridge := audiopipeline.NewBridge(newRecordSink, newSTTSink)
+	pa.OnAudioPacket = bridge.HandlePacket
+	pa.OnTrackEnded = bridge.HandleTrackEnded
+
+	var player *ttsplayer.Player
+	if publishTrack != nil && s.orch != nil {
+		p, err := ttsplayer.New(publishTrack, ttsclient.New(s.cfg.TTSService.BaseURL), s.cfg.TTSService.SampleRate,
+			s.recClient, s.roomID, s.cfg.AgentUserID, s.cfg.TTSService.MaxQueueSize, s.orch)
+		if err != nil {
+			// Best-effort per audio-ingestion/PLAN.md D5 -- an encoder
+			// init failure (see internal/opusenc) must not stop the agent
+			// from joining and record/transcribing normally, just means it
+			// can't speak this session.
+			logging.L.Warn("ttsplayer: unavailable this session", logging.ErrAttrs(err)...)
+		} else {
+			player = p
+		}
+	}
+
+	s.peerAgent = pa
+	s.player = player
+	s.refs.set(bridge, player)
+}
+
+func (s *session) onOffer(sdp string) (string, error) {
+	if s.peerAgent == nil {
+		return "", errNoPeerAgent
+	}
+	return s.peerAgent.HandleOffer(sdp)
+}
+
+func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, members []signaling.Member) {
+	logging.L.Info("signaling: room_snapshot", "self_peer_id", selfPeerID, "participant_count", participantCount)
+	if s.peerAgent == nil {
+		return
+	}
+	for _, m := range members {
+		s.peerAgent.UpsertRoster(m)
 	}
 }
 
-// parseTranscriptMessage mirrors the old Python agent's parsing in
-// event_handlers.py's transcription_callback: JSON {"text","is_final"} if
-// the message looks like JSON, otherwise the raw message is the text
-// (is_final defaults to false in that case).
-func parseTranscriptMessage(raw []byte) (text string, isFinal bool, ok bool) {
-	s := strings.TrimSpace(string(raw))
-	if s == "" {
-		return "", false, false
+func (s *session) onPeerJoined(participantCount int, peer signaling.Member) {
+	logging.L.Info("signaling: peer_joined", "user_id", peer.UserID, "role", peer.Role, "participant_count", participantCount)
+	if s.peerAgent != nil {
+		s.peerAgent.UpsertRoster(peer)
 	}
-	if strings.HasPrefix(s, "{") {
-		var data struct {
-			Text    string `json:"text"`
-			IsFinal bool   `json:"is_final"`
-		}
-		if err := json.Unmarshal([]byte(s), &data); err != nil {
-			return "", false, false
-		}
-		return strings.TrimSpace(data.Text), data.IsFinal, true
+}
+
+func (s *session) onPeerLeft(ev signaling.PeerLeftEvent) {
+	logging.L.Info("signaling: peer_left", "user_id", ev.UserID, "participant_count", ev.ParticipantCount)
+	if s.peerAgent != nil {
+		s.peerAgent.RemovePeer(ev.UserID)
 	}
-	return s, false, true
+}
+
+func (s *session) onPeerUpdated(peer signaling.Member) {
+	logging.L.Info("signaling: peer_updated", "user_id", peer.UserID, "role", peer.Role, "is_mute", peer.IsMute)
+	if s.peerAgent != nil {
+		s.peerAgent.UpsertRoster(peer)
+	}
+}
+
+// close releases this session's resources, clears refs so the long-lived
+// orchestrator SSE handlers stop seeing it as the active session, and
+// unregisters the room from orchestrator (see RegisterRoom's doc for what
+// that triggers -- room finalization/summary generation). Safe to call even
+// if onJoined never fired (peerAgent/player stay nil) or registration never
+// succeeded (roomID falls back to roomName -- unregistering that is a
+// harmless no-op orchestrator-side, matching the old Python agent, which
+// always called unregister_room in its cleanup path regardless).
+func (s *session) close() {
+	s.refs.set(nil, nil)
+	if s.peerAgent != nil {
+		_ = s.peerAgent.Close()
+	}
+	if s.player != nil {
+		s.player.Close()
+	}
+	if s.orch != nil {
+		// context.Background(), not runSession's ctx: this typically runs
+		// during shutdown (SIGTERM), by which point that ctx is already
+		// cancelled -- same pattern as transcriptForwarder.push.
+		uctx, cancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
+		defer cancel()
+		if err := s.orch.UnregisterRoom(uctx, s.roomName, s.roomID); err != nil {
+			logging.L.Warn("orchestratorclient: unregister_room failed", append(logging.ErrAttrs(err), "room_name", s.roomName)...)
+		}
+	}
 }
 
 var errNoPeerAgent = errors.New("received offer before joined/peer-connection setup completed")

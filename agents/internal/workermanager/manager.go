@@ -29,28 +29,61 @@ type managedAgent struct {
 // persistence (e.g. a local state file, PID liveness reconciliation on
 // startup) if that turns out to matter in practice; not worth the added
 // complexity before there's a real deployment to size it against.
+//
+// [NOTE 2026-08-19, chưa triển khai, cần suy nghĩ thêm] Sketch cho hướng
+// reconciliation nếu làm: ghi 1 file nhỏ {room_id, pid, agent_user_id,
+// started_at} khi spawn (xoá khi reap/Stop xong); lúc start lại, scan thư
+// mục đó, check từng pid còn sống không (kill(pid,0)) VÀ đúng là tiến trình
+// `agent` thật (đối chiếu /proc/<pid>/exe hoặc cmdline, tránh nhầm pid đã bị
+// OS tái sử dụng cho process khác) rồi mới nạp lại vào `agents`. Điểm khó:
+// agent con dùng Setpgid:true nên khi worker-manager cũ chết, nó bị
+// reparent lên init -- không còn là con của instance mới, nên cmd.Wait()
+// (cách reap() đang dùng) không dùng lại được cho các agent "nạp lại" này;
+// phải tách 2 đường -- agent tự Start() trong đời process hiện tại vẫn
+// dùng cmd.Wait() như cũ, còn agent adopt lại từ file phải tự poll
+// kill(pid,0) định kỳ (đơn giản, tốn 1 goroutine/agent) hoặc dùng Linux
+// pidfd_open (qua golang.org/x/sys/unix) để poll không cần sleep-loop --
+// sạch hơn nhưng thêm dependency Linux-specific, có thể bắt đầu bằng bản
+// polling đơn giản trước.
 type Manager struct {
 	cfg Config
 
 	mu     sync.Mutex
 	agents map[uint64]*managedAgent
+
+	// shards: see shard.go's doc -- routes Start/Stop calls so events for
+	// the same room always serialize with each other but never block a
+	// different room's events.
+	shards [numShards]chan func()
 }
 
 func New(cfg Config) *Manager {
-	return &Manager{cfg: cfg, agents: make(map[uint64]*managedAgent)}
+	m := &Manager{cfg: cfg, agents: make(map[uint64]*managedAgent)}
+	m.startShards()
+	return m
 }
 
 // Start spawns one `agent` subprocess for ev.RoomID. Idempotent: a start
 // for a room that already has a running agent is logged and ignored rather
 // than double-spawning (a duplicate/retried NATS delivery shouldn't produce
-// two agents fighting over the same room).
+// two agents fighting over the same room). The existence check below is
+// safe against a concurrent Start/Stop for the *same* room_id only because
+// callers always go through Manager.dispatch (shard.go), which guarantees
+// at most one goroutine is ever running Start/Stop for a given room_id at a
+// time -- calling Start directly from multiple goroutines for the same room
+// would race between the check and the map insert below.
 func (m *Manager) Start(ev StartEvent) error {
 	if ev.RoomID == 0 {
 		return fmt.Errorf("workermanager: start event missing room_id")
 	}
-	if ev.AgentUserID == 0 {
-		return fmt.Errorf("workermanager: start event for room_id=%d missing agent_user_id", ev.RoomID)
+	// AgentUserID always comes from config, never the event -- see
+	// StartEvent's doc for why. 0 (unconfigured) is a hard error rather
+	// than silently joining with a guessed id.
+	if m.cfg.AgentUserIDBase == 0 {
+		return fmt.Errorf("workermanager: AGENT_USER_ID_BASE not configured, cannot start room_id=%d", ev.RoomID)
 	}
+	agentUserID := m.cfg.AgentUserIDBase
+
 	role := ev.Role
 	if role == "" {
 		role = string(config.RoleAudience)
@@ -69,7 +102,7 @@ func (m *Manager) Start(ev StartEvent) error {
 	env = append(env, m.cfg.BaseAgentEnv...)
 	env = append(env,
 		fmt.Sprintf("ROOM_ID=%d", ev.RoomID),
-		fmt.Sprintf("AGENT_USER_ID=%d", ev.AgentUserID),
+		fmt.Sprintf("AGENT_USER_ID=%d", agentUserID),
 		fmt.Sprintf("AGENT_ROLE=%s", role),
 	)
 
@@ -90,7 +123,7 @@ func (m *Manager) Start(ev StartEvent) error {
 	agent := &managedAgent{
 		cmd:         cmd,
 		roomID:      ev.RoomID,
-		agentUserID: ev.AgentUserID,
+		agentUserID: agentUserID,
 		startedAt:   time.Now(),
 		done:        make(chan struct{}),
 	}
@@ -100,7 +133,7 @@ func (m *Manager) Start(ev StartEvent) error {
 	m.mu.Unlock()
 
 	logging.L.Info("workermanager: spawned agent",
-		"room_id", ev.RoomID, "agent_user_id", ev.AgentUserID, "role", role, "pid", cmd.Process.Pid)
+		"room_id", ev.RoomID, "agent_user_id", agentUserID, "role", role, "pid", cmd.Process.Pid)
 
 	go m.reap(agent)
 	return nil

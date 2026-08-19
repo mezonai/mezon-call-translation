@@ -22,10 +22,10 @@ type answerMsg struct {
 	SDP  string `json:"sdp"`
 }
 
-type pingMsg struct {
-	Type string `json:"type"`
-}
-
+// pongMsg is the only keepalive message the client sends -- mezon-sfu
+// drives the ping/pong cycle itself (server pings every 10s, disconnects
+// after 20s idle; see the "ping" case in Client.dispatch), so there's no
+// pingMsg here for the client to proactively send.
 type pongMsg struct {
 	Type string `json:"type"`
 }

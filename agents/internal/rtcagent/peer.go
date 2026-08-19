@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
@@ -27,6 +28,12 @@ import (
 	"github.com/mezonai/mezon-call-translation/agents/internal/logging"
 	"github.com/mezonai/mezon-call-translation/agents/internal/signaling"
 )
+
+// closeTimeout bounds pion's PeerConnection.Close, which has no built-in
+// deadline of its own. Local teardown (ICE/DTLS/SRTP), not a call that waits
+// on the remote side, so this is purely a defensive ceiling against an
+// unexpected hang, not something normal operation should ever approach.
+const closeTimeout = 2 * time.Second
 
 const remoteMidBase = 3 // mezon-sfu SFU_REMOTE_MID_BASE
 
@@ -185,9 +192,18 @@ func (a *PeerAgent) RemovePeer(userID int64) {
 
 // Close tears down the PeerConnection. Closing the parent WS connection is
 // what actually ends the mezon-sfu session server-side; this just releases
-// local resources.
+// local resources. Bounded by closeTimeout rather than trusting pion to
+// always return promptly.
 func (a *PeerAgent) Close() error {
-	return a.pc.Close()
+	done := make(chan error, 1)
+	go func() { done <- a.pc.Close() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(closeTimeout):
+		logging.L.Warn("rtcagent: PeerConnection.Close did not return within timeout, continuing shutdown", "timeout", closeTimeout)
+		return nil
+	}
 }
 
 func (a *PeerAgent) handleTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
