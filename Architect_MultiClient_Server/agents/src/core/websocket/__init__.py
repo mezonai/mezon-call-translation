@@ -2,7 +2,7 @@
 WebSocket clients for external services
 
 This module provides WebSocket clients for:
-- STT (Speech-to-Text): Vosk transcription server
+- STT (Speech-to-Text): Speech to text transcription server
 - TTS (Text-to-Speech): TTS generation server
 
 All clients inherit from BaseWebSocketClient for common functionality.
