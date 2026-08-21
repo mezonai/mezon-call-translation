@@ -3,117 +3,35 @@ SSE Metadata API
 Endpoints for bot to receive agent metadata events via SSE
 """
 
-from datetime import datetime
-from typing import Any, ClassVar
-from uuid import UUID
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.constants.permissions import METADATA_EVENTS_VIEW_ALL
-from orchestrator_service.models.metadata_event_models import MetadataEventType
+from orchestrator_service.models.sse_metadata_models import (
+    MetadataEventDetailResponse,
+    MetadataEventIdPath,
+    MetadataEventListResponse,
+    MetadataListQuery,
+    MetadataPushResponse,
+    SessionEndedRequest,
+    SessionRecordDoneRequest,
+    SessionStartedRequest,
+    SessionSummaryDoneRequest,
+)
 from orchestrator_service.services.sse_metadata_service import SseMetadataService, get_sse_metadata_service
-from orchestrator_service.utils.logger import get_logger
 
-logger = get_logger(__name__)
 router = APIRouter()
 
 
-# ==================== Pydantic Models ====================
-
-
-class RoomInfo(BaseModel):  # type: ignore[explicit-any]
-    """Room information"""
-
-    room_id: str = Field(..., description="Room identifier")
-    room_name: str = Field(..., description="Room name")
-
-    @field_validator("room_id")
-    @classmethod
-    def validate_uuid(cls, v: str) -> str:
-        try:
-            UUID(v)
-        except (ValueError, AttributeError) as e:
-            raise ValueError(f"Invalid UUID format: {v!r}") from e
-        return v
-
-    class Config:
-        # TODO: Use `Any` type becase json_schema_extra is defined by complex structure
-        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
-            "example": {"room_id": "abc123", "room_name": "Interview Room 1"}
-        }
-
-
-class SessionStartedRequest(RoomInfo):  # type: ignore[explicit-any]
-    """Request model for session_started event"""
-
-    class Config(RoomInfo.Config):
-        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
-            "example": {"room_id": "abc123", "room_name": "Interview Room 1"}
-        }
-
-
-class SessionEndedRequest(RoomInfo):  # type: ignore[explicit-any]
-    """Request model for session_ended event"""
-
-    duration_seconds: int | None = Field(None, description="Duration of room session in seconds")
-
-    class Config(RoomInfo.Config):
-        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
-            "example": {"room_id": "abc123", "room_name": "Interview Room 1", "duration_seconds": 3600}
-        }
-
-
-class FileResult(BaseModel):  # type: ignore[explicit-any]
-    """Recording file result"""
-
-    participant_identity: str = Field(..., description="Identity of participant")
-    filename: str = Field(..., description="Name of the recording file")
-    start_time: str = Field(..., description="Recording start time (ISO 8601)")
-    end_time: str = Field(..., description="Recording end time (ISO 8601)")
-
-    class Config:
-        json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
-            "example": {
-                "participant_identity": "user_1",
-                "filename": "user_1_audio.mp3",
-                "start_time": "2026-03-02T10:00:01Z",
-                "end_time": "2026-03-02T11:00:00Z",
-            }
-        }
-
-
-class SessionRecordDoneRequest(RoomInfo):  # type: ignore[explicit-any]
-    """Request model for room_record_done event"""
-
-    class Config(RoomInfo.Config):
-        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
-            "example": {
-                "room_id": "abc123",
-                "room_name": "Room_1",
-            }
-        }
-
-
-class SessionSummaryDoneRequest(RoomInfo):  # type: ignore[explicit-any]
-    """Request model for room_summary_done event"""
-
-    class Config(RoomInfo.Config):
-        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
-            "example": {"room_id": "69a66008cfc00881f1d7b382", "room_name": "H3U-EXdDg"}
-        }
-
-
-# ==================== SSE Endpoint ====================
-
-
-@router.get("/sse/metadata")
+@router.get("/sse/metadata", response_class=StreamingResponse)
 async def sse_metadata_endpoint(
     auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL)),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
-):
+) -> StreamingResponse:
     """
     SSE endpoint for bot to receive agent metadata events.
 
@@ -124,18 +42,18 @@ async def sse_metadata_endpoint(
     Returns:
         StreamingResponse with SSE events
     """
-    return await sse_service.create_connection(auth.user_id)
+    return await sse_service.create_connection(auth.user_id) # type: ignore[no-any-return]
 
 
 # ==================== Push Endpoints ====================
 
 
-@router.post("/push_metadata/session_started")
+@router.post("/push_metadata/session_started", response_model=MetadataPushResponse)
 async def push_session_started_api(
     req: SessionStartedRequest,
     auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
-):
+) -> MetadataPushResponse:
     """
     Push session_started event to all connected bots via SSE.
 
@@ -146,15 +64,16 @@ async def push_session_started_api(
         Status and statistics
 
     """
-    return await sse_service.push_room_started(room_id=req.room_id, room_name=req.room_name)
+    result = await sse_service.push_room_started(room_id=req.room_id, room_name=req.room_name)
+    return MetadataPushResponse(**result)
 
 
-@router.post("/push_metadata/session_ended")
+@router.post("/push_metadata/session_ended", response_model=MetadataPushResponse)
 async def push_session_ended_api(
     req: SessionEndedRequest,
     auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
-):
+) -> MetadataPushResponse:
     """
     Push session_ended event to all connected bots via SSE.
 
@@ -165,17 +84,18 @@ async def push_session_ended_api(
         Status and statistics
 
     """
-    return await sse_service.push_room_ended(
+    result = await sse_service.push_room_ended(
         room_id=req.room_id, room_name=req.room_name, duration_seconds=req.duration_seconds
     )
+    return MetadataPushResponse(**result)
 
 
-@router.post("/push_metadata/session_record_done")
+@router.post("/push_metadata/session_record_done", response_model=MetadataPushResponse)
 async def push_session_record_done_api(
     req: SessionRecordDoneRequest,
     auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
-):
+) -> MetadataPushResponse:
     """
     Push session_record_done event to all connected bots via SSE.
     File results are automatically fetched from PostgreSQL based on room_id.
@@ -187,15 +107,16 @@ async def push_session_record_done_api(
         Status and statistics
 
     """
-    return await sse_service.push_room_record_done(room_id=req.room_id, room_name=req.room_name)
+    result = await sse_service.push_room_record_done(room_id=req.room_id, room_name=req.room_name)
+    return MetadataPushResponse(**result)
 
 
-@router.post("/push_metadata/session_summary_done")
+@router.post("/push_metadata/session_summary_done", response_model=MetadataPushResponse)
 async def push_session_summary_done_api(
     req: SessionSummaryDoneRequest,
     auth: dict[str, str | bool] = Depends(verify_api_key),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
-):
+) -> MetadataPushResponse:
     """
     Push session_summary_done event to all connected bots via SSE.
     Notifies that room summary/analysis has been completed.
@@ -207,25 +128,16 @@ async def push_session_summary_done_api(
         Status and statistics
 
     """
-    return await sse_service.push_room_summary_done(room_id=req.room_id, room_name=req.room_name)
+    result = await sse_service.push_room_summary_done(room_id=req.room_id, room_name=req.room_name)
+    return MetadataPushResponse(**result)
 
 
-@router.get("/metadata", response_description="List metadata events")
+@router.get("/metadata", response_model=MetadataEventListResponse, response_description="List metadata events")
 async def list_metadata_events(
-    event_type: str | None = Query(
-        None, description="Filter by event type (room_started, room_ended, room_record_done, room_summary_done)"
-    ),
-    room_id: str | None = Query(None, description="Filter by room ID"),
-    from_utc: datetime | None = Query(None, description="Start of time range (UTC, ISO 8601)"),
-    to_utc: datetime | None = Query(None, description="End of time range (UTC, ISO 8601)"),
-    limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    sort_order: str = Query(
-        "desc", description="Sort order: 'asc' for ascending, 'desc' for descending (default: 'desc')"
-    ),
+    filters: Annotated[MetadataListQuery, Query()],
     auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL)),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
-):
+) -> MetadataEventListResponse:
     """
     Get metadata events with optional filters.
     Events are automatically deleted after 3 days (TTL).
@@ -239,56 +151,40 @@ async def list_metadata_events(
     - **sort_order**: Sort direction for created_at
     ('asc' = ascending/oldest first, 'desc' = descending/newest first, default: 'desc')
     """
-    # Validate event_type
-    if event_type is not None and MetadataEventType.is_valid(event_type) is False:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid event_type. Must be one of: {', '.join(MetadataEventType)}"
-        )
+    events, total = await sse_service.list_metadata_events(
+        event_type=filters.event_type,
+        room_id=filters.room_id,
+        from_utc=filters.from_utc,
+        to_utc=filters.to_utc,
+        limit=filters.limit,
+        skip=filters.skip,
+        sort_order=filters.sort_order,
+    )
 
-    # Validate time range
-    if from_utc is not None and to_utc is not None and from_utc >= to_utc:
-        raise HTTPException(status_code=400, detail="from_utc must be before to_utc")
-
-    # Validate sort_order
-    if sort_order not in ["asc", "desc"]:
-        raise HTTPException(status_code=400, detail="sort_order must be 'asc' (ascending) or 'desc' (descending)")
-
-    try:
-        events, total = await sse_service.list_metadata_events(
-            event_type, room_id, from_utc, to_utc, limit, skip, sort_order
-        )
-        return {
-            "status": "ok",
-            "total": total,
-            "limit": limit,
-            "skip": skip,
-            "ttl_seconds": 259200,  # 3 days
-            "data": events,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to list metadata events: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list metadata events: {e!s}") from e
+    return MetadataEventListResponse(
+        status="ok",
+        total=total,
+        limit=filters.limit,
+        skip=filters.skip,
+        ttl_seconds=259200,  # 3 days
+        data=events,
+    )
 
 
-@router.get("/metadata/{event_id}", response_description="Get metadata event by event_id")
+@router.get("/metadata/{event_id}", response_model=MetadataEventDetailResponse, response_description="Get metadata event by event_id")
 async def get_metadata_event_by_id(
-    event_id: str,
+    event_id: MetadataEventIdPath,
     auth: AuthContext = Depends(require_any_permission(METADATA_EVENTS_VIEW_ALL)),
     sse_service: SseMetadataService = Depends(get_sse_metadata_service),
-):
+) -> MetadataEventDetailResponse:
     """
     Get single metadata event by event_id (UUID).
 
     - **event_id**: Event UUID
     """
-    try:
-        event = await sse_service.get_metadata_event_by_id(event_id)
-        return {"status": "ok", "data": event}
+    event = await sse_service.get_metadata_event_by_id(str(event_id))
+    return MetadataEventDetailResponse(
+        status="ok",
+        data=event,
+    )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get metadata event: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get metadata event: {e!s}") from e

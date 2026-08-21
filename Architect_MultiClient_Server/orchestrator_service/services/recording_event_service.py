@@ -155,7 +155,7 @@ class RecordingEventService:
                     )
             return RecordingEventResponse(received=True, action="recording_failed")
 
-        logger.warning(f"Unknown recording event type: {payload.event}")
+        logger.warning(f"Unknown recording event type: {payload.event}") # type: ignore[unreachable]
         return RecordingEventResponse(received=True, action="ignored")
 
     async def handle_derivative_event(self, payload: DerivativeEventRequest) -> RecordingEventResponse:

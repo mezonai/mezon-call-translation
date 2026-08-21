@@ -2,34 +2,40 @@
 Internal API endpoints for room summary
 """
 
-from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from orchestrator_service.models.summary_models import RetryType, RoomSummaryResponse
+from orchestrator_service.models.room_models import RoomIdPath
+from orchestrator_service.models.summary_models import (
+    RoomSummaryResponse,
+    SummaryDetailResponse,
+    SummaryListQuery,
+    SummaryListResponse,
+    SummaryRetryRequest,
+    SummaryRetryResponse,
+)
 from orchestrator_service.services.postgresql.pg_summary_repository import (
     PgSummaryRepository,
 )
 from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
+from orchestrator_service.utils.transcript_validators import RoomNamePath
 
 client_router = APIRouter(prefix="/api/summary", tags=["Summary"])
 
 
-@client_router.get("/room/{room_name}", response_description="Get summary by room ID")
+@client_router.get("/room/{room_name}", response_model=SummaryListResponse, response_description="Get summary by room ID")
 async def get_summary_by_room_name(
-    room_name: str,
-    start_time: datetime | None = Query(
-        None,
-        description="Start time for room summary (ISO format: 2024-01-01T00:00:00)",
-    ),
-    end_time: datetime | None = Query(None, description="End time for room summary (ISO format: 2024-01-31T23:59:59)"),
-):
+    room_name: RoomNamePath,
+    query: SummaryListQuery = Query(),
+) -> SummaryListResponse:
     """
     Get summary by room name.
     """
     pg_repo = PgSummaryRepository()
+    start_time = query.start_time
+    end_time = query.end_time
 
     summaries, rooms = await pg_repo.get_summary_by_room_name(room_name, start_time, end_time)
 
@@ -50,21 +56,24 @@ async def get_summary_by_room_name(
             summary_dict["completed_at"] = convert_to_iso_8601(summary_dict["completed_at"])
         summary_models.append(RoomSummaryResponse.model_construct(**summary_dict))
 
-    return {"status": "ok", "data": summary_models, "count": len(summary_models)}
+    return SummaryListResponse(
+        status="ok",
+        data=summary_models,
+        count=len(summary_models),
+    )
 
-
-@client_router.get("/room/id/{room_id}", response_description="Get summary by room ID")
+@client_router.get("/room/id/{room_id}", response_model=SummaryDetailResponse, response_description="Get summary by room ID")
 async def get_summary_by_room_id(
-    room_id: str,
-):
+    room_id: RoomIdPath,
+) -> SummaryDetailResponse:
     """
     Get summary by room id.
     """
     pg_repo = PgSummaryRepository()
-    summary, room = await pg_repo.get_summary_by_room_id(room_id)
+    summary, room = await pg_repo.get_summary_by_room_id(str(room_id))
 
     if not summary or not room:
-        return RoomSummaryResponse.model_construct()
+        return SummaryDetailResponse(status="ok", data=RoomSummaryResponse())
 
     summary_dict = {c.name: getattr(summary, c.name) for c in summary.__table__.columns}
     summary_dict["created_at"] = room.created_at
@@ -94,28 +103,21 @@ async def get_summary_by_room_id(
 
     response_data = RoomSummaryResponse.model_construct(**summary_dict)
 
-    return {"status": "ok", "data": response_data}
+    return SummaryDetailResponse(status="ok", data=response_data)
 
 
 @client_router.post(
     "/retry/{room_id}",
+    response_model=SummaryRetryResponse,
     response_description="Re-run LLM summary using existing full_text",
 )
 async def retry_summary(
-    room_id: str,
-    type: RetryType = Query(RetryType.SUMMARY, description="Type of retry: 'summary', 'sections', or 'overall_context'"),
-):
-    try:
-        summary_data = await get_summary_service().retry_summary_from_full_text(room_id, retry_type=type)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    room_id: RoomIdPath,
+    request: SummaryRetryRequest,
+) -> SummaryRetryResponse:
+    summary_data = await get_summary_service().retry_summary_from_full_text(str(room_id), retry_type=request.type)
 
     if summary_data is None:
         raise HTTPException(status_code=500, detail="Update summary_data to DB failed")
 
-    return {
-        "status": "ok",
-        "room_id": room_id,
-        "type": type.value,
-        "summary_data": summary_data,
-    }
+    return SummaryRetryResponse(status="ok", room_id=str(room_id), type=request.type, summary_data=summary_data)
