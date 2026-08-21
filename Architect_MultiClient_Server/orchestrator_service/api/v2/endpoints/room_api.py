@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.config.transcript_config import VALIDATION_CONFIG as VC
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
-from orchestrator_service.services.livekit_client import AudioTrackInfo
+from orchestrator_service.models.room_models import AudioTrackInfo
 from orchestrator_service.services.room_service import RoomService, get_room_service
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.transcript_validators import (

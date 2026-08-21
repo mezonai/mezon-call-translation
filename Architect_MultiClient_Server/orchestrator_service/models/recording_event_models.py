@@ -26,7 +26,7 @@ class RecordingEventRequest(BaseModel):  # type: ignore[explicit-any]
     room_id: str                # normally orchestrator's own stable room UUID, captured by the agent at
                                  # registration and threaded through record-service unchanged (PLAN.md D27,
                                  # supersedes D18) -- see RecordingEventService._resolve_room_ref_id for the
-                                 # degrade path (falls back to LiveKit room-name resolve) if it isn't a UUID
+                                 # degrade path (falls back to Mezon-SFU room-name resolve) if it isn't a UUID
     track_id: str
     participant_identity: str
     source: str

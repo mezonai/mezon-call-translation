@@ -63,7 +63,6 @@ module = [
     "openai.*",
     "httpx.*",
     "google.*",
-    "livekit.*",
     "redis.*",
     "tenacity.*",
     "uvicorn.*",

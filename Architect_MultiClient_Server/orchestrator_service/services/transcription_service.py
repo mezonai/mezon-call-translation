@@ -68,7 +68,7 @@ class TranscriptionService:
         flips this row to "completed" instead.
 
         Replaces the old enqueue(egress_info: Dict) which took a
-        LiveKit-egress-webhook-shaped dict (audio-ingestion PLAN.md D2: no
+        Recording event payload dict (audio-ingestion PLAN.md D2: no
         egress-shaped contracts survive the migration).
         """
         try:

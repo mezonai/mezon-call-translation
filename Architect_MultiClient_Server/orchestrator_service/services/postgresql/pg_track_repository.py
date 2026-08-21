@@ -16,7 +16,7 @@ Room+track-mixed logic (`check_and_notify_room_recordings_ready`) stays in
 pg_transcript_repository.py -- see that method's docstring for why.
 
 Track PK (`tracks.id`) is named `record_id` throughout this file, not
-`egress_id` -- that naming is a LiveKit-egress-era holdover (PLAN.md D10
+`egress_id` -- that naming is a legacy egress-era holdover (PLAN.md D10
 deferred renaming the actual DB column since it'd be a migration on live
 data, but nothing forces new code to keep calling it "egress" too). It's
 the same value as record-service's `recording_id`/`session_id`.

@@ -1,13 +1,11 @@
 # ============================================================================
 # Orchestrator Service Requirements
-# FastAPI-based REST API orchestrator for LiveKit room/agent management
+# FastAPI-based REST API orchestrator for room and agent management
 # ============================================================================
 
 # ========================================
-# Core LiveKit API
+# Core API Dependencies
 # ========================================
-livekit-api>=0.7.0             # LiveKit server API for room/token/egress management
-protobuf>=4.25.0               # Protocol buffers (required by livekit-api)
 
 # ========================================
 # Web Framework & API

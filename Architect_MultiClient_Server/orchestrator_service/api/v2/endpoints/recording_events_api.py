@@ -1,7 +1,7 @@
 """
 Endpoint record-service (Phase 1-2) and, from Phase 5, audio-processing-service
 post their lifecycle events to. See audio-ingestion/PLAN.md D8 (idempotent,
-not shaped like a LiveKit egress webhook) and D18/D19 (what each event does
+not shaped like a legacy LiveKit / Mezon-SFU egress webhook) and D18/D19 (what each event does
 to Track/Room state).
 
 Path matches record-service's default OrchestratorConfig.events_path
