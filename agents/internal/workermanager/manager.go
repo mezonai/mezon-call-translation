@@ -159,9 +159,43 @@ func (m *Manager) reap(a *managedAgent) {
 
 // Stop signals the agent for ev.RoomID to shut down: SIGTERM first (the
 // agent's own signal handler treats this as "leave the room", see
-// cmd/agent/main.go), escalating to SIGKILL if it hasn't exited within
-// cfg.StopTimeout. A room with no running agent is logged and treated as
-// success (already in the desired end state).
+// cmd/agent/main.go), escalating to SIGKILL in the background if it hasn't
+// exited within cfg.StopTimeout. A room with no running agent is logged and
+// treated as success (already in the desired end state).
+//
+// The room is removed from the registry here, synchronously, rather than
+// waiting for the process to actually exit (reap()) -- deliberately, see
+// [2026-08-21] below. Stop itself therefore returns as soon as SIGTERM is
+// sent, without waiting out cfg.StopTimeout; the wait-then-maybe-SIGKILL
+// part runs in its own goroutine (killAfterTimeout) so it can take as long
+// as it needs without blocking anything else.
+//
+// [2026-08-21] Removing the room from the registry only used to happen in
+// reap(), which meant Stop() had to block the calling goroutine until the
+// process actually exited (waiting out the full SIGTERM grace period, then
+// SIGKILL) -- otherwise a Start for the same room_id could see the stale
+// entry and skip spawning a replacement (Start's "already running?" check).
+// The problem: dispatch.go/shard.go route every event for a given room_id
+// through the *same* shard goroutine, specifically so start/stop for one
+// room can never race or reorder -- which also means a Start queued right
+// behind a Stop for the same room_id had to wait for that same blocking
+// Stop to finish first. Concretely: someone leaves a room (agent gets a
+// stop event), decides to add it back a few seconds later while the old
+// agent's still mid-graceful-shutdown (flushing its record-service forwarder,
+// reporting to orchestrator, etc, agents/internal/rtcagent's trackWG/
+// ttsplayer close grace) -- the UI already shows no agent (mezon-sfu treats
+// the WS close as an immediate leave, cmd/agent/main.go's ctx cancellation
+// closes it right away, well before any of that local cleanup finishes) but
+// the "add" click would silently queue behind the still-running Stop call
+// and only actually spawn once the old process's cleanup either finished or
+// got SIGKILLed at cfg.StopTimeout. Freeing the room here instead means a
+// same-room Start queued right after a Stop can proceed immediately -- the
+// old process's local cleanup (and, if it overruns, its eventual SIGKILL)
+// keeps running independently in the background, unobserved by anything
+// that cares whether the room has an agent. See reap()'s `cur == a` guard:
+// it already anticipated exactly this (a stale managedAgent being reaped
+// after a newer one has taken its place in the registry), so this wasn't a
+// new invariant to introduce, just wiring Stop up to rely on it too.
 func (m *Manager) Stop(ev StopEvent) error {
 	if ev.RoomID == 0 {
 		return fmt.Errorf("workermanager: stop event missing room_id")
@@ -169,6 +203,9 @@ func (m *Manager) Stop(ev StopEvent) error {
 
 	m.mu.Lock()
 	agent, ok := m.agents[ev.RoomID]
+	if ok {
+		delete(m.agents, ev.RoomID)
+	}
 	m.mu.Unlock()
 	if !ok {
 		logging.L.Warn("workermanager: stop ignored, no agent running for room", "room_id", ev.RoomID)
@@ -180,22 +217,27 @@ func (m *Manager) Stop(ev StopEvent) error {
 		return fmt.Errorf("workermanager: sigterm room_id=%d pid=%d: %w", ev.RoomID, agent.cmd.Process.Pid, err)
 	}
 
+	go m.killAfterTimeout(agent, ev.RoomID)
+	return nil
+}
+
+// killAfterTimeout waits for agent to exit on its own after Stop's SIGTERM,
+// escalating to SIGKILL if it overruns cfg.StopTimeout. Runs detached from
+// Stop's caller (see Stop's doc) -- errors here have no caller left to
+// return to, so they're logged directly instead.
+func (m *Manager) killAfterTimeout(agent *managedAgent, roomID uint64) {
 	select {
 	case <-agent.done:
-		return nil
+		return
 	case <-time.After(m.cfg.StopTimeout):
 		logging.L.Warn("workermanager: agent did not exit within stop timeout, sending SIGKILL",
-			"room_id", ev.RoomID, "pid", agent.cmd.Process.Pid, "timeout", m.cfg.StopTimeout)
+			"room_id", roomID, "pid", agent.cmd.Process.Pid, "timeout", m.cfg.StopTimeout)
 		if err := agent.cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("workermanager: sigkill room_id=%d pid=%d: %w", ev.RoomID, agent.cmd.Process.Pid, err)
+			logging.L.Error("workermanager: sigkill failed",
+				append(logging.ErrAttrs(err), "room_id", roomID, "pid", agent.cmd.Process.Pid)...)
+			return
 		}
-		// Block until reap() actually removes this room from the registry
-		// (SIGKILL isn't interceptable, so cmd.Wait() should return almost
-		// immediately) -- otherwise a Start for the same room_id arriving
-		// right after this returns could see the stale entry and skip
-		// spawning a replacement.
 		<-agent.done
-		return nil
 	}
 }
 

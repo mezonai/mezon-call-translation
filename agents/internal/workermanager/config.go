@@ -59,7 +59,13 @@ type Config struct {
 	// manager spawns per room.
 	AgentBinPath string
 	// StopTimeout: how long to wait after SIGTERM before escalating to
-	// SIGKILL.
+	// SIGKILL. Runs in the background (manager.go's killAfterTimeout), not
+	// gating anything else -- see Stop's [2026-08-21] doc for why it's safe
+	// for this to be generous. Should stay comfortably above the agent's own
+	// graceful-shutdown worst case (~16s as of the trackWG/ttsplayer close
+	// grace added 2026-08-20/21 -- see agents/README.md's shutdown timeout
+	// bullet) so SIGKILL doesn't cut off recording/orchestrator cleanup that
+	// was already running.
 	StopTimeout time.Duration
 	// BaseAgentEnv is applied to every spawned agent (mezon-sfu connection
 	// details, reconnect tuning...) -- same for every room in a given
@@ -115,7 +121,7 @@ func FromEnv() (Config, error) {
 		AgentBinPath: getEnv("AGENT_BIN_PATH", defaultAgentBinPath()),
 	}
 
-	stopTimeoutSec, err := strconv.Atoi(getEnv("AGENT_STOP_TIMEOUT_SECONDS", "10"))
+	stopTimeoutSec, err := strconv.Atoi(getEnv("AGENT_STOP_TIMEOUT_SECONDS", "20"))
 	if err != nil {
 		return Config{}, fmt.Errorf("workermanager: invalid AGENT_STOP_TIMEOUT_SECONDS: %w", err)
 	}

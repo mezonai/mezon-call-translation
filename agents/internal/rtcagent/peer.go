@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/rtp"
@@ -95,6 +96,22 @@ type PeerAgent struct {
 	// session's buffered audio never got uploaded, forever, even though
 	// record-service's own logic is fine on its own.
 	trackWG sync.WaitGroup
+
+	// closing is set at the very start of Close(), before pc.Close() and
+	// well before trackWG.Wait() -- handleTrack checks it to refuse any
+	// track that arrives after shutdown has begun. Needed because Close()
+	// only waits up to closeTimeout for pc.Close() to return before moving
+	// on regardless (see Close's doc); if pc.Close() is genuinely still
+	// hung past that point, pion's internals are still tearing down and can
+	// still invoke OnTrack for a track that was mid-negotiation. Without
+	// this guard, that late handleTrack's trackWG.Add(1) could race
+	// trackWG.Wait() -- sync.WaitGroup's contract requires a positive-delta
+	// Add from a zero counter to happen-before any concurrent Wait, and
+	// violating it here would silently reopen the exact truncated-recording
+	// race trackWG exists to close, for that one straggler track. Plain
+	// atomic.Bool rather than folding into mu: read on every OnTrack, so it
+	// shouldn't share a lock with anything else handleTrack does.
+	closing atomic.Bool
 
 	// OnAudioPacket and OnTrackEnded, if set, are both invoked from the same
 	// single goroutine: one track's own read loop (see readLoop). That's
@@ -327,6 +344,10 @@ func (a *PeerAgent) RemovePeer(userID int64) {
 // local resources. Bounded by closeTimeout rather than trusting pion to
 // always return promptly.
 func (a *PeerAgent) Close() error {
+	// Must happen before anything else -- see closing's doc for why this
+	// needs to be set well ahead of trackWG.Wait() below, not just before it.
+	a.closing.Store(true)
+
 	done := make(chan error, 1)
 	go func() { done <- a.pc.Close() }()
 	var closeErr error
@@ -358,6 +379,13 @@ func (a *PeerAgent) Close() error {
 }
 
 func (a *PeerAgent) handleTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	if a.closing.Load() {
+		// See closing's doc -- Close() is already underway, refuse rather
+		// than risk racing trackWG.Add against trackWG.Wait.
+		logging.L.Warn("rtcagent: OnTrack fired after shutdown began, ignoring", "stream_id", track.StreamID())
+		return
+	}
+
 	mid := a.midFor(receiver)
 	if mid == "" {
 		logging.L.Warn("rtcagent: OnTrack fired but no matching transceiver mid found", "stream_id", track.StreamID())
