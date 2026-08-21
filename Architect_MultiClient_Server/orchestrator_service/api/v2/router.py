@@ -5,6 +5,7 @@ API v1 router - includes all endpoints
 from fastapi import APIRouter
 
 from orchestrator_service.api.v2.endpoints.auth_api import router as auth_router
+from orchestrator_service.api.v2.endpoints.dispatch_api import router as dispatch_router
 from orchestrator_service.api.v2.endpoints.queue_api import router as queue_router
 from orchestrator_service.api.v2.endpoints.recording_events_api import router as recording_events_router
 from orchestrator_service.api.v2.endpoints.room_api import router as room_router
@@ -19,6 +20,7 @@ api_router = APIRouter()
 
 # Include routers
 api_router.include_router(auth_router)  # Mezon OAuth2 authentication
+api_router.include_router(dispatch_router)
 api_router.include_router(stream_router, tags=["sse transcript"])
 api_router.include_router(sse_chat_external_router, tags=["sse chat external"])
 api_router.include_router(sse_metadata_router, tags=["sse metadata"])
