@@ -103,7 +103,7 @@ func NewSTTSinkFactory(cfg config.Config, orch *orchestratorclient.Client) *STTS
 func (f *STTSinkFactory) NewSink(info rtcagent.TrackInfo) audiopipeline.Sink {
 	clientID := fmt.Sprintf("peer%d-%s", info.PeerID, info.Kind)
 	participantIdentity := strconv.FormatInt(info.UserID, 10)
-	wsURL := fmt.Sprintf("ws://%s:%d/ws/vosk/?client_id=%s&session_id=%s",
+	wsURL := fmt.Sprintf("ws://%s:%d/ws/transcription/?client_id=%s&session_id=%s",
 		f.cfg.STT.Host, f.cfg.STT.Port, url.QueryEscape(clientID), url.QueryEscape(f.roomName))
 
 	fwd := &transcriptForwarder{orch: f.orch, roomName: f.roomName, participantIdentity: participantIdentity}
