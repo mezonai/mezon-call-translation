@@ -1,0 +1,33 @@
+[Unit]
+Description=mezon-agents worker-manager
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=changeme
+Group=changeme
+
+WorkingDirectory=/opt/mezon-agents
+EnvironmentFile=/etc/mezon-agents/worker-manager.env
+ExecStart=/opt/mezon-agents/bin/worker-manager
+
+KillSignal=SIGTERM
+TimeoutStopSec=10
+# Default KillMode=control-group would also kill every spawned `agent`
+# subprocess on restart (Setpgid in manager.go only escapes terminal
+# signals, not systemd's cgroup kill) -- process-only keeps active calls
+# alive across a worker-manager restart.
+KillMode=process
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
