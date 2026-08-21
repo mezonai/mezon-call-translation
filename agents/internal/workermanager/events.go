@@ -5,13 +5,15 @@ package workermanager
 // code (dispatchSfuAgentMessage/addAgentDispatch/deleteAgentDispatch) --
 // see mezon-sfu-migration-checklist.md D4. Two things this corrects versus
 // what was assumed when this package was first written:
-//   - It is NOT published on a dedicated subject. BE mezon reuses the exact
-//     same NATS subject ("SFU_HOOK_EVENT") that mezon-sfu's own C code
-//     publishes its participant hook events on (mezon-sfu/CLAUDE.md section
-//     6, payload shape {"user_id","room_id","name","event"}). Subscriber.go
-//     tells the two apart by field: this shape carries "action", SFU's own
-//     hook events carry "event" instead -- anything without a recognized
-//     "action" is silently ignored, not treated as a decode error.
+//   - It is NOT published on a dedicated subject. BE mezon hardcodes the
+//     NATS subject on its own side, independent of mezon-sfu's config, as
+//     the *value* of a Go constant it names `SFU_HOOK_EVENT` -- but that
+//     value is the string "mezon_sfu_hook_event", not the literal text
+//     "SFU_HOOK_EVENT" (a naming-vs-value mixup caught 2026-08-20; see
+//     Config.Subject's doc in config.go for the real BE mezon source and
+//     the fix). This happens to match mezon-sfu's own default hook-event
+//     subject too (mezon-sfu commit 88984d6, 2026-08-20), so it's still one
+//     shared subject for both -- just under the corrected string.
 //   - room_id is sent as a JSON *string* (BE mezon builds it with
 //     fmt.Sprintf(`"%v"`, channelId), quotes included), not a bare number.
 type dispatchEvent struct {

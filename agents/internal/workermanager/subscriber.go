@@ -16,11 +16,12 @@ import (
 // handles a given event -- see the Config doc), and blocks until ctx is
 // cancelled.
 //
-// cfg.Subject is shared with mezon-sfu's own participant hook events (see
-// dispatchEvent's doc) -- most messages received here will NOT be an
-// add/delete dispatch, and that's expected, not an error: anything that
-// doesn't decode into a recognized "action" is logged at debug level and
-// dropped.
+// cfg.Subject may still be shared with mezon-sfu's own participant hook
+// events depending on how mezon-sfu is deployed (see dispatchEvent's doc
+// for the 2026-08-20 subject-split caveat) -- so messages received here
+// are not guaranteed to all be an add/delete dispatch, and that's expected,
+// not an error: anything that doesn't decode into a recognized "action" is
+// logged at debug level and dropped.
 //
 // handleDispatch itself stays cheap and never blocks on Start/Stop directly:
 // it routes the actual work through Manager.dispatch (see shard.go), since
@@ -83,6 +84,6 @@ func handleDispatch(data []byte, m *Manager) {
 			}
 		})
 	default:
-		logging.L.Debug("workermanager: dispatch event with unrecognized action, ignoring", "action", ev.Action, "room_id", roomID)
+		logging.L.Info("workermanager: dispatch event with unrecognized action, ignoring", "event", ev)
 	}
 }

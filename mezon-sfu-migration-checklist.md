@@ -8,6 +8,7 @@
 > - Lần scan đầu: `mezon-sfu` @ commit `5cfff1d` (chưa có auth, chưa có event tường minh).
 > - **Cập nhật 2026-08-14**: `mezon-sfu` team đã push code mới, HEAD lúc đó `1a8bc61` (đã thêm JWT auth bắt buộc + roster event `room_snapshot`/`peer_joined`/`peer_left`/`peer_updated` + hook event NATS thật thay vì stub). Các mục A1/A3/A7/B1/B3 bên dưới đã được cập nhật lại theo code mới — mục nào còn giữ nguyên nhận định cũ sẽ ghi rõ.
 > - **Cập nhật 2026-08-16**: `mezon-sfu` push tiếp 1 đợt lớn (57 commit), HEAD hiện tại `2ec3556`. Đáng chú ý nhất: **camera/screen tách hẳn thành track độc lập** (mỗi peer 3 slot uplink audio/camera/screen thay vì 2), **`msid` giờ nhúng `user_id`/`peer_id`**, thêm **RTP MID header extension** để demux, **`room_id` chỉ lấy từ JWT** (bỏ field `room` khỏi message `join`), thêm message `camera`/`mute` tied với state thật. Việc này **giải quyết luôn A3.5 / phần "chưa giải quyết" ở D2 bước 5** (phân biệt mic/screen) — cập nhật lại các mục liên quan bên dưới. Xem thêm `mezon-sfu/CLAUDE.md` (repo kia) để tra chi tiết giao thức đầy đủ, luôn là nguồn chính khi có sai khác.
+> - **Cập nhật 2026-08-20**: HEAD hiện tại `4e58348`. commit `88984d6` đổi NATS hook topic mặc định của chính `mezon-sfu` từ hardcode `SFU_HOOK_EVENT` sang config `nats_hook_topic` (default đổi tên thành `mezon_sfu_hook_event`). Ban đầu tưởng đây là rủi ro tách subject với BE mezon — nhưng **đọc lại đúng code BE mezon thì phát hiện ra bug thật ở phía mình**: hằng số Go bên BE mezon tên là `SFU_HOOK_EVENT` nhưng **giá trị** của nó là `"mezon_sfu_hook_event"`, không phải literal `"SFU_HOOK_EVENT"` — chốt 08-19 ở `D4` đã nhầm tên hằng số với giá trị, khiến `internal/workermanager` subscribe sai subject (`"SFU_HOOK_EVENT"`), **chưa từng nhận được trigger `add`/`delete` thật**. Đã sửa default subject sang `"mezon_sfu_hook_event"` — đúng, và tình cờ trùng luôn với default mới của `nats_hook_topic`, nên "1 subject dùng chung, phân biệt bằng field" vẫn đúng như thiết kế. Xem chi tiết ở C.4 + D4.
 > - **Cập nhật 2026-08-18**: HEAD hiện tại `3cb7853`. **Quan trọng nhất cho agent**: `push_to_talk` giờ **tách hẳn khỏi `role_change`**, không đổi role và **không còn bắn hook `publish`/`unpublish` qua NATS nữa** — nếu định dùng hook đó để suy luận "ai đang nói" qua PTT thì hết dùng được, phải đọc `push_to_talk_changed` ở tầng WS hoặc theo dõi RTP thật. Message `publish`/`unpublish` do client tự gửi **đã bị xoá khỏi giao thức**. `share_screen` tắt giờ bắn `unshare_screen` (tên event mới, tách khỏi `share_screen`). SDP downlink **đã revert bỏ `a=ssrc`** (thêm ở đợt 08-16, gây lỗi renegotiate) — chỉ còn `a=msid`, ảnh hưởng trực tiếp recipe D2 bên dưới. Xem `mezon-sfu/CLAUDE.md` mục 10 để tra chi tiết từng commit.
 
 ---
@@ -19,7 +20,7 @@
 **Trạng thái tổng quan theo mezon-sfu (đã cập nhật theo code 2026-08-14):**
 - ✅ Đã có tương đương thật sự: auto-create room khi join; SVC/simulcast + GCC congestion control; publish audio uplink (`role:speaker`) đủ nguyên lý cho agent gửi TTS; **JWT auth bắt buộc cho `join`** (HS256, claims gần giống LiveKit `VideoGrants`); **roster event tường minh** (`room_snapshot`/`peer_joined`/`peer_left`/`peer_updated`) map sẵn `user_id ↔ ufrag ↔ mid_audio/mid_video`; **hook event NATS thật** (`join/publish/unpublish/share_screen/leave`, không còn stub `"{}"`).
 - ⚠️ Có nền tảng nhưng chưa đủ dùng: hook event NATS chỉ có 6 loại cơ bản (`join/publish/unpublish/share_screen/unshare_screen/leave`), không có event cho "room tạo/đóng" hay "track thật sự publish ở tầng SDP" — và từ **08-18** cũng không có event nào cho push-to-talk (xem C.4); phân loại audio/video/screen (`share_screen`) hiện chỉ là hook tự báo từ client, server không tự phát hiện; JWT claims chưa có scope `canPublish`/`canSubscribe`/`kind` như LiveKit.
-- ❌ Chưa có, phải tự xây 100% ở phía mezon-call-translation (trừ khi SFU team nhận làm): worker/job dispatch, participant "kind" (phân biệt bot/người thật), data channel, REST/gRPC admin API, webhook HTTP có chữ ký (thay bằng NATS subscribe), SDK client (ICE/DTLS/SRTP/RTP tự viết vì không có SDK non-browser).
+- ❌ Chưa có, phải tự xây 100% ở phía mezon-call-translation (trừ khi SFU team nhận làm): worker/job dispatch, participant "kind" (phân biệt bot/người thật), data channel, REST/gRPC admin API (**[SỬA 08-19]** riêng mute/kick giờ có qua WS message `participant_action`, không phải REST — xem A6.1/C.5), webhook HTTP có chữ ký (thay bằng NATS subscribe), SDK client (ICE/DTLS/SRTP/RTP tự viết vì không có SDK non-browser).
 
 ---
 
@@ -73,7 +74,7 @@
 
 | # | Chức năng dùng | Cách dùng hiện tại | mezon-sfu | Ghi chú |
 |---|---|---|---|---|
-| A6.1 | `client.room.list_participants()` | `livekit_client.py:295,326`, `room_registry_api.py:158` | ❌ Chưa có | Không có REST/gRPC admin API nào, chỉ có WS signaling |
+| A6.1 | `client.room.list_participants()` | `livekit_client.py:295,326`, `room_registry_api.py:158` | ❌ Chưa có | Không có REST/gRPC admin API nào, chỉ có WS signaling. **[MỚI 08-19]** Không có "list", nhưng đã có 2 hành động moderation qua WS message `participant_action` (`{token: <jwt hành động riêng>}`): mute/kick 1 participant theo `user_id` — xem `mezon-sfu/CLAUDE.md` mục 4.1 |
 | A6.2 | `get_participant_detail` (tracks, permission, kind, state...) | `livekit_client.py:313-391` | ❌ Chưa có | — |
 | A6.3 | `create_room`/`delete_room`/`mute_published_track`/`update_participant`/`send_data` | Có import trong SDK `livekit-api` nhưng **grep xác nhận orchestrator hiện KHÔNG thực sự gọi** (chỉ dùng A2.2 + A6.1) | N/A hiện tại | Chưa cần map ngay, nhưng sẽ thiếu nếu sau này cần (vd: force-remove 1 participant lỗi) |
 
@@ -83,7 +84,7 @@
 |---|---|---|---|---|
 | A7.1 | Nhận webhook HTTP, verify chữ ký JWT (`sha256` claim) | `webhook_auth.py` — `livekit.api.TokenVerifier` + `WebhookReceiver` | ⚠️ Cơ chế khác hẳn, nhưng nay có data thật | Vẫn không có webhook HTTP — publish qua **NATS** topic `SFU_HOOK_EVENT`, consumer phải tự subscribe NATS thay vì nhận HTTP POST có ký. Không có cơ chế verify nguồn gốc message (NATS nội bộ, không ký) — xem Phần C để biết cách subscribe |
 | A7.2 | Event `participant_joined` (lưu participant vào DB) | `webhook_handler.py:57-75` | ✅ **Đã có (mới)** | **[CẬP NHẬT 08-14]** Event `join` giờ có payload thật: `{"user_id","room_id","name":"","event":"join"}` (`signaling.c:637-654,888`) — không còn stub `"{}"`. `name` vẫn luôn rỗng (chưa gắn display name) |
-| A7.3 | Event `track_published` (log track info) | `webhook_handler.py:77-94` | ⚠️ Có tương đương gần đúng, khác cơ chế | **[CẬP NHẬT 08-18]** Event `publish`/`unpublish` bắn tự động theo state thật (`join` role khác audience, `role_change`, toggle `camera`) — message WS `publish`/`unpublish` client tự gửi trước đây **đã bị xoá khỏi giao thức**, không còn cách nào tự báo tay nữa. `share_screen`/`unshare_screen` vẫn là hook client tự gửi, server không tự phát hiện. **`push_to_talk` không còn bắn hook này** (đã tách khỏi role_change, xem C.4) — vẫn khác LiveKit ở chỗ đây là tín hiệu ý định theo state client báo/negotiate, không phải xác nhận track thật xuất hiện ở tầng SDP |
+| A7.3 | Event `track_published` (log track info) | `webhook_handler.py:77-94` | ✅ **Gần tương đương thật cho camera/screen (từ 08-19)**, ⚠️ audio/role vẫn chỉ là ý định | **[CẬP NHẬT 08-19]** Nhánh `camera`/`share_screen` của `publish`/`unpublish`/`share_screen`/`unshare_screen` giờ verify bằng **RTP thật đến** (`camera_rtp_observed`/`screen_rtp_observed`) trước khi bắn — gần sát nghĩa `track_published` của LiveKit rồi. Nhánh audio/role (`join`, `role_change`) **chưa** được nâng cấp, vẫn chỉ là ý định/state client báo, không verify RTP. message WS `publish`/`unpublish` client tự gửi đã bị xoá khỏi giao thức từ 08-18. **`push_to_talk` không bắn hook này** (đã tách khỏi role_change, xem C.4) |
 | A7.4 | ~30 loại event khác của LiveKit (room_started/ended, track_muted, egress_*, participant_active...) — hiện bị ignore hết ngoại trừ A7.2/A7.3 | `webhook_handler.py:45-55` | ❌ Chưa có | Không cấp thiết. Riêng "room_started/ended" vẫn chưa có event NATS tương đương — chỉ suy ra gián tiếp qua event `join` đầu tiên/`leave` cuối cùng của room, không có event "room" độc lập |
 
 ### A8. Recording/Egress — đã tự chủ động bỏ LiveKit, không cần đàm phán lại phần này
@@ -129,7 +130,7 @@ Theo `audio-ingestion/PLAN.md`, đã thay `LiveKit Egress` bằng gRPC `agent �
 
 ### B5. API hỗ trợ agent, room, participant, record
 
-- Có kế hoạch REST/gRPC admin API (list room, list participants, kick participant, mute remote track, lấy trạng thái room — đối chiếu A6) không?
+- Có kế hoạch REST/gRPC admin API (list room, list participants, lấy trạng thái room — đối chiếu A6) không? ~~kick participant, mute remote track~~ — **[GIẢI QUYẾT MỘT PHẦN 08-19]** đã có qua WS `participant_action`, không cần hỏi phần đó nữa, xem A6.1.
 - TURN: code có sẵn nhánh sinh credentials nhưng `turn_secret` đang rỗng, chưa đọc từ `config.ini` (`signaling.c:40,46`) — có kế hoạch bật thật không? Quan trọng nếu agent/record-service không cùng LAN với mezon-sfu.
 
 ### B6. Các điểm khác cần hỏi thêm
@@ -148,7 +149,7 @@ Theo `audio-ingestion/PLAN.md`, đã thay `LiveKit Egress` bằng gRPC `agent �
 ### C.1 Hai kênh giao tiếp hoàn toàn tách biệt
 
 1. **WebSocket signaling** (1 kết nối / 1 client) — nơi duy nhất để join room, trao đổi SDP, và nhận roster/event realtime của chính room đó. Chỉ ai đang giữ kết nối WS mới thấy được các message này.
-2. **NATS topic `SFU_HOOK_EVENT`** — nơi server publish (fire-and-forget) một số ít sự kiện lifecycle ra ngoài, cho các service **không** giữ kết nối WS (vd: orchestrator) theo dõi. Không có gì đảm bảo về thứ tự/độ tin cậy — client publish, ai subscribe thì nhận, không buffer nếu NATS down lúc publish.
+2. **NATS topic `mezon_sfu_hook_event`** (đổi tên 2026-08-20, xem D4 — trước đó hardcode literal `SFU_HOOK_EVENT`) — nơi server publish (fire-and-forget) một số ít sự kiện lifecycle ra ngoài, cho các service **không** giữ kết nối WS (vd: orchestrator) theo dõi. Không có gì đảm bảo về thứ tự/độ tin cậy — client publish, ai subscribe thì nhận, không buffer nếu NATS down lúc publish.
 
 **Hệ quả quan trọng cho kiến trúc**: roster đầy đủ (`room_snapshot`, `peer_joined`, `peer_left`, `peer_updated` — có map `user_id ↔ mid_audio/mid_video`) **chỉ tồn tại ở kênh (1)**. Orchestrator (đang subscribe kênh (2)) sẽ **không** tự thấy được ai đang nói ở mid nào — chỉ agent (đang giữ WS) mới thấy. Nếu orchestrator/record-service cần biết roster mà không tự giữ WS, agent phải chủ động forward lại (giống cách record-service hiện nhận PCM qua gRPC từ agent) — đây là điểm cần quyết định kiến trúc, xem lại B4.
 
@@ -159,7 +160,8 @@ Theo `audio-ingestion/PLAN.md`, đã thay `LiveKit Egress` bằng gRPC `agent �
 2. Tự sinh JWT HS256, claims tối thiểu:
    { "identity": "<user_id agent>", "room": <room_id>, "roomJoin": true, "exp": <unix_ts> }
 3. Mở WebSocket tới ws://<public_host>:<signaling_port>
-4. Gửi: {"type":"join","room":"<room_id>","token":"<jwt>","role":"speaker"|"audience"}
+4. Gửi: {"type":"join","token":"<jwt>","role":"speaker"|"audience"}
+   - [SỬA 08-16] message "join" KHÔNG còn field "room" nữa — room_id chỉ lấy từ claim "room" trong JWT ở bước 2, gửi "room" ở đây bị server bỏ qua
    - role "speaker": agent CÓ THỂ publish (dùng cho TTS) — server offer uplink a=recvonly
    - role "audience": agent CHỈ nghe, không publish gì — server offer uplink a=inactive
 5. Nhận về theo thứ tự:
@@ -177,6 +179,8 @@ Theo `audio-ingestion/PLAN.md`, đã thay `LiveKit Egress` bằng gRPC `agent �
 
 Chi tiết từng field payload — xem bảng đầy đủ ở `mezon-sfu/CLAUDE.md` mục 4 (giao thức) và mục 5 (JWT).
 
+**[2026-08-20, bug thật đã fix]** Bước 3-6 (agent tự gom ICE candidate xong mới gửi `answer`, do mezon-sfu bắt buộc non-trickle ICE) có thể mất **vài giây** trên thực tế (đo được ~5s) trước khi mezon-sfu đăng ký xong answer và bắt đầu trả lời STUN (`signaling.c:1127`, "awaits authenticated STUN bind" — mezon-sfu chủ động withhold STUN response cho tới lúc đó). `pion/ice` mặc định chỉ retry STUN 7 lần/candidate pair (~1.4s) rồi đánh dấu pair `Failed` vĩnh viễn — ngắn hơn nhiều so với ~5s cần thiết, khiến ICE luôn `checking → failed` sau 30s dù mạng/protocol hoàn toàn đúng. Fix ở `internal/rtcagent/peer.go` (`SetICEMaxBindingRequests(50)`, phía agent Go, không cần sửa gì bên mezon-sfu). Chi tiết đầy đủ + cách chẩn đoán: `agents/LOCAL_TESTING.md`.
+
 ### C.3 Luồng "lấy audio để record" — theo đúng note đã bàn ở B4, giờ có thêm chi tiết giao thức
 
 Bất kể chọn **Hướng A** (agent forward qua gRPC như hiện tại) hay **Hướng B** (record-service tự join), bên nhận audio đều phải tự làm bước 1-6 ở C.2 với `role:"audience"` (không publish, chỉ subscribe) — **không có API "egress" nào để bỏ qua bước tự làm WebRTC client**. Cụ thể:
@@ -185,24 +189,30 @@ Bất kể chọn **Hướng A** (agent forward qua gRPC như hiện tại) hay 
 - Để biết **RTP nhận được (theo `mid`) là của user nào** — dùng đúng mapping đã có ở `room_snapshot`/`peer_joined` (C.1): mỗi member có `mid_audio` gắn với `user_id`. Đây chính là input để điền field `participant_identity` trong gRPC `SessionStart` hiện tại (`recording.proto`) nếu tiếp tục Hướng A, hoặc để tag đúng session nếu record-service tự làm ở Hướng B.
 - `source: mic|screen` trong `SessionStart` — **[ĐÃ GIẢI QUYẾT 08-16]** giờ xác định trực tiếp qua vị trí `mid` (slot `base+2` = screen) + `msid`, không cần suy đoán/hỏi SFU team nữa — xem D2.
 - RTP nhận được là **audio đã encrypt bằng SRTP** (DTLS-SRTP như WebRTC chuẩn) — bên nhận (record-service nếu đi Hướng B) phải tự làm decrypt + decode Opus, không có giúp đỡ nào từ SFU ngoài phần ICE/DTLS handshake chuẩn.
-- SSRC/sequence/timestamp **không bị SFU normalize lại** — RTP nhận được giữ nguyên SSRC gốc của publisher, thuận lợi để đối chiếu chéo với `peer_joined`.
+- **[SỬA 08-20]** SSRC/timestamp **không bị SFU normalize** — RTP nhận được giữ nguyên SSRC gốc của publisher, thuận lợi để đối chiếu chéo với `peer_joined`. Riêng **sequence number thì có** — từ commit mới (`rtp_seq_translate.c`), SFU rewrite seq thành gapless riêng cho mỗi cặp (subscriber, SSRC) trước khi egress (bù việc SVC layer scheduler chủ động bỏ bớt gói theo băng thông từng subscriber). Không phải vấn đề với agent dùng `pion` (tự quản lý seq/jitter theo stream nhận được, không so với publisher gốc) — chỉ đáng chú ý nếu tự parse RTP thô và tính packet-loss dựa trên seq gap: số đó giờ phản ánh loss *sau khi SFU lọc layer*, không phải loss mạng thật của publisher.
 
-### C.4 Catalog đầy đủ — NATS event (`SFU_HOOK_EVENT`)
+### C.4 Catalog đầy đủ — NATS event
+
+**[ĐỔI 08-20]** Subject phía mezon-sfu không còn cứng literal `SFU_HOOK_EVENT` — đọc từ config `[nats] nats_hook_topic`, default đổi sang `mezon_sfu_hook_event`. **[SỬA LẠI cùng ngày]** ban đầu tưởng đây là rủi ro tách subject với trigger BE mezon, nhưng hoá ra là dịp phát hiện bug thật ở phía mình: BE mezon publish trigger lên giá trị hằng số `SFU_HOOK_EVENT` của họ, mà giá trị đó **vốn đã là** `"mezon_sfu_hook_event"` từ trước giờ (chốt 08-19 đọc nhầm tên hằng số Go thành giá trị subject — xem D4). Nên rốt cuộc default mới của mezon-sfu (`mezon_sfu_hook_event`) trùng khớp đúng với subject thật BE mezon dùng — không cần hỏi SFU team set lại gì, "1 subject dùng chung" vẫn đúng, chỉ là tên đúng khác với những gì đã ghi trước đây trong file này. `internal/workermanager` đã sửa default subject theo đúng giá trị này.
 
 Payload chung: `{"user_id": "<int64>", "room_id": "<uint64>", "name": "", "event": "<event>"}`
 
 | event | Bắn khi nào | Ghi chú |
 |---|---|---|
 | `join` | JWT verify thành công lúc `join` | Bắn cho **mọi** role, kể cả `audience` |
-| `publish` | Join với role khác `audience`, hoặc đổi role sang `speaker`, hoặc toggle `camera` với `active:true` | **[ĐỔI 08-18]** message client `{"type":"publish"}` đã bị xoá khỏi giao thức, không còn là nguồn nữa. `push_to_talk` **không** trigger event này (xem dưới) |
-| `unpublish` | Đổi role sang `audience`, hoặc toggle `camera` với `active:false` | Tương tự — message client `{"type":"unpublish"}` đã bị xoá; `push_to_talk` không trigger |
-| `share_screen` | Client gửi `{"type":"share_screen","active":true}` | Server không tự phát hiện — hoàn toàn phụ thuộc client gọi đúng lúc |
-| `unshare_screen` | **[MỚI 08-18]** Client gửi `{"type":"share_screen","active":false}` | Trước đây tắt screen share cũng bắn `share_screen` (không phân biệt được), giờ có tên riêng |
+| `publish` | Join với role khác `audience`, đổi role sang `speaker` (theo ý định/state, KHÔNG verify RTP), hoặc camera chuyển active (**[ĐỔI 08-19]** giờ verify bằng RTP thật đến, không còn bắn ngay lúc nhận message `camera` nữa — xem dưới) | message client `{"type":"publish"}` đã bị xoá khỏi giao thức từ 08-18, không còn là nguồn. `push_to_talk` **không** trigger event này (xem dưới) |
+| `unpublish` | Đổi role sang `audience`, hoặc camera chuyển không-active (RTP-verified, cùng cơ chế trên) | Tương tự — message client `{"type":"unpublish"}` đã bị xoá; `push_to_talk` không trigger |
+| `share_screen` | **[ĐỔI 08-19]** Track screen chuyển active **và RTP thật đã tới** (`screen_rtp_observed`) | Trước đây bắn ngay lúc nhận message `share_screen active:true`, giờ có độ trễ vài trăm ms chờ RTP thật — đáng tin cậy hơn nhiều so với ghi nhận trước đây ("chỉ là ý định client báo") |
+| `unshare_screen` | Track screen chuyển không-active (RTP-verified, cùng cơ chế trên) | Trước đây tắt screen share cũng bắn `share_screen` (không phân biệt được), giờ có tên riêng từ 08-18 |
 | `leave` | WS đóng và peer từng ở trong room | Bắn 1 lần khi `finish_client_close` chạy |
+
+**[QUAN TRỌNG 08-19]** `publish`/`unpublish`/`share_screen`/`unshare_screen` (nhánh **camera/screen**) giờ được xác nhận bằng RTP thật đến (`camera_rtp_observed`/`screen_rtp_observed`, `ingress.c`) — không còn thuần là "tín hiệu ý định client tự báo" như ghi nhận cũ ở A7.3. **Nhánh audio/role (`join`/`role_change`) thì CHƯA được nâng cấp** — vẫn chỉ là ý định/state, chưa verify RTP audio thật. Nếu cần biết chính xác "audio publisher thật sự có RTP" phải tự detect ở tầng agent (đã làm, dựa trên RTP thật tới qua pion), không trông chờ hook NATS cho phần audio.
 
 **[QUAN TRỌNG 08-18]** `push_to_talk` (message WS, xem C.5/`CLAUDE.md` 4.1) từ giờ **tách hẳn khỏi role** — người audience bấm PTT vẫn là `audience`, không trigger `publish`/`unpublish`/`role_change`/`peer_updated` gì cả, chỉ trả riêng `push_to_talk_changed` ở tầng WS. Nếu logic detect "ai đang nói" của agent định dựa vào hook NATS `publish`/role thì **PTT sẽ vô hình** với agent — phải tự lắng nghe `push_to_talk_changed` qua WS (không có ở NATS) hoặc theo dõi RTP thật đến.
 
-**Không có** (và cần hỏi B4/B5 nếu cần): `room_started`/`room_finished`, event xác nhận track thật publish ở tầng SDP, event lỗi/disconnect bất thường riêng biệt với `leave` thường, event NATS cho push-to-talk.
+**[MỚI 08-19]** WS message `participant_action` (mute/kick người khác — xem `mezon-sfu/CLAUDE.md` mục 4.1) **không có hook NATS tương ứng** — chỉ trả `participant_action_completed` ở tầng WS cho người gửi, không broadcast qua NATS.
+
+**Không có** (và cần hỏi B4/B5 nếu cần): `room_started`/`room_finished`, event xác nhận track audio (mic) thật sự có RTP, event lỗi/disconnect bất thường riêng biệt với `leave` thường, event NATS cho push-to-talk hay `participant_action`.
 
 ### C.5 Catalog đầy đủ — WS message (client ⇄ server)
 
@@ -257,8 +267,19 @@ FE mezon (bấm dừng) → BE mezon → publish NATS event (stop) → orchestra
 
 **[SỬA 2026-08-19]** Có code thật từ BE mezon (`dispatchSfuAgentMessage`/`addAgentDispatch`/`deleteAgentDispatch`), lật lại 2 giả định bên dưới đã ghi hôm 08-17:
 
-- ~~Đây là NATS event riêng, khác hẳn `SFU_HOOK_EVENT`~~ — **SAI**. BE mezon publish thẳng lên cùng subject `SFU_HOOK_EVENT` mà `mezon-sfu` C dùng cho hook event của nó (`mezon-sfu/CLAUDE.md` mục 6, payload `{"user_id","room_id","name","event"}`). Không phải 2 subject riêng — **1 subject dùng chung, phân biệt bằng field**: message của BE mezon có `action` (không có `event`), message của SFU có `event` (không có `action`). Subscriber phải tự lọc theo field, bỏ qua message không khớp shape mình cần thay vì coi là lỗi.
-- ~~Tên subject chưa chốt~~ — **đã chốt, chính là `SFU_HOOK_EVENT`**, literal string (`producer.c:78`), không phải subject riêng đặt tên `mezon.agent.start`/`stop` như code tạm đang dùng.
+- ~~Đây là NATS event riêng, khác hẳn `SFU_HOOK_EVENT`~~ — **SAI**. BE mezon publish thẳng lên cùng subject mà `mezon-sfu` C dùng cho hook event của nó (`mezon-sfu/CLAUDE.md` mục 6, payload `{"user_id","room_id","name","event"}`). Không phải 2 subject riêng — **1 subject dùng chung, phân biệt bằng field**: message của BE mezon có `action` (không có `event`), message của SFU có `event` (không có `action`). Subscriber phải tự lọc theo field, bỏ qua message không khớp shape mình cần thay vì coi là lỗi.
+- ~~Tên subject chưa chốt~~ — chốt hôm 08-19 là literal `SFU_HOOK_EVENT`, không phải subject riêng đặt tên `mezon.agent.start`/`stop` như code tạm đang dùng.
+  - **[❌ SỬA LẠI 2026-08-20, chốt 08-19 ở trên SAI — đây là bug thật, worker-manager code chưa từng nhận được trigger thật]** Bạn tự đọc lại đúng file định nghĩa hằng số phía BE mezon:
+    ```go
+    const (
+        SFU_HOOK_EVENT = "mezon_sfu_hook_event"
+        ...
+    )
+    func dispatchSfuAgentMessage(nc *nats.Conn, buf []byte) error {
+        return nc.Publish(SFU_HOOK_EVENT, buf)
+    }
+    ```
+    Chốt 08-19 đã nhầm **tên hằng số Go** (`SFU_HOOK_EVENT`) với **giá trị string** của nó. Subject thật BE mezon publish lên là `"mezon_sfu_hook_event"`, không phải literal `"SFU_HOOK_EVENT"`. `internal/workermanager/config.go` default `AGENT_DISPATCH_SUBJECT` bị set sai theo chốt cũ (`"SFU_HOOK_EVENT"`) — **đã sửa lại thành `"mezon_sfu_hook_event"`** (commit tiếp theo sau lần cập nhật checklist này). Tình cờ đây cũng đúng bằng default mới của chính `nats_hook_topic` bên `mezon-sfu` (commit `88984d6`, xem ngay dưới) — nên rốt cuộc "1 subject dùng chung, phân biệt bằng field" ở bullet trên vẫn đúng, chỉ là tên subject đúng là `mezon_sfu_hook_event`, không phải `SFU_HOOK_EVENT`. **Rủi ro `nats_hook_topic` bị SFU team đổi khác default vẫn còn** (xem bullet ngay dưới) — vẫn nên hỏi thẳng SFU team để chắc chắn.
 - Payload thật, 2 hướng đối xứng qua 1 field `action`:
   ```json
   {"action":"add", "room_id":"<room_id>"}

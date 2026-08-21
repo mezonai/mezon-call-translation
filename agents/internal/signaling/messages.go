@@ -41,8 +41,15 @@ type ICEServer struct {
 }
 
 type joinedMsg struct {
-	Type       string      `json:"type"`
-	Room       uint64      `json:"room"`
+	Type string `json:"type"`
+	// Room: mezon-sfu sends this quoted (`"room":"1"`, signaling.c:59/75),
+	// not a bare JSON number -- `,string` tells encoding/json to expect
+	// that. Every int64/uint64 identifier field in this file has the same
+	// treatment; only counts (participant_count) and peer_id/self_peer_id
+	// are sent as bare numbers -- verified against signaling.c directly,
+	// not assumed, since a wrong guess here fails to decode the *entire*
+	// message, not just this field.
+	Room       uint64      `json:"room,string"`
 	ICEServers []ICEServer `json:"iceServers"`
 }
 
@@ -52,16 +59,19 @@ type offerMsg struct {
 }
 
 // Member is the roster entry shape shared by room_snapshot.members[],
-// peer_joined.peer and peer_updated.peer.
+// peer_joined.peer and peer_updated.peer. See joinedMsg.Room's doc for why
+// UserID needs `,string` while PeerID/MidAudio/MidVideo/MidScreen don't --
+// verified per field against signaling.c (member-array construction around
+// line 1643, peer_updated around line 1163), not assumed.
 type Member struct {
 	PeerID    uint64 `json:"peer_id"`
-	UserID    int64  `json:"user_id"`
+	UserID    int64  `json:"user_id,string"`
 	Role      string `json:"role"`
 	IsMute    bool   `json:"is_mute"`
 	Ufrag     string `json:"ufrag"`
-	MidAudio  string `json:"mid_audio"`
-	MidVideo  string `json:"mid_video"`
-	MidScreen string `json:"mid_screen"`
+	MidAudio  uint32 `json:"mid_audio"`
+	MidVideo  uint32 `json:"mid_video"`
+	MidScreen uint32 `json:"mid_screen"`
 }
 
 type roomSnapshotMsg struct {
@@ -81,11 +91,11 @@ type peerLeftMsg struct {
 	Type             string `json:"type"`
 	ParticipantCount int    `json:"participant_count"`
 	Ufrag            string `json:"ufrag"`
-	UserID           int64  `json:"user_id"`
+	UserID           int64  `json:"user_id,string"`
 	PeerID           uint64 `json:"peer_id"`
-	MidAudio         string `json:"mid_audio"`
-	MidVideo         string `json:"mid_video"`
-	MidScreen        string `json:"mid_screen"`
+	MidAudio         uint32 `json:"mid_audio"`
+	MidVideo         uint32 `json:"mid_video"`
+	MidScreen        uint32 `json:"mid_screen"`
 }
 
 type peerUpdatedMsg struct {

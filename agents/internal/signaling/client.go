@@ -17,9 +17,9 @@ type PeerLeftEvent struct {
 	Ufrag            string
 	UserID           int64
 	PeerID           uint64
-	MidAudio         string
-	MidVideo         string
-	MidScreen        string
+	MidAudio         uint32
+	MidVideo         uint32
+	MidScreen        uint32
 }
 
 // Callbacks lets the caller (rtcagent) react to server messages without this

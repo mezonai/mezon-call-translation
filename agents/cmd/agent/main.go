@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/mezonai/mezon-call-translation/agents/internal/audiopipeline"
@@ -44,6 +45,13 @@ import (
 const orchestratorCallTimeout = 3 * time.Second
 
 func main() {
+	// Best-effort: only matters when bin/agent is run standalone for
+	// debugging (bypassing worker-manager) -- worker-manager already loads
+	// its own .env and passes the relevant vars through explicitly
+	// (internal/workermanager/config.go's agentPassthroughEnvKeys), so this
+	// is a no-op duplicate in that path, not a conflicting second source.
+	_ = godotenv.Load()
+
 	cfg, err := config.FromEnv()
 	if err != nil {
 		logging.L.Error("config: failed to load", logging.ErrAttrs(err)...)
@@ -342,7 +350,20 @@ func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
 		}
 	}
 
-	pa, err := rtcagent.New(iceServers, publishTrack)
+	// Classic Go typed-nil-interface trap: rtcagent.New takes webrtc.TrackLocal
+	// (an interface), and publishTrack's static type is the concrete
+	// *webrtc.TrackLocalStaticSample -- passing a nil publishTrack straight
+	// through would implicitly wrap it into a non-nil interface (type set,
+	// value nil), so rtcagent.New's own `!= nil` check would see it as
+	// non-nil and call pc.AddTrack on a nil pointer (confirmed: panics
+	// inside pion's AddTrack -> TrackLocalStaticSample.Kind, nil receiver).
+	// Converting explicitly here, while publishTrack is still the concrete
+	// type, keeps the interface genuinely nil for the audience case.
+	var rtcPublishTrack webrtc.TrackLocal
+	if publishTrack != nil {
+		rtcPublishTrack = publishTrack
+	}
+	pa, err := rtcagent.New(iceServers, rtcPublishTrack)
 	if err != nil {
 		logging.L.Error("rtcagent: failed to create peer connection", logging.ErrAttrs(err)...)
 		return

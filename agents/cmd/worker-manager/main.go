@@ -11,11 +11,18 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/joho/godotenv"
+
 	"github.com/mezonai/mezon-call-translation/agents/internal/logging"
 	"github.com/mezonai/mezon-call-translation/agents/internal/workermanager"
 )
 
 func main() {
+	// Best-effort: a missing .env (the common case outside local dev) isn't
+	// an error, everything still falls back to the shell's real env/config
+	// defaults exactly as before this existed.
+	_ = godotenv.Load()
+
 	cfg, err := workermanager.FromEnv()
 	if err != nil {
 		logging.L.Error("workermanager: failed to load config", logging.ErrAttrs(err)...)

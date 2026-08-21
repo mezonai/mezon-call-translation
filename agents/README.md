@@ -23,7 +23,7 @@ Work in progress, built incrementally against [`mezon-sfu-migration-plan.md`](..
 | — `register_room`/`unregister_room` with orchestrator | Done (2026-08-18) — was skipped initially, turned out to be load-bearing, see `orchestratorclient.Client.RegisterRoom`'s doc |
 | 2.7 VAD | Dropped, not dead code to maintain — see `internal/audiopipeline`'s absence of it and plan.md 2.7 |
 
-**Not yet tested against a running `mezon-sfu`, NATS server, or orchestrator_service** — no local build of `mezon-sfu` exists on the dev machine this was written on (missing `libuv`/`libsrtp2`/`liburing`/BoringSSL/`nats.c`), no local `nats-server` either, and orchestrator_service wasn't run against this code. `go build ./...`, `go vet ./...`, and `go test ./...` are clean throughout (including a real cgo/`libopus` round-trip encode in `internal/opusenc`'s test, not just a compile check) — end-to-end verification against a live `mezon-sfu` is still open, see plan.md section 3.
+**First real end-to-end test against `mezon-sfu` + NATS ran 2026-08-19** (see `LOCAL_TESTING.md`) — `worker-manager` → NATS → spawn → agent dial all confirmed working, but the `join` handshake itself failed to decode (`json: cannot unmarshal string into Go struct field joinedMsg.room of type uint64`). Root cause: `internal/signaling/messages.go`'s wire structs had never been checked against mezon-sfu's actual JSON output (only against the prose description in `mezon-sfu/CLAUDE.md`) -- `room`/`user_id` are sent JSON-quoted even though they're numeric, while `mid_audio`/`mid_video`/`mid_screen` are sent as bare numbers despite reading like they should be strings; every struct in that file had at least one field the wrong way round, which would have broken `room_snapshot`/`peer_joined`/`peer_left`/`peer_updated` too, one at a time, as each was fixed in isolation without checking the others. Fixed all of them at once, each `,string` decision verified against the exact `snprintf` line in `signaling.c`, not guessed -- see `messages.go`'s comments and `messages_test.go` (payloads copied verbatim from the C format strings) for the specifics. Still open: orchestrator_service/record-service/STT/TTS haven't been run against this code yet (deliberately out of scope for the first pass, see `LOCAL_TESTING.md`).
 
 `cmd/agent` does not know or implement how it gets spawned — it only reads its parameters from the environment (below). `cmd/worker-manager` is what owns that, in this repo, for real now (not just on paper in the plan).
 
@@ -78,7 +78,7 @@ All via environment variables (`internal/workermanager/config.go`):
 | Var | Required | Default | Meaning |
 |---|---|---|---|
 | `NATS_URL` | no | `nats://127.0.0.1:4222` | NATS server to subscribe on. |
-| `AGENT_DISPATCH_SUBJECT` | no | `SFU_HOOK_EVENT` | Confirmed 2026-08-19 against BE mezon's real dispatch code — **one shared subject** for both add and delete (also shared with mezon-sfu's own participant hook events), routed by the `action` field. See `mezon-sfu-migration-checklist.md` D4. |
+| `AGENT_DISPATCH_SUBJECT` | no | `mezon_sfu_hook_event` | **[2026-08-20, corrected]** BE mezon's Go code names its dispatch constant `SFU_HOOK_EVENT`, but that constant's *value* — the real NATS subject — is the string `"mezon_sfu_hook_event"`. The 2026-08-19 confirmation mistook the identifier for the value and shipped the wrong default (`"SFU_HOOK_EVENT"`), which meant this subscription would never receive a real dispatch. Fixed. One shared subject for both add and delete, routed by the `action` field — mezon-sfu's own participant hook events land on this same subject too as of mezon-sfu commit `88984d6` (its `nats_hook_topic` default also changed to `mezon_sfu_hook_event`). See `mezon-sfu-migration-checklist.md` D4. |
 | `AGENT_WORKER_QUEUE_GROUP` | no | `agent-worker-manager` | NATS queue group, so a future multi-instance worker-manager doesn't double-spawn on the same event. |
 | `AGENT_BIN_PATH` | no | `agent` next to the `worker-manager` binary | Path to the built `agent` binary to spawn. |
 | `AGENT_STOP_TIMEOUT_SECONDS` | no | `10` | How long to wait after SIGTERM before escalating to SIGKILL on Stop. Sized against the agent's own graceful-shutdown worst case (~9s after the 2026-08-19 timeout pass below), not arbitrary -- don't lower without checking that math still holds. |
@@ -92,7 +92,7 @@ go build -o bin/worker-manager ./cmd/worker-manager
 SFU_WS_URL=ws://127.0.0.1:8000/ws SFU_JWT_SECRET=default ./bin/worker-manager
 ```
 
-Then publish a start event, e.g. via the NATS CLI: `nats pub SFU_HOOK_EVENT '{"action":"add","room_id":"1"}'`. Requires `AGENT_USER_ID_BASE` to be set first (see the env var table above and the `agent_user_id` design-decision note below) — without it `Manager.Start` errors instead of spawning.
+Then publish a start event, e.g. via the NATS CLI: `nats pub mezon_sfu_hook_event '{"action":"add","room_id":"1"}'`. Requires `AGENT_USER_ID_BASE` to be set first (see the env var table above and the `agent_user_id` design-decision note below) — without it `Manager.Start` errors instead of spawning.
 
 ## Layout
 
@@ -147,6 +147,10 @@ Three separate network dependencies, all infra decisions this module doesn't con
 - `worker-manager` → NATS server (`NATS_URL`).
 - `agent` → `mezon-sfu`'s signaling (WS) and media (UDP) ports. `mezon-sfu`'s TURN support is not wired up yet, so for now this assumes `agent` and `mezon-sfu` are reachable directly (same LAN/VPC).
 - `agent` → `orchestrator_service` (HTTP, optional) and the Vosk STT service (WS, optional) -- both best-effort, see Configuration above.
+
+## Running as a deployed service (dev/prod)
+
+No Docker in dev/prod (same policy as `audio-ingestion/record-service`, PLAN.md D14) — systemd on the host instead. `worker-manager` is the one long-lived unit; it spawns/kills `agent` subprocesses itself (see Design decisions above), so there is no separate unit per agent or per room. Full install steps, unit file, and env file example: **[`deploy/systemd/README.md`](deploy/systemd/README.md)**.
 
 ## Background
 

@@ -29,12 +29,30 @@ import (
 
 type Config struct {
 	NATSURL string
-	// Subject: confirmed 2026-08-19 against BE mezon's real dispatch code --
-	// BOTH add and delete are published on this single subject
-	// ("SFU_HOOK_EVENT", the same one mezon-sfu's own C hook events use),
-	// distinguished by the "action" field, not by subject. See
-	// dispatchEvent's doc in events.go and mezon-sfu-migration-checklist.md
-	// D4.
+	// Subject: BOTH add and delete are published on this single subject,
+	// distinguished by the "action" field, not by subject.
+	//
+	// [2026-08-20, corrected] The actual wire subject is the NATS *string*
+	// "mezon_sfu_hook_event", NOT the literal text "SFU_HOOK_EVENT". BE
+	// mezon's Go code names its constant `SFU_HOOK_EVENT`, but that
+	// constant's *value* is `"mezon_sfu_hook_event"`:
+	//
+	//   const SFU_HOOK_EVENT = "mezon_sfu_hook_event"
+	//   func dispatchSfuAgentMessage(nc *nats.Conn, buf []byte) error {
+	//       return nc.Publish(SFU_HOOK_EVENT, buf)
+	//   }
+	//
+	// The 2026-08-19 confirmation mistook the Go identifier name for the
+	// subject string and set the default below to the literal
+	// "SFU_HOOK_EVENT" -- which meant this subscription would never have
+	// received a real BE mezon dispatch event at all. Conveniently, this
+	// now also matches mezon-sfu's own hook-event default as of its commit
+	// 88984d6 (2026-08-20, `nats_hook_topic` default -> also
+	// "mezon_sfu_hook_event") -- so both BE mezon's dispatch and
+	// mezon-sfu's own participant hook events land on the same real
+	// subject again, same as originally assumed, just under the right
+	// string. See dispatchEvent's doc in events.go and
+	// mezon-sfu-migration-checklist.md D4.
 	Subject    string
 	QueueGroup string
 	// AgentBinPath is the path to the built `agent` binary (cmd/agent) this
@@ -92,7 +110,7 @@ var agentPassthroughEnvKeys = []string{
 func FromEnv() (Config, error) {
 	cfg := Config{
 		NATSURL:      getEnv("NATS_URL", "nats://127.0.0.1:4222"),
-		Subject:      getEnv("AGENT_DISPATCH_SUBJECT", "SFU_HOOK_EVENT"),
+		Subject:      getEnv("AGENT_DISPATCH_SUBJECT", "mezon_sfu_hook_event"),
 		QueueGroup:   getEnv("AGENT_WORKER_QUEUE_GROUP", "agent-worker-manager"),
 		AgentBinPath: getEnv("AGENT_BIN_PATH", defaultAgentBinPath()),
 	}

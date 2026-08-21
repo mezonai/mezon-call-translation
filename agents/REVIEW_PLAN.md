@@ -17,40 +17,40 @@
 
 ## 3. `rtcagent/peer.go` — nặng nhất, dành thời gian nhiều nhất
 
-- [ ] `New()` — chỗ `AddTrack` phải chạy trước `SetRemoteDescription`, đọc kỹ comment giải thích tại sao thứ tự này bắt buộc.
-- [ ] `handleTrack`/`parseMsid`/`kindForMid` — logic suy ra user_id/kind từ `mid`, so với D2 checklist.
-- [ ] `HandleOffer` — có đợi `GatheringCompletePromise` không (bắt buộc vì SFU không trickle ICE).
-- [ ] `readLoop` — chỗ toàn bộ "hợp đồng 1 goroutine sở hữu 1 track" bắt nguồn từ, hiểu kỹ trước khi đọc `audiopipeline`.
+- [x] `New()` — chỗ `AddTrack` phải chạy trước `SetRemoteDescription`, đọc kỹ comment giải thích tại sao thứ tự này bắt buộc.
+- [x] `handleTrack`/`parseMsid`/`kindForMid` — logic suy ra user_id/kind từ `mid`, so với D2 checklist.
+- [x] `HandleOffer` — có đợi `GatheringCompletePromise` không (bắt buộc vì SFU không trickle ICE).
+- [x] `readLoop` — chỗ toàn bộ "hợp đồng 1 goroutine sở hữu 1 track" bắt nguồn từ, hiểu kỹ trước khi đọc `audiopipeline`.
 
 ## 4. `internal/audiopipeline/bridge.go` — dễ có race nhất, đọc chậm
 
-- [ ] Đối chiếu "ai gọi gì từ goroutine nào": `HandlePacket`/`HandleTrackEnded` (goroutine của track) vs `SetSTTEnabled` (goroutine SSE) — lý do duy nhất `session.mu` tồn tại, chỉ bảo vệ `sttSink`.
-- [ ] `sessionFor`/`applySTTEnabled` — nhánh "thua race, đóng bản trùng" có đúng logic không.
+- [x] Đối chiếu "ai gọi gì từ goroutine nào": `HandlePacket`/`HandleTrackEnded` (goroutine của track) vs `SetSTTEnabled` (goroutine SSE) — lý do duy nhất `session.mu` tồn tại, chỉ bảo vệ `sttSink`.
+- [x] `sessionFor`/`applySTTEnabled` — nhánh "thua race, đóng bản trùng" có đúng logic không.
 
 ## 5. 2 sink cụ thể — đọc song song, không phụ thuộc nhau
 
-- [ ] `internal/recordclient/{client,forwarder}.go` — đối chiếu semantics với `record_service_client.py` gốc (non-blocking, drop-and-report).
-- [ ] `internal/sttclient/client.go` — đối chiếu với `stt_client.py`, chú ý phần cắt bớt (batching/rate-limit/circuit-breaker/auth) có bỏ sót gì quan trọng không.
-- [ ] `internal/recordpb/*.pb.go` — chỉ lướt (code generate). Nghi ngờ thì so `proto/recording.proto` với bản gốc bên `audio-ingestion`.
+- [x] `internal/recordclient/{client,forwarder}.go` — đối chiếu semantics với `record_service_client.py` gốc (non-blocking, drop-and-report).
+- [x] `internal/sttclient/client.go` — đối chiếu với `stt_client.py`, chú ý phần cắt bớt (batching/rate-limit/circuit-breaker/auth) có bỏ sót gì quan trọng không.
+- [x] `internal/recordpb/*.pb.go` — chỉ lướt (code generate). Nghi ngờ thì so `proto/recording.proto` với bản gốc bên `audio-ingestion`.
 
 ## 6. Nhánh TTS + trigger — phức tạp về luồng điều khiển
 
-- [ ] `internal/orchestratorclient/{client,sse}.go` — parse SSE có đúng format Python không; phần `room_name` giả định (đọc kỹ package doc).
-- [ ] `internal/ttsclient/client.go` — đơn giản, đọc nhanh.
-- [ ] `internal/opusenc/encoder.go` — chỉ là interface + lỗi rõ ràng; xác nhận đồng ý hướng "để gap rõ ràng" thay vì cgo không kiểm chứng được.
-- [ ] `internal/ttsplayer/player.go` — hàng đợi `Speak()` (serialize đúng chưa), và `forwardToRecordService` dùng mutex thay vì "1 goroutine sở hữu" như audiopipeline — đọc comment giải thích tại sao khác.
+- [x] `internal/orchestratorclient/{client,sse}.go` — parse SSE có đúng format Python không; phần `room_name` giả định (đọc kỹ package doc).
+- [x] `internal/ttsclient/client.go` — đơn giản, đọc nhanh.
+- [-] `internal/opusenc/encoder.go` — chỉ là interface + lỗi rõ ràng; xác nhận đồng ý hướng "để gap rõ ràng" thay vì cgo không kiểm chứng được.
+- [x] `internal/ttsplayer/player.go` — hàng đợi `Speak()` (serialize đúng chưa), và `forwardToRecordService` dùng mutex thay vì "1 goroutine sở hữu" như audiopipeline — đọc comment giải thích tại sao khác.
 
 ## 7. Ráp nối — đọc cuối cùng khi đã quen hết các mảnh
 
-- [ ] `cmd/agent/main.go` — đặc biệt `sessionRefs` (cách SSE handler với vòng đời session ngắn hạn nói chuyện với nhau qua reconnect), và 2 factory `newRecordSinkFactory`/`newSTTSinkFactory`.
+- [x] `cmd/agent/main.go` — đặc biệt `sessionRefs` (cách SSE handler với vòng đời session ngắn hạn nói chuyện với nhau qua reconnect), và 2 factory `newRecordSinkFactory`/`newSTTSinkFactory`.
 
 ## 8. Worker manager — độc lập, review riêng
 
-- [ ] `internal/workermanager/config.go`
-- [ ] `internal/workermanager/events.go`
-- [ ] `internal/workermanager/manager.go` — trọng tâm: spawn/kill/reap, đoạn `Setpgid`, race đã fix ở nhánh SIGKILL (`<-agent.done` trước khi return).
-- [ ] `internal/workermanager/subscriber.go`
-- [ ] `cmd/worker-manager/main.go`
+- [x] `internal/workermanager/config.go`
+- [x] `internal/workermanager/events.go`
+- [x] `internal/workermanager/manager.go` — trọng tâm: spawn/kill/reap, đoạn `Setpgid`, race đã fix ở nhánh SIGKILL (`<-agent.done` trước khi return).
+- [x] `internal/workermanager/subscriber.go`
+- [x] `cmd/worker-manager/main.go`
 
 ## Sau khi xong
 
