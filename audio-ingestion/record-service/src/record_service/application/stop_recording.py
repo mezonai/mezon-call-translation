@@ -88,13 +88,46 @@ class StopRecording:
         await self._finalize(session_id)
 
     async def _finalize(self, session_id: str) -> None:
-        active = self._registry.pop(session_id)
+        active = self._registry.get(session_id)
         if active is None:
             return
         session = active.session
 
         async with active.lock:
+            if session.status in (RecordingStatus.COMPLETED, RecordingStatus.FAILED):
+                # A concurrent call already finalized this session_id -- e.g.
+                # _grace_timeout finished its status check and released the
+                # lock right before a graceful stream-end for the same
+                # session_id called execute()->_finalize() directly (no
+                # status/lock check there before calling in). Both then
+                # reach here with the same non-popped `active` (see this
+                # method's registry.get, not .pop, at the top -- pop() used
+                # to double as a single-call guard when it ran first; moving
+                # it to the end for the reconciler-race fix above removed
+                # that side effect, so this checks explicitly instead).
+                # Redoing complete_or_abort below would call
+                # complete_multipart_upload/abort a second time on an
+                # upload_id S3 already closed -- that fails, and the
+                # exception handler in finalize.py would flip an already-
+                # COMPLETED session to FAILED and report the wrong event.
+                logger.info(
+                    "Session %s already finalized (status=%s), skipping duplicate finalize call",
+                    session_id,
+                    session.status.value,
+                )
+                return
+
             session.ended_at = time.time()
+            logger.info(
+                "Finalizing session %s: buffered=%dB pending flush, raw_bytes_received=%d, "
+                "frames_received=%d, dropped=%d, parts_uploaded=%d",
+                session_id,
+                len(active.buffer),
+                session.raw_bytes_received,
+                session.frames_received,
+                session.dropped_frame_count,
+                len(session.parts),
+            )
 
             if active.buffer:
                 part_number = session.next_part_number
@@ -115,6 +148,9 @@ class StopRecording:
                         self._policy.upload_retry, f"final_part[{session_id}]", _do_upload
                     )
                     session.parts.append(UploadedPart(part_number=part_number, etag=etag))
+                    logger.info(
+                        "Uploaded final part %d (%d bytes) for %s", part_number, len(payload), session_id
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "Failed to flush final part for %s, finalizing with parts uploaded so far: %s",
@@ -124,6 +160,17 @@ class StopRecording:
 
             await complete_or_abort(session, self._blob_storage, self._policy)
             await self._state_repo.save(session)
+
+        self._registry.pop(session_id)
+
+        logger.info(
+            "Finalized session %s: status=%s, parts=%d, raw_bytes_received=%d, duration=%.1fs",
+            session_id,
+            session.status.value,
+            len(session.parts),
+            session.raw_bytes_received,
+            (session.ended_at or 0) - session.started_at,
+        )
 
         event = "recording.completed" if session.status == RecordingStatus.COMPLETED else "recording.failed"
         reported = await self._report_event.execute(session, event)
