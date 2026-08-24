@@ -5,7 +5,7 @@ Room Registry API - Manager active rooms for webhook processing
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from livekit import api
+
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.auth.transcript_auth import verify_api_key
@@ -18,7 +18,7 @@ from orchestrator_service.models.room_registry_models import (
     RoomUnregisterRequest,
     RoomUnregisterResponse,
 )
-from orchestrator_service.services.livekit_client import get_livekit_service
+
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
@@ -105,31 +105,8 @@ async def register_room(
 
 async def _fetch_and_save_existing_participants(room_name: str, room_id: str) -> None:
     """Background half of register_room's step 3 -- see call site comment."""
-    try:
-        livekit_service = get_livekit_service()
-        if not livekit_service.is_available:
-            logger.warning("LiveKit API not available")
-            return
-
-        client = livekit_service.get_client()
-        participants_response = await client.room.list_participants(
-            api.ListParticipantsRequest(room=room_name)
-        )
-
-        logger.info(f"Found {len(participants_response.participants)} participants")
-        participants_data = [
-            {
-                "participant_identity": participant.identity,
-                "username": participant.name or participant.metadata,
-                "timestamp": datetime.utcnow(),
-            }
-            for participant in participants_response.participants
-        ]
-
-        if participants_data:
-            await transcription_service.save_participants_batch(room_id, participants_data)
-    except Exception as e:
-        logger.error(f"Error saving existing participants for room '{room_name}': {e}", exc_info=True)
+    # TODO: save participants data to db
+    pass
 
 
 @router.post("/unregister", response_model=RoomUnregisterResponse, response_description="Unregister a room")
