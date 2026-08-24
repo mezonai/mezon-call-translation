@@ -632,7 +632,7 @@ class PgTranscriptRepository:
         know about it, and this UPDATE appends it again on top of the
         now-already-updated row. Result: a duplicated participant entry.
         Not hypothetical -- can happen today whenever a `participant_joined`
-        webhook lands while /register's batch save (also awaiting a LiveKit
+        webhook lands while /register's batch save (also awaiting a query
         API call) is still in flight for the same room.
 
         This version does the membership filter *inside* the same UPDATE

@@ -4,13 +4,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from orchestrator_service.auth.authorization import AuthContext
-from orchestrator_service.services.livekit_client import (
-    AudioTrackInfo,
-    DispatchActionResponseModel,
-    LiveKitServiceError,
-    ParticipantBasicInfo,
-    get_livekit_service,
-)
+from orchestrator_service.models.room_models import AudioTrackInfo
 from orchestrator_service.services.postgresql.models import Room
 from orchestrator_service.services.postgresql.pg_summary_repository import (
     PgSummaryRepository,
@@ -158,36 +152,6 @@ class RoomService:
             )
 
         return file_results
-
-    async def create_dispatch(self, room_name: str) -> DispatchActionResponseModel:
-        livekit_service = get_livekit_service()
-        try:
-            return await livekit_service.ensure_dispatch(room_name)
-        except LiveKitServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
-
-    async def cancel_dispatch(self, room_name: str) -> DispatchActionResponseModel:
-        livekit_service = get_livekit_service()
-        try:
-            return await livekit_service.cancel_dispatch(room_name)
-        except LiveKitServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
-
-    async def list_participants(self, room_id: str) -> list[ParticipantBasicInfo]:
-        room = await self.pg_transcript_repo.get_room_by_id(room_id)
-        if not room:
-            raise HTTPException(status_code=404, detail="Room not found")
-
-        room_name = room.room_name
-        if not room_name:
-            raise HTTPException(status_code=400, detail=f"Room with ID {room_id} has no assigned room_name")
-
-        try:
-            livekit_service = get_livekit_service()
-            participants = await livekit_service.list_participants(room_name)
-            return participants
-        except LiveKitServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # Get singleton instance

@@ -8,7 +8,7 @@ from orchestrator_service.models.room_registry_models import RoomNameField
 class PushChatExternalRequest(BaseModel): # type: ignore[explicit-any]
     """Request body for pushing an external chat event through SSE."""
 
-    room_name: RoomNameField = Field(description="LiveKit room name")
+    room_name: RoomNameField = Field(description="Room name")
     room_id: str = Field(min_length=1, description="Room identifier")
     participant_identity: str = Field(
         min_length=1,

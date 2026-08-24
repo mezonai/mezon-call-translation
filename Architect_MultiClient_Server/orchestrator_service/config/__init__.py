@@ -5,7 +5,6 @@ All configuration is loaded from a single source
 
 from .application_config import (
     Config,
-    LiveKitConfig,
     LoggerConfig,
     MinIOConfig,
     ServerConfig,
@@ -15,7 +14,6 @@ from .application_config import (
 
 __all__ = [
     "Config",
-    "LiveKitConfig",
     "LoggerConfig",
     "MinIOConfig",
     "STTServiceConfig",
