@@ -132,7 +132,7 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 		if err != nil {
 			return fmt.Errorf("handle offer: %w", err)
 		}
-		if err := c.send(answerMsg{Type: "answer", SDP: answer}); err != nil {
+		if err := c.send(answerMsg{Type: "answer", OfferGeneration: m.OfferGeneration, SDP: answer}); err != nil {
 			return fmt.Errorf("send answer: %w", err)
 		}
 

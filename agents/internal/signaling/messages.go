@@ -17,9 +17,16 @@ type joinMsg struct {
 	Role  string `json:"role,omitempty"`
 }
 
+// answerMsg.OfferGeneration must echo back exactly the value the
+// corresponding offerMsg carried (2026-08-22, mezon-sfu commit 2e01885) --
+// not part of the SDP itself, a sibling JSON field. A mismatch or omission
+// gets the answer rejected outright (missing_offer_generation /
+// stale_offer_generation / future_offer_generation) before mezon-sfu even
+// parses the SDP.
 type answerMsg struct {
-	Type string `json:"type"`
-	SDP  string `json:"sdp"`
+	Type            string `json:"type"`
+	OfferGeneration int    `json:"offer_generation"`
+	SDP             string `json:"sdp"`
 }
 
 // pongMsg is the only keepalive message the client sends -- mezon-sfu
@@ -55,7 +62,11 @@ type joinedMsg struct {
 
 type offerMsg struct {
 	Type string `json:"type"`
-	SDP  string `json:"sdp"`
+	// OfferGeneration: 0 on the initial offer (right after joined), strictly
+	// increasing on every renegotiate. Must be echoed back verbatim in the
+	// answer -- see answerMsg.OfferGeneration.
+	OfferGeneration int    `json:"offer_generation"`
+	SDP             string `json:"sdp"`
 }
 
 // Member is the roster entry shape shared by room_snapshot.members[],
