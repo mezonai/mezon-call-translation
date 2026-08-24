@@ -10,6 +10,7 @@
 > - **Cập nhật 2026-08-16**: `mezon-sfu` push tiếp 1 đợt lớn (57 commit), HEAD hiện tại `2ec3556`. Đáng chú ý nhất: **camera/screen tách hẳn thành track độc lập** (mỗi peer 3 slot uplink audio/camera/screen thay vì 2), **`msid` giờ nhúng `user_id`/`peer_id`**, thêm **RTP MID header extension** để demux, **`room_id` chỉ lấy từ JWT** (bỏ field `room` khỏi message `join`), thêm message `camera`/`mute` tied với state thật. Việc này **giải quyết luôn A3.5 / phần "chưa giải quyết" ở D2 bước 5** (phân biệt mic/screen) — cập nhật lại các mục liên quan bên dưới. Xem thêm `mezon-sfu/CLAUDE.md` (repo kia) để tra chi tiết giao thức đầy đủ, luôn là nguồn chính khi có sai khác.
 > - **Cập nhật 2026-08-20**: HEAD hiện tại `4e58348`. commit `88984d6` đổi NATS hook topic mặc định của chính `mezon-sfu` từ hardcode `SFU_HOOK_EVENT` sang config `nats_hook_topic` (default đổi tên thành `mezon_sfu_hook_event`). Ban đầu tưởng đây là rủi ro tách subject với BE mezon — nhưng **đọc lại đúng code BE mezon thì phát hiện ra bug thật ở phía mình**: hằng số Go bên BE mezon tên là `SFU_HOOK_EVENT` nhưng **giá trị** của nó là `"mezon_sfu_hook_event"`, không phải literal `"SFU_HOOK_EVENT"` — chốt 08-19 ở `D4` đã nhầm tên hằng số với giá trị, khiến `internal/workermanager` subscribe sai subject (`"SFU_HOOK_EVENT"`), **chưa từng nhận được trigger `add`/`delete` thật**. Đã sửa default subject sang `"mezon_sfu_hook_event"` — đúng, và tình cờ trùng luôn với default mới của `nats_hook_topic`, nên "1 subject dùng chung, phân biệt bằng field" vẫn đúng như thiết kế. Xem chi tiết ở C.4 + D4.
 > - **Cập nhật 2026-08-18**: HEAD hiện tại `3cb7853`. **Quan trọng nhất cho agent**: `push_to_talk` giờ **tách hẳn khỏi `role_change`**, không đổi role và **không còn bắn hook `publish`/`unpublish` qua NATS nữa** — nếu định dùng hook đó để suy luận "ai đang nói" qua PTT thì hết dùng được, phải đọc `push_to_talk_changed` ở tầng WS hoặc theo dõi RTP thật. Message `publish`/`unpublish` do client tự gửi **đã bị xoá khỏi giao thức**. `share_screen` tắt giờ bắn `unshare_screen` (tên event mới, tách khỏi `share_screen`). SDP downlink **đã revert bỏ `a=ssrc`** (thêm ở đợt 08-16, gây lỗi renegotiate) — chỉ còn `a=msid`, ảnh hưởng trực tiếp recipe D2 bên dưới. Xem `mezon-sfu/CLAUDE.md` mục 10 để tra chi tiết từng commit.
+> - **Cập nhật 2026-08-24**: HEAD hiện tại `0c59d96`. 2 breaking change: (1) commit `2e01885` (08-22) thêm field JSON top-level `offer_generation` vào cả `offer` (server→client) lẫn `answer` (client→server), sibling với `sdp`, không nằm trong SDP -- client bắt buộc echo lại đúng giá trị, thiếu/sai bị từ chối thẳng (`missing_offer_generation`/`stale_offer_generation`/`future_offer_generation`) trước khi SFU parse SDP. **Đã fix** ở `agents/internal/signaling/messages.go` (`offerMsg.OfferGeneration`, `answerMsg.OfferGeneration`) + `client.go` (echo trong `dispatch`'s `"offer"` case) + test `TestDecodeOffer`/`TestAnswerEchoesOfferGeneration`. (2) commit `0fd8626` (08-23) vô hiệu hoá hoàn toàn `role_change` (luôn trả `error: role_change_disabled`) -- **không ảnh hưởng agent**, agent chưa từng gửi `role_change` (role cố định lúc `join`, xem C.2 bước 4-5 + `signaling.Dial`'s `role` param). Chi tiết đầy đủ + các thay đổi nhỏ khác (WS close code, H264, SDP audio downlink `a=ssrc` quay lại) ở `mezon-sfu/CLAUDE.md` mục 4.1/4.2/10.
 
 ---
 
@@ -166,13 +167,17 @@ Theo `audio-ingestion/PLAN.md`, đã thay `LiveKit Egress` bằng gRPC `agent �
    - role "audience": agent CHỈ nghe, không publish gì — server offer uplink a=inactive
 5. Nhận về theo thứ tự:
    a) {"type":"joined","room":...,"iceServers":[...]}
-   b) {"type":"offer","sdp":"..."}                      <- SDP offer đầu tiên từ server
+   b) {"type":"offer","offer_generation":0,"sdp":"..."}  <- SDP offer đầu tiên từ server, generation luôn =0
    c) {"type":"room_snapshot","self_peer_id":...,"members":[...]}  <- SAU KHI agent gửi answer hợp lệ
 6. Agent tạo PeerConnection, set remote offer, tạo answer, gửi:
-   {"type":"answer","sdp":"<answer sdp>"}
+   {"type":"answer","offer_generation":0,"sdp":"<answer sdp>"}
+   - [SỬA 08-22] "offer_generation" là field JSON riêng, sibling với "sdp", KHÔNG nằm trong nội dung SDP —
+     agent phải echo lại đúng nguyên giá trị server gửi trong "offer" tương ứng; thiếu/sai bị từ chối
+     thẳng (missing/stale/future_offer_generation) trước khi server parse SDP
 7. Từ đây, mỗi khi có người khác vào/ra/đổi role, agent nhận thêm:
    {"type":"peer_joined", ...} / {"type":"peer_left", ...} / {"type":"peer_updated", ...}
-   và 1 SDP offer mới (renegotiate) — agent phải answer lại mỗi lần.
+   và 1 SDP offer mới (renegotiate, "offer_generation" tăng dần khác 0) — agent phải answer lại mỗi lần,
+   echo đúng "offer_generation" của offer đó.
 8. Agent rời room: đóng WebSocket là đủ — server tự dọn + báo "leave"/"peer_left" cho phần còn lại,
    không cần gửi message "leave" tường minh.
 ```

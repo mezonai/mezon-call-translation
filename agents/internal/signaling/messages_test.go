@@ -26,6 +26,36 @@ func TestDecodeJoined(t *testing.T) {
 	}
 }
 
+func TestDecodeOffer(t *testing.T) {
+	raw := []byte(`{"type":"offer","offer_generation":3,"sdp":"v=0..."}`)
+	var m offerMsg
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode offer: %v", err)
+	}
+	if m.OfferGeneration != 3 || m.SDP != "v=0..." {
+		t.Errorf("m = %+v", m)
+	}
+}
+
+// TestAnswerEchoesOfferGeneration guards the 2026-08-22 breaking change
+// (mezon-sfu commit 2e01885): offer_generation is a JSON field sibling to
+// sdp, not part of the SDP body, and the answer must echo the offer's value
+// back verbatim or mezon-sfu rejects it before even parsing the SDP.
+func TestAnswerEchoesOfferGeneration(t *testing.T) {
+	m := answerMsg{Type: "answer", OfferGeneration: 3, SDP: "v=0..."}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal answer: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode marshaled answer: %v", err)
+	}
+	if got["offer_generation"] != float64(3) {
+		t.Errorf("offer_generation = %v, want 3", got["offer_generation"])
+	}
+}
+
 func TestDecodeRoomSnapshot(t *testing.T) {
 	raw := []byte(`{"type":"room_snapshot","room":"1","self_peer_id":2,"participant_count":1,` +
 		`"members":[{"peer_id":3,"user_id":"999001","role":"speaker","is_mute":false,` +
