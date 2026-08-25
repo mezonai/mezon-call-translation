@@ -2,10 +2,8 @@
 Room Registry API - Manager active rooms for webhook processing
 """
 
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.auth.transcript_auth import verify_api_key
@@ -18,7 +16,6 @@ from orchestrator_service.models.room_registry_models import (
     RoomUnregisterRequest,
     RoomUnregisterResponse,
 )
-
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
