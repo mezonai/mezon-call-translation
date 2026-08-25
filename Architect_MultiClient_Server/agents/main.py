@@ -1,5 +1,5 @@
 """
-LiveKit Agent entrypoint - Starts speech-to-text transcription agent + TTS
+LiveKit Agent entrypoint - Starts Vosk transcription agent + TTS
 """
 import asyncio
 import uuid
@@ -124,9 +124,9 @@ async def entrypoint(ctx: agents.JobContext):
     
     # Log readiness status
     if tts_manager:
-        logger.info("🎤🔊 STT + TTS Agent ready and waiting for participants...")
+        logger.info("🎤🔊 Vosk + TTS Agent ready and waiting for participants...")
     else:
-        logger.info("🎤 STT Agent ready and waiting for participants...")
+        logger.info("🎤 Vosk Agent ready and waiting for participants...")
     
     # Keep agent alive forever (cleanup callback will be called on shutdown)
     await asyncio.Future()
