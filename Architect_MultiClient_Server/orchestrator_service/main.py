@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
+from orchestrator_service.api.exception_handlers import register_exception_handlers
 from orchestrator_service.api.sse.sse_manager import SSEManager
 from orchestrator_service.api.sse_agent_request_api import (
     router as sse_agent_request_router,
@@ -21,11 +22,7 @@ from orchestrator_service.api.summary_api import client_router as summary_client
 from orchestrator_service.api.v2.router import (
     api_router as api_router_v2,
 )  # Import the v2 API router
-from orchestrator_service.api.webhook_api import (
-    router as webhook_router,
-)
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.livekit_client import cleanup_livekit_service
 from orchestrator_service.services.postgresql.database import dispose_engine, get_engine
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.services.redis.redis_save_transcription_service import (
@@ -132,35 +129,31 @@ async def lifespan(app: FastAPI):
 
     # Step 2: Cleanup SSE manager (clear data structures)
     # SSE connections were already notified by signal handler
-    logger.info("Step 2/6: Cleaning up SSE manager...")
+    logger.info("Step 2/5: Cleaning up SSE manager...")
     await sse_manager.cleanup()
     logger.info("✅ SSE manager cleanup completed")
 
-    # Step 3: Cleanup LiveKit service
-    logger.info("Step 3/6: Cleaning up LiveKit service...")
-    await cleanup_livekit_service()
-    logger.info("✅ LiveKit service cleanup completed")
-
-    # Step 4: Disconnect Redis Connection Pool
+    # Step 3: Disconnect Redis Connection Pool
     try:
-        logger.info("Step 4/6: Disconnecting Redis connection pool...")
+        logger.info("Step 3/5: Disconnecting Redis connection pool...")
         redis_manager = get_connection_manager()
         await redis_manager.disconnect()
         logger.info("✅ Redis connection pool closed")
     except Exception as e:
         logger.error(f"Error closing Redis connection pool: {e}")
 
-    # Step 5: 🛑 FastAPI shutdown
-    logger.info("Step 5/6: 🛑 FastAPI shutdown")
+    # Step 4: 🛑 FastAPI shutdown
+    logger.info("Step 4/5: 🛑 FastAPI shutdown")
 
     # Dispose PostgreSQL engine
     await dispose_engine()
 
-    logger.info("Step 6/6: ✅ Cleanup complete")
+    logger.info("Step 5/5: ✅ Cleanup complete")
     logger.info("🎉 All services cleanup completed successfully")
 
 
-app = FastAPI(title="LiveKit Orchestrator API", lifespan=lifespan)
+app = FastAPI(title="Orchestrator API", lifespan=lifespan)
+register_exception_handlers(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -175,7 +168,6 @@ app.include_router(stream_router, prefix="/api", tags=["sse transcript"])
 app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat external"])
 app.include_router(sse_metadata_router, prefix="/api", tags=["sse metadata"])
 app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent requests"])
-app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
 # TODO: legacy summary API, mounted with no auth (unlike /api/v2/summary which
 # requires ROOMS_VIEW_ALL/ROOMS_VIEW_OWN). Confirm no downstream still calls this,
 # then remove this router and its module (api/summary_api.py).

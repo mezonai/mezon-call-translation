@@ -2,10 +2,11 @@
 Pydantic models for room summary
 """
 
+from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RetryType(StrEnum):
@@ -54,3 +55,50 @@ class RoomSummaryResponse(BaseModel):  # type: ignore[explicit-any]
     speech_durations: list[dict[str, Any]] = Field(  # type: ignore[explicit-any]
         description="Speech Durations of each participant", default=[]
     )
+
+
+class SummaryListQuery(BaseModel): # type: ignore[explicit-any]
+    """Query parameters for listing summaries."""
+    start_time: datetime | None = Field(
+        default=None,
+        description="Start time for room summary (ISO format: 2024-01-01T00:00:00Z)"
+    )
+    end_time: datetime | None = Field(
+        default=None,
+        description="End time for room summary (ISO format: 2024-01-01T00:00:00Z)"
+    )
+
+    @model_validator(mode="after") # type: ignore[call-arg]
+    def validate_time_range(self) -> "SummaryListQuery":
+        if self.start_time is not None and self.end_time is not None and self.start_time >= self.end_time:
+            raise ValueError("start_time must be before end_time")
+        return self
+
+
+class SummaryListResponse(BaseModel): # type: ignore[explicit-any]
+    """Response model for get_summary_by_room_name"""
+    status: Literal["ok"] = "ok"
+    data: list[RoomSummaryResponse]
+    count: int
+
+
+class SummaryDetailResponse(BaseModel): # type: ignore[explicit-any]
+    """Response model for get_summary_detail_by_room_name"""
+    status: Literal["ok"] = "ok"
+    data: RoomSummaryResponse
+
+class SummaryRetryRequest(BaseModel): # type: ignore[explicit-any]
+    """Request body for retrying an existing summary generation."""
+
+    type: RetryType = Field(
+        default=RetryType.SUMMARY,
+        description="Type of retry: summary, sections, or overall_context"
+    )
+
+
+class SummaryRetryResponse(BaseModel): # type: ignore[explicit-any]
+    """Response model for retrying an existing summary generation."""
+    status: Literal["ok"] = "ok"
+    room_id: str
+    type: RetryType
+    summary_data: dict[str, Any] # type: ignore[explicit-any]
