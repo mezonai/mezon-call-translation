@@ -190,7 +190,6 @@ class ClientInferencePipeline:
                     f"   Circuit State: {circuit_state.get('state')}\n"
                     f"   Failure Count: {failure_count}/{self._circuit_breaker.config.failure_threshold}\n"
                     f"   Time Since Last Failure: {time_since_failure:.1f}s\n"
-                    f"   Timeout Required: {self._circuit_breaker.config.timeout}s\n"
                     f"   Pipeline Issues: Check Nemotron processing errors, audio format issues, or model problems\n"
                     f"   ⚠️  This client's audio processing is suspended until circuit recovers"
                 )
