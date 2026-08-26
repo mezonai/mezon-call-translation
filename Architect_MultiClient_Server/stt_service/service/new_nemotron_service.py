@@ -92,15 +92,14 @@ class NewSTTNemotronService:
                 time_since_failure = circuit_state.get('time_since_last_failure', 0)
                 failure_count = circuit_state.get('failure_count', 0)
                 
-                # logger.error(
-                #     f"🚨 Circuit breaker BLOCKING audio for client {client_id}! 🚨\n"
-                #     f"   Circuit State: {circuit_state.get('state')}\n"
-                #     f"   Failure Count: {failure_count}/{self._circuit_breaker.config.failure_threshold}\n"
-                #     f"   Time Since Last Failure: {time_since_failure:.1f}s\n"
-                #     f"   Timeout Required: {self._circuit_breaker.config.timeout}s\n"
-                #     f"   Last Failure: {time.strftime('%H:%M:%S', time.localtime(circuit_state.get('last_failure_time', 0))) if circuit_state.get('last_failure_time') else 'Unknown'}\n"
-                #     f"   ⚠️  All audio processing is suspended until circuit recovers"
-                # )
+                logger.error(
+                    f"🚨 Circuit breaker BLOCKING audio for client {client_id}! 🚨\n"
+                    f"   Circuit State: {circuit_state.get('state')}\n"
+                    f"   Failure Count: {failure_count}/{self._circuit_breaker.config.failure_threshold}\n"
+                    f"   Time Since Last Failure: {time_since_failure:.1f}s\n"
+                    f"   Last Failure: {time.strftime('%H:%M:%S', time.localtime(circuit_state.get('last_failure_time', 0))) if circuit_state.get('last_failure_time') else 'Unknown'}\n"
+                    f"   ⚠️  All audio processing is suspended until circuit recovers"
+                )
                 return False
             
             # Get or create pipeline for client
