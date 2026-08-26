@@ -12,6 +12,7 @@ import time
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
 from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.raw_pcm_cleanup_service import RawPcmCleanupService
 from orchestrator_service.services.redis.redis_stream_service import (
     RedisStreamService,
     create_stream_service,
@@ -64,6 +65,7 @@ class RedisSaveTranscriptionService:
         self._redis_service: RedisStreamService[SaveTranscriptionTask] = get_save_stream_service()
         self._pg_repo: PgTranscriptRepository = PgTranscriptRepository()
         self._pg_track_repo: PgTrackRepository = PgTrackRepository()
+        self._raw_pcm_cleanup_service = RawPcmCleanupService()
         self._consumer_task: asyncio.Task[None] | None = None
         self._orphan_recovery_task: asyncio.Task[None] | None = None
         self._running = False
@@ -244,6 +246,23 @@ class RedisSaveTranscriptionService:
                 if updated_track is not None:
                     # Get room_ref_id from updated track
                     room_ref_id = updated_track.room_ref_id
+
+                    try:
+                        # This is the symmetric counterpart to the derivative
+                        # completion hook.  complete_track_with_vad_duration()
+                        # committed `status=completed` before this call; the
+                        # shared helper now performs a fresh read and deletes
+                        # only if the OGG pipeline is also completed.
+                        await self._raw_pcm_cleanup_service.maybe_delete_raw_pcm(task.track_ref_id)
+                    except Exception as e:
+                        # Transcription and its segments are already complete.
+                        # Never reject/retry the final save task just because
+                        # cleanup failed; the reconciler will retry the PCM.
+                        logger.error(
+                            f"Raw PCM cleanup failed after transcription completion: "
+                            f"track={task.track_ref_id} error={e}",
+                            exc_info=True,
+                        )
 
                     # Log final summary
                     logger.info(

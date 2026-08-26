@@ -24,6 +24,7 @@ from orchestrator_service.api.v2.router import (
 )  # Import the v2 API router
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.services.postgresql.database import dispose_engine, get_engine
+from orchestrator_service.services.raw_pcm_cleanup_service import RawPcmCleanupService
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.services.redis.redis_save_transcription_service import (
     RedisSaveTranscriptionService,
@@ -98,6 +99,14 @@ async def lifespan(app: FastAPI):
         summary_outbox_worker = SummaryOutboxWorker()
         await summary_outbox_worker.start()
         logger.info("✅ Summary Outbox worker started")
+
+        # Reconcile PCM cleanup missed when a process died after committing
+        # the second (Whisper/derivative) completion status but before its
+        # opportunistic cleanup call.  The worker derives eligibility from
+        # existing Track state and persists its marker in audio_info JSONB.
+        raw_pcm_cleanup_service = RawPcmCleanupService()
+        await raw_pcm_cleanup_service.start()
+        logger.info("✅ Raw PCM cleanup reconciler started")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Redis services: {e}")
         raise
@@ -108,6 +117,15 @@ async def lifespan(app: FastAPI):
     # Uvicorn automatically cancels all active SSE generators when shutdown signal received
     # We just need to cleanup resources after generators are cancelled
     logger.info("🛑 FastAPI shutting down, cleaning up resources...")
+
+    # Stop storage reconciliation before PostgreSQL is disposed below.
+    try:
+        logger.info("Stopping Raw PCM cleanup reconciler...")
+        raw_pcm_cleanup_service = RawPcmCleanupService()
+        await raw_pcm_cleanup_service.stop()
+        logger.info("✅ Raw PCM cleanup reconciler stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Raw PCM cleanup reconciler: {e}")
 
     # Step 0: Stop summary outbox worker
     try:

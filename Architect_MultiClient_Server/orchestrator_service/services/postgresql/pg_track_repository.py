@@ -27,7 +27,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
@@ -58,6 +58,85 @@ class PgTrackRepository:
 
     def __init__(self):
         pass
+
+    async def get_track_by_id(self, record_id: str) -> Track | None:
+        """Return one track by its recording id.
+
+        Raw PCM cleanup deliberately re-reads the track after either the
+        Whisper or derivative transaction commits.  It must not make its
+        decision from an ORM object fetched before that commit, because that
+        object may contain the other pipeline's stale status.
+        """
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                return await session.get(Track, record_id)
+        except Exception as e:
+            logger.error(f"Failed to get track by id for PCM cleanup: {e}")
+            return None
+
+    async def list_raw_pcm_cleanup_candidates(self, limit: int = 100) -> list[Track]:
+        """Find tracks whose PCM is no longer needed by either consumer.
+
+        `status` belongs to the Whisper pipeline and `derivative_status` to
+        the OGG pipeline.  Requiring both to be `completed` is the database
+        synchronization barrier: whichever pipeline finishes first is not
+        eligible, and a later reconciler pass sees the final committed state
+        after the second pipeline finishes.
+
+        Cleanup state is kept in the existing `audio_info` JSONB document, so
+        this feature needs no new track-table column or database migration.
+        """
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                stmt = (
+                    select(Track)
+                    .where(
+                        Track.status == "completed",
+                        Track.derivative_status == "completed",
+                        Track.audio_info.is_not(None),
+                        Track.audio_info["filename"].as_string().like("%.pcm"),
+                        Track.audio_info["derivative_object_key"].as_string().is_not(None),
+                        Track.audio_info["raw_deleted_at"].as_string().is_(None),
+                    )
+                    .order_by(Track.updated_at.asc())
+                    .limit(limit)
+                )
+                return list((await session.scalars(stmt)).all())
+        except Exception as e:
+            logger.error(f"Failed to list raw PCM cleanup candidates: {e}")
+            return []
+
+    async def mark_raw_pcm_deleted(self, record_id: str, deleted_at: datetime) -> bool:
+        """Mark a successful deletion by merging into `audio_info` JSONB.
+
+        This is an SQL-side JSON merge rather than a Python read/modify/write.
+        A concurrent Whisper completion may be adding `duration_after_vad_sec`
+        while a derivative completion adds `derivative_object_key`; replacing
+        the whole JSON document here could silently discard either value.
+
+        If the object was deleted but this DB update fails, the reconciler may
+        try again.  S3 DeleteObject is idempotent, so that retry is safe.
+        """
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                deletion_marker = func.jsonb_build_object("raw_deleted_at", deleted_at.isoformat())
+                stmt = (
+                    update(Track)
+                    .where(Track.id == record_id)
+                    .values(
+                        audio_info=func.coalesce(Track.audio_info, text("'{}'::jsonb")).concat(deletion_marker),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+                result = await session.execute(stmt)
+                await session.commit()
+                return bool(result.rowcount)
+        except Exception as e:
+            logger.error(f"Failed to mark raw PCM deleted for id={record_id}: {e}")
+            return False
 
     async def create_track_placeholder(
         self,
