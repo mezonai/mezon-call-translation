@@ -9,7 +9,11 @@ process. It does the NATS subscribe and, per room, `exec.Command`s a plain
 separate systemd unit per agent, and no unit per room. systemd's job here is
 just "keep worker-manager itself running"; worker-manager's own code is what
 keeps agents running across its own restarts (see the unit file's KillMode
-comment -- read that one before touching this setup).
+comment -- read that one before touching this setup) and, since
+2026-08-28, can reconnect to and manage agents left over from *before* a
+restart too (Reconcile, see the unit file's StateDirectory/RuntimeDirectory
+comment) -- no manual step needed for that, systemd creates both
+directories itself on first start from the unit file's declarations.
 
 ## One-time host setup
 

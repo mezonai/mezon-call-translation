@@ -34,6 +34,13 @@ func main() {
 
 	m := workermanager.New(cfg)
 
+	// Re-adopt agents a previous instance of this worker-manager left
+	// running (crash, redeploy, manual restart) -- Phase 3 of
+	// mezon-sfu-migration-plan.md's restart-recovery gap. Must happen
+	// before subscribing to NATS below, so no Start/Stop for a room this is
+	// about to adopt can race the reconciliation itself.
+	m.Reconcile()
+
 	logging.L.Info("workermanager: starting", "agent_bin_path", cfg.AgentBinPath)
 	if err := workermanager.RunSubscriber(ctx, cfg, m); err != nil {
 		logging.L.Error("workermanager: exiting", logging.ErrAttrs(err)...)
