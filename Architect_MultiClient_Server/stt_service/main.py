@@ -45,14 +45,22 @@ async def lifespan(app: FastAPI):
     redis_manager = get_connection_manager()
     await redis_manager.connect()
 
-    # Initialize Whisper transcription if enabled
+    # Load both ASR engines before accepting Redis work. Starting the stream
+    # consumer first would let an existing task race the Whisper/Gipformer
+    # initialization during startup.
+    whisper_processor = WhisperTranscriptionProcessor()
+    await whisper_processor.initialize()
+    health_service = get_health_service()
+    health_service.register_health_check(
+        "gipformer_fallback",
+        whisper_processor.gipformer_health_status,
+    )
+
+    # Initialize Whisper transcription consumer only after its model assets
+    # are fully ready.
     transcription_queue = RedisTranscriptionQueueService()
     transcription_queue.set_processor(transcribe_task)  # Set Whisper processor
     await transcription_queue.start()
-        
-    # Pre-initialize Whisper model (optional, can be lazy loaded)
-    whisper_processor = WhisperTranscriptionProcessor()
-    await whisper_processor.initialize()
     
     system_metrics_task = asyncio.create_task(system_metrics_loop())
     
@@ -63,6 +71,7 @@ async def lifespan(app: FastAPI):
         await transcription_queue.stop()
     if whisper_processor is not None:
         await whisper_processor.shutdown()
+    get_health_service().unregister_health_check("gipformer_fallback")
     try:
         # Disconnect Redis Connection Pool
         await redis_manager.disconnect()

@@ -15,8 +15,9 @@ pydantic>=2.0.0                # Data validation and settings management
 # Speech-to-Text Engines
 # ========================================
 onnxruntime-genai==0.14.0      # Nemotron streaming ONNX runtime
-huggingface-hub>=0.24.0        # Nemotron model download
-faster-whisper>=1.0.0          # Whisper transcription (post-processing)
+huggingface-hub>=0.24.0        # Nemotron/Whisper model download
+faster-whisper==1.2.1          # Tested marker VAD/Whisper implementation
+sherpa-onnx>=1.12.0            # CPU Gipformer fallback for unresolved VAD chunks
 
 # ========================================
 # Database & Storage

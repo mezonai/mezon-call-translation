@@ -4,7 +4,7 @@ Whisper Transcription Processor - BATCHED REDIS MODE
 Transcription flow with Redis-based batched sending:
 1. Download audio from MinIO
 2. Transcribe and collect segments in memory
-3. Send batches of segments as Redis tasks (200 segments per task)
+3. Send batches of segments as Redis tasks (normally 50 segments per task)
 4. Orchestrator will consume tasks and save to MongoDB progressively
 """
 
@@ -12,16 +12,17 @@ import asyncio
 import logging
 import tempfile
 import shutil
-import math
+from concurrent.futures import Future
 from typing import Optional, Dict, Any
 from pathlib import Path
 from dataclasses import dataclass
 
 import numpy as np
 from minio import Minio
-from faster_whisper import WhisperModel
-
 from stt_service.service.redis.redis_producer_service import RedisProducerService
+from stt_service.service.whisper_marker_transcriber import (
+    MarkerWhisperTranscriber,
+)
 from stt_service.utils.decorator import singleton
 
 from stt_service.config import get_config
@@ -62,7 +63,7 @@ class TranscriptionSegment:
     start: float
     end: float
     text: str
-    confidence: float
+    confidence: Optional[float]
     metadata: Dict[str, Any] = None
 
     def to_dict(self) -> dict:
@@ -91,17 +92,19 @@ class WhisperTranscriptionProcessor:
     """
     
     # Configuration
-    CHUNK_BATCH_SIZE = 50  # Send to Redis every 200 segments
+    CHUNK_BATCH_SIZE = 50  # Send to Redis every configured number of segments
     SAVE_STREAM_KEY = "save_transcription:stream"  # Redis stream for save tasks
     
     def __init__(self):
         self._config = get_config()
         self._minio_client: Optional[Minio] = None
-        self._whisper_model: Optional[WhisperModel] = None
+        self._marker_transcriber: Optional[MarkerWhisperTranscriber] = None
         self._initialized = False
         self._temp_dir: Optional[Path] = None
         self._redis_producer: Optional[RedisProducerService] = None
         self.CHUNK_BATCH_SIZE = self._config.Transcirpt.chunk_size
+        if self.CHUNK_BATCH_SIZE < 1:
+            raise ValueError("TRANSCRIPT_CHUNK_SIZE must be at least 1")
         logger.info("WhisperTranscriptionProcessor created (batched Redis mode)")
     
     async def initialize(self):
@@ -142,24 +145,30 @@ class WhisperTranscriptionProcessor:
             logger.error(f"Failed to verify MinIO bucket: {e}")
             raise
         
-        # Initialize Whisper model
+        # Initialize the tested marker/VAD Whisper engine.  Keep the legacy
+        # faster-whisper behavior: model_size is a model name and faster-
+        # whisper resolves/downloads its own Hugging Face cache.
         whisper_config = self._config.whisper
+        marker_path = Path(__file__).resolve().parents[1] / "assets" / "whisper_marker.wav"
+        configured_language = whisper_config.language.strip()
         logger.info(
-            f"Loading Whisper model '{whisper_config.model_size}' "
-            f"on {whisper_config.device}..."
+            "Loading marker Whisper model '%s' via faster-whisper (CPU, compute_type=%s)...",
+            whisper_config.model_size,
+            whisper_config.compute_type,
         )
-        
-        loop = asyncio.get_event_loop()
-        self._whisper_model = await loop.run_in_executor(
-            None,
-            lambda: WhisperModel(
-                whisper_config.model_size,
-                device=whisper_config.device,
-                compute_type=whisper_config.compute_type,
-                cpu_threads=whisper_config.cpu_threads,
-            )
+        self._marker_transcriber = MarkerWhisperTranscriber(
+            model_path=whisper_config.model_size,
+            marker_path=marker_path,
+            compute_type=whisper_config.compute_type,
+            cpu_threads=whisper_config.cpu_threads,
+            temperature=whisper_config.temperature,
+            # An empty legacy WHISPER_LANGUAGE meant auto-detect; preserve
+            # that behaviour while supporting the clearer value "auto".
+            language=None if not configured_language or configured_language.lower() == "auto" else configured_language,
         )
-        logger.info(f"✅ Whisper model loaded: {whisper_config.model_size}")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._marker_transcriber.initialize)
+        logger.info("Marker Whisper model loaded: %s", whisper_config.model_size)
 
         # We now feed raw PCM16 straight in as a pre-decoded np.ndarray
         # (see _pcm16_bytes_to_float32), skipping decode_audio()'s own
@@ -170,11 +179,10 @@ class WhisperTranscriptionProcessor:
         # capture is always mono (audio-ingestion PLAN.md D6); fail fast at
         # startup rather than per-task if that ever stops being true.
         audio_config = self._config.audio
-        extractor_rate = self._whisper_model.feature_extractor.sampling_rate
-        if audio_config.sample_rate != extractor_rate:
+        if audio_config.sample_rate != 16_000:
             raise RuntimeError(
                 f"Capture sample_rate ({audio_config.sample_rate}) does not match "
-                f"Whisper's expected sampling_rate ({extractor_rate}) -- raw PCM is fed "
+                "marker Whisper's required sampling_rate (16000) -- raw PCM is fed "
                 f"in directly without resampling, see _pcm16_bytes_to_float32."
             )
         if audio_config.channels != 1:
@@ -251,12 +259,12 @@ class WhisperTranscriptionProcessor:
             if local_path.exists():
                 local_path.unlink()
             raise RuntimeError(f"Failed to download {filename}") from e
-    
+
     async def _transcribe_and_stream_batches(
         self,
         audio_path: Path,
         track_ref_id: str,
-    ) -> int:
+    ) -> tuple[int, str]:
         """
         Transcribe audio and stream batches to Redis as they're collected.
         Sends batch immediately when CHUNK_BATCH_SIZE is reached.
@@ -266,10 +274,11 @@ class WhisperTranscriptionProcessor:
             track_ref_id: Egress ID / Track reference
             
         Returns:
-            Number of batches sent
+            Tuple of (number of batches sent, full transcript text)
         """
-        if not self._whisper_model:
-            raise RuntimeError("Whisper model not initialized")
+        if not self._marker_transcriber:
+            raise RuntimeError("Marker Whisper model not initialized")
+        transcriber = self._marker_transcriber
         
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -277,41 +286,61 @@ class WhisperTranscriptionProcessor:
         if not self._redis_producer:
             raise RuntimeError("Redis producer not initialized")
         
-        whisper_config = self._config.whisper
         logger.info(f"🎤 Starting transcription for {audio_path.name}...")
         
-        # Create queue for communication between thread and async code
-        batch_queue = asyncio.Queue()
+        # A single-slot queue plus producer acknowledgements preserves the
+        # production contract: complete and enqueue one 50-segment batch
+        # before decoding the next batch.  It also bounds memory for a long
+        # recording when Redis is temporarily slower than ASR.
+        batch_queue: asyncio.Queue[tuple[str, Any, Future[None] | None]] = asyncio.Queue(maxsize=1)
         
         # Run transcription in thread pool
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         
         def transcribe_in_thread():
             """Transcribe audio and send batches via queue"""
-            try:
-                audio_array = _pcm16_bytes_to_float32(audio_path.read_bytes())
-                segments_generator, info = self._whisper_model.transcribe(
-                    audio_array,
-                    language=whisper_config.language if whisper_config.language else None,
-                    beam_size=whisper_config.beam_size,
-                    vad_filter=whisper_config.vad_filter,
+            class DeliveryFailed(Exception):
+                """Redis-side failure; the outer task retry owns recovery."""
+
+            def publish(message_type: str, data: Any, wait_for_enqueue: bool) -> None:
+                acknowledgement: Future[None] | None = Future() if wait_for_enqueue else None
+                put_future = asyncio.run_coroutine_threadsafe(
+                    batch_queue.put((message_type, data, acknowledgement)), loop
                 )
+                put_future.result()
+                if acknowledgement is not None:
+                    try:
+                        acknowledgement.result()
+                    except Exception as error:
+                        raise DeliveryFailed() from error
+
+            try:
+                # If the file is a standard container format (e.g. .ogg, .wav, .mp3),
+                # we must decode it using PyAV (via faster_whisper's decode_audio)
+                # rather than blindly reading raw bytes as PCM16, which creates static noise.
+                from faster_whisper.audio import decode_audio
+
+                if audio_path.suffix.lower() in ('.ogg', '.wav', '.mp3', '.m4a', '.webm'):
+                    logger.info(f"Decoding container format {audio_path.suffix} using PyAV")
+                    audio_array = decode_audio(str(audio_path), sampling_rate=16000)
+                else:
+                    logger.info("Assuming raw headerless PCM16 format")
+                    audio_array = _pcm16_bytes_to_float32(audio_path.read_bytes())
+
+                prepared_audio = transcriber.prepare_audio(audio_array)
                 
                 # Collect segments into batches
                 current_batch = []
                 
-                for seg in segments_generator:
+                for marker_segment in transcriber.iter_segments(prepared_audio, logger=logger):
                     segment = TranscriptionSegment(
-                        start=seg.start,
-                        end=seg.end,
-                        text=seg.text.strip(),
-                        confidence=round(math.exp(seg.avg_logprob), 4),
+                        start=marker_segment.start,
+                        end=marker_segment.end,
+                        text=marker_segment.text,
+                        confidence=None,
                         metadata={
-                            "avg_logprob": seg.avg_logprob,
-                            "compression_ratio": seg.compression_ratio,
-                            "no_speech_prob": seg.no_speech_prob,
-                            "words": seg.words,
-                            "temperature": seg.temperature,
+                            "engine": "whisper_marker_v1",
+                            "timestamp_source": "vad_span",
                         }
                     )
                     
@@ -320,37 +349,28 @@ class WhisperTranscriptionProcessor:
                     
                     # When batch is full, send it immediately
                     if len(current_batch) >= self.CHUNK_BATCH_SIZE:
-                        asyncio.run_coroutine_threadsafe(
-                            batch_queue.put(('batch', current_batch.copy())),
-                            loop
-                        )
+                        publish('batch', current_batch.copy(), wait_for_enqueue=True)
                         current_batch.clear()
                 
                 # Send remaining segments as final batch
                 if current_batch:
-                    asyncio.run_coroutine_threadsafe(
-                        batch_queue.put(('batch', current_batch)),
-                        loop
-                    )
+                    publish('batch', current_batch, wait_for_enqueue=True)
                 
                 # Signal completion
-                asyncio.run_coroutine_threadsafe(
-                    batch_queue.put((
-                        'done',
-                        {
-                            "duration_after_vad_sec": float(info.duration_after_vad)
-                        }
-                    )),
-                    loop
+                publish(
+                    'done',
+                    {"duration_after_vad_sec": prepared_audio.duration_after_vad_sec},
+                    wait_for_enqueue=True,
                 )
-                
+            except DeliveryFailed:
+                # The coroutine that writes Redis already has the original
+                # error. Do not enqueue a failed marker after a partially
+                # delivered batch; retry of the source task handles it.
+                return
             except Exception as e:
                 logger.error(f"❌ Transcription failed in thread: {e}", exc_info=True)
                 # Signal error
-                asyncio.run_coroutine_threadsafe(
-                    batch_queue.put(('error', str(e))),
-                    loop
-                )
+                asyncio.run_coroutine_threadsafe(batch_queue.put(('error', str(e), None)), loop).result()
         
         # Start transcription in thread
         transcription_task = loop.run_in_executor(None, transcribe_in_thread)
@@ -358,14 +378,18 @@ class WhisperTranscriptionProcessor:
         # Process batches as they arrive
         chunk_index = 0
         total_segments = 0
+        full_text_parts: list[str] = []
         
         try:
             while True:
-                msg_type, data = await batch_queue.get()
+                msg_type, data, acknowledgement = await batch_queue.get()
                 
                 if msg_type == 'batch':
                     batch_segments = data
                     total_segments += len(batch_segments)
+                    full_text_parts.extend(
+                        segment["text"] for segment in batch_segments if segment["text"]
+                    )
                     
                     start_time = batch_segments[0]['start']
                     end_time = batch_segments[-1]['end']
@@ -381,7 +405,14 @@ class WhisperTranscriptionProcessor:
                         status="pending",
                     )
                     
-                    await self._redis_producer.enqueue(task)
+                    try:
+                        await self._redis_producer.enqueue(task)
+                    except Exception as error:
+                        if acknowledgement is not None and not acknowledgement.done():
+                            acknowledgement.set_exception(error)
+                        raise
+                    if acknowledgement is not None:
+                        acknowledgement.set_result(None)
                     
                     logger.info(
                         f"📥 Sent batch {chunk_index + 1}: "
@@ -404,7 +435,14 @@ class WhisperTranscriptionProcessor:
                         status="completed",
                         duration_after_vad_sec=data["duration_after_vad_sec"],
                     )
-                    await self._redis_producer.enqueue(final_task)
+                    try:
+                        await self._redis_producer.enqueue(final_task)
+                    except Exception as error:
+                        if acknowledgement is not None and not acknowledgement.done():
+                            acknowledgement.set_exception(error)
+                        raise
+                    if acknowledgement is not None:
+                        acknowledgement.set_result(None)
                     
                     logger.info(
                         f"✅ Transcription complete: {total_segments} segments, "
@@ -437,7 +475,7 @@ class WhisperTranscriptionProcessor:
             # Wait for thread to complete
             await transcription_task
             
-            return chunk_index
+            return chunk_index, " ".join(full_text_parts)
             
         except Exception as e:
             # Ensure thread completes even on error
@@ -494,7 +532,7 @@ class WhisperTranscriptionProcessor:
             # STEP 2: Transcribe and stream batches to Redis
             # Batches are sent immediately when CHUNK_BATCH_SIZE is reached
             # If transcription fails, a failed task is sent to notify consumer
-            num_batches = await self._transcribe_and_stream_batches(
+            num_batches, full_text = await self._transcribe_and_stream_batches(
                 audio_path=local_file,
                 track_ref_id=track_ref_id,
             )
@@ -512,7 +550,7 @@ class WhisperTranscriptionProcessor:
                 f"{'='*60}"
             )
             
-            return ""
+            return full_text
             
         except Exception as e:
             logger.error(f"❌ Failed to process transcription: {e}")
@@ -543,13 +581,28 @@ class WhisperTranscriptionProcessor:
         if self._redis_producer:
             await self._redis_producer.close()
         
+        # Release model/VAD references before the worker is torn down.
+        if self._marker_transcriber:
+            self._marker_transcriber.shutdown()
+
         # Reset state
-        self._whisper_model = None
+        self._marker_transcriber = None
         self._minio_client = None
         self._redis_producer = None
         self._initialized = False
         
         logger.info("✅ WhisperTranscriptionProcessor shutdown complete")
+
+
+    def gipformer_health_status(self) -> dict[str, Any]:
+        """Adapt the dedicated Gipformer service for the app health checker."""
+        if self._marker_transcriber is None:
+            return {
+                "status": "unhealthy",
+                "initialized": False,
+                "error": "Whisper/Gipformer transcription engine is not initialized",
+            }
+        return self._marker_transcriber.gipformer_health_status()
 
 
 # ============================================================

@@ -295,24 +295,14 @@ class SummaryService:
         id_to_username, username_to_id = build_username_maps(list(unique_participants), room_participants)
 
         turns = []
-        current_turn = None
-
+        
         for seg in all_segments:
-            real_p = str(seg["participant_id"])
-            text = seg["text"]
-            if current_turn and current_turn["participant_id"] == real_p:
-                current_turn["content"] += f"\n{text}"
-            else:
-                if current_turn:
-                    turns.append(current_turn)
-                dt = datetime.fromtimestamp(seg["timestamp"] / 1_000_000_000)
-                current_turn = {
-                    "timestamp": dt.strftime("%H:%M:%S"),
-                    "participant_id": real_p,
-                    "content": text,
-                }
-        if current_turn:
-            turns.append(current_turn)
+            dt = datetime.fromtimestamp(seg["timestamp"] / 1_000_000_000)
+            turns.append({
+                "timestamp": dt.strftime("%H:%M:%S"),
+                "participant_id": str(seg["participant_id"]),
+                "content": seg["text"],
+            })
 
         for p in room_participants:
             user_id = p.get("participant_identity")
