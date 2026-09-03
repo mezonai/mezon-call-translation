@@ -465,6 +465,24 @@ func (s *session) onPeerJoined(participantCount int, peer signaling.Member) {
 	if s.peerAgent != nil {
 		s.peerAgent.UpsertRoster(peer)
 	}
+	if s.orch == nil || peer.UserID <= 0 {
+		return
+	}
+
+	// Signaling callbacks run on one read-loop goroutine. Persisting the
+	// roster is best-effort and must not stall WebRTC renegotiation or later
+	// peer events while orchestrator/agents-bot is slow or temporarily down.
+	roomName, roomID, participantIdentity := s.roomName, s.roomID, strconv.FormatInt(peer.UserID, 10)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
+		defer cancel()
+		if err := s.orch.ParticipantJoined(ctx, roomName, roomID, participantIdentity); err != nil {
+			logging.L.Warn(
+				"orchestratorclient: participant_joined failed",
+				append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID, "participant_identity", participantIdentity)...,
+			)
+		}
+	}()
 }
 
 func (s *session) onPeerLeft(ev signaling.PeerLeftEvent) {

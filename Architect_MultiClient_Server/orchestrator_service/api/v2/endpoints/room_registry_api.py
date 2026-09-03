@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.room_registry_models import (
+    ParticipantJoinedRequest,
+    ParticipantJoinedResponse,
     RoomRegisterRequest,
     RoomRegisterResponse,
     RoomRegistryClearResponse,
@@ -16,7 +18,10 @@ from orchestrator_service.models.room_registry_models import (
     RoomUnregisterRequest,
     RoomUnregisterResponse,
 )
-from orchestrator_service.services.agents_bot_user_client import get_agents_bot_room_participants
+from orchestrator_service.services.agents_bot_user_client import (
+    get_agents_bot_room_participants,
+    resolve_agents_bot_usernames,
+)
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
@@ -121,6 +126,58 @@ async def _fetch_and_save_existing_participants(room_name: str, room_id: str) ->
             f"Failed to fetch and save participants for room '{room_name}' (room_id={room_id}): {e}",
             exc_info=True,
         )
+
+
+@router.post("/participant-joined", response_model=ParticipantJoinedResponse)
+async def participant_joined(
+    request: ParticipantJoinedRequest,
+    auth: dict[str, str | bool] = Depends(verify_api_key),
+) -> ParticipantJoinedResponse:
+    """Persist a participant from the Go agent's ``peer_joined`` event.
+
+    The agent only forwards the stable Mezon user id.  Username resolution is
+    deliberately owned by agents-bot, the service that receives Mezon identity
+    events.  The room-id check prevents an old agent process from adding a
+    participant to a later call that reused the same channel/room name.
+    """
+    registry = get_room_registry()
+
+    def stale_response() -> ParticipantJoinedResponse:
+        logger.info(
+            f"Ignoring stale participant_joined for room '{request.room_name}': "
+            f"event room_id={request.room_id}"
+        )
+        return ParticipantJoinedResponse(
+            status="ignored_stale_session",
+            room_name=request.room_name,
+            room_id=request.room_id,
+            participant_identity=request.participant_identity,
+        )
+
+    if await registry.get_room_id(request.room_name) != request.room_id:
+        return stale_response()
+
+    usernames = await resolve_agents_bot_usernames([request.participant_identity])
+
+    # Resolution is an HTTP round-trip. Check again so a re-registration that
+    # happened while it was in flight cannot write to a stale room session.
+    if await registry.get_room_id(request.room_name) != request.room_id:
+        return stale_response()
+
+    username = usernames.get(request.participant_identity)
+    if not await transcription_service.save_participant(
+        room_id=request.room_id,
+        participant_identity=request.participant_identity,
+        username=username,
+    ):
+        raise HTTPException(status_code=500, detail="Failed to persist participant")
+
+    return ParticipantJoinedResponse(
+        status="ok",
+        room_name=request.room_name,
+        room_id=request.room_id,
+        participant_identity=request.participant_identity,
+    )
 
 
 @router.post("/unregister", response_model=RoomUnregisterResponse, response_description="Unregister a room")
