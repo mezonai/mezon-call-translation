@@ -21,6 +21,7 @@ from orchestrator_service.services.audio_derivative_service import get_audio_der
 from orchestrator_service.services.postgresql.models import Track
 from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
+from orchestrator_service.services.raw_pcm_cleanup_service import RawPcmCleanupService
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.utils.constants import (
@@ -40,6 +41,7 @@ class RecordingEventService:
         self.track_repo = PgTrackRepository()
         self.transcription_service = TranscriptionService()
         self.audio_derivative_service = get_audio_derivative_service()
+        self.raw_pcm_cleanup_service = RawPcmCleanupService()
 
     async def _resolve_room_ref_id(self, raw_room_id: str) -> str | None:
         """record-service sends whatever the agent gave it as room_id
@@ -175,6 +177,23 @@ class RecordingEventService:
             derivative_error=payload.error if payload.event == "derivative.failed" else None,
             derivative_object_key=payload.object_key if payload.event == "derivative.completed" else None,
         )
+
+        if derivative_status == "completed":
+            try:
+                # Derivative and Whisper run independently.  This helper does
+                # a fresh DB read and deletes only if Whisper has also reached
+                # `completed`; otherwise the Whisper completion path will make
+                # the symmetric call later.
+                await self.raw_pcm_cleanup_service.maybe_delete_raw_pcm(payload.recording_id)
+            except Exception as e:
+                # OGG creation already succeeded.  Cleanup is best-effort and
+                # retried by the periodic reconciler, so a MinIO cleanup error
+                # must not make audio-processing-service retry this event.
+                logger.error(
+                    f"Raw PCM cleanup failed after derivative completion: "
+                    f"track={payload.recording_id} error={e}",
+                    exc_info=True,
+                )
 
         # First of the two call sites required by D19 -- the other is
         # TranscriptionService.final_room(). Either the room finalizes last
