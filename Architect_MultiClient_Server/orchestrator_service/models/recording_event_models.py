@@ -9,7 +9,9 @@ record-service's HttpEventReporter._to_payload() exactly
 """
 
 
-from pydantic import BaseModel
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
 
 
 class QualityAnnotationModel(BaseModel):  # type: ignore[explicit-any]
@@ -21,12 +23,16 @@ class QualityAnnotationModel(BaseModel):  # type: ignore[explicit-any]
 class RecordingEventRequest(BaseModel):  # type: ignore[explicit-any]
     """Posted by record-service. event: "recording.started" | "recording.completed" | "recording.failed"."""
 
-    event: str
+    event: Literal[
+        "recording.started",
+        "recording.completed",
+        "recording.failed"
+    ]
     recording_id: str          # room_id:track_id -- used as tracks.id (PLAN.md D10 defers the PK rename)
     room_id: str                # normally orchestrator's own stable room UUID, captured by the agent at
                                  # registration and threaded through record-service unchanged (PLAN.md D27,
                                  # supersedes D18) -- see RecordingEventService._resolve_room_ref_id for the
-                                 # degrade path (falls back to LiveKit room-name resolve) if it isn't a UUID
+                                 # degrade path (falls back to Mezon-SFU room-name resolve) if it isn't a UUID
     track_id: str
     participant_identity: str
     source: str
@@ -46,7 +52,10 @@ class RecordingEventRequest(BaseModel):  # type: ignore[explicit-any]
 class DerivativeEventRequest(BaseModel):  # type: ignore[explicit-any]
     """Posted by audio-processing-service (Phase 5). event: "derivative.completed" | "derivative.failed"."""
 
-    event: str
+    event: Literal[
+        "derivative.completed",
+        "derivative.failed"
+    ]
     recording_id: str          # matches tracks.id from the originating RecordingEventRequest
     bucket: str | None = None
     object_key: str | None = None
@@ -63,13 +72,22 @@ class TtsTranscriptEventRequest(BaseModel):  # type: ignore[explicit-any]
     send this itself for check_and_complete_room to ever see it as finished).
     """
 
-    event: str
+    event: Literal[
+        "tts.transcript",
+        "tts.completed"
+    ]
     room_id: str
     track_id: str
     text: str | None = None
     start: float | None = None
     end: float | None = None
 
+RecordingEventPayload = Annotated[
+    RecordingEventRequest
+    | DerivativeEventRequest
+    | TtsTranscriptEventRequest,
+    Field(discriminator="event"),
+]
 
 class RecordingEventResponse(BaseModel):  # type: ignore[explicit-any]
     received: bool

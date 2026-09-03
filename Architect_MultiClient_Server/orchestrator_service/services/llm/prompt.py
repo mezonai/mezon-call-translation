@@ -15,7 +15,12 @@ You are a professional Project Manager & Technical Writer. Your task is to conve
 2. Always write in the following language: {language}.
 3. Participant Naming:
 * In next_focus: Use raw [participant_id] (e.g., [hoang.dohuy]). Only use "[Everyone]" when a task is explicitly assigned to the entire team, or "[Unknown]" when it is impossible to clearly identify who the task is assigned to.
-* In narrative text (context, key_discussions, detail): Use natural names inferred from transcript context (e.g. "Hoàng"), or fallback to capitalized firstname (e.g. "Hoang"). Never put raw hoang.dohuy inside narrative sentences.
+* In narrative text (context, key_discussions, detail):
+  - Identity source: Every speaker and actor MUST be named strictly using the firstname extracted from BEFORE the dot in participant_id (e.g., "alex.chen" → "Alex", "hoang.dohuy" → "Hoang" / "Hoàng").
+  - Spoken text override: Spoken transcript content may contain ASR errors, nicknames, or middle/last names. NEVER use a name from the spoken text if its base spelling differs from the firstname before the dot.
+  - Accent / diacritics: In languages using accents or diacritics (such as Vietnamese), you may use the accented form (e.g., "Hoàng") ONLY IF its base ASCII spelling strictly matches the extracted firstname ("hoang"). Otherwise, use the capitalized ASCII firstname as-is (e.g., "Alex", "Hoang").
+  - NEVER use any part after the dot as a person's name.
+  - NEVER put raw participant_id with dots (e.g., hoang.dohuy) inside narrative sentences.
 4. Do not invent actions, assignees, or decisions.
 5. The `next_focus` field must be the most important part that contains CLEAR and SPECIFIC action items.
 6. The `detail` field must be the most comprehensive part, capturing all important information.
@@ -23,7 +28,7 @@ You are a professional Project Manager & Technical Writer. Your task is to conve
 # INPUT FORMAT
 * The input transcript covers the ENTIRE meeting room conversation.
 * The transcript is provided as a list of messages, where each message contains: `content`, `timestamp`, and `participant_id`.
-* Note: `participant_id` is provided in standard username format (e.g., `tien.trannhat`, `nguyen.buicao`, `lan.nguyenthi`).
+* Note on `participant_id`: Each participant_id follows the format `firstname.lastnamemiddlename` (e.g., `alex.chen`, `hoang.dohuy`). The substring BEFORE the dot is the ONLY authoritative firstname for that participant. Ignore any conflicting names spoken in the transcript.
 
 ---
 {conversation_text}
@@ -108,7 +113,9 @@ Analyze the input transcript and only return the JSON object.
 
 # FINAL CHECK
 * Check if the content is clean and standardized, and ensure it does not contain any comment artifacts or strange characters generated during the response process like: "//", "//comment ", "] ", "[ ",....
-* Re-verify participant names: ensure raw `[participant_id]` is used ONLY in `next_focus`, while narrative fields use natural names (e.g. "Hoàng").
+* Re-verify participant names:
+  - `next_focus`: MUST use raw `[participant_id]` (e.g., `[hoang.dohuy]`, `[alex.chen]`).
+  - Narrative fields (`context`, `key_discussions`, `detail`): MUST use the firstname derived strictly from BEFORE the dot of `participant_id` (e.g., "Hoàng"/"Hoang", "Alex"). NEVER use names from spoken dialogue that differ from the firstname before the dot.
 """
 
 
@@ -136,7 +143,7 @@ You are a professional Project Manager & Technical Writer. Your task is to conve
 # INPUT TRANSCRIPT
 * You will receive a candidate transcript window from a long conversation.
 * Each message consists of the following fields: `content`, `timestamp`, `participant_id`
-* Note: `participant_id` is provided in standard username format (e.g., `tien.trannhat`, `nguyen.buicao`, `lan.nguyenthi`).
+* Note on `participant_id`: Each participant_id follows the format `firstname.lastnamemiddlename` (e.g., `alex.chen`, `hoang.dohuy`). The substring BEFORE the dot is the ONLY authoritative firstname for that participant. Ignore any conflicting names spoken in the transcript.
 
 ---
 {conversation_str}
@@ -162,7 +169,12 @@ You need to perform 2 tasks within a single response:
 2. Always write in the following language: {language}.
 3. Participant Naming:
 * In next_focus: Use raw [participant_id] (e.g., [hoang.dohuy]).
-* In narrative text (context, key_discussions, detail): Use natural names inferred from transcript context (e.g. "Hoàng"), or fallback to capitalized firstname (e.g. "Hoang"). Never put raw hoang.dohuy inside narrative sentences.
+* In narrative text (context, key_discussions, detail):
+  - Identity source: Every speaker and actor MUST be named strictly using the firstname extracted from BEFORE the dot in participant_id (e.g., "alex.chen" → "Alex", "hoang.dohuy" → "Hoang" / "Hoàng").
+  - Spoken text override: Spoken transcript content may contain ASR errors, nicknames, or middle/last names. NEVER use a name from the spoken text if its base spelling differs from the firstname before the dot.
+  - Accent / diacritics: In languages using accents or diacritics (such as Vietnamese), you may use the accented form (e.g., "Hoàng") ONLY IF its base ASCII spelling strictly matches the extracted firstname ("hoang"). Otherwise, use the capitalized ASCII firstname as-is (e.g., "Alex", "Hoang").
+  - NEVER use any part after the dot as a person's name.
+  - NEVER put raw participant_id with dots (e.g., hoang.dohuy) inside narrative sentences.
 4. Do not invent actions, assignees, or decisions.
 5. The `next_focus` field must be the most important part that contains CLEAR and SPECIFIC action items.
 6. The `detail` field must be the most comprehensive part, capturing all important information.
@@ -243,7 +255,9 @@ Analyze the input transcript and only return the JSON object.
 
 # FINAL CHECK
 * Check if the content is clean and standardized, and ensure it does not contain any comment artifacts or strange characters generated during the response process like: "//", "//comment ", "] ", "[ ",....
-* Re-verify participant names: ensure raw `[participant_id]` is used ONLY in `next_focus`, while narrative fields use natural names (e.g. "Hoàng").
+* Re-verify participant names:
+  - `next_focus`: MUST use raw `[participant_id]` (e.g., `[hoang.dohuy]`, `[alex.chen]`).
+  - Narrative fields (`context`, `key_discussions`, `detail`): MUST use the firstname derived strictly from BEFORE the dot of `participant_id` (e.g., "Hoàng"/"Hoang", "Alex"). NEVER use names from spoken dialogue that differ from the firstname before the dot.
 """
 
 

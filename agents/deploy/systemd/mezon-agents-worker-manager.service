@@ -1,0 +1,56 @@
+[Unit]
+Description=mezon-agents worker-manager
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=changeme
+Group=changeme
+
+WorkingDirectory=/opt/mezon-agents
+EnvironmentFile=/etc/mezon-agents/worker-manager.env
+ExecStart=/opt/mezon-agents/bin/worker-manager
+
+KillSignal=SIGTERM
+TimeoutStopSec=10
+# Default KillMode=control-group would also kill every spawned `agent`
+# subprocess on restart (Setpgid in manager.go only escapes terminal
+# signals, not systemd's cgroup kill) -- process-only keeps active calls
+# alive across a worker-manager restart.
+KillMode=process
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+# Restart-recovery state (mezon-sfu-migration-plan.md's "Chưa làm, biết
+# trước là gap", Phase 1-4): ProtectSystem=strict above makes nearly the
+# whole filesystem read-only, so these are the only writable paths
+# worker-manager gets, matched by WORKER_MANAGER_STATE_DIR/AGENT_SOCKET_DIR
+# in worker-manager.env.
+#   - StateDirectory -> /var/lib/mezon-agents, for registry.json
+#     (room_id -> pid). Survives everything, including a full `systemctl
+#     stop` -- it's just a file on disk, no reason to lose it between runs.
+#   - RuntimeDirectory -> /run/mezon-agents, for each agent's control
+#     socket (internal/agentcontrol). RuntimeDirectoryPreserve=restart is
+#     the directive that actually matters here: default RuntimeDirectory
+#     behavior tears the directory down on stop, which a bare `restart`
+#     technically is (stop then start) -- without this, the very sockets
+#     Reconcile needs to dial back into after a restart would already be
+#     gone by the time it looks. `restart` keeps it across that stop+start
+#     cycle specifically, only clearing it on a real stop (not followed by
+#     a start) -- exactly the KillMode=process tradeoff above: an agent
+#     surviving its parent's restart is only useful if worker-manager can
+#     still reach it afterward.
+StateDirectory=mezon-agents
+RuntimeDirectory=mezon-agents
+RuntimeDirectoryPreserve=restart
+
+[Install]
+WantedBy=multi-user.target

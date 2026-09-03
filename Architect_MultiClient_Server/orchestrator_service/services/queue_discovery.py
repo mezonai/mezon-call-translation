@@ -7,7 +7,8 @@ No manual registration required - automatically discovers queues.
 
 from typing import Any, cast
 
-from orchestrator_service.models.queue_models import QueueInfo
+from orchestrator_service.models.queue_models import QueueInfo, QueueStatsResponse
+from orchestrator_service.services.queue_service import get_queue_service_by_name
 from orchestrator_service.services.redis.connection_pool import get_redis_connection
 from orchestrator_service.utils.decode import decode_mapping, decode_value
 from orchestrator_service.utils.logger import get_logger
@@ -145,6 +146,25 @@ class QueueDiscovery:
                 queues.append(info)
 
         return queues
+
+    @staticmethod
+    async def get_queues_overview() -> tuple[dict[str, QueueStatsResponse], int]:
+        queues_data = await QueueDiscovery.list_queues()
+        overview: dict[str, QueueStatsResponse] = {}
+
+        for queue_data in queues_data:
+            queue_name = queue_data.queue_name
+            try:
+                queue_service = get_queue_service_by_name(queue_name)
+                overview[queue_name] = await queue_service.get_stats()
+            except Exception as e:
+                logger.error(f"Error getting stats for queue '{queue_name}': {e}")
+                overview[queue_name] = QueueStatsResponse(
+                    error=str(e),
+                    queue_name=queue_name,
+                )
+
+        return overview, len(queues_data)
 
     @staticmethod
     def parse_stream_key(stream_key: str) -> str:

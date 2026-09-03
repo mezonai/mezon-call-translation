@@ -20,6 +20,7 @@ from orchestrator_service.api.sse.channels.metadata_channel import MetadataChann
 from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
+from orchestrator_service.exceptions import SummaryRetryNotFoundError
 from orchestrator_service.models.summary_models import (
     OverallContextResult,
     RetryType,
@@ -46,9 +47,9 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import (
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
     build_username_maps,
+    format_key_discussions,
     group_next_focus_by_user,
     sanitize_and_decode_list,
-    format_key_discussions,
 )
 from orchestrator_service.utils.retry_utils import WaitCustomStrategy
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
@@ -511,17 +512,17 @@ class SummaryService:
             summary_data dict if successful, None if failed.
 
         Raises:
-            ValueError: If document not found or messages is empty.
+            SummaryRetryNotFoundError: If document not found or messages is empty.
         """
         summary_doc, room_doc = await self.pg_summary_repo.get_summary_by_room_id(room_id)
         if not summary_doc:
-            raise ValueError(f"Not found summary_doc for room_id: {room_id}")
+            raise SummaryRetryNotFoundError(f"Not found summary_doc for room_id: {room_id}")
         if not room_doc:
-            raise ValueError(f"Not found room_doc for room_id: {room_id}")
+            raise SummaryRetryNotFoundError(f"Not found room_doc for room_id: {room_id}")
 
         messages = summary_doc.messages or []
         if not messages:
-            raise ValueError(f"messages is empty for room_id: {room_id}")
+            raise SummaryRetryNotFoundError(f"messages is empty for room_id: {room_id}")
 
         unique_participants = {t["participant_id"] for t in messages}
         room_participants = room_doc.participants if isinstance(room_doc.participants, list) else []

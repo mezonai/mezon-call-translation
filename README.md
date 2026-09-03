@@ -4,7 +4,7 @@
 
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue)](https://docker.com)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Framework-green)](https://fastapi.tiangolo.com)
-[![Vosk](https://img.shields.io/badge/Vosk-STT%20Engine-orange)](https://alphacephei.com/vosk/)
+[![Nemotron](https://img.shields.io/badge/Nemotron-STT%20Engine-orange)](https://huggingface.co/onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4)
 [![LiveKit](https://img.shields.io/badge/LiveKit-Integration-purple)](https://livekit.io)
 
 ## 🚀 Quick Start
@@ -12,12 +12,14 @@
 ### Option 1: Basic Setup
 ```bash
 # 1. Setup environment
-./scripts/setup.sh                    # Linux/macOS
-.\scripts\setup.ps1                    # Windows
+./scripts/setup.sh --skip-models      # Linux/macOS; models downloaded below
+.\scripts\setup.ps1 -SkipModels        # Windows; models downloaded below
 
-# 2. Download models
-./scripts/download-vosk-model.sh       # STT model (Linux/macOS)
-.\scripts\download-vosk-model.ps1       # STT model (Windows)
+# 2. Download the Nemotron STT model (Linux/macOS, or Git Bash/WSL on Windows)
+python -m pip install "huggingface-hub>=0.24.0"
+./scripts/download-nemotron-model.sh
+
+
 
 ./scripts/download-kokoro-model.sh     # TTS model (Linux/macOS)
 .\scripts\download-kokoro-model.ps1     # TTS model (Windows)
@@ -62,7 +64,7 @@ cp env.example .env                    # Edit with your LiveKit credentials
 
 **Mezon Call Translation** is a production-ready, scalable Speech-to-Text system designed for real-time communication platforms. It provides:
 
-- **Real-time STT**: Convert speech to text with low latency using Vosk engine
+- **Real-time STT**: Convert speech to text with low latency using Nemotron
 - **Multi-client Support**: Handle multiple simultaneous audio streams
 - **Horizontal Scaling**: Scale across multiple server instances with load balancing
 - **LiveKit Integration**: Seamless integration with LiveKit rooms and agents
@@ -70,7 +72,7 @@ cp env.example .env                    # Edit with your LiveKit credentials
 
 ### Key Technologies
 
-- **[Vosk](https://alphacephei.com/vosk/)**: Offline speech recognition engine
+- **[Nemotron](https://huggingface.co/onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4)**: Cache-aware streaming speech recognition engine
 - **[FastAPI](https://fastapi.tiangolo.com)**: Modern web framework with WebSocket support
 - **[LiveKit](https://livekit.io)**: Real-time communication platform
 - **[Docker](https://docker.com)**: Containerization and orchestration
@@ -89,7 +91,7 @@ cp env.example .env                    # Edit with your LiveKit credentials
                                 │                       │
                                 ▼                       ▼
                        ┌─────────────────┐    ┌─────────────────┐
-                       │  LiveKit Agent  │    │  Vosk STT       │
+                       │  LiveKit Agent  │    │  Nemotron STT   │
                        │  (Port 8080)    │    │  Workers        │
                        └─────────────────┘    └─────────────────┘
 ```
@@ -105,7 +107,7 @@ cp env.example .env                    # Edit with your LiveKit credentials
 ## ✨ Features
 
 ### Core Capabilities
-- ✅ **Real-time Speech-to-Text** with Vosk engine
+- ✅ **Real-time Speech-to-Text** with Nemotron
 - ✅ **Multi-client Session Management** with language support
 - ✅ **WebSocket-based Communication** for low latency
 - ✅ **Adaptive Processing** based on system load
@@ -132,7 +134,7 @@ cp env.example .env                    # Edit with your LiveKit credentials
 ### Setup & Installation
 - **[Setup Guide](docs/setup/SETUP-GUIDE.md)** - Complete installation and configuration guide
 - **Environment Configuration** - LiveKit credentials and system settings
-- **Model Management** - Vosk model download and configuration
+- **Model Management** - Nemotron model download and configuration
 
 ### Architecture Documentation
 - **[Server Architecture](docs/overviews/server_architecture.md)** - Detailed server design and components
@@ -189,7 +191,7 @@ docker-compose up -d --scale server=3
 
 ### WebSocket API
 ```
-ws://localhost:8000/ws/vosk/
+ws://localhost:8000/ws/transcription/
 ```
 **Parameters**:
 - `client_id`: Unique client identifier
@@ -255,7 +257,7 @@ For detailed metrics analysis, see the [Metrics Guide](docs/operations/metrics-g
 LIVEKIT_URL=wss://your-livekit-server.com
 LIVEKIT_API_KEY=your-api-key
 LIVEKIT_API_SECRET=your-api-secret
-VOSK_MODEL_PATH=/app/models/vosk-model
+NEMOTRON_MODEL_PATH=nemotron-3.5-asr-streaming-0.6b-onnx-int4
 
 # Performance Tuning
 SERVER_HOST=0.0.0.0
@@ -296,11 +298,12 @@ See [Setup Guide](docs/setup/SETUP-GUIDE.md) for complete configuration options.
 
 **Server won't start**:
 ```bash
-# Check Vosk STT model exists
-ls -la models/vosk-model/
+# Check the Nemotron STT model exists
+ls -la models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4/genai_config.json
 
 # Download if missing
-./scripts/download-vosk-model.sh
+python -m pip install "huggingface-hub>=0.24.0"
+bash scripts/download-nemotron-model.sh
 ```
 
 **Agent TTS not working**:
@@ -370,7 +373,7 @@ This project is part of the Mezon platform ecosystem. See the project documentat
 
 ## 🏷️ Tags
 
-`speech-to-text` `real-time` `vosk` `fastapi` `livekit` `docker` `microservices` `websocket` `audio-processing` `scalable`/degraded/unhealthy)
+`speech-to-text` `real-time` `nemotron` `fastapi` `livekit` `docker` `microservices` `websocket` `audio-processing` `scalable`/degraded/unhealthy)
 │   ├── Uptime information
 │   ├── Component details
 │   └── HTTP status codes (200/503)
@@ -421,7 +424,7 @@ This project is part of the Mezon platform ecosystem. See the project documentat
 1. **Client connection** → WebSocket with parameters
 2. **Audio streaming** → Continuous audio chunks
 3. **VAD filtering** → Silence elimination
-4. **STT processing** → Multi-worker Vosk recognition
+4. **STT processing** → Per-client Nemotron streaming recognition
 5. **Result dispatching** → Async delivery to subscribed clients
 6. **Session management** → Multi-client coordination
 7. **Resource cleanup** → Automatic maintenance
