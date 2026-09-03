@@ -3,6 +3,7 @@ from orchestrator_service.models.summary_models import (
     OverallContextResult,
     SummaryResult,
 )
+from orchestrator_service.models.transcript_models import TranscriptCorrectionResult
 
 
 def build_prompt_summary(conversation_text: str, language: str) -> str:
@@ -286,3 +287,149 @@ Only return a valid JSON object according to the schema:
 {OverallContextResult.model_json_schema()}
 ```
 """
+
+
+def build_transcript_correction_prompt(indexed_content: str, previous_context: str = "", language: str = "Vietnamese") -> str:
+    if previous_context.strip():
+        previous_block = f"""
+# PREVIOUS CONTEXT (ALREADY CORRECTED)
+Use this context to understand the conversation flow, identify recurring technical terms, proper names, and resolve ambiguous errors.
+Do NOT re-correct or include these lines in your output.
+
+{previous_context}
+"""
+    else:
+        previous_block = """
+# PREVIOUS CONTEXT (ALREADY CORRECTED)
+(No previous context - this is the first section.)
+"""
+
+    return f"""
+# ROLE & OBJECTIVES
+You are a professional Proofreader and Linguist specializing in correcting {language} STT (Speech-to-Text) output from technical meetings.
+The STT engine frequently produces Vietnamese phonetic approximations of English words (e.g., "im bặt" for "impact", "cát lụt" for "catalog"). Your primary task is to reconstruct the intended words using context clues, technical domain knowledge, and phonetic reasoning.
+
+{previous_block}
+
+# INPUT FORMAT
+* You will receive a block of transcript text from a technical meeting.
+* Each line starts with an index in brackets, followed by the content. Example: "[0] xin chào mọi người"
+* The meeting context is typically software engineering / IT.
+
+---
+{indexed_content}
+---
+
+# CORRECTION RULES
+1. Correct spelling, grammar, and STT misrecognition errors in {language}.
+2. DO NOT rewrite, paraphrase, or change the intended meaning. Only fix errors.
+3. When the STT has phonetically transcribed an English word into Vietnamese syllables, reconstruct the original English word if the context makes it clear (e.g., "im bặt" → "impact", "phiếu riêng" → "field riêng", "bắt cấp" → "backup").
+4. PRESERVE correctly recognized English technical terms exactly as they appear (e.g., "deploy", "staging", "endpoint").
+5. If the input line is already correct, return it unchanged in the output.
+6. If a line is completely garbled and you cannot confidently determine the intended meaning, return it unchanged rather than guessing incorrectly.
+7. **Proactive anomaly detection**: When you encounter ANY word or phrase that seems out of place, nonsensical, or inconsistent with the surrounding conversation context, actively attempt to infer the intended word using PREVIOUS CONTEXT, surrounding lines, phonetic similarity, and domain knowledge. Apply the correction ONLY if you are reasonably confident; otherwise, leave the original text unchanged.
+
+# COMMON STT ERROR PATTERNS
+Pay special attention to these frequent STT misrecognition patterns:
+
+1. **Vietnamese phonetization of English words (Việt hóa âm thanh Tiếng Anh)** — THE MOST COMMON ERROR:
+   The STT engine hears English words but writes Vietnamese syllables that sound similar.
+   Examples: "im bặt" → "impact", "xten đứt ren" → "extended length", "max zen" → "make sense", "định sệt" → "research", "bắt cấp" → "backup", "cát lụt" → "catalog", "con fidel" → "confident".
+
+2. **English tech term misrecognition (Sai thuật ngữ chuyên ngành)**:
+   Common English tech words recognized as unrelated Vietnamese or English words.
+   Examples: "phiếu riêng" → "field riêng", "cái phim" → "cái field", "tiktok" → "ticket", "cái bay" → "cái base", "ai cần" → "icon".
+
+3. **Format and abbreviation errors (Sai định dạng chuẩn)**:
+   Numbers and abbreviations spelled out phonetically.
+   Examples: "ba d" / "ba đề" → "3D", "x ten" → "extended".
+
+4. **Proper name confusion (Sai tên riêng)**:
+   Names treated as common words. Use context and PREVIOUS CONTEXT to identify recurring names.
+   Examples: "hiểu" → "Hiếu" (person's name), "anh văn" → "Anh Văn" (person's name).
+
+5. **Tone/diacritical errors (Sai dấu/thanh điệu)**:
+   Examples: "nó sẽ thừa" → "nó sẽ thường", "nhu" → "nhô", "sữa" → "sửa", "sẻ" → "sẽ".
+
+6. **Filler word misrecognition (Sai từ đệm/cảm thán)**:
+   Speech fillers and interjections misrecognized. Preserve natural fillers but fix misrecognized ones.
+   Examples: "từ từ từ" → "ừm ừm ừm", "trả" → "chắc là".
+
+7. **Complete hallucination (Ảo giác nhận dạng)**:
+   The STT output bears no resemblance to the actual speech. These are UNFIXABLE — leave them unchanged unless surrounding context makes the intended meaning absolutely clear.
+   Examples: "mangrioz" → leave as-is (cannot guess), "phút lăng" → leave as-is.
+
+Use the PREVIOUS CONTEXT and surrounding lines to determine the correct word when multiple interpretations are possible.
+
+# OUTPUT FORMAT
+Return only a valid JSON object matching the TranscriptCorrectionResult schema:
+1. ONLY return a single valid JSON object, absolutely no other text, characters, or markdown wrapping.
+2. The output must contain ALL indices from the input, in the same order.
+3. If an index is [5] in the input, it MUST be index 5 in the output JSON.
+
+{TranscriptCorrectionResult.model_json_schema()}
+
+# FEW-SHOT EXAMPLES
+
+## Example 1 — Vietnamese phonetization of English tech terms + tone errors
+**Input:**
+[0] hôm nay mình sẻ bàn về cái tiktok số 81 nhé
+[1] cái phiếu xten đứt ren đang có im bặt lớn, cần sữa gấp
+[2] ừ, kiểm tra lại cái cát lụt xem có max zen không
+[3] dạ em sẽ bắt cấp dữ liệu trước khi sữa
+
+**Output:**
+{{
+  "entries": [
+    {{"index": 0, "corrected_content": "hôm nay mình sẽ bàn về cái ticket số 81 nhé"}},
+    {{"index": 1, "corrected_content": "cái field extended length đang có impact lớn, cần sửa gấp"}},
+    {{"index": 2, "corrected_content": "ừ, kiểm tra lại cái catalog xem có make sense không"}},
+    {{"index": 3, "corrected_content": "dạ em sẽ backup dữ liệu trước khi sửa"}}
+  ]
+}}
+
+## Example 2 — Proper name confusion + filler words + tone errors
+**Input:**
+[10] hiểu hiểu đang đưa lên rồi anh ơi
+[11] ừm, nó sẽ thừa đi một chút đó
+[12] từ từ từ, để em xem lại
+[13] anh văn mới chịu mà, nào nhỉ
+
+**Output:**
+{{
+  "entries": [
+    {{"index": 10, "corrected_content": "Hiếu Hiếu đang đưa lên rồi anh ơi"}},
+    {{"index": 11, "corrected_content": "ừm, nó sẽ thường đi một chút đó"}},
+    {{"index": 12, "corrected_content": "ừm ừm ừm, để em xem lại"}},
+    {{"index": 13, "corrected_content": "Anh Văn mới chỉ mà, ảo nhỉ"}}
+  ]
+}}
+
+## Example 3 — Mix of fixable errors and unfixable hallucinations
+**Input:**
+[20] ok anh ơi, em push code lên branch develop rồi
+[21] mangrioz cái con fidel đi
+[22] dạ em sẻ kiểm tra lại cái ba đề trước
+[23] phút lăng cái đó xem
+
+**Output:**
+{{
+  "entries": [
+    {{"index": 20, "corrected_content": "ok anh ơi, em push code lên branch develop rồi"}},
+    {{"index": 21, "corrected_content": "mangrioz cái confident đi"}},
+    {{"index": 22, "corrected_content": "dạ em sẽ kiểm tra lại cái 3D trước"}},
+    {{"index": 23, "corrected_content": "phút lăng cái đó xem"}}
+  ]
+}}
+
+# EXECUTION
+Analyze the input transcript and only return the JSON object.
+
+# FINAL CHECK
+* Verify that EVERY index from the input appears in the output — no missing, no extra indices.
+* Ensure corrected content preserves the original meaning — only spelling/grammar fixes and English word reconstruction, no paraphrasing.
+* For Vietnamese phonetization of English: only reconstruct if the context clearly supports the intended English word.
+* If you are not confident about a correction, leave the original text unchanged.
+* Ensure the output is clean JSON with no markdown wrapping, no comments, no trailing commas.
+"""
+

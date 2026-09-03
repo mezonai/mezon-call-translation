@@ -5,9 +5,10 @@ Data models for request/response handling in transcript endpoints.
 """
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # Response Models
@@ -155,3 +156,19 @@ class HealthCheckResponse(BaseModel):  # type: ignore[explicit-any]
     mongodb_connected: bool
     timestamp: str
     error: str | None = None
+
+
+# ============================================================================
+# Transcript Correction Models
+# ============================================================================
+
+class TranscriptCorrectionRetryType(StrEnum):
+    SECTION = "section"
+    ALL = "all"
+
+class CorrectedEntry(BaseModel):  # type: ignore[explicit-any]
+    index: int = Field(description="Original index of the message")
+    corrected_content: str = Field(description="Corrected text content")
+
+class TranscriptCorrectionResult(BaseModel):  # type: ignore[explicit-any]
+    entries: list[CorrectedEntry] = Field(description="List of corrected transcript entries")

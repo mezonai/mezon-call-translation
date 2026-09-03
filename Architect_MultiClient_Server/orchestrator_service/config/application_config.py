@@ -228,7 +228,7 @@ class AuthConfig:
 
 class LLMProvider(StrEnum):
     GEMINI = "gemini"
-    LOCAL = "local"
+    MEZON = "mezon"
 
 
 @dataclass
@@ -384,7 +384,7 @@ class OutboxConfig:
 
 @dataclass
 class SummaryConfig:
-    provider: str = "local"
+    provider: str = "mezon"
     model: str = "Qwen3.5-35B-A3B"
     temperature: float = 0.4
     top_p: float = 0.4
@@ -405,7 +405,7 @@ class SummaryConfig:
     @classmethod
     def from_env(cls) -> "SummaryConfig":
         return cls(
-            provider=os.getenv("SUMMARY_LLM_PROVIDER", "local"),
+            provider=os.getenv("SUMMARY_LLM_PROVIDER", "mezon"),
             model=os.getenv("SUMMARY_LLM_MODEL", "Qwen3.5-35B-A3B"),
             temperature=float(os.getenv("SUMMARY_LLM_TEMPERATURE", "0.4")),
             top_p=float(os.getenv("SUMMARY_LLM_TOP_P", "0.4")),
@@ -457,6 +457,51 @@ class LightSummaryConfig:
 
 
 # ============================================================================
+# Transcript Correction Configuration
+# ============================================================================
+
+
+@dataclass
+class TranscriptCorrectionConfig:
+    provider: str = "mezon"
+    model: str = "gemini-3.5-flash-low" # Using gemini-3.5-flash-low by default
+    temperature: float = 0.2
+    top_p: float = 0.4
+    timeout: int = 120
+    retry_count: int = 3
+    chunk_duration_min: int = 15
+    previous_context_min: int = 5
+
+    fallback_enable: bool = True
+    fallback_provider: str = "gemini"
+    fallback_model: str = "gemini-3.5-flash-low"
+    fallback_temperature: float = 0.2
+    fallback_top_p: float = 0.4
+    fallback_timeout: int = 120
+    fallback_retry_count: int = 3
+
+    @classmethod
+    def from_env(cls) -> "TranscriptCorrectionConfig":
+        return cls(
+            provider=os.getenv("CORRECTION_LLM_PROVIDER", "mezon"),
+            model=os.getenv("CORRECTION_LLM_MODEL", "gemini-3.5-flash-low"),
+            temperature=float(os.getenv("CORRECTION_LLM_TEMPERATURE", "0.2")),
+            top_p=float(os.getenv("CORRECTION_LLM_TOP_P", "0.4")),
+            timeout=int(os.getenv("CORRECTION_LLM_TIMEOUT", "120")),
+            retry_count=int(os.getenv("CORRECTION_LLM_RETRY_COUNT", "3")),
+            chunk_duration_min=int(os.getenv("CORRECTION_CHUNK_DURATION_MIN", "15")),
+            previous_context_min=int(os.getenv("CORRECTION_PREVIOUS_CONTEXT_MIN", "5")),
+            fallback_enable=os.getenv("CORRECTION_LLM_FALLBACK_ENABLE", "true").lower() == "true",
+            fallback_provider=os.getenv("CORRECTION_LLM_FALLBACK_PROVIDER", "gemini"),
+            fallback_model=os.getenv("CORRECTION_LLM_FALLBACK_MODEL", "gemini-3.5-flash-low"),
+            fallback_temperature=float(os.getenv("CORRECTION_LLM_FALLBACK_TEMPERATURE", "0.2")),
+            fallback_top_p=float(os.getenv("CORRECTION_LLM_FALLBACK_TOP_P", "0.4")),
+            fallback_timeout=int(os.getenv("CORRECTION_LLM_FALLBACK_TIMEOUT", "120")),
+            fallback_retry_count=int(os.getenv("CORRECTION_LLM_FALLBACK_RETRY_COUNT", "3")),
+        )
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -494,10 +539,10 @@ class Config:
         self.auth = AuthConfig.from_env()
         self.minio = MinIOConfig.from_env()
         self.gemini_llm_config = LLMConfig.from_env(api_key_env="GEMINI_API_KEY", url_env="GEMINI_URL")
-        self.local_llm_config = LLMConfig.from_env(
-            api_key_env="LOCAL_LLM_API_KEY",
-            url_env="LOCAL_LLM_URL",
-            default_url="http://localhost:8080/v1/chat/completions",
+        self.mezon_llm_config = LLMConfig.from_env(
+            api_key_env="MEZON_LLM_API_KEY",
+            url_env="MEZON_LLM_URL",
+            default_url="https://llm.mrdnd.dev/v1/chat/completions",
         )
         self.redis = RedisConfig.from_env()
         self.notification = NotificationConfig.from_env()
@@ -505,6 +550,7 @@ class Config:
         self.outbox = OutboxConfig.from_env()
         self.summary = SummaryConfig.from_env()
         self.light_summary = LightSummaryConfig.from_env()
+        self.transcript_correction = TranscriptCorrectionConfig.from_env()
 
         self._initialized = True
         self._validate_all()

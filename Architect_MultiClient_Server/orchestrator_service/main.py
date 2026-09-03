@@ -19,6 +19,7 @@ from orchestrator_service.api.sse_chat_external_api import (
 from orchestrator_service.api.sse_metadata_api import router as sse_metadata_router
 from orchestrator_service.api.sse_transcript_api import router as stream_router
 from orchestrator_service.api.summary_api import client_router as summary_client_router
+from orchestrator_service.api.transcript_api import router as transcript_router
 from orchestrator_service.api.v2.router import (
     api_router as api_router_v2,
 )  # Import the v2 API router
@@ -172,5 +173,6 @@ app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent req
 # requires ROOMS_VIEW_ALL/ROOMS_VIEW_OWN). Confirm no downstream still calls this,
 # then remove this router and its module (api/summary_api.py).
 app.include_router(summary_client_router)
+app.include_router(transcript_router)
 
 app.include_router(api_router_v2, prefix="/api/v2")

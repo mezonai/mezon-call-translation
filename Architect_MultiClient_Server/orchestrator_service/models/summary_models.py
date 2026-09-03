@@ -15,7 +15,6 @@ class RetryType(StrEnum):
     SECTIONS = "sections"
     OVERALL_CONTEXT = "overall_context"
 
-
 class SummaryResult(BaseModel):  # type: ignore[explicit-any]
     context: str = Field(description="Meeting context and participant permissions")
     key_discussions: list[str] = Field(description="Main discussion details and viewpoints")
@@ -55,8 +54,6 @@ class RoomSummaryResponse(BaseModel):  # type: ignore[explicit-any]
     speech_durations: list[dict[str, Any]] = Field(  # type: ignore[explicit-any]
         description="Speech Durations of each participant", default=[]
     )
-
-
 class SummaryListQuery(BaseModel): # type: ignore[explicit-any]
     """Query parameters for listing summaries."""
     start_time: datetime | None = Field(
