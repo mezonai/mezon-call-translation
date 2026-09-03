@@ -62,6 +62,27 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// MaxLifetime: self-imposed upper bound on how long this agent runs, tied
+	// to call/pricing plans (mezon-sfu-migration-plan.md). Firing this just
+	// cancels the same ctx SIGINT/SIGTERM already cancels -- same
+	// graceful-shutdown path, not a separate one. Deliberately enforced here
+	// (inside the agent itself) rather than by worker-manager watching a
+	// clock: worker-manager can be down when the deadline is reached (the
+	// restart-recovery gap this plan section exists for) or this agent may
+	// have been adopted (reconcile.go) by an instance that never even
+	// witnessed its actual start time -- a timer living in this process
+	// works regardless. See config.Config.MaxLifetime's doc for why no
+	// second "did shutdown actually finish" backstop timer is layered on top
+	// of this: every step of the shutdown path is already individually
+	// bounded, so plain ctx cancellation is enough.
+	if cfg.MaxLifetime > 0 {
+		maxLifetimeTimer := time.AfterFunc(cfg.MaxLifetime, func() {
+			logging.L.Warn("agent: max lifetime reached, shutting down", "max_lifetime", cfg.MaxLifetime)
+			stop()
+		})
+		defer maxLifetimeTimer.Stop()
+	}
+
 	// SIGUSR1 is worker-manager's Pdeathsig (internal/workermanager's
 	// manager.go Start, set on the agent's SysProcAttr) -- kernel-delivered
 	// the instant worker-manager dies, no polling. Handled separately from
@@ -128,7 +149,7 @@ func main() {
 		logging.L.Info("orchestratorclient: ORCHESTRATOR_BASE_URL not set, running without TTS trigger/transcript push/transcript_control")
 	}
 
-	err = run(ctx, cfg, recClient, orch, refs)
+	err = run(ctx, stop, cfg, recClient, orch, refs)
 	switch {
 	case err == nil:
 		return
@@ -209,12 +230,12 @@ func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs)
 // not a resume, and what it is not a substitute for). It only returns once
 // ctx is cancelled (graceful shutdown, e.g. worker manager sent SIGTERM --
 // no point retrying that) or the retry budget is exhausted.
-func run(ctx context.Context, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs) error {
+func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs) error {
 	backoff := reconnect.New(cfg.Reconnect)
 
 	for {
 		start := time.Now()
-		err := runSession(ctx, cfg, recClient, orch, refs)
+		err := runSession(ctx, stop, cfg, recClient, orch, refs)
 
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -251,7 +272,7 @@ func run(ctx context.Context, cfg config.Config, recClient *recordclient.Client,
 // cancelled. Every call builds a brand new session -- mezon-sfu ties the
 // media session to the WS connection 1:1, so there is nothing to resume
 // from a previous attempt, and mid numbering restarts from scratch too.
-func runSession(ctx context.Context, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs) error {
+func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs) error {
 	token, err := sfuauth.SignJoinToken(cfg.JWTSecret, cfg.AgentUserID, cfg.RoomID, cfg.TokenTTL)
 	if err != nil {
 		return err
@@ -265,7 +286,7 @@ func runSession(ctx context.Context, cfg config.Config, recClient *recordclient.
 	roomName := strconv.FormatUint(cfg.RoomID, 10)
 	roomID := registerRoomWithOrchestrator(ctx, orch, roomName)
 
-	sess := newSession(cfg, recClient, orch, refs, roomName, roomID)
+	sess := newSession(cfg, recClient, orch, refs, roomName, roomID, stop)
 
 	client, err := signaling.Dial(ctx, cfg.SFUWebSocketURL, token, string(cfg.Role), sess.callbacks())
 	if err != nil {
@@ -333,13 +354,22 @@ type session struct {
 	// push_transcript/SSE/STT use.
 	roomName string
 	roomID   string
+	// stop is the root ctx's cancel func (signal.NotifyContext in main) --
+	// checkEmptyRoom calls this directly, same as config.Config.MaxLifetime's
+	// timer, to end run()'s reconnect loop entirely rather than just this
+	// session (retrying into an empty room makes no sense).
+	stop context.CancelFunc
 
 	peerAgent *rtcagent.PeerAgent
 	player    *ttsplayer.Player
+
+	// emptyRoomTimer: see checkEmptyRoom's doc. nil whenever the room isn't
+	// currently down to just this agent.
+	emptyRoomTimer *time.Timer
 }
 
-func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs, roomName, roomID string) *session {
-	return &session{cfg: cfg, recClient: recClient, orch: orch, refs: refs, roomName: roomName, roomID: roomID}
+func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs, roomName, roomID string, stop context.CancelFunc) *session {
+	return &session{cfg: cfg, recClient: recClient, orch: orch, refs: refs, roomName: roomName, roomID: roomID, stop: stop}
 }
 
 func (s *session) callbacks() signaling.Callbacks {
@@ -445,6 +475,7 @@ func (s *session) onOffer(sdp string) (string, error) {
 
 func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, members []signaling.Member) {
 	logging.L.Info("signaling: room_snapshot", "self_peer_id", selfPeerID, "participant_count", participantCount)
+	s.checkEmptyRoom(participantCount)
 	if s.peerAgent == nil {
 		return
 	}
@@ -455,6 +486,7 @@ func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, member
 
 func (s *session) onPeerJoined(participantCount int, peer signaling.Member) {
 	logging.L.Info("signaling: peer_joined", "user_id", peer.UserID, "role", peer.Role, "participant_count", participantCount)
+	s.checkEmptyRoom(participantCount)
 	if s.peerAgent != nil {
 		s.peerAgent.UpsertRoster(peer)
 	}
@@ -462,9 +494,58 @@ func (s *session) onPeerJoined(participantCount int, peer signaling.Member) {
 
 func (s *session) onPeerLeft(ev signaling.PeerLeftEvent) {
 	logging.L.Info("signaling: peer_left", "user_id", ev.UserID, "participant_count", ev.ParticipantCount)
+	s.checkEmptyRoom(ev.ParticipantCount)
 	if s.peerAgent != nil {
 		s.peerAgent.RemovePeer(ev.UserID)
 	}
+}
+
+// checkEmptyRoom implements EmptyRoomGrace (config.Config's doc has the
+// business rationale): called from every roster-changing callback
+// (onRoomSnapshot/onPeerJoined/onPeerLeft) with mezon-sfu's own
+// participant_count, which already counts this agent same as any real user
+// (mezon-sfu/CLAUDE.md section 9 -- "no bot participant kind, a bot looks
+// like any other user in the roster"). So participantCount <= 1 means this
+// agent is the only one left.
+//
+// A grace timer, not an immediate stop(): participant_count also dips on a
+// transient reconnect (the last human's own client blipping), not just a
+// deliberate leave. If a peer_joined arrives before the timer fires, it's
+// cancelled -- same person reconnecting or someone else joining both count.
+//
+// Deliberately much shorter than this agent's own Reconnect budget
+// (internal/reconnect, ~2-3 minutes worst case with defaults) -- the two
+// are independent, not layered: this only ever runs while *this* agent's own
+// WS session is alive and receiving events; if the agent's own connection
+// drops instead, this whole session (and any pending emptyRoomTimer) is
+// torn down via close() below before the *outer* run() reconnect loop even
+// starts a retry, so the two budgets never compound or race against each
+// other.
+//
+// No locking needed for the field itself, same invariant as the rest of
+// session -- every call here runs on signaling.Client's single read-loop
+// goroutine. The timer's own fired callback runs on a *different* goroutine
+// (time.AfterFunc), which is exactly why it only calls s.stop() (already
+// safe to call from any goroutine, same as MaxLifetime's timer in main) and
+// touches no other session field.
+func (s *session) checkEmptyRoom(participantCount int) {
+	if s.cfg.EmptyRoomGrace <= 0 {
+		return
+	}
+	if participantCount > 1 {
+		if s.emptyRoomTimer != nil {
+			s.emptyRoomTimer.Stop()
+			s.emptyRoomTimer = nil
+		}
+		return
+	}
+	if s.emptyRoomTimer != nil {
+		return // already counting down
+	}
+	s.emptyRoomTimer = time.AfterFunc(s.cfg.EmptyRoomGrace, func() {
+		logging.L.Warn("agent: room empty except self past grace period, shutting down", "grace", s.cfg.EmptyRoomGrace)
+		s.stop()
+	})
 }
 
 func (s *session) onPeerUpdated(peer signaling.Member) {
@@ -483,6 +564,16 @@ func (s *session) onPeerUpdated(peer signaling.Member) {
 // harmless no-op orchestrator-side, matching the old Python agent, which
 // always called unregister_room in its cleanup path regardless).
 func (s *session) close() {
+	// Must happen before anything else that could block/take time below --
+	// this session is going away regardless of why (graceful stop, WS
+	// death, about to reconnect into a brand new session); an
+	// emptyRoomTimer left running from it would otherwise outlive it and
+	// could fire s.stop() later on top of an unrelated, healthy reconnect.
+	// See checkEmptyRoom's doc.
+	if s.emptyRoomTimer != nil {
+		s.emptyRoomTimer.Stop()
+		s.emptyRoomTimer = nil
+	}
 	s.refs.set(nil, nil)
 	if s.peerAgent != nil {
 		_ = s.peerAgent.Close()

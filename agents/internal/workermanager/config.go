@@ -104,6 +104,15 @@ type Config struct {
 	// process's environment) so that's automatic as long as both read the
 	// same env var name, which they do.
 	SocketDir string
+	// DefaultAgentMaxLifetime is written into every spawned agent's
+	// AGENT_MAX_LIFETIME_SECONDS env var (Start, below) -- see
+	// internal/config.Config.MaxLifetime's doc for what it does and why it's
+	// enforced agent-side. Deliberately NOT a plain passthrough
+	// (agentPassthroughEnvKeys): Start sets it explicitly per spawn so this
+	// is the one place a future per-event override (once BE mezon sends a
+	// plan-derived value over NATS, see StartEvent) plugs in without
+	// changing how the value reaches the agent.
+	DefaultAgentMaxLifetime time.Duration
 }
 
 // agentPassthroughEnvKeys are copied from this process's environment into
@@ -128,6 +137,11 @@ var agentPassthroughEnvKeys = []string{
 	"TTS_SAMPLE_RATE",
 	"TTS_RECORD_MAX_QUEUE_SIZE",
 	"LOG_LEVEL",
+	// AGENT_EMPTY_ROOM_GRACE_SECONDS: unlike AGENT_MAX_LIFETIME_SECONDS
+	// above, this isn't per-room/plan-derived -- same value makes sense for
+	// every agent, so a plain passthrough is enough (no need for Start to
+	// set it explicitly per spawn).
+	"AGENT_EMPTY_ROOM_GRACE_SECONDS",
 	// AGENT_SOCKET_DIR: shared with worker-manager's own env of the same
 	// name (not yet a Config field here -- Phase 1 only needs the agent
 	// side to have it; worker-manager itself starts reading/using its own
@@ -159,6 +173,15 @@ func FromEnv() (Config, error) {
 
 	cfg.StateDir = getEnv("WORKER_MANAGER_STATE_DIR", "/tmp/mezon-agents")
 	cfg.SocketDir = getEnv("AGENT_SOCKET_DIR", "/tmp/mezon-agents")
+
+	maxLifetimeSeconds, err := strconv.Atoi(getEnv("AGENT_MAX_LIFETIME_SECONDS", "10800")) // 3h
+	if err != nil {
+		return Config{}, fmt.Errorf("workermanager: invalid AGENT_MAX_LIFETIME_SECONDS: %w", err)
+	}
+	if maxLifetimeSeconds < 0 {
+		return Config{}, fmt.Errorf("workermanager: AGENT_MAX_LIFETIME_SECONDS must be >= 0, got %d", maxLifetimeSeconds)
+	}
+	cfg.DefaultAgentMaxLifetime = time.Duration(maxLifetimeSeconds) * time.Second
 
 	cfg.BaseAgentEnv = passthroughEnv(agentPassthroughEnvKeys)
 

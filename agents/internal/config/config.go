@@ -71,6 +71,53 @@ type Config struct {
 	// internal/workermanager/config.go's agentPassthroughEnvKeys, not
 	// something to set independently per room.
 	ControlSocketDir string
+	// MaxLifetime bounds how long this agent runs before shutting itself
+	// down, win or lose -- a self-imposed upper bound on how long a call can
+	// be translated for, tied to pricing plans (mezon-sfu-migration-plan.md).
+	// 0 disables it (runs indefinitely, e.g. local/manual testing).
+	//
+	// This is deliberately enforced *inside* the agent, not by worker-manager
+	// watching a clock and sending SIGTERM at the right time: worker-manager
+	// can itself be down when the deadline is reached (crash, redeploy,
+	// exactly the restart-recovery gap this whole plan section exists for),
+	// and an adopted agent (Phase 3, reconcile.go) is reparented away from
+	// the instance that spawned it anyway. A timer inside the agent's own
+	// process keeps running regardless of whether *anything* worker-manager
+	// side is alive to enforce it.
+	//
+	// Firing this just cancels the same context SIGINT/SIGTERM cancel
+	// (cmd/agent/main.go) -- the exact same graceful-shutdown path, not a
+	// separate one. No additional "did it actually stop in time" backstop
+	// timer needed here: every step of that path (rtcagent.PeerAgent.Close,
+	// ttsplayer.Player.Close, recordclient.Forwarder.Close,
+	// orchestratorclient's HTTP calls) is already individually bounded by its
+	// own timeout, so the existing chain's documented worst case (~16-20s,
+	// see workermanager.Config.StopTimeout's doc) already holds here the same
+	// as it does for a worker-manager-initiated SIGTERM -- discussed and
+	// confirmed in mezon-sfu-migration-plan.md before deciding against a
+	// second internal force-exit timer.
+	//
+	// Worker-manager sets this explicitly per spawn (not a passthrough env,
+	// see agentPassthroughEnvKeys) so it can later be overridden per-event
+	// once BE mezon starts sending a plan-derived value over NATS; until
+	// then every agent gets the same configured default. Read here too (not
+	// only worker-manager-side) so a standalone/local run still gets a
+	// sane bound instead of silently running forever.
+	MaxLifetime time.Duration
+	// EmptyRoomGrace: how long to keep running after this agent becomes the
+	// only member left in the room (participant_count == 1, mezon-sfu counts
+	// the agent itself same as any real user -- mezon-sfu/CLAUDE.md section
+	// 9) before shutting itself down gracefully -- the session/interview is
+	// over once everyone real has left. 0 disables it (never self-exits on
+	// an empty room).
+	//
+	// Deliberately a grace period, not immediate: participant_count also
+	// drops on a transient network blip (the last human's own client
+	// reconnecting), not just a deliberate leave -- see cmd/agent/main.go's
+	// session.checkEmptyRoom doc for the full race analysis (in particular
+	// why this is independent of, and much shorter than, this agent's own
+	// Reconnect budget).
+	EmptyRoomGrace time.Duration
 }
 
 type ReconnectConfig struct {
@@ -145,6 +192,24 @@ func FromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("config: invalid AGENT_TOKEN_TTL_SECONDS: %w", err)
 	}
 	cfg.TokenTTL = time.Duration(ttlSeconds) * time.Second
+
+	maxLifetimeSeconds, err := strconv.Atoi(getEnv("AGENT_MAX_LIFETIME_SECONDS", "10800")) // 3h
+	if err != nil {
+		return Config{}, fmt.Errorf("config: invalid AGENT_MAX_LIFETIME_SECONDS: %w", err)
+	}
+	if maxLifetimeSeconds < 0 {
+		return Config{}, fmt.Errorf("config: AGENT_MAX_LIFETIME_SECONDS must be >= 0, got %d", maxLifetimeSeconds)
+	}
+	cfg.MaxLifetime = time.Duration(maxLifetimeSeconds) * time.Second
+
+	emptyRoomGraceSeconds, err := strconv.Atoi(getEnv("AGENT_EMPTY_ROOM_GRACE_SECONDS", "15"))
+	if err != nil {
+		return Config{}, fmt.Errorf("config: invalid AGENT_EMPTY_ROOM_GRACE_SECONDS: %w", err)
+	}
+	if emptyRoomGraceSeconds < 0 {
+		return Config{}, fmt.Errorf("config: AGENT_EMPTY_ROOM_GRACE_SECONDS must be >= 0, got %d", emptyRoomGraceSeconds)
+	}
+	cfg.EmptyRoomGrace = time.Duration(emptyRoomGraceSeconds) * time.Second
 
 	if cfg.Role != RoleAudience && cfg.Role != RoleSpeaker {
 		return Config{}, fmt.Errorf("config: invalid AGENT_ROLE %q (want %q or %q)", cfg.Role, RoleAudience, RoleSpeaker)
