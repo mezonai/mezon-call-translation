@@ -111,6 +111,7 @@ var agentPassthroughEnvKeys = []string{
 	"TTS_SAMPLE_RATE",
 	"TTS_RECORD_MAX_QUEUE_SIZE",
 	"LOG_LEVEL",
+	"AGENTS_BOT_BASE_URL",
 }
 
 func FromEnv() (Config, error) {

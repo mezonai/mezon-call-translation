@@ -16,6 +16,7 @@ from orchestrator_service.models.room_registry_models import (
     RoomUnregisterRequest,
     RoomUnregisterResponse,
 )
+from orchestrator_service.services.agents_bot_user_client import get_agents_bot_room_participants
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
@@ -75,18 +76,9 @@ async def register_room(
     # 3. Point the name -> id cache at this session (always overwrites).
     await registry.register_room(request.room_name, request.room_id)
 
-    # 4. Save existing participants (best effort). Recording itself is driven
-    # by agents/record-service once the agent joins and subscribes tracks
-    # (audio-ingestion PLAN.md D3) -- no egress kick-off needed here anymore.
-    # Backgrounded (audio-ingestion PLAN.md D27): the LiveKit list_participants
-    # API call is the single biggest source of latency in this endpoint, and
-    # the caller (agent, registering *before* connecting to the room -- see
-    # main.py) doesn't need it to be done before getting room_id back. Not a
-    # correctness downgrade: this is still a live query against LiveKit made
-    # right after the registry entry goes active, same as before, just not
-    # blocking the response -- the participant_joined webhook (active from
-    # step 3 onward, same as before) still catches anyone who joins around
-    # this same window.
+    # 4. Save existing participants (best effort). Fetches the current
+    # voice channel roster from agents-bot in the background so registration
+    # latency remains minimal and non-blocking for the agent.
     asyncio_create_task_safety(_fetch_and_save_existing_participants(request.room_name, request.room_id))
 
     metadata_channel = MetadataChannel()
@@ -101,9 +93,34 @@ async def register_room(
 
 
 async def _fetch_and_save_existing_participants(room_name: str, room_id: str) -> None:
-    """Background half of register_room's step 3 -- see call site comment."""
-    # TODO: save participants data to db
-    pass
+    """Fetch initial voice channel participants from agents-bot and persist to database."""
+    try:
+        participants = await get_agents_bot_room_participants(room_name)
+
+        registry = get_room_registry()
+        current_room_id = await registry.get_room_id(room_name)
+        if current_room_id != room_id:
+            logger.warning(
+                f"Skip stale participant snapshot for room '{room_name}': "
+                f"expected room_id={room_id}, current room_id={current_room_id}"
+            )
+            return
+
+        if participants:
+            saved = await transcription_service.save_participants_batch(room_id, participants)
+            if saved:
+                logger.info(
+                    f"Saved {len(participants)} participants for room '{room_name}' (room_id={room_id})"
+                )
+            else:
+                logger.error(
+                    f"Failed to save participants for room '{room_name}' (room_id={room_id})"
+                )
+    except Exception as e:
+        logger.error(
+            f"Failed to fetch and save participants for room '{room_name}' (room_id={room_id}): {e}",
+            exc_info=True,
+        )
 
 
 @router.post("/unregister", response_model=RoomUnregisterResponse, response_description="Unregister a room")

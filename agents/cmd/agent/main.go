@@ -22,6 +22,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/pion/webrtc/v4"
 
+	"github.com/mezonai/mezon-call-translation/agents/internal/agentsbotclient"
 	"github.com/mezonai/mezon-call-translation/agents/internal/audiopipeline"
 	"github.com/mezonai/mezon-call-translation/agents/internal/config"
 	"github.com/mezonai/mezon-call-translation/agents/internal/logging"
@@ -80,6 +81,16 @@ func main() {
 	// session is live right now" (or no-op if none is, e.g. mid-reconnect).
 	refs := &sessionRefs{}
 
+	// Agents-bot client for registering active rooms used by chat forwarding.
+	// nil if AGENTS_BOT_BASE_URL is not set.
+	var agentsBotClient *agentsbotclient.Client
+	if cfg.AgentsBot.BaseURL != "" {
+		agentsBotClient = agentsbotclient.New(cfg.AgentsBot.BaseURL)
+		logging.L.Info("agentsbotclient: configured", "base_url", cfg.AgentsBot.BaseURL)
+	} else {
+		logging.L.Info("agentsbotclient: AGENTS_BOT_BASE_URL not set, running without chat forwarding registration")
+	}
+
 	var orch *orchestratorclient.Client
 	if cfg.Orchestrator.BaseURL != "" {
 		orch = orchestratorclient.New(cfg.Orchestrator.BaseURL, cfg.Orchestrator.APIKey)
@@ -99,7 +110,7 @@ func main() {
 		logging.L.Info("orchestratorclient: ORCHESTRATOR_BASE_URL not set, running without TTS trigger/transcript push/transcript_control")
 	}
 
-	err = run(ctx, cfg, recClient, orch, refs)
+	err = run(ctx, cfg, recClient, orch, agentsBotClient, refs)
 	switch {
 	case err == nil:
 		return
@@ -180,12 +191,12 @@ func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs)
 // not a resume, and what it is not a substitute for). It only returns once
 // ctx is cancelled (graceful shutdown, e.g. worker manager sent SIGTERM --
 // no point retrying that) or the retry budget is exhausted.
-func run(ctx context.Context, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs) error {
+func run(ctx context.Context, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs) error {
 	backoff := reconnect.New(cfg.Reconnect)
 
 	for {
 		start := time.Now()
-		err := runSession(ctx, cfg, recClient, orch, refs)
+		err := runSession(ctx, cfg, recClient, orch, agentsBotClient, refs)
 
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -222,7 +233,7 @@ func run(ctx context.Context, cfg config.Config, recClient *recordclient.Client,
 // cancelled. Every call builds a brand new session -- mezon-sfu ties the
 // media session to the WS connection 1:1, so there is nothing to resume
 // from a previous attempt, and mid numbering restarts from scratch too.
-func runSession(ctx context.Context, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs) error {
+func runSession(ctx context.Context, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs) error {
 	token, err := sfuauth.SignJoinToken(cfg.JWTSecret, cfg.AgentUserID, cfg.RoomID, cfg.TokenTTL)
 	if err != nil {
 		return err
@@ -237,6 +248,31 @@ func runSession(ctx context.Context, cfg config.Config, recClient *recordclient.
 	roomID := registerRoomWithOrchestrator(ctx, orch, roomName)
 
 	sess := newSession(cfg, recClient, orch, refs, roomName, roomID)
+
+	// Register room with agents-bot so it knows which channels to forward.
+	if agentsBotClient != nil {
+		gwCtx, gwCancel := context.WithTimeout(ctx, orchestratorCallTimeout)
+		err := agentsBotClient.RegisterRoom(gwCtx, roomName, roomID)
+		gwCancel()
+		if err != nil {
+			logging.L.Warn("agentsbotclient: register_room failed", append(logging.ErrAttrs(err), "room_name", roomName)...)
+		} else {
+			logging.L.Info("agentsbotclient: room registered", "room_name", roomName, "room_id", roomID)
+			// Keep agents-bot cleanup local to this integration. This defer is
+			// installed before Dial so a failed SFU connection cannot leave a
+			// stale chat-forwarding registration behind.
+			defer func() {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
+				defer cleanupCancel()
+				if err := agentsBotClient.UnregisterRoom(cleanupCtx, roomName, roomID); err != nil {
+					logging.L.Warn(
+						"agentsbotclient: unregister_room failed",
+						append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID)...,
+					)
+				}
+			}()
+		}
+	}
 
 	client, err := signaling.Dial(ctx, cfg.SFUWebSocketURL, token, string(cfg.Role), sess.callbacks())
 	if err != nil {

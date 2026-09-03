@@ -457,6 +457,29 @@ class LightSummaryConfig:
 
 
 # ============================================================================
+# Agents Bot Configuration
+# ============================================================================
+
+
+@dataclass
+class AgentsBotConfig:
+    """
+    Base URL for the Go agents-bot service.
+
+    agents-bot owns the current voice-channel roster and user_id -> username
+    cache populated from Mezon events. Empty string disables those lookups.
+    """
+
+    base_url: str = ""
+
+    @classmethod
+    def from_env(cls) -> "AgentsBotConfig":
+        return cls(
+            base_url=os.getenv("AGENTS_BOT_BASE_URL", ""),
+        )
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -505,6 +528,7 @@ class Config:
         self.outbox = OutboxConfig.from_env()
         self.summary = SummaryConfig.from_env()
         self.light_summary = LightSummaryConfig.from_env()
+        self.agents_bot = AgentsBotConfig.from_env()
 
         self._initialized = True
         self._validate_all()
