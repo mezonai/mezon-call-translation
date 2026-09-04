@@ -8,13 +8,15 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
-from sqlalchemy import Select, exists, func, or_, select, text, update
+from sqlalchemy import Select, delete, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
 from orchestrator_service.services.postgresql.models import (
     MetadataEvent,
     Room,
+    RoomSectionSummary,
+    RoomSummary,
     Track,
     TranscriptChunk,
 )
@@ -685,6 +687,87 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to save participants batch (atomic): {e}")
             return False
+
+    async def reset_room_transcription(self, room_id: str) -> dict[str, Any]:
+        """
+        Reset transcript chunks, summaries, and track statuses for a room to allow clean re-transcription.
+        """
+        session_factory = get_session_factory()
+        now = datetime.now(UTC)
+        try:
+            async with session_factory() as session, session.begin():
+                    # 1. Resolve room
+                    room = await session.get(Room, room_id)
+                    if not room:
+                        stmt = select(Room).where(Room.mongo_id == room_id)
+                        room = await session.scalar(stmt)
+                    if not room:
+                        raise ValueError(f"Room with id '{room_id}' not found")
+
+                    room_id_str = str(room.id)
+
+                    # 2. Get tracks for this room
+                    track_stmt = select(Track).where(Track.room_ref_id == room.id)
+                    tracks = list((await session.scalars(track_stmt)).all())
+                    track_ids = [t.id for t in tracks]
+
+                    # 3. Delete transcript_chunks
+                    deleted_chunks = 0
+                    if track_ids:
+                        del_chunk_stmt = delete(TranscriptChunk).where(TranscriptChunk.track_ref_id.in_(track_ids))
+                        chunk_res = await session.execute(del_chunk_stmt)
+                        deleted_chunks = chunk_res.rowcount or 0
+
+                    # 4. Delete room summaries
+                    del_summary_stmt = delete(RoomSummary).where(RoomSummary.room_id == room.id)
+                    sum_res = await session.execute(del_summary_stmt)
+                    deleted_summaries = sum_res.rowcount or 0
+
+                    del_sec_stmt = delete(RoomSectionSummary).where(RoomSectionSummary.room_id == room.id)
+                    await session.execute(del_sec_stmt)
+
+                    # 5. Reset track status to 'wait_process', chunk_count=0
+                    reset_tracks_count = 0
+                    if track_ids:
+                        reset_track_stmt = (
+                            update(Track)
+                            .where(Track.room_ref_id == room.id)
+                            .values(status="wait_process", chunk_count=0, error=None, updated_at=now)
+                        )
+                        track_res = await session.execute(reset_track_stmt)
+                        reset_tracks_count = track_res.rowcount or 0
+
+                    # 6. Reset room completed_at=None, status='final_room'
+                    room.completed_at = None
+                    room.status = "final_room"
+
+                    logger.info(
+                        f"🧹 Reset room {room_id_str}: deleted {deleted_chunks} chunks, "
+                        f"{deleted_summaries} summaries, reset {reset_tracks_count} tracks"
+                    )
+
+                    return {
+                        "room_id": room_id_str,
+                        "room_name": room.room_name,
+                        "deleted_chunks": deleted_chunks,
+                        "deleted_summaries": deleted_summaries,
+                        "reset_tracks_count": reset_tracks_count,
+                        "tracks": [
+                            {
+                                "id": t.id,
+                                "track_id": t.track_id,
+                                "participant_identity": t.participant_identity,
+                                "audio_info": t.audio_info,
+                                "filename": (t.audio_info or {}).get("filename") if isinstance(t.audio_info, dict) else None,
+                            }
+                            for t in tracks
+                        ],
+                    }
+        except Exception as e:
+            logger.error(f"Failed to reset room transcription for room {room_id}: {e}", exc_info=True)
+            raise
+
+
 
 # --------------- Singleton ---------------
 _pg_transcript_repository: PgTranscriptRepository | None = None
