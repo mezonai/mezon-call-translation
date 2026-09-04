@@ -295,7 +295,6 @@ class SummaryService:
         id_to_username, username_to_id = build_username_maps(list(unique_participants), room_participants)
 
         turns = []
-        current_turn = None
 
         for seg in all_segments:
             real_p = str(seg["participant_id"])
