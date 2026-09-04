@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.room_registry_models import (
+    ParticipantJoinedRequest,
+    ParticipantJoinedResponse,
     RoomRegisterRequest,
     RoomRegisterResponse,
     RoomRegistryClearResponse,
@@ -15,6 +17,10 @@ from orchestrator_service.models.room_registry_models import (
     RoomStatusResponse,
     RoomUnregisterRequest,
     RoomUnregisterResponse,
+)
+from orchestrator_service.services.agents_bot_user_client import (
+    get_agents_bot_room_participants,
+    resolve_agents_bot_usernames,
 )
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
@@ -75,18 +81,9 @@ async def register_room(
     # 3. Point the name -> id cache at this session (always overwrites).
     await registry.register_room(request.room_name, request.room_id)
 
-    # 4. Save existing participants (best effort). Recording itself is driven
-    # by agents/record-service once the agent joins and subscribes tracks
-    # (audio-ingestion PLAN.md D3) -- no egress kick-off needed here anymore.
-    # Backgrounded (audio-ingestion PLAN.md D27): the LiveKit list_participants
-    # API call is the single biggest source of latency in this endpoint, and
-    # the caller (agent, registering *before* connecting to the room -- see
-    # main.py) doesn't need it to be done before getting room_id back. Not a
-    # correctness downgrade: this is still a live query against LiveKit made
-    # right after the registry entry goes active, same as before, just not
-    # blocking the response -- the participant_joined webhook (active from
-    # step 3 onward, same as before) still catches anyone who joins around
-    # this same window.
+    # 4. Save existing participants (best effort). Fetches the current
+    # voice channel roster from agents-bot in the background so registration
+    # latency remains minimal and non-blocking for the agent.
     asyncio_create_task_safety(_fetch_and_save_existing_participants(request.room_name, request.room_id))
 
     metadata_channel = MetadataChannel()
@@ -101,9 +98,86 @@ async def register_room(
 
 
 async def _fetch_and_save_existing_participants(room_name: str, room_id: str) -> None:
-    """Background half of register_room's step 3 -- see call site comment."""
-    # TODO: save participants data to db
-    pass
+    """Fetch initial voice channel participants from agents-bot and persist to database."""
+    try:
+        participants = await get_agents_bot_room_participants(room_name)
+
+        registry = get_room_registry()
+        current_room_id = await registry.get_room_id(room_name)
+        if current_room_id != room_id:
+            logger.warning(
+                f"Skip stale participant snapshot for room '{room_name}': "
+                f"expected room_id={room_id}, current room_id={current_room_id}"
+            )
+            return
+
+        if participants:
+            saved = await transcription_service.save_participants_batch(room_id, participants)
+            if saved:
+                logger.info(
+                    f"Saved {len(participants)} participants for room '{room_name}' (room_id={room_id})"
+                )
+            else:
+                logger.error(
+                    f"Failed to save participants for room '{room_name}' (room_id={room_id})"
+                )
+    except Exception as e:
+        logger.error(
+            f"Failed to fetch and save participants for room '{room_name}' (room_id={room_id}): {e}",
+            exc_info=True,
+        )
+
+
+@router.post("/participant-joined", response_model=ParticipantJoinedResponse)
+async def participant_joined(
+    request: ParticipantJoinedRequest,
+    auth: dict[str, str | bool] = Depends(verify_api_key),
+) -> ParticipantJoinedResponse:
+    """Persist a participant from the Go agent's ``peer_joined`` event.
+
+    The agent only forwards the stable Mezon user id.  Username resolution is
+    deliberately owned by agents-bot, the service that receives Mezon identity
+    events.  The room-id check prevents an old agent process from adding a
+    participant to a later call that reused the same channel/room name.
+    """
+    registry = get_room_registry()
+
+    def stale_response() -> ParticipantJoinedResponse:
+        logger.info(
+            f"Ignoring stale participant_joined for room '{request.room_name}': "
+            f"event room_id={request.room_id}"
+        )
+        return ParticipantJoinedResponse(
+            status="ignored_stale_session",
+            room_name=request.room_name,
+            room_id=request.room_id,
+            participant_identity=request.participant_identity,
+        )
+
+    if await registry.get_room_id(request.room_name) != request.room_id:
+        return stale_response()
+
+    usernames = await resolve_agents_bot_usernames([request.participant_identity])
+
+    # Resolution is an HTTP round-trip. Check again so a re-registration that
+    # happened while it was in flight cannot write to a stale room session.
+    if await registry.get_room_id(request.room_name) != request.room_id:
+        return stale_response()
+
+    username = usernames.get(request.participant_identity)
+    if not await transcription_service.save_participant(
+        room_id=request.room_id,
+        participant_identity=request.participant_identity,
+        username=username,
+    ):
+        raise HTTPException(status_code=500, detail="Failed to persist participant")
+
+    return ParticipantJoinedResponse(
+        status="ok",
+        room_name=request.room_name,
+        room_id=request.room_id,
+        participant_identity=request.participant_identity,
+    )
 
 
 @router.post("/unregister", response_model=RoomUnregisterResponse, response_description="Unregister a room")

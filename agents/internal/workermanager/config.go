@@ -128,6 +128,7 @@ var agentPassthroughEnvKeys = []string{
 	"TTS_SAMPLE_RATE",
 	"TTS_RECORD_MAX_QUEUE_SIZE",
 	"LOG_LEVEL",
+	"AGENTS_BOT_BASE_URL",
 	// AGENT_SOCKET_DIR: shared with worker-manager's own env of the same
 	// name (not yet a Config field here -- Phase 1 only needs the agent
 	// side to have it; worker-manager itself starts reading/using its own

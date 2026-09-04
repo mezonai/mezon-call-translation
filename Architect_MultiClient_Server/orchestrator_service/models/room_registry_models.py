@@ -86,6 +86,32 @@ class RoomRegisterResponse(BaseModel): # type: ignore[explicit-any]
     room_id: str
 
 
+class ParticipantJoinedRequest(BaseModel):  # type: ignore[explicit-any]
+    """A participant observed by a registered room agent."""
+
+    room_name: RoomNameField = Field(..., description="Registered room name")
+    room_id: str = Field(..., description="The registering agent session UUID")
+    participant_identity: str = Field(..., min_length=1, max_length=128, description="Mezon user id")
+
+    @field_validator("room_id")
+    @classmethod
+    def validate_room_id_uuid(cls, v: str) -> str:
+        try:
+            UUID(v)
+        except ValueError as e:
+            raise ValueError("room_id must be a valid UUID string") from e
+        return v
+
+
+class ParticipantJoinedResponse(BaseModel):  # type: ignore[explicit-any]
+    """Result of a participant-joined notification."""
+
+    status: Literal["ok", "ignored_stale_session"]
+    room_name: str
+    room_id: str
+    participant_identity: str
+
+
 class RoomUnregisterResponse(BaseModel): # type: ignore[explicit-any]
     """Response model for room unregistration"""
     status: Literal["ok"]

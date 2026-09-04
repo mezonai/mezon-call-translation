@@ -10,6 +10,9 @@
 //     silently drops every recording event record-service reports for this
 //     session (this was originally left unported, then found to be a real
 //     gap and added back on 2026-08-18, see mezon-sfu-migration-plan.md).
+//   - participant_joined: reports each new Mezon-SFU peer to orchestrator;
+//     orchestrator resolves its display name through agents-bot and persists
+//     it in the room roster.
 //   - push_transcript: kept, unchanged wire contract.
 //   - ReportTTSTranscript / ReportTTSCompleted (report_tts_transcript/
 //     report_tts_completed): kept, added back 2026-08-18 alongside
@@ -123,6 +126,44 @@ func (c *Client) RegisterRoom(ctx context.Context, roomName, roomID string) erro
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("orchestratorclient: register_room: HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// ParticipantJoined reports a Mezon-SFU peer_joined event for this exact
+// room session. The event intentionally contains only the stable Mezon user
+// id: orchestrator resolves a display name through agents-bot, which owns the
+// Mezon identity cache. roomID protects a reused roomName from a late event
+// emitted by an older agent process.
+func (c *Client) ParticipantJoined(ctx context.Context, roomName, roomID, participantIdentity string) error {
+	body, err := json.Marshal(map[string]string{
+		"room_name":            roomName,
+		"room_id":              roomID,
+		"participant_identity": participantIdentity,
+	})
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: encode participant_joined body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/api/v2/room-registry/participant-joined",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: build participant_joined request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.authHeader(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: participant_joined: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("orchestratorclient: participant_joined: HTTP %d", resp.StatusCode)
 	}
 	return nil
 }
