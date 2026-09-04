@@ -1,7 +1,7 @@
 #!/bin/bash
 # Setup script for Mezon Call Translation Services
 # This script:
-# - Downloads Nemotron and Kokoro models
+# - Downloads Nemotron, non-realtime Whisper, and Kokoro models
 # - Backs up existing .env files
 # - Creates .env files from .env.example
 # - Sets up virtual environments for each service
@@ -31,6 +31,7 @@ TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
 # Model directories
 MODELS_DIR="$PROJECT_ROOT/models"
 NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
+WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 
 # Functions
@@ -108,6 +109,7 @@ SKIP_VENV=false
 SKIP_ENV=false
 INSTALL_DEPS=false
 NEMOTRON_MODEL="nemotron-3.5-asr-streaming-0.6b-onnx-int4"
+WHISPER_MODEL="large-v3-turbo"
 KOKORO_VOICES=""
 ALL_KOKORO_VOICES=false
 
@@ -240,6 +242,14 @@ if [ "$SKIP_MODELS" = false ]; then
             --output "$NEMOTRON_MODEL_DIR"
     fi
     
+    # Gipformer is the CPU fallback for unresolved marker/VAD chunks. Like
+    # faster-whisper, it stays in the Hugging Face cache instead of models/.
+    print_info "Downloading Gipformer fallback model..."
+    if ! "$PYTHON_CMD" -c "import huggingface_hub" >/dev/null 2>&1; then
+        "$PYTHON_CMD" -m pip install huggingface-hub
+    fi
+    bash "$SCRIPT_DIR/download-gipformer-model.sh"
+
     # Download Kokoro model
     print_info "Downloading Kokoro TTS model..."
     KOKORO_ARGS=("$SCRIPT_DIR/download-kokoro-model.sh" "--output" "models/kokoro_models")
@@ -404,6 +414,7 @@ echo -e "${GREEN}${BOLD}Summary:${NC}"
 echo ""
 echo -e "  ${GREEN}✓${NC} Models downloaded to: $MODELS_DIR"
 echo -e "  ${GREEN}✓${NC} Nemotron model: $NEMOTRON_MODEL"
+echo -e "  ${GREEN}✓${NC} Non-realtime Whisper model: $WHISPER_MODEL"
 echo -e "  ${GREEN}✓${NC} Kokoro model: kokoro_models"
 echo ""
 echo -e "  ${GREEN}✓${NC} .env files created and configured"
