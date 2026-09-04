@@ -157,7 +157,7 @@ class WhisperTranscriptionProcessor:
             whisper_config.compute_type,
         )
         self._marker_transcriber = MarkerWhisperTranscriber(
-            model_path=whisper_config.model_size,
+            model_size=whisper_config.model_size,
             marker_path=marker_path,
             compute_type=whisper_config.compute_type,
             cpu_threads=whisper_config.cpu_threads,
