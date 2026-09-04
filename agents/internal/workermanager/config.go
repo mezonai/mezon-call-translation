@@ -87,6 +87,23 @@ type Config struct {
 	// BE mezon, this is not a final decision, just enough to unblock local
 	// testing.
 	AgentUserIDBase int64
+	// StateDir is where the on-disk registry (room_id -> pid mapping,
+	// registry_store.go) is written -- Phase 2 of
+	// mezon-sfu-migration-plan.md's restart-recovery gap. Written on every
+	// Start/Stop/reap; read back at startup by Reconcile (Phase 3,
+	// reconcile.go) to find agents a previous instance left running.
+	// Distinct from SocketDir below -- that one is the agent's own
+	// control-socket directory.
+	StateDir string
+	// SocketDir is worker-manager's own copy of AGENT_SOCKET_DIR (same env
+	// var name and default as internal/config.Config.ControlSocketDir,
+	// agentPassthroughEnvKeys below passes it through to spawned agents
+	// unchanged) -- needed here too so Reconcile (Phase 3) knows where to
+	// Dial an adopted agent's control socket (internal/agentcontrol). Must
+	// stay in sync with the agent's own copy; there's only one source (this
+	// process's environment) so that's automatic as long as both read the
+	// same env var name, which they do.
+	SocketDir string
 }
 
 // agentPassthroughEnvKeys are copied from this process's environment into
@@ -112,6 +129,13 @@ var agentPassthroughEnvKeys = []string{
 	"TTS_RECORD_MAX_QUEUE_SIZE",
 	"LOG_LEVEL",
 	"AGENTS_BOT_BASE_URL",
+	// AGENT_SOCKET_DIR: shared with worker-manager's own env of the same
+	// name (not yet a Config field here -- Phase 1 only needs the agent
+	// side to have it; worker-manager itself starts reading/using its own
+	// copy in Phase 3, see internal/agentcontrol's package doc). Passed
+	// through unchanged so both sides agree on the socket directory
+	// without the value living in two places.
+	"AGENT_SOCKET_DIR",
 }
 
 func FromEnv() (Config, error) {
@@ -133,6 +157,9 @@ func FromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("workermanager: invalid AGENT_USER_ID_BASE: %w", err)
 	}
 	cfg.AgentUserIDBase = agentUserIDBase
+
+	cfg.StateDir = getEnv("WORKER_MANAGER_STATE_DIR", "/tmp/mezon-agents")
+	cfg.SocketDir = getEnv("AGENT_SOCKET_DIR", "/tmp/mezon-agents")
 
 	cfg.BaseAgentEnv = passthroughEnv(agentPassthroughEnvKeys)
 

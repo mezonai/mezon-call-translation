@@ -2,6 +2,7 @@ package workermanager
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"sync"
@@ -13,11 +14,28 @@ import (
 )
 
 type managedAgent struct {
-	cmd         *exec.Cmd
+	// process is always set, for both variants below -- Signal()/Kill() work
+	// through an *os.Process regardless of whether it's a real child of this
+	// process (os.FindProcess never actually starts anything on Unix, it
+	// just wraps a pid for signaling).
+	process *os.Process
+
+	// cmd is set only for an agent this instance itself spawned (Start) --
+	// nil for one adopted from a previous instance's registry (Phase 3,
+	// reconcile.go). reap branches on this: cmd.Wait() only works for a
+	// real child of the calling process, which an adopted agent no longer
+	// is (see reap's doc).
+	cmd *exec.Cmd
+
+	// conn is the reverse of cmd: nil for a freshly spawned agent, set for
+	// an adopted one -- the dialed connection to the agent's control socket
+	// (internal/agentcontrol), used in place of cmd.Wait() to detect exit.
+	conn net.Conn
+
 	roomID      uint64
 	agentUserID int64
 	startedAt   time.Time
-	done        chan struct{} // closed once cmd.Wait() returns
+	done        chan struct{} // closed once reap's wait (cmd.Wait or conn read) returns
 }
 
 // Manager owns the in-memory room_id -> subprocess mapping for agents
@@ -50,6 +68,22 @@ type Manager struct {
 
 	mu     sync.Mutex
 	agents map[uint64]*managedAgent
+
+	// persistMu serializes persistRegistry's whole snapshot-then-write cycle
+	// (registry_store.go) -- separate from mu (which only ever needs to be
+	// held for a quick map read/write) because two persistRegistry calls
+	// from different shards can legitimately run concurrently (Start room A
+	// and Stop room B don't serialize against each other, only same-room
+	// events do -- shard.go). Without this, two concurrent calls could both
+	// target the same "registry.json.tmp" path and race each other's
+	// WriteFile/Rename, or -- even single-writer-at-a-time but
+	// snapshot-then-write not treated as one atomic step -- have the call
+	// that captured an *older* snapshot win the race to actually write
+	// last, silently regressing the file. Holding this for the entire
+	// snapshot+write body makes "last to acquire the lock" and "last
+	// snapshot captured" the same thing, which is what makes "last writer
+	// wins" actually correct instead of just atomic-looking.
+	persistMu sync.Mutex
 
 	// shards: see shard.go's doc -- routes Start/Stop calls so events for
 	// the same room always serialize with each other but never block a
@@ -93,7 +127,7 @@ func (m *Manager) Start(ev StartEvent) error {
 	if existing, ok := m.agents[ev.RoomID]; ok {
 		m.mu.Unlock()
 		logging.L.Warn("workermanager: start ignored, agent already running for room",
-			"room_id", ev.RoomID, "pid", existing.cmd.Process.Pid)
+			"room_id", ev.RoomID, "pid", existing.process.Pid)
 		return nil
 	}
 	m.mu.Unlock()
@@ -114,13 +148,25 @@ func (m *Manager) Start(ev StartEvent) error {
 	// (e.g. Ctrl-C in a terminal running both in the foreground) must not
 	// cascade to the child. Only an explicit Stop() call should ever
 	// terminate an agent.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	//
+	// Pdeathsig: PR_SET_PDEATHSIG (SIGUSR1) -- the kernel delivers this to
+	// the agent the instant *this* worker-manager process dies (crash,
+	// kill, restart), no polling needed. Independent of Setpgid above (one
+	// controls signal propagation from a terminal, the other is
+	// parent-death notification) -- the two don't interact. Phase 1 of
+	// mezon-sfu-migration-plan.md's restart-recovery gap; see
+	// internal/agentcontrol's package doc for the rest of the design.
+	// SIGUSR1 is otherwise unused anywhere in agents/ (grepped to confirm),
+	// so this can't collide with the agent's own SIGINT/SIGTERM shutdown
+	// handling.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGUSR1}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("workermanager: spawn agent for room_id=%d: %w", ev.RoomID, err)
 	}
 
 	agent := &managedAgent{
+		process:     cmd.Process,
 		cmd:         cmd,
 		roomID:      ev.RoomID,
 		agentUserID: agentUserID,
@@ -131,6 +177,7 @@ func (m *Manager) Start(ev StartEvent) error {
 	m.mu.Lock()
 	m.agents[ev.RoomID] = agent
 	m.mu.Unlock()
+	m.persistRegistry()
 
 	logging.L.Info("workermanager: spawned agent",
 		"room_id", ev.RoomID, "agent_user_id", agentUserID, "role", role, "pid", cmd.Process.Pid)
@@ -139,12 +186,32 @@ func (m *Manager) Start(ev StartEvent) error {
 	return nil
 }
 
-// reap waits for a spawned agent to exit and removes it from the registry.
-// This is what makes an agent that exhausts its own reconnect budget (see
+// reap waits for an agent to exit and removes it from the registry. This is
+// what makes an agent that exhausts its own reconnect budget (see
 // internal/reconnect) or otherwise exits on its own clean itself out of
 // this manager's bookkeeping, not just processes we explicitly Stop().
+//
+// Two ways to wait, depending on how this agent ended up in m.agents:
+//   - Spawned by this instance (a.cmd != nil): a.cmd.Wait() -- the normal
+//     case, this process really is our child.
+//   - Adopted from a previous instance's registry (reconcile.go, a.conn !=
+//     nil): no longer a real child of *this* process -- it was reparented
+//     to init/a subreaper when the worker-manager that originally spawned
+//     it died, so only that reparent target can wait4() it, not us.
+//     Instead, block reading on the control-socket connection: the agent's
+//     own agentcontrol.Serve holds its end open and never writes anything,
+//     so our Read only ever returns once the agent process exits and the
+//     kernel tears down its end of the socket (EOF) -- functionally the
+//     same "block until it's really gone" property as cmd.Wait(), just
+//     sourced from a socket instead of the process table.
 func (m *Manager) reap(a *managedAgent) {
-	err := a.cmd.Wait()
+	var err error
+	if a.cmd != nil {
+		err = a.cmd.Wait()
+	} else {
+		_, err = a.conn.Read(make([]byte, 1))
+		_ = a.conn.Close()
+	}
 	close(a.done)
 
 	m.mu.Lock()
@@ -152,9 +219,10 @@ func (m *Manager) reap(a *managedAgent) {
 		delete(m.agents, a.roomID)
 	}
 	m.mu.Unlock()
+	m.persistRegistry()
 
 	logging.L.Info("workermanager: agent process exited",
-		append(logging.ErrAttrs(err), "room_id", a.roomID, "pid", a.cmd.Process.Pid, "uptime", time.Since(a.startedAt))...)
+		append(logging.ErrAttrs(err), "room_id", a.roomID, "pid", a.process.Pid, "uptime", time.Since(a.startedAt))...)
 }
 
 // Stop signals the agent for ev.RoomID to shut down: SIGTERM first (the
@@ -211,10 +279,11 @@ func (m *Manager) Stop(ev StopEvent) error {
 		logging.L.Warn("workermanager: stop ignored, no agent running for room", "room_id", ev.RoomID)
 		return nil
 	}
+	m.persistRegistry()
 
-	logging.L.Info("workermanager: stopping agent", "room_id", ev.RoomID, "pid", agent.cmd.Process.Pid)
-	if err := agent.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("workermanager: sigterm room_id=%d pid=%d: %w", ev.RoomID, agent.cmd.Process.Pid, err)
+	logging.L.Info("workermanager: stopping agent", "room_id", ev.RoomID, "pid", agent.process.Pid)
+	if err := agent.process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("workermanager: sigterm room_id=%d pid=%d: %w", ev.RoomID, agent.process.Pid, err)
 	}
 
 	go m.killAfterTimeout(agent, ev.RoomID)
@@ -231,10 +300,10 @@ func (m *Manager) killAfterTimeout(agent *managedAgent, roomID uint64) {
 		return
 	case <-time.After(m.cfg.StopTimeout):
 		logging.L.Warn("workermanager: agent did not exit within stop timeout, sending SIGKILL",
-			"room_id", roomID, "pid", agent.cmd.Process.Pid, "timeout", m.cfg.StopTimeout)
-		if err := agent.cmd.Process.Kill(); err != nil {
+			"room_id", roomID, "pid", agent.process.Pid, "timeout", m.cfg.StopTimeout)
+		if err := agent.process.Kill(); err != nil {
 			logging.L.Error("workermanager: sigkill failed",
-				append(logging.ErrAttrs(err), "room_id", roomID, "pid", agent.cmd.Process.Pid)...)
+				append(logging.ErrAttrs(err), "room_id", roomID, "pid", agent.process.Pid)...)
 			return
 		}
 		<-agent.done

@@ -65,6 +65,15 @@ type Config struct {
 	// AgentsBot: HTTP endpoint for active-room registration used by chat
 	// forwarding. Optional; an empty BaseURL disables that integration.
 	AgentsBot AgentsBotConfig
+	// ControlSocketDir is where this agent listens on a per-room Unix
+	// domain socket (internal/agentcontrol.Listen), so a worker-manager
+	// that restarts later can reconnect to it (mezon-sfu-migration-plan.md
+	// gap "Chưa làm, biết trước là gap", Phase 1 -- worker-manager's own
+	// dial-back-in side is Phase 3, not implemented yet). Must match
+	// worker-manager's AGENT_SOCKET_DIR -- passed through via
+	// internal/workermanager/config.go's agentPassthroughEnvKeys, not
+	// something to set independently per room.
+	ControlSocketDir string
 }
 
 type ReconnectConfig struct {
@@ -121,9 +130,10 @@ type AgentsBotConfig struct {
 
 func FromEnv() (Config, error) {
 	cfg := Config{
-		SFUWebSocketURL: getEnv("SFU_WS_URL", "ws://127.0.0.1:8000/ws"),
-		JWTSecret:       getEnv("SFU_JWT_SECRET", "default"),
-		Role:            Role(getEnv("AGENT_ROLE", string(RoleAudience))),
+		SFUWebSocketURL:  getEnv("SFU_WS_URL", "ws://127.0.0.1:8000/ws"),
+		JWTSecret:        getEnv("SFU_JWT_SECRET", "default"),
+		Role:             Role(getEnv("AGENT_ROLE", string(RoleAudience))),
+		ControlSocketDir: getEnv("AGENT_SOCKET_DIR", "/tmp/mezon-agents"),
 	}
 
 	roomID, err := requireUint64Env("ROOM_ID")

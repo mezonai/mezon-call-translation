@@ -22,6 +22,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/pion/webrtc/v4"
 
+	"github.com/mezonai/mezon-call-translation/agents/internal/agentcontrol"
 	"github.com/mezonai/mezon-call-translation/agents/internal/agentsbotclient"
 	"github.com/mezonai/mezon-call-translation/agents/internal/audiopipeline"
 	"github.com/mezonai/mezon-call-translation/agents/internal/config"
@@ -61,6 +62,34 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// SIGUSR1 is worker-manager's Pdeathsig (internal/workermanager's
+	// manager.go Start, set on the agent's SysProcAttr) -- kernel-delivered
+	// the instant worker-manager dies, no polling. Handled separately from
+	// the SIGINT/SIGTERM context above: purely observational for now (this
+	// agent keeps serving its room regardless of whether worker-manager is
+	// alive), not a shutdown trigger. See internal/agentcontrol's package
+	// doc for the bigger picture (mezon-sfu-migration-plan.md.
+	parentDeathCh := make(chan os.Signal, 1)
+	signal.Notify(parentDeathCh, syscall.SIGUSR1)
+	go func() {
+		for range parentDeathCh {
+			logging.L.Warn("agent: worker-manager died (SIGUSR1/Pdeathsig), waiting for a new one to reconnect")
+		}
+	}()
+
+	// Best-effort, same posture as recordclient/orchestrator below: a
+	// worker-manager restart-recovery socket that fails to open must not
+	// stop the agent from joining the room, just disable that recovery
+	// path for this run (Phase 3, which would actually dial back in, isn't
+	// implemented yet anyway -- see internal/agentcontrol's package doc).
+	if ln, lnErr := agentcontrol.Listen(cfg.ControlSocketDir, cfg.RoomID); lnErr != nil {
+		logging.L.Error("agentcontrol: failed to open control socket, worker-manager restart recovery unavailable this run",
+			append(logging.ErrAttrs(lnErr), "dir", cfg.ControlSocketDir)...)
+	} else {
+		defer func() { _ = ln.Close() }()
+		go agentcontrol.Serve(ln)
+	}
 
 	// Recording is best-effort (audio-ingestion/PLAN.md D5): a dial failure
 	// here must not stop the agent from joining the room, just disable
