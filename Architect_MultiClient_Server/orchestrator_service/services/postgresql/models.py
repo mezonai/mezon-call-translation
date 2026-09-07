@@ -22,7 +22,6 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class OutboxUseCase(enum.StrEnum):
     RETRY_SUMMARIZATION = "retry_summarization"
-    RETRY_TRANSCRIPT_CORRECTION = "retry_transcript_correction"
 
 
 class OutboxStatus(enum.StrEnum):

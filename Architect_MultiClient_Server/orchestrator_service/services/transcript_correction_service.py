@@ -12,6 +12,7 @@ from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
+    wait_exponential,
 )
 
 from orchestrator_service.config.application_config import get_config
@@ -25,7 +26,6 @@ from orchestrator_service.services.postgresql.pg_summary_repository import (
     get_pg_summary_repository,
 )
 from orchestrator_service.utils.logger import get_logger
-from orchestrator_service.utils.retry_utils import WaitCustomStrategy
 from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
 
 logger = get_logger(__name__)
@@ -59,8 +59,8 @@ class TranscriptCorrectionService:
         max_attempts: int,
     ) -> T:
         @retry(
-            stop=stop_after_attempt(max_attempts * 3),
-            wait=WaitCustomStrategy(),
+            stop=stop_after_attempt(max_attempts),
+            wait=wait_exponential(multiplier=2, min=1, max=10),
             retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
             before_sleep=before_sleep_log(logger, logging.ERROR),
             reraise=True,

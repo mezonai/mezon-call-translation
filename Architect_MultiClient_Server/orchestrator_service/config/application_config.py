@@ -429,7 +429,7 @@ class OutboxConfig:
 @dataclass
 class SummaryConfig:
     provider: str = "mezon"
-    model: str = "Qwen3.5-35B-A3B"
+    model: str = "gemini-3.8-flash-high"
     temperature: float = 0.4
     top_p: float = 0.4
     timeout: int = 120
@@ -450,7 +450,7 @@ class SummaryConfig:
     def from_env(cls) -> "SummaryConfig":
         return cls(
             provider=os.getenv("SUMMARY_LLM_PROVIDER", "mezon"),
-            model=os.getenv("SUMMARY_LLM_MODEL", "Qwen3.5-35B-A3B"),
+            model=os.getenv("SUMMARY_LLM_MODEL", "gemini-3.8-flash-high"),
             temperature=float(os.getenv("SUMMARY_LLM_TEMPERATURE", "0.4")),
             top_p=float(os.getenv("SUMMARY_LLM_TOP_P", "0.4")),
             timeout=int(os.getenv("SUMMARY_LLM_TIMEOUT", "120")),
@@ -508,7 +508,7 @@ class LightSummaryConfig:
 @dataclass
 class TranscriptCorrectionConfig:
     provider: str = "mezon"
-    model: str = "gemini-3.5-flash-low" # Using gemini-3.5-flash-low by default
+    model: str = "gemini-3.8-flash-high"
     temperature: float = 0.2
     top_p: float = 0.4
     timeout: int = 120
@@ -518,7 +518,7 @@ class TranscriptCorrectionConfig:
 
     fallback_enable: bool = True
     fallback_provider: str = "gemini"
-    fallback_model: str = "gemini-3.5-flash-low"
+    fallback_model: str = "gemini-3.7-flash-high"
     fallback_temperature: float = 0.2
     fallback_top_p: float = 0.4
     fallback_timeout: int = 120
@@ -528,7 +528,7 @@ class TranscriptCorrectionConfig:
     def from_env(cls) -> "TranscriptCorrectionConfig":
         return cls(
             provider=os.getenv("CORRECTION_LLM_PROVIDER", "mezon"),
-            model=os.getenv("CORRECTION_LLM_MODEL", "gemini-3.5-flash-low"),
+            model=os.getenv("CORRECTION_LLM_MODEL", "gemini-3.8-flash-high"),
             temperature=float(os.getenv("CORRECTION_LLM_TEMPERATURE", "0.2")),
             top_p=float(os.getenv("CORRECTION_LLM_TOP_P", "0.4")),
             timeout=int(os.getenv("CORRECTION_LLM_TIMEOUT", "120")),
@@ -537,7 +537,7 @@ class TranscriptCorrectionConfig:
             previous_context_min=int(os.getenv("CORRECTION_PREVIOUS_CONTEXT_MIN", "5")),
             fallback_enable=os.getenv("CORRECTION_LLM_FALLBACK_ENABLE", "true").lower() == "true",
             fallback_provider=os.getenv("CORRECTION_LLM_FALLBACK_PROVIDER", "gemini"),
-            fallback_model=os.getenv("CORRECTION_LLM_FALLBACK_MODEL", "gemini-3.5-flash-low"),
+            fallback_model=os.getenv("CORRECTION_LLM_FALLBACK_MODEL", "gemini-3.7-flash-high"),
             fallback_temperature=float(os.getenv("CORRECTION_LLM_FALLBACK_TEMPERATURE", "0.2")),
             fallback_top_p=float(os.getenv("CORRECTION_LLM_FALLBACK_TOP_P", "0.4")),
             fallback_timeout=int(os.getenv("CORRECTION_LLM_FALLBACK_TIMEOUT", "120")),
