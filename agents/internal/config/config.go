@@ -62,6 +62,9 @@ type Config struct {
 	// TTSService: HTTP endpoint synthesizing text to PCM. Only relevant
 	// when Role is "speaker" -- see internal/ttsplayer.
 	TTSService TTSServiceConfig
+	// AgentsBot: HTTP endpoint for active-room registration used by chat
+	// forwarding. Optional; an empty BaseURL disables that integration.
+	AgentsBot AgentsBotConfig
 	// ControlSocketDir is where this agent listens on a per-room Unix
 	// domain socket (internal/agentcontrol.Listen), so a worker-manager
 	// that restarts later can reconnect to it (mezon-sfu-migration-plan.md
@@ -118,6 +121,11 @@ type TTSServiceConfig struct {
 	BaseURL      string
 	SampleRate   int
 	MaxQueueSize int
+}
+
+// AgentsBotConfig configures active-room registration with agents-bot.
+type AgentsBotConfig struct {
+	BaseURL string
 }
 
 func FromEnv() (Config, error) {
@@ -222,6 +230,10 @@ func FromEnv() (Config, error) {
 		BaseURL:      getEnv("TTS_SERVICE_BASE_URL", "http://localhost:8008"),
 		SampleRate:   ttsSampleRate,
 		MaxQueueSize: ttsMaxQueueSize,
+	}
+
+	cfg.AgentsBot = AgentsBotConfig{
+		BaseURL: getEnv("AGENTS_BOT_BASE_URL", ""),
 	}
 
 	return cfg, nil
