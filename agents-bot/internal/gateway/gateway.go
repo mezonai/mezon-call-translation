@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/quangledang23/mezon-sdk-go/rtapi"
 
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/config"
+	"github.com/mezonai/mezon-call-translation/agents-bot/internal/logging"
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/orchestratorclient"
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/userresolver"
 )
@@ -30,7 +30,6 @@ type RoomInfo struct {
 }
 
 type orchestratorAPI interface {
-	GetActiveRoomID(ctx context.Context, roomName string) (string, error)
 	PushChatExternal(ctx context.Context, roomName, roomID, participantIdentity, message, timeStr string) error
 }
 
@@ -44,15 +43,8 @@ type Gateway struct {
 	// activeRooms maps room_name (SFU numeric id as string) → RoomInfo.
 	// The agent registers its room here so the gateway knows which
 	// channel messages to forward and has the orchestrator UUID.
-	registrationMu sync.Mutex // serializes verified register/unregister mutations
-	roomsMu        sync.RWMutex
-	activeRooms    map[string]*RoomInfo // keyed by room_name
-
-	// channelToRoom maps channel_id (string) → room_name, populated
-	// from VoiceJoinedEvent.VoiceChannelId. This is how we match an
-	// incoming ChannelMessage to an active meeting room.
-	chanMu        sync.RWMutex
-	channelToRoom map[string]string // channel_id → room_name
+	roomsMu     sync.RWMutex
+	activeRooms map[string]*RoomInfo // keyed by room_name
 }
 
 // New creates a new Gateway (does not start it — call Run).
@@ -80,12 +72,11 @@ func New(cfg config.Config) (*Gateway, error) {
 	}
 
 	g := &Gateway{
-		cfg:           cfg,
-		client:        client,
-		resolver:      userresolver.New(),
-		orch:          orchestratorclient.New(cfg.OrchestratorBaseURL, cfg.InternalAPISecret),
-		activeRooms:   make(map[string]*RoomInfo),
-		channelToRoom: make(map[string]string),
+		cfg:         cfg,
+		client:      client,
+		resolver:    userresolver.New(),
+		orch:        orchestratorclient.New(cfg.OrchestratorBaseURL, cfg.InternalAPISecret),
+		activeRooms: make(map[string]*RoomInfo),
 	}
 
 	g.registerEventHandlers()
@@ -95,17 +86,17 @@ func New(cfg config.Config) (*Gateway, error) {
 // Run starts the gateway: logs into Mezon and starts the HTTP server.
 // Blocks until ctx is cancelled.
 func (g *Gateway) Run(ctx context.Context) error {
-	log.Println("agents-bot: logging into Mezon...")
+	logging.L.Info("agents-bot: logging into Mezon")
 	if err := g.client.Login(); err != nil {
 		return fmt.Errorf("gateway: mezon login: %w", err)
 	}
-	log.Printf("agents-bot: logged in as %s", g.client.ClientID)
-	log.Printf("agents-bot: clans cached: %d", g.client.Clans.Size())
+	logging.L.Info("agents-bot: logged in", "client_id", g.client.ClientID)
+	logging.L.Info("agents-bot: clans cached", "count", g.client.Clans.Size())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", g.handleHealthz)
 	mux.HandleFunc("GET /api/users/{id}", g.handleGetUser)
-	mux.HandleFunc("POST /api/users/batch", g.handleBatchUsers)
+	mux.HandleFunc("POST /api/users", g.handleBatchUsers)
 	mux.HandleFunc("POST /api/rooms/register", g.handleRoomRegister)
 	mux.HandleFunc("POST /api/rooms/unregister", g.handleRoomUnregister)
 	mux.HandleFunc("GET /api/rooms/{room_name}/participants", g.handleGetRoomParticipants)
@@ -115,13 +106,13 @@ func (g *Gateway) Run(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
-		log.Println("agents-bot: shutting down HTTP server...")
+		logging.L.Info("agents-bot: shutting down HTTP server")
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
 	}()
 
-	log.Printf("agents-bot: HTTP server listening on %s", addr)
+	logging.L.Info("agents-bot: HTTP server listening", "address", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("gateway: http server: %w", err)
 	}
@@ -138,16 +129,21 @@ func (g *Gateway) registerEventHandlers() {
 		}
 		userID := strconv.FormatInt(ev.UserId, 10)
 		channelID := strconv.FormatInt(ev.VoiceChannelId, 10)
+		clanID := ""
+		if ev.ClanId != 0 {
+			clanID = strconv.FormatInt(ev.ClanId, 10)
+		}
 
-		g.resolver.CacheFromVoiceJoined(userID, ev.Participant, channelID)
-		log.Printf("agents-bot: voice_joined user=%s name=%q channel=%s label=%q clan=%q",
-			userID, ev.Participant, channelID, ev.VoiceChannelLabel, ev.ClanName)
-
-		// Map this voice channel to a room_name (= channel_id as string,
-		// which is also how agents format their SFU ROOM_ID).
-		g.chanMu.Lock()
-		g.channelToRoom[channelID] = channelID
-		g.chanMu.Unlock()
+		g.resolver.CacheFromVoiceJoined(userID, ev.Participant, channelID, clanID)
+		logging.L.Debug(
+			"agents-bot: voice joined",
+			"user_id", userID,
+			"name", ev.Participant,
+			"channel_id", channelID,
+			"clan_id", clanID,
+			"channel_label", ev.VoiceChannelLabel,
+			"clan_name", ev.ClanName,
+		)
 	})
 
 	// VoiceLeavedEvent: remove current channel membership but keep the user
@@ -160,8 +156,7 @@ func (g *Gateway) registerEventHandlers() {
 		userID := strconv.FormatInt(ev.VoiceUserId, 10)
 		channelID := strconv.FormatInt(ev.VoiceChannelId, 10)
 		g.resolver.RemoveFromVoiceChannel(userID, channelID)
-		log.Printf("agents-bot: voice_leaved user=%s channel=%s",
-			userID, channelID)
+		logging.L.Debug("agents-bot: voice left", "user_id", userID, "channel_id", channelID)
 	})
 
 	// ChannelMessage: cache user info + forward to orchestrator if room is active
@@ -177,7 +172,7 @@ func (g *Gateway) registerEventHandlers() {
 		// Cache user profile from message fields
 		if m.SenderID != "" {
 			g.resolver.CacheFromMessage(
-				m.SenderID, m.Username, m.DisplayName, m.ClanNick, m.Avatar,
+				m.SenderID, m.Username, m.DisplayName, m.ClanID, m.ClanNick, m.Avatar,
 			)
 		}
 
@@ -186,23 +181,20 @@ func (g *Gateway) registerEventHandlers() {
 	})
 
 	g.client.OnReady(func() {
-		log.Printf("agents-bot: SDK ready, client_id=%s, clans=%d, user_cache=%d",
-			g.client.ClientID, g.client.Clans.Size(), g.resolver.Size())
+		logging.L.Info(
+			"agents-bot: SDK ready",
+			"client_id", g.client.ClientID,
+			"clans", g.client.Clans.Size(),
+			"user_cache", g.resolver.Size(),
+		)
 	})
 }
 
 // forwardChatIfActive checks if the message's channel belongs to an active
 // meeting room and, if so, POSTs it to orchestrator's agent_push_chat_external.
 func (g *Gateway) forwardChatIfActive(m *mezon.ChannelMessage) {
-	// Check if this channel is mapped to a room
-	g.chanMu.RLock()
-	roomName, mapped := g.channelToRoom[m.ChannelID]
-	g.chanMu.RUnlock()
-	if !mapped {
-		return
-	}
-
-	// Check if that room is actively registered by an agent
+	// room_name is the Mezon voice channel ID represented as a string.
+	roomName := m.ChannelID
 	g.roomsMu.RLock()
 	room, active := g.activeRooms[roomName]
 	g.roomsMu.RUnlock()
@@ -228,9 +220,16 @@ func (g *Gateway) forwardChatIfActive(m *mezon.ChannelMessage) {
 	defer cancel()
 
 	if err := g.orch.PushChatExternal(ctx, room.RoomName, room.RoomID, identity, message, timeStr); err != nil {
-		log.Printf("agents-bot: push_chat_external failed: %v", err)
+		logging.L.Error(
+			"agents-bot: push chat external failed",
+			append(logging.ErrAttrs(err), "room_name", room.RoomName, "participant_identity", identity)...,
+		)
 	} else {
-		log.Printf("agents-bot: forwarded chat from %s in room %s", identity, room.RoomName)
+		logging.L.Debug(
+			"agents-bot: chat forwarded",
+			"participant_identity", identity,
+			"room_name", room.RoomName,
+		)
 	}
 }
 
@@ -258,16 +257,29 @@ func (g *Gateway) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, user)
+
+	clanID, _ := g.resolveRoomClanContext(r.URL.Query().Get("room_name"))
+	writeJSON(w, http.StatusOK, newUserResponseItem(user, clanID))
 }
 
 type batchRequest struct {
-	UserIDs []string `json:"user_ids"`
+	UserIDs  []string `json:"user_ids"`
+	RoomName string   `json:"room_name,omitempty"`
+}
+
+type userResponseItem struct {
+	UserID       string `json:"user_id"`
+	Username     string `json:"username"`
+	DisplayName  string `json:"display_name"`
+	ClanNick     string `json:"clan_nick,omitempty"`
+	DisplayLabel string `json:"display_label"`
+	Avatar       string `json:"avatar,omitempty"`
 }
 
 type batchResponse struct {
-	Users    []*userresolver.UserInfo `json:"users"`
-	NotFound []string                 `json:"not_found"`
+	Users           []userResponseItem `json:"users"`
+	NotFound        []string           `json:"not_found"`
+	ContextResolved bool               `json:"context_resolved"`
 }
 
 func (g *Gateway) handleBatchUsers(w http.ResponseWriter, r *http.Request) {
@@ -280,14 +292,20 @@ func (g *Gateway) handleBatchUsers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_ids required"})
 		return
 	}
+	clanID, contextResolved := g.resolveRoomClanContext(req.RoomName)
 	found, notFound := g.resolver.GetBatch(req.UserIDs)
-	if found == nil {
-		found = []*userresolver.UserInfo{}
+	users := make([]userResponseItem, 0, len(found))
+	for _, user := range found {
+		users = append(users, newUserResponseItem(user, clanID))
 	}
 	if notFound == nil {
 		notFound = []string{}
 	}
-	writeJSON(w, http.StatusOK, batchResponse{Users: found, NotFound: notFound})
+	writeJSON(w, http.StatusOK, batchResponse{
+		Users:           users,
+		NotFound:        notFound,
+		ContextResolved: contextResolved,
+	})
 }
 
 type roomRegisterRequest struct {
@@ -305,39 +323,6 @@ func (g *Gateway) handleRoomRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "room_name and room_id required"})
 		return
 	}
-	if g.orch == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "orchestrator unavailable"})
-		return
-	}
-
-	// Keep verification and the subsequent registry mutation ordered against
-	// every other register/unregister request. roomsMu remains free during the
-	// network call so chat forwarding can continue reading the current room.
-	g.registrationMu.Lock()
-	defer g.registrationMu.Unlock()
-
-	activeRoomID, err := g.orch.GetActiveRoomID(r.Context(), req.RoomName)
-	if err != nil {
-		// Verification failed, so no room ID is safe to forward to. Remove a
-		// potentially stale prior mapping instead of leaving chat fail-open.
-		g.clearActiveRoomUnless(req.RoomName, "")
-		log.Printf("agents-bot: room status lookup failed for room=%s: %v", req.RoomName, err)
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "failed to verify active room session"})
-		return
-	}
-	if activeRoomID != req.RoomID {
-		// Preserve a local mapping only when it already matches the UUID that
-		// orchestrator says is current; otherwise discard the stale mapping.
-		g.clearActiveRoomUnless(req.RoomName, activeRoomID)
-		log.Printf(
-			"agents-bot: stale register rejected for room=%s (active=%s, requested=%s)",
-			req.RoomName,
-			activeRoomID,
-			req.RoomID,
-		)
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "stale_room_session"})
-		return
-	}
 
 	g.roomsMu.Lock()
 	g.activeRooms[req.RoomName] = &RoomInfo{
@@ -346,25 +331,8 @@ func (g *Gateway) handleRoomRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	g.roomsMu.Unlock()
 
-	// Also map this room_name as a channel_id (since ROOM_ID == voice_channel_id)
-	g.chanMu.Lock()
-	g.channelToRoom[req.RoomName] = req.RoomName
-	g.chanMu.Unlock()
-
-	log.Printf("agents-bot: room registered: name=%s id=%s", req.RoomName, req.RoomID)
+	logging.L.Info("agents-bot: room registered", "room_name", req.RoomName, "room_id", req.RoomID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "room_name": req.RoomName})
-}
-
-// clearActiveRoomUnless removes roomName unless its local mapping matches
-// keepRoomID. An empty keepRoomID always clears the mapping (fail closed).
-// Callers serialize this helper with registrationMu.
-func (g *Gateway) clearActiveRoomUnless(roomName, keepRoomID string) {
-	g.roomsMu.Lock()
-	defer g.roomsMu.Unlock()
-	current, exists := g.activeRooms[roomName]
-	if exists && (keepRoomID == "" || current.RoomID != keepRoomID) {
-		delete(g.activeRooms, roomName)
-	}
 }
 
 type roomUnregisterRequest struct {
@@ -383,15 +351,17 @@ func (g *Gateway) handleRoomUnregister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g.registrationMu.Lock()
-	defer g.registrationMu.Unlock()
-
 	g.roomsMu.Lock()
 	current, exists := g.activeRooms[req.RoomName]
 	if exists {
 		if current.RoomID != req.RoomID {
 			g.roomsMu.Unlock()
-			log.Printf("agents-bot: stale unregister ignored for room=%s (active=%s, requested=%s)", req.RoomName, current.RoomID, req.RoomID)
+			logging.L.Warn(
+				"agents-bot: stale unregister ignored",
+				"room_name", req.RoomName,
+				"active_room_id", current.RoomID,
+				"requested_room_id", req.RoomID,
+			)
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ignored_stale_session", "room_name": req.RoomName})
 			return
 		}
@@ -399,7 +369,7 @@ func (g *Gateway) handleRoomUnregister(w http.ResponseWriter, r *http.Request) {
 	}
 	g.roomsMu.Unlock()
 
-	log.Printf("agents-bot: room unregistered: name=%s id=%s", req.RoomName, req.RoomID)
+	logging.L.Info("agents-bot: room unregistered", "room_name", req.RoomName, "room_id", req.RoomID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "room_name": req.RoomName})
 }
 
@@ -415,13 +385,14 @@ func (g *Gateway) handleGetRoomParticipants(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	clanID := g.resolver.GetChannelClan(roomName)
 	users := g.resolver.GetChannelUsers(roomName)
 
 	participants := make([]roomParticipant, 0, len(users))
 	for _, u := range users {
 		participants = append(participants, roomParticipant{
 			ParticipantIdentity: u.UserID,
-			Username:            u.KnownDisplayLabel(),
+			Username:            u.KnownDisplayLabel(clanID),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -431,6 +402,32 @@ func (g *Gateway) handleGetRoomParticipants(w http.ResponseWriter, r *http.Reque
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
+
+func newUserResponseItem(user *userresolver.UserInfo, clanID string) userResponseItem {
+	return userResponseItem{
+		UserID:       user.UserID,
+		Username:     user.Username,
+		DisplayName:  user.DisplayName,
+		ClanNick:     user.ClanNick(clanID),
+		DisplayLabel: user.KnownDisplayLabel(clanID),
+		Avatar:       user.Avatar,
+	}
+}
+
+// resolveRoomClanContext looks up the clan internally from the room/channel ID.
+// A request without a room intentionally uses the generic, non-clan label.
+func (g *Gateway) resolveRoomClanContext(roomName string) (string, bool) {
+	roomName = strings.TrimSpace(roomName)
+	if roomName == "" {
+		return "", true
+	}
+
+	roomClanID := g.resolver.GetChannelClan(roomName)
+	if roomClanID == "" {
+		return "", false
+	}
+	return roomClanID, true
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

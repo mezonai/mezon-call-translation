@@ -18,32 +18,27 @@ import (
 
 // UserInfo holds the displayable profile fields for one Mezon user.
 type UserInfo struct {
-	UserID      string `json:"user_id"`
-	Username    string `json:"username"`
-	DisplayName string `json:"display_name"`
-	ClanNick    string `json:"clan_nick,omitempty"`
-	Avatar      string `json:"avatar,omitempty"`
-
-	// LastVoiceChannelID is the most recent voice channel this user was seen
-	// joining (VoiceJoinedEvent.VoiceChannelId, as string). Internal only
-	// (json:"-"): used to move roster membership atomically when a user
-	// switches channels; not part of the HTTP API contract.
-	LastVoiceChannelID string `json:"-"`
+	UserID      string            `json:"user_id"`
+	Username    string            `json:"username"`
+	DisplayName string            `json:"display_name"`
+	Avatar      string            `json:"avatar,omitempty"`
+	clanNicks   map[string]string // clan_id -> clan_nick; internal only
 }
 
-// DisplayLabel returns the best available display name, falling back to UserID.
-func (u *UserInfo) DisplayLabel() string {
-	if label := u.KnownDisplayLabel(); label != "" {
+// DisplayLabel returns the best available display name for a clan context,
+// falling back to UserID. An empty clanID deliberately bypasses clan nicknames.
+func (u *UserInfo) DisplayLabel(clanID string) string {
+	if label := u.KnownDisplayLabel(clanID); label != "" {
 		return label
 	}
 	return u.UserID
 }
 
-// KnownDisplayLabel returns the best available display name without falling back to UserID.
-// Returns empty string if no actual human name has been seen yet.
-func (u *UserInfo) KnownDisplayLabel() string {
-	if u.ClanNick != "" {
-		return u.ClanNick
+// KnownDisplayLabel returns the best human-readable name for a clan context
+// without falling back to UserID. An empty clanID never uses a clan nickname.
+func (u *UserInfo) KnownDisplayLabel(clanID string) string {
+	if nick := u.ClanNick(clanID); nick != "" {
+		return nick
 	}
 	if u.DisplayName != "" {
 		return u.DisplayName
@@ -51,17 +46,28 @@ func (u *UserInfo) KnownDisplayLabel() string {
 	return u.Username
 }
 
+// ClanNick returns the nickname for exactly one clan. It never falls back to
+// another clan's nickname when the context is empty or unknown.
+func (u *UserInfo) ClanNick(clanID string) string {
+	if clanID == "" || u.clanNicks == nil {
+		return ""
+	}
+	return u.clanNicks[clanID]
+}
+
 // Resolver is a thread-safe in-memory user profile cache.
 type Resolver struct {
 	mu           sync.RWMutex
 	users        map[string]*UserInfo           // keyed by user_id as string
 	channelUsers map[string]map[string]struct{} // channel_id  -> set of user_id
+	channelClans map[string]string              // channel_id -> clan_id
 }
 
 func New() *Resolver {
 	return &Resolver{
 		users:        make(map[string]*UserInfo),
 		channelUsers: make(map[string]map[string]struct{}),
+		channelClans: make(map[string]string),
 	}
 }
 
@@ -73,9 +79,7 @@ func (r *Resolver) Get(userID string) *UserInfo {
 	if u == nil {
 		return nil
 	}
-	// Return a copy to avoid data races on reads
-	copy := *u
-	return &copy
+	return cloneUserInfo(u)
 }
 
 // GetBatch returns cached UserInfo for each user ID. IDs not in cache are
@@ -85,8 +89,7 @@ func (r *Resolver) GetBatch(userIDs []string) (found []*UserInfo, notFound []str
 	defer r.mu.RUnlock()
 	for _, id := range userIDs {
 		if u, ok := r.users[id]; ok {
-			copy := *u
-			found = append(found, &copy)
+			found = append(found, cloneUserInfo(u))
 		} else {
 			notFound = append(notFound, id)
 		}
@@ -108,23 +111,18 @@ func (r *Resolver) GetBatch(userIDs []string) (found []*UserInfo, notFound []str
 // clan_nick — deliberately NOT stored (it would win DisplayLabel's
 // clan_nick priority and label every member with the clan's name). Logged
 // at the call site for context instead.
-func (r *Resolver) CacheFromVoiceJoined(userID, participant, voiceChannelID string) {
+func (r *Resolver) CacheFromVoiceJoined(userID, participant, voiceChannelID, clanID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if voiceChannelID != "" && clanID != "" && clanID != "0" {
+		r.channelClans[voiceChannelID] = clanID
+	}
 	u, ok := r.users[userID]
 	if !ok {
 		u = &UserInfo{UserID: userID}
 		r.users[userID] = u
 	}
 	if voiceChannelID != "" {
-		if u.LastVoiceChannelID != "" && u.LastVoiceChannelID != voiceChannelID {
-			delete(r.channelUsers[u.LastVoiceChannelID], userID)
-			if len(r.channelUsers[u.LastVoiceChannelID]) == 0 {
-				delete(r.channelUsers, u.LastVoiceChannelID)
-			}
-		}
-
-		u.LastVoiceChannelID = voiceChannelID
 		if r.channelUsers[voiceChannelID] == nil {
 			r.channelUsers[voiceChannelID] = make(map[string]struct{})
 		}
@@ -142,10 +140,9 @@ func (r *Resolver) CacheFromVoiceJoined(userID, participant, voiceChannelID stri
 
 // CacheFromMessage stores user info extracted from a ChannelMessage.
 // ChannelMessage carries Username, DisplayName, ClanNick, Avatar directly
-// from the Mezon server — richer than voice events, and the only source that
-// reflects name changes, so non-empty fields overwrite what voice events
-// filled in earlier.
-func (r *Resolver) CacheFromMessage(userID, username, displayName, clanNick, avatar string) {
+// from the Mezon server — richer than voice events and the only source that
+// reflects name changes. An empty nickname clears only that clan's entry.
+func (r *Resolver) CacheFromMessage(userID, username, displayName, clanID, clanNick, avatar string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	u, ok := r.users[userID]
@@ -159,8 +156,15 @@ func (r *Resolver) CacheFromMessage(userID, username, displayName, clanNick, ava
 	if displayName != "" {
 		u.DisplayName = displayName
 	}
-	if clanNick != "" {
-		u.ClanNick = clanNick
+	if clanID != "" && clanID != "0" {
+		if u.clanNicks == nil {
+			u.clanNicks = make(map[string]string)
+		}
+		if clanNick != "" {
+			u.clanNicks[clanID] = clanNick
+		} else {
+			delete(u.clanNicks, clanID)
+		}
 	}
 	if avatar != "" {
 		u.Avatar = avatar
@@ -174,6 +178,14 @@ func (r *Resolver) Size() int {
 	return len(r.users)
 }
 
+// GetChannelClan returns the clan containing a voice channel, or an empty
+// string when no voice event has established the relationship yet.
+func (r *Resolver) GetChannelClan(channelID string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.channelClans[channelID]
+}
+
 // RemoveFromVoiceChannel removes a user's current membership without deleting
 // their cached profile, which remains useful for later display-name lookups.
 func (r *Resolver) RemoveFromVoiceChannel(userID, channelID string) {
@@ -185,10 +197,6 @@ func (r *Resolver) RemoveFromVoiceChannel(userID, channelID string) {
 		if len(users) == 0 {
 			delete(r.channelUsers, channelID)
 		}
-	}
-
-	if u, ok := r.users[userID]; ok && u.LastVoiceChannelID == channelID {
-		u.LastVoiceChannelID = ""
 	}
 }
 
@@ -206,8 +214,7 @@ func (r *Resolver) GetChannelUsers(channelID string) []*UserInfo {
 	result := make([]*UserInfo, 0, len(userSet))
 	for uid := range userSet {
 		if u, ok := r.users[uid]; ok {
-			copyUser := *u
-			result = append(result, &copyUser)
+			result = append(result, cloneUserInfo(u))
 		} else {
 			result = append(result, &UserInfo{UserID: uid})
 		}
@@ -218,4 +225,20 @@ func (r *Resolver) GetChannelUsers(channelID string) []*UserInfo {
 	})
 
 	return result
+}
+
+// cloneUserInfo must be called while the resolver lock is held. It deep-copies
+// the nickname map so callers can safely read the result after the lock is released.
+func cloneUserInfo(u *UserInfo) *UserInfo {
+	if u == nil {
+		return nil
+	}
+	copyUser := *u
+	if u.clanNicks != nil {
+		copyUser.clanNicks = make(map[string]string, len(u.clanNicks))
+		for clanID, nick := range u.clanNicks {
+			copyUser.clanNicks[clanID] = nick
+		}
+	}
+	return &copyUser
 }

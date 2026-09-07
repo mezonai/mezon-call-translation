@@ -24,9 +24,8 @@ from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Display-label precedence, matching agents-bot's UserInfo semantics:
-# clan_nick (how the user is known inside the clan) > display_name > username.
-_LABEL_KEYS = ("clan_nick", "display_name", "username")
+_MAX_CONNECTIONS = 20
+_MAX_KEEPALIVE_CONNECTIONS = 10
 
 
 class AgentsBotUserClient:
@@ -34,12 +33,31 @@ class AgentsBotUserClient:
 
     def __init__(self, base_url: str, timeout: float = 3.0):
         self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-        self._cache: dict[str, str] = {}
+        self._http = httpx.AsyncClient(
+            base_url=self._base_url,
+            timeout=httpx.Timeout(timeout),
+            limits=httpx.Limits(
+                max_connections=_MAX_CONNECTIONS,
+                max_keepalive_connections=_MAX_KEEPALIVE_CONNECTIONS,
+            ),
+        )
+        # Names are room-sensitive because agents-bot resolves each room's clan
+        # internally. The global key deliberately bypasses clan nicknames.
+        self._cache: dict[tuple[str, str], str] = {}
 
-    async def resolve_usernames(self, user_ids: list[str]) -> dict[str, str]:
+    async def close(self) -> None:
+        """Close the shared HTTP connection pool."""
+        if not self._http.is_closed:
+            await self._http.aclose()
+
+    async def resolve_usernames(
+        self,
+        user_ids: list[str],
+        *,
+        room_name: str | None = None,
+    ) -> dict[str, str]:
         """
-        Resolve user_ids -> {user_id: display_label}.
+        Resolve user_ids -> {user_id: display_label} for an optional room.
 
         Returns {} on any failure or when the gateway is not configured.
         Unknown ids simply stay absent from the result.
@@ -47,10 +65,13 @@ class AgentsBotUserClient:
         if not user_ids:
             return {}
 
+        room_name = room_name.strip() if room_name else None
+        context_key = f"room:{room_name}" if room_name else "global"
+
         result: dict[str, str] = {}
         missing: list[str] = []
         for uid in user_ids:
-            cached = self._cache.get(uid)
+            cached = self._cache.get((context_key, uid))
             if cached:
                 result[uid] = cached
             else:
@@ -60,57 +81,64 @@ class AgentsBotUserClient:
             return result
 
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(
-                    f"{self._base_url}/api/users/batch",
-                    json={"user_ids": missing},
-                )
+            payload: dict[str, object] = {"user_ids": missing}
+            if room_name:
+                payload["room_name"] = room_name
+
+            resp = await self._http.post(
+                "/api/users",
+                json=payload,
+            )
             if resp.status_code != 200:
-                logger.warning(f"agents_bot_user_client: batch resolve HTTP {resp.status_code}, falling back to ids")
+                logger.error(f"agents_bot_user_client: batch resolve HTTP {resp.status_code}, falling back to ids")
                 return result
             data = resp.json()
+            context_resolved = not room_name or data.get("context_resolved") is True
             for user in data.get("users", []):
                 uid = str(user.get("user_id", ""))
-                label = next((user.get(k) for k in _LABEL_KEYS if user.get(k)), "")
+                raw_label = user.get("display_label")
+                label = raw_label.strip() if isinstance(raw_label, str) else ""
                 if uid and label:
-                    self._cache[uid] = label
+                    # Do not permanently cache a generic fallback for a room
+                    # whose clan mapping has not reached agents-bot yet.
+                    if context_resolved:
+                        self._cache[(context_key, uid)] = label
                     result[uid] = label
             for uid in data.get("not_found", []):
-                logger.debug(f"agents_bot_user_client: user {uid} not found in agents-bot cache")
+                logger.warning(f"agents_bot_user_client: user {uid} not found in agents-bot cache")
         except Exception as e:
             logger.warning(f"agents_bot_user_client: batch resolve failed ({e}), falling back to ids")
 
         return result
 
     async def get_room_participants(self, room_name: str) -> list[dict[str, str]]:
-        """Lấy danh sách participants hiện có trong room từ agents-bot."""
+        """Get list participants in room from agents-bot."""
         if not self._base_url or not room_name:
             return []
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.get(f"{self._base_url}/api/rooms/{room_name}/participants")
-                if resp.status_code != 200:
-                    logger.warning(f"agents_bot_user_client: get_room_participants HTTP {resp.status_code}")
-                    return []
-                data = resp.json()
-                raw_participants = data.get("participants", [])
+            resp = await self._http.get(f"/api/rooms/{room_name}/participants")
+            if resp.status_code != 200:
+                logger.warning(f"agents_bot_user_client: get_room_participants HTTP {resp.status_code}")
+                return []
+            data = resp.json()
+            raw_participants = data.get("participants", [])
 
-                # Chuẩn hóa dữ liệu
-                result = []
-                seen = set()
-                for p in raw_participants:
-                    if not isinstance(p, dict):
-                        continue
-                    identity = str(p.get("participant_identity") or "").strip()
-                    raw_username = p.get("username")
-                    username = raw_username.strip() if isinstance(raw_username, str) else ""
-                    if identity and identity not in seen:
-                        seen.add(identity)
-                        item = {"participant_identity": identity}
-                        if username:
-                            item["username"] = username
-                        result.append(item)
-                return result
+            # data normalization
+            result = []
+            seen = set()
+            for p in raw_participants:
+                if not isinstance(p, dict):
+                    continue
+                identity = str(p.get("participant_identity") or "").strip()
+                raw_username = p.get("username")
+                username = raw_username.strip() if isinstance(raw_username, str) else ""
+                if identity and identity not in seen:
+                    seen.add(identity)
+                    item = {"participant_identity": identity}
+                    if username:
+                        item["username"] = username
+                    result.append(item)
+            return result
         except Exception as e:
             logger.warning(f"agents_bot_user_client: failed to fetch room participants ({e})")
             return []
@@ -119,7 +147,11 @@ class AgentsBotUserClient:
 _agents_bot_user_client: AgentsBotUserClient | None = None
 
 
-async def resolve_agents_bot_usernames(participant_ids: list[str]) -> dict[str, str]:
+async def resolve_agents_bot_usernames(
+    participant_ids: list[str],
+    *,
+    room_name: str | None = None,
+) -> dict[str, str]:
     """
     Convenience wrapper used by summary flows.
 
@@ -136,11 +168,11 @@ async def resolve_agents_bot_usernames(participant_ids: list[str]) -> dict[str, 
     if client is None:
         return {}
 
-    return await client.resolve_usernames(numeric_ids)
+    return await client.resolve_usernames(numeric_ids, room_name=room_name)
 
 
 def get_agents_bot_user_client() -> AgentsBotUserClient | None:
-    """Singleton accessor. Returns None when AGENTS_BOT_BASE_URL is unset."""
+    """Singleton accessor. Returns None when the configured base URL is empty."""
     global _agents_bot_user_client
     if _agents_bot_user_client is None:
         base_url = get_config().agents_bot.base_url
@@ -148,6 +180,14 @@ def get_agents_bot_user_client() -> AgentsBotUserClient | None:
             return None
         _agents_bot_user_client = AgentsBotUserClient(base_url)
     return _agents_bot_user_client
+
+
+async def close_agents_bot_user_client() -> None:
+    """Close and reset the shared agents-bot HTTP client."""
+    global _agents_bot_user_client
+    if _agents_bot_user_client is not None:
+        await _agents_bot_user_client.close()
+        _agents_bot_user_client = None
 
 
 async def get_agents_bot_room_participants(room_name: str) -> list[dict[str, str]]:

@@ -467,7 +467,7 @@ class AgentsBotConfig:
     Base URL for the Go agents-bot service.
 
     agents-bot owns the current voice-channel roster and user_id -> username
-    cache populated from Mezon events. Empty string disables those lookups.
+    cache populated from Mezon events.
     """
 
     base_url: str = ""
@@ -475,7 +475,7 @@ class AgentsBotConfig:
     @classmethod
     def from_env(cls) -> "AgentsBotConfig":
         return cls(
-            base_url=os.getenv("AGENTS_BOT_BASE_URL", ""),
+            base_url=os.getenv("AGENTS_BOT_BASE_URL", "http://localhost:8003"),
         )
 
 

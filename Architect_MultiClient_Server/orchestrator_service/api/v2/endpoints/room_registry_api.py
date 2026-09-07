@@ -102,15 +102,6 @@ async def _fetch_and_save_existing_participants(room_name: str, room_id: str) ->
     try:
         participants = await get_agents_bot_room_participants(room_name)
 
-        registry = get_room_registry()
-        current_room_id = await registry.get_room_id(room_name)
-        if current_room_id != room_id:
-            logger.warning(
-                f"Skip stale participant snapshot for room '{room_name}': "
-                f"expected room_id={room_id}, current room_id={current_room_id}"
-            )
-            return
-
         if participants:
             saved = await transcription_service.save_participants_batch(room_id, participants)
             if saved:
@@ -137,32 +128,12 @@ async def participant_joined(
 
     The agent only forwards the stable Mezon user id.  Username resolution is
     deliberately owned by agents-bot, the service that receives Mezon identity
-    events.  The room-id check prevents an old agent process from adding a
-    participant to a later call that reused the same channel/room name.
+    events.
     """
-    registry = get_room_registry()
-
-    def stale_response() -> ParticipantJoinedResponse:
-        logger.info(
-            f"Ignoring stale participant_joined for room '{request.room_name}': "
-            f"event room_id={request.room_id}"
-        )
-        return ParticipantJoinedResponse(
-            status="ignored_stale_session",
-            room_name=request.room_name,
-            room_id=request.room_id,
-            participant_identity=request.participant_identity,
-        )
-
-    if await registry.get_room_id(request.room_name) != request.room_id:
-        return stale_response()
-
-    usernames = await resolve_agents_bot_usernames([request.participant_identity])
-
-    # Resolution is an HTTP round-trip. Check again so a re-registration that
-    # happened while it was in flight cannot write to a stale room session.
-    if await registry.get_room_id(request.room_name) != request.room_id:
-        return stale_response()
+    usernames = await resolve_agents_bot_usernames(
+        [request.participant_identity],
+        room_name=request.room_name,
+    )
 
     username = usernames.get(request.participant_identity)
     if not await transcription_service.save_participant(

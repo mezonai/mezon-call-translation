@@ -284,7 +284,7 @@ func runSession(ctx context.Context, cfg config.Config, recClient *recordclient.
 		err := agentsBotClient.RegisterRoom(gwCtx, roomName, roomID)
 		gwCancel()
 		if err != nil {
-			logging.L.Warn("agentsbotclient: register_room failed", append(logging.ErrAttrs(err), "room_name", roomName)...)
+			logging.L.Error("agentsbotclient: register_room failed", append(logging.ErrAttrs(err), "room_name", roomName)...)
 		} else {
 			logging.L.Info("agentsbotclient: room registered", "room_name", roomName, "room_id", roomID)
 			// Keep agents-bot cleanup local to this integration. This defer is
@@ -294,7 +294,7 @@ func runSession(ctx context.Context, cfg config.Config, recClient *recordclient.
 				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
 				defer cleanupCancel()
 				if err := agentsBotClient.UnregisterRoom(cleanupCtx, roomName, roomID); err != nil {
-					logging.L.Warn(
+					logging.L.Error(
 						"agentsbotclient: unregister_room failed",
 						append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID)...,
 					)
@@ -506,7 +506,7 @@ func (s *session) onPeerJoined(participantCount int, peer signaling.Member) {
 		ctx, cancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
 		defer cancel()
 		if err := s.orch.ParticipantJoined(ctx, roomName, roomID, participantIdentity); err != nil {
-			logging.L.Warn(
+			logging.L.Error(
 				"orchestratorclient: participant_joined failed",
 				append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID, "participant_identity", participantIdentity)...,
 			)
