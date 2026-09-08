@@ -94,6 +94,11 @@ class AgentsBotUserClient:
                 return result
             data = resp.json()
             context_resolved = not room_name or data.get("context_resolved") is True
+            if room_name and not context_resolved:
+                logger.warning(
+                    f"agents_bot_user_client: clan context unresolved for room '{room_name}', "
+                    "using generic display labels"
+                )
             for user in data.get("users", []):
                 uid = str(user.get("user_id", ""))
                 raw_label = user.get("display_label")
