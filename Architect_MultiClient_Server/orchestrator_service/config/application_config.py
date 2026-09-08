@@ -349,35 +349,6 @@ class OAuth2Config:
 
 
 # ============================================================================
-# Outbox Worker Configuration
-# ============================================================================
-
-
-@dataclass
-class OutboxConfig:
-    """Configuration for the Summary Outbox Worker"""
-
-    check_interval_sec: int = 30
-    delay_between_items_sec: int = 30
-    batch_limit: int = 5
-    retry_summarization_target_hours: list[int] = field(default_factory=lambda: [19, 20, 21])
-
-    @classmethod
-    def from_env(cls) -> "OutboxConfig":
-        hours_str = os.getenv("OUTBOX_RETRY_SUMMARIZATION_TARGET_HOURS", "19,20,21")
-        try:
-            target_hours = [int(h.strip()) for h in hours_str.split(",") if h.strip()]
-        except ValueError:
-            target_hours = [19, 20, 21]
-        return cls(
-            check_interval_sec=int(os.getenv("OUTBOX_CHECK_INTERVAL_SEC", "30")),
-            delay_between_items_sec=int(os.getenv("OUTBOX_DELAY_BETWEEN_ITEMS_SEC", "30")),
-            batch_limit=int(os.getenv("OUTBOX_BATCH_LIMIT", "5")),
-            retry_summarization_target_hours=target_hours,
-        )
-
-
-# ============================================================================
 # Summary Configuration
 # ============================================================================
 
@@ -525,11 +496,9 @@ class Config:
         self.redis = RedisConfig.from_env()
         self.notification = NotificationConfig.from_env()
         self.oauth2 = OAuth2Config.from_env()
-        self.outbox = OutboxConfig.from_env()
         self.summary = SummaryConfig.from_env()
         self.light_summary = LightSummaryConfig.from_env()
         self.agents_bot = AgentsBotConfig.from_env()
-
         self._initialized = True
         self._validate_all()
 
