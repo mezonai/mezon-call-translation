@@ -19,6 +19,12 @@ type Client struct {
 	http    *http.Client
 }
 
+// BotProfile is the global profile of the bot authenticated by agents-bot.
+type BotProfile struct {
+	Username string `json:"username"`
+	Avatar   string `json:"avatar"`
+}
+
 // New creates a gateway client. baseURL is e.g. "http://localhost:8003".
 // Returns nil if baseURL is empty (gateway not configured).
 func New(baseURL string) *Client {
@@ -29,6 +35,36 @@ func New(baseURL string) *Client {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		http:    &http.Client{Timeout: 3 * time.Second},
 	}
+}
+
+// GetBotProfile returns the username and avatar of the bot authenticated by
+// agents-bot. It is intentionally separate from the user-resolution API.
+func (c *Client) GetBotProfile(ctx context.Context) (*BotProfile, error) {
+	if c == nil {
+		return nil, fmt.Errorf("agentsbotclient: client is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/bot/profile", nil)
+	if err != nil {
+		return nil, fmt.Errorf("agentsbotclient: build get bot profile request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("agentsbotclient: get bot profile: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		msg, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("agentsbotclient: get bot profile: HTTP %d: %s", resp.StatusCode, string(msg))
+	}
+
+	var profile BotProfile
+	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
+		return nil, fmt.Errorf("agentsbotclient: decode bot profile: %w", err)
+	}
+	if profile.Username == "" {
+		return nil, fmt.Errorf("agentsbotclient: bot profile has empty username")
+	}
+	return &profile, nil
 }
 
 // RegisterRoom tells the gateway that this agent has an active room.

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	mezon "github.com/quangledang23/mezon-sdk-go"
+	mezonapi "github.com/quangledang23/mezon-sdk-go/api"
 	"github.com/quangledang23/mezon-sdk-go/rtapi"
 
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/config"
@@ -35,10 +36,11 @@ type orchestratorAPI interface {
 
 // Gateway is the main service struct.
 type Gateway struct {
-	cfg      config.Config
-	client   *mezon.MezonClient
-	resolver *userresolver.Resolver
-	orch     orchestratorAPI
+	cfg        config.Config
+	client     *mezon.MezonClient
+	accountAPI *mezon.MezonApi
+	resolver   *userresolver.Resolver
+	orch       orchestratorAPI
 
 	// activeRooms maps room_name (SFU numeric id as string) → RoomInfo.
 	// The agent registers its room here so the gateway knows which
@@ -92,9 +94,11 @@ func (g *Gateway) Run(ctx context.Context) error {
 	}
 	logging.L.Info("agents-bot: logged in", "client_id", g.client.ClientID)
 	logging.L.Info("agents-bot: clans cached", "count", g.client.Clans.Size())
+	g.accountAPI = newAccountAPI(g.client)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", g.handleHealthz)
+	mux.HandleFunc("GET /api/bot/profile", g.handleGetBotProfile)
 	mux.HandleFunc("GET /api/users/{id}", g.handleGetUser)
 	mux.HandleFunc("POST /api/users", g.handleBatchUsers)
 	mux.HandleFunc("POST /api/rooms/register", g.handleRoomRegister)
@@ -168,6 +172,14 @@ func (g *Gateway) registerEventHandlers() {
 		if m.SenderID == g.client.ClientID {
 			return
 		}
+		logging.L.Info(
+			"agents-bot: channel message received",
+			"sender_id", m.SenderID,
+			"username", m.Username,
+			"room_name", m.ChannelID,
+			"clan_id", m.ClanID,
+			"message_id", m.MessageID,
+		)
 
 		// Cache user profile from message fields
 		if m.SenderID != "" {
@@ -225,10 +237,11 @@ func (g *Gateway) forwardChatIfActive(m *mezon.ChannelMessage) {
 			append(logging.ErrAttrs(err), "room_name", room.RoomName, "participant_identity", identity)...,
 		)
 	} else {
-		logging.L.Debug(
+		logging.L.Info(
 			"agents-bot: chat forwarded",
 			"participant_identity", identity,
 			"room_name", room.RoomName,
+			"room_id", room.RoomID,
 		)
 	}
 }
@@ -239,6 +252,40 @@ func (g *Gateway) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":     "ok",
 		"user_cache": g.resolver.Size(),
+	})
+}
+
+type botProfileResponse struct {
+	Username string `json:"username"`
+	Avatar   string `json:"avatar"`
+}
+
+func (g *Gateway) handleGetBotProfile(w http.ResponseWriter, r *http.Request) {
+	// The SDK creates the pseudo-clan "0" during login and keeps its session
+	// token refreshed. GetAccount returns the currently authenticated bot.
+	clan, ok := g.client.Clans.Get("0")
+	if !ok || clan == nil || clan.SessionToken == "" || g.accountAPI == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "bot_profile_unavailable"})
+		return
+	}
+
+	account := &mezonapi.Account{}
+	if err := g.accountAPI.Call(clan.SessionToken, "GetAccount", nil, account); err != nil {
+		logging.L.Error("agents-bot: get bot profile failed", logging.ErrAttrs(err)...)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "bot_profile_lookup_failed"})
+		return
+	}
+
+	user := account.GetUser()
+	if user == nil || user.GetUsername() == "" {
+		logging.L.Error("agents-bot: get bot profile returned no user")
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "bot_profile_invalid"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, botProfileResponse{
+		Username: user.GetUsername(),
+		Avatar:   user.GetAvatarUrl(),
 	})
 }
 
@@ -427,6 +474,17 @@ func (g *Gateway) resolveRoomClanContext(roomName string) (string, bool) {
 		return "", false
 	}
 	return roomClanID, true
+}
+
+func newAccountAPI(client *mezon.MezonClient) *mezon.MezonApi {
+	scheme := "http"
+	if client.UseSSL {
+		scheme = "https"
+	}
+	baseURL := fmt.Sprintf("%s://%s:%s", scheme, client.Host, client.Port)
+	apiClient := mezon.NewMezonApi(client.Token, baseURL, client.Timeout)
+	apiClient.AttachSocket(client.Socket())
+	return apiClient
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
