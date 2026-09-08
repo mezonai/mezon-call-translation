@@ -1,10 +1,10 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
 
 from orchestrator_service.auth.authorization import AuthContext
-from orchestrator_service.models.room_models import AudioTrackInfo
+from orchestrator_service.models.room_models import AudioTrackInfo, ParticipantModel
 from orchestrator_service.services.postgresql.models import Room
 from orchestrator_service.services.postgresql.pg_summary_repository import (
     PgSummaryRepository,
@@ -152,6 +152,52 @@ class RoomService:
             )
 
         return file_results
+
+    async def list_participants(self, room_id: str) -> list[ParticipantModel]:
+        room = await self.pg_transcript_repo.get_room_by_id(room_id)
+        if not room:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Room with ID '{room_id}' not found",
+            )
+
+        participants_data = (
+            room.participants
+            if isinstance(room.participants, list)
+            else []
+        )
+
+        result: list[ParticipantModel] = []
+
+        for participant in participants_data:
+            identity = participant.get("participant_identity")
+            if not identity:
+                continue
+
+            joined_at = 0
+            raw_timestamp = participant.get("timestamp")
+
+            if raw_timestamp:
+                try:
+                    joined_datetime = datetime.fromisoformat(str(raw_timestamp))
+                    if joined_datetime.tzinfo is None:
+                        joined_datetime = joined_datetime.replace(tzinfo=UTC)
+
+                    joined_at = int(joined_datetime.timestamp())
+                except (ValueError, OverflowError, OSError):
+                    joined_at = 0
+
+            result.append(
+                ParticipantModel(
+                    identity=identity,
+                    name=participant.get("username") or identity,
+                    state="ACTIVE",
+                    joined_at=joined_at,
+                    metadata={},
+                )
+            )
+
+        return result
 
 
 # Get singleton instance
