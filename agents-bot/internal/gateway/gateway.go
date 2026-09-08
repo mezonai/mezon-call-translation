@@ -172,15 +172,11 @@ func (g *Gateway) registerEventHandlers() {
 		if m.SenderID == g.client.ClientID {
 			return
 		}
-		g.roomsMu.RLock()
-		_, roomRegistered := g.activeRooms[m.ChannelID]
-		g.roomsMu.RUnlock()
 		logging.L.Info(
 			"agents-bot: channel message received",
 			"sender_id", m.SenderID,
 			"username", m.Username,
 			"room_name", m.ChannelID,
-			"room_registered", roomRegistered,
 			"clan_id", m.ClanID,
 			"message_id", m.MessageID,
 		)
