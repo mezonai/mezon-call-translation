@@ -23,6 +23,7 @@ from orchestrator_service.api.v2.router import (
     api_router as api_router_v2,
 )  # Import the v2 API router
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.services.agents_bot_user_client import close_agents_bot_user_client
 from orchestrator_service.services.postgresql.database import dispose_engine, get_engine
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.services.redis.redis_save_transcription_service import (
@@ -126,6 +127,13 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Save Transcription service stopped")
     except Exception as e:
         logger.error(f"Error stopping Save Transcription service: {e}")
+
+    # Close the shared agents-bot HTTP connection pool
+    try:
+        await close_agents_bot_user_client()
+        logger.info("✅ Agents-bot HTTP client closed")
+    except Exception as e:
+        logger.error(f"Error closing agents-bot HTTP client: {e}")
 
     # Step 2: Cleanup SSE manager (clear data structures)
     # SSE connections were already notified by signal handler

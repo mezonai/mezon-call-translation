@@ -142,6 +142,7 @@ var agentPassthroughEnvKeys = []string{
 	// every agent, so a plain passthrough is enough (no need for Start to
 	// set it explicitly per spawn).
 	"AGENT_EMPTY_ROOM_GRACE_SECONDS",
+	"AGENTS_BOT_BASE_URL",
 	// AGENT_SOCKET_DIR: shared with worker-manager's own env of the same
 	// name (not yet a Config field here -- Phase 1 only needs the agent
 	// side to have it; worker-manager itself starts reading/using its own
