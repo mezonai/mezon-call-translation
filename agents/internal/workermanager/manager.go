@@ -132,12 +132,19 @@ func (m *Manager) Start(ev StartEvent) error {
 	}
 	m.mu.Unlock()
 
-	env := make([]string, 0, len(m.cfg.BaseAgentEnv)+3)
+	env := make([]string, 0, len(m.cfg.BaseAgentEnv)+4)
 	env = append(env, m.cfg.BaseAgentEnv...)
 	env = append(env,
 		fmt.Sprintf("ROOM_ID=%d", ev.RoomID),
 		fmt.Sprintf("AGENT_USER_ID=%d", agentUserID),
 		fmt.Sprintf("AGENT_ROLE=%s", role),
+		// Explicit per-spawn, not agentPassthroughEnvKeys -- see
+		// Config.DefaultAgentMaxLifetime's doc: this is the one place a
+		// future per-event override (StartEvent carrying a plan-derived
+		// value from BE mezon) plugs in without changing how the value
+		// reaches the agent. ev doesn't carry one yet, so every spawn just
+		// gets the configured default for now.
+		fmt.Sprintf("AGENT_MAX_LIFETIME_SECONDS=%d", int(m.cfg.DefaultAgentMaxLifetime.Seconds())),
 	)
 
 	cmd := exec.Command(m.cfg.AgentBinPath)
@@ -180,7 +187,8 @@ func (m *Manager) Start(ev StartEvent) error {
 	m.persistRegistry()
 
 	logging.L.Info("workermanager: spawned agent",
-		"room_id", ev.RoomID, "agent_user_id", agentUserID, "role", role, "pid", cmd.Process.Pid)
+		"room_id", ev.RoomID, "agent_user_id", agentUserID, "role", role, "pid", cmd.Process.Pid,
+		"max_lifetime", m.cfg.DefaultAgentMaxLifetime)
 
 	go m.reap(agent)
 	return nil
