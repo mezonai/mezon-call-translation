@@ -130,6 +130,8 @@ type RoomMessage struct {
 type roomMessageMsg struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+	UserID  string `json:"user_id"`
+	PeerID  uint64 `json:"peer_id"`
 }
 
 func decodeType(raw []byte) (string, error) {

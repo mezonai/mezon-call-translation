@@ -610,27 +610,22 @@ func (s *session) onPeerUpdated(peer signaling.Member) {
 	}
 }
 
-func (s *session) onRoomMessage(message signaling.RoomMessage) {
+func (s *session) onRoomMessage(message signaling.RoomMessage, userID string) {
 	if s.orch == nil {
 		return
 	}
-	if strings.TrimSpace(message.ID) == "" || strings.TrimSpace(message.Content) == "" {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(message.Content) == "" {
 		return
 	}
 	timeStr := ""
 	if message.Timestamp > 0 {
-		const millisecondsThreshold int64 = 1_000_000_000_000
-		if message.Timestamp >= millisecondsThreshold {
-			timeStr = time.UnixMilli(message.Timestamp).UTC().Format(time.RFC3339Nano)
-		} else {
-			timeStr = time.Unix(message.Timestamp, 0).UTC().Format(time.RFC3339Nano)
-		}
+		timeStr = time.UnixMilli(message.Timestamp).UTC().Format(time.RFC3339Nano)
 	}
 
 	orch := s.orch
 	roomName := s.roomName
 	roomID := s.roomID
-	participantIdentity := message.ID
+	participantIdentity := userID
 	content := message.Content
 
 	go func() {

@@ -36,7 +36,7 @@ type Callbacks struct {
 	OnPeerJoined   func(participantCount int, peer Member)
 	OnPeerLeft     func(ev PeerLeftEvent)
 	OnPeerUpdated  func(peer Member)
-	OnRoomMessage  func(message RoomMessage)
+	OnRoomMessage  func(message RoomMessage, userID string)
 }
 
 // Client is a single-use WS signaling session. mezon-sfu treats a WS
@@ -213,7 +213,7 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 			return fmt.Errorf("decode room_message payload: %w", err)
 		}
 		if c.cb.OnRoomMessage != nil {
-			c.cb.OnRoomMessage(message)
+			c.cb.OnRoomMessage(message, m.UserID)
 		}
 
 	default:
