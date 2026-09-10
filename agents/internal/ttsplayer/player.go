@@ -202,7 +202,21 @@ func (p *Player) speakNow(ctx context.Context, text, voice string, speed float64
 	// latency above doesn't leak into the reported segment timing).
 	utteranceStart := time.Now()
 	samplesWritten := 0
+
+	playbackTicker := time.NewTicker(frameDuration)
+	// this ticker will prevent emitting multi-second utterance as one burst and 
+	// keep every following frame on the 20ms audio clock => fixing the bug of discarding 
+	// audio in SFU/browser jitter buffer
+	defer playbackTicker.Stop()
 	for off := 0; off+frameSamples <= len(pcm); off += frameSamples {
+		if off > 0 {
+			select {
+			case <-p.stopCtx.Done():
+				return p.stopCtx.Err()
+			case <-playbackTicker.C:
+			}
+		}
+
 		frame := pcm[off : off+frameSamples]
 
 		opusPayload, err := p.encoder.Encode(frame)
