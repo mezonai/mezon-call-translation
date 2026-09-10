@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -244,24 +243,26 @@ func (c *Client) send(v any) error {
 	return c.conn.WriteJSON(v)
 }
 
-// SendRoomMessage posts text into the room's chat as this peer (mezon-sfu
-// wireTypeSendMessage). Best-effort: the SFU broadcasts it to other peers
-// and acks with `message_sent`, but there's no per-message result on the
-// wire, so a success here only means the frame was written -- a later
-// `error` "must_join_room_first" (peer not fully joined yet) or
-// "invalid_message" only shows up as a logged handler error in Run's loop.
+// SendRoomMessage posts a chat message into the room as this peer (mezon-sfu
+// wireTypeSendMessage). msg is JSON-encoded into the frame's `message`
+// string -- the SFU treats that as an opaque blob and just relays it, and
+// the receiving side decodes it back into a RoomMessage (see the
+// "room_message" case in dispatch), so this must stay symmetric with that.
+//
+// Best-effort: the SFU broadcasts it to other peers and acks with
+// `message_sent`, but there's no per-message result on the wire, so a
+// success here only means the frame was written -- a later `error`
+// "must_join_room_first" (peer not fully joined yet) or "invalid_message"
+// only shows up as a logged handler error in Run's loop.
 //
 // Safe to call from any goroutine (see writeMu). Rejects an empty or
 // over-long message locally rather than after a WS round-trip.
-func (c *Client) SendRoomMessage(text string) error {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return fmt.Errorf("signaling: room message is empty")
+func (c *Client) SendRoomMessage(msg RoomMessage) error {
+	frame, err := encodeSendMessageFrame(msg)
+	if err != nil {
+		return err
 	}
-	if len(text) > maxRoomMessageBytes {
-		return fmt.Errorf("signaling: room message is %d bytes, over the %d-byte limit", len(text), maxRoomMessageBytes)
-	}
-	if err := c.send(sendMessageMsg{Type: wireTypeSendMessage, Message: text}); err != nil {
+	if err := c.send(frame); err != nil {
 		return fmt.Errorf("signaling: send room message: %w", err)
 	}
 	return nil
