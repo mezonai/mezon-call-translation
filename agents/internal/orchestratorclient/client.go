@@ -175,6 +175,48 @@ func (c *Client) ParticipantJoined(ctx context.Context, roomName, roomID, partic
 	return nil
 }
 
+func (c *Client) PushChatExternal(ctx context.Context, roomName, roomID, participantIdentity, message, timeStr string) error {
+	payload := map[string]string{
+		"room_name":            roomName,
+		"room_id":              roomID,
+		"participant_identity": participantIdentity,
+		"message":              message,
+	}
+
+	if timeStr != "" {
+		payload["time"] = timeStr
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: encode push_chat_external body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/api/v2/agent_push_chat_external",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: build push_chat_external request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.authHeader(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: push_chat_external http: %w", err)
+	}
+
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("orchestratorclient: push_chat_external: HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // UnregisterRoom releases the registration RegisterRoom created, and
 // triggers orchestrator's room finalization (status -> terminal, summary
 // generation) for roomID -- POST /api/v2/room-registry/unregister.

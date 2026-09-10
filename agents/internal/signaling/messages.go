@@ -146,6 +146,21 @@ type errorMsg struct {
 	Message string `json:"message"`
 }
 
+type RoomMessage struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Avatar    string `json:"avatar"`
+	Timestamp int64  `json:"timestamp"`
+	Content   string `json:"content"`
+}
+
+type roomMessageMsg struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+	UserID  string `json:"user_id"`
+	PeerID  uint64 `json:"peer_id"`
+}
+
 func decodeType(raw []byte) (string, error) {
 	var e envelope
 	if err := json.Unmarshal(raw, &e); err != nil {
