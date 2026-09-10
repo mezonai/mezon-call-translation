@@ -21,6 +21,14 @@
 //     (GET /api/v2/sse/agent-requests?agent_id=&room_name=, text/event-stream).
 //   - tts_play / transcript_control request handling: kept (drives
 //     internal/ttsplayer and internal/audiopipeline.Bridge.SetSTTEnabled).
+//   - send_chat_message request handling: kept (posts a room chat message
+//     over the WS session -- see cmd/agent's registerRequestHandlers and
+//     signaling.Client.SendRoomMessage). Originally left unported (was a
+//     LiveKit DataChannel and mezon-sfu had no text channel); mezon-sfu
+//     commit c41e59b "add send message" added a `send_message` WS type, so
+//     it is ported now. The orchestrator SSE request type stays
+//     "send_chat_message" -- a different string from the SFU wire type, see
+//     cmd/agent's sseRequestTypeSendChatMessage.
 //
 // NOT ported (out of scope for this pass, see mezon-sfu-migration-plan.md
 // 2.5/2.6): push_event_session_started/ended -- checked against the old
@@ -29,8 +37,7 @@
 // orchestrator_service's register_room/unregister_room already push the
 // equivalent room_started/room_ended events themselves as a side effect
 // (room_registry_api.py) -- an explicit call here would just be a
-// duplicate. Also not ported: send_chat_message (was LiveKit DataChannel,
-// mezon-sfu has no data channel yet).
+// duplicate.
 //
 // room_name vs room_id, and why both still appear below: the old contract
 // had two distinct identifiers -- room_name (LiveKit room name / Mezon

@@ -116,40 +116,6 @@ class AgentsBotUserClient:
 
         return result
 
-    async def send_chat_message(self, room_name: str, message: str) -> bool:
-        """
-        Send a message into a room's Mezon chat via agents-bot, as the bot.
-
-        Part of the send_chat_message agent-request flow
-        (mezon-sfu-migration-plan.md): orchestrator calls agents-bot
-        directly for this one request type instead of relaying through the
-        per-room Go agent's SSE listener (unlike tts_play/transcript_control)
-        -- agents-bot is the only thing holding a live Mezon bot session,
-        so there's no per-room agent state this needs to go through first.
-
-        Unlike resolve_usernames/get_room_participants above (read-side,
-        best-effort, degrade to {}/[] on any failure), this is a real write
-        with a user-visible effect in a live meeting -- callers need to know
-        whether it actually landed, so this does NOT swallow errors the same
-        way:
-        - Returns False only for the one *expected* non-delivery case --
-          agents-bot doesn't currently consider room_name active (HTTP 409,
-          mirrors the SSE path's "no active agent connection" case in
-          AgentRequestChannel.send_request).
-        - Raises for everything else (agents-bot unreachable, timeout, the
-          Mezon send itself failing) -- a genuine failure, not a soft
-          "nobody was listening" outcome.
-        """
-        resp = await self._http.post(f"/api/rooms/{room_name}/chat", json={"message": message})
-        if resp.status_code == 409:
-            logger.warning(f"agents_bot_user_client: send_chat_message room {room_name} not active on agents-bot")
-            return False
-        if resp.status_code != 200:
-            raise RuntimeError(f"agents_bot_user_client: send_chat_message HTTP {resp.status_code}: {resp.text}")
-
-        logger.info(f"agents_bot_user_client: send_chat_message sent to room {room_name} ({len(message)} chars)")
-        return True
-
     async def get_room_participants(self, room_name: str) -> list[dict[str, str]]:
         """Get list participants in room from agents-bot."""
         if not self._base_url or not room_name:
@@ -234,17 +200,3 @@ async def get_agents_bot_room_participants(room_name: str) -> list[dict[str, str
     if client is None:
         return []
     return await client.get_room_participants(room_name)
-
-
-async def send_agents_bot_chat_message(room_name: str, message: str) -> bool:
-    """
-    Convenience wrapper for the send_chat_message agent-request flow (see
-    AgentRequestChannel.send_request). Unlike the resolve/get_participants
-    wrappers above, this raises rather than degrading to a default value
-    when agents-bot isn't configured at all -- an unconfigured gateway
-    silently dropping a chat-send request is worse than a loud failure.
-    """
-    client = get_agents_bot_user_client()
-    if client is None:
-        raise RuntimeError("agents_bot_user_client: send_chat_message failed, AGENTS_BOT_BASE_URL not configured")
-    return await client.send_chat_message(room_name, message)
