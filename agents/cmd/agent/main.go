@@ -152,7 +152,7 @@ func main() {
 	var orch *orchestratorclient.Client
 	if cfg.Orchestrator.BaseURL != "" {
 		orch = orchestratorclient.New(cfg.Orchestrator.BaseURL, cfg.Orchestrator.APIKey)
-		registerRequestHandlers(orch, refs)
+		registerRequestHandlers(orch, refs, cfg)
 
 		go func() {
 			agentID := strconv.FormatInt(cfg.AgentUserID, 10)
@@ -227,8 +227,9 @@ func (r *sessionRefs) signalingClient() *signaling.Client {
 // this agent acts on: tts_play drives ttsplayer.Player.Speak,
 // transcript_control drives audiopipeline.Bridge.SetSTTEnabled, and
 // send_chat_message posts a room chat message via the WS session
-// (signaling.Client.SendRoomMessage).
-func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs) {
+// (signaling.Client.SendRoomMessage). cfg supplies the chat sender
+// identity (id/name/avatar) stamped on send_chat_message.
+func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs, cfg config.Config) {
 	orch.RegisterHandler("tts_play", func(payload map[string]any) error {
 		_, player := refs.get()
 		if player == nil {
@@ -271,7 +272,13 @@ func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs)
 		// frame, but the SFU may still reject it (e.g. peer not fully joined
 		// yet -> "must_join_room_first"), which surfaces only as a logged
 		// signaling handler error, not here.
-		return sig.SendRoomMessage(text)
+		return sig.SendRoomMessage(signaling.RoomMessage{
+			ID:        strconv.FormatInt(cfg.AgentUserID, 10),
+			Name:      cfg.ChatName,
+			Avatar:    cfg.ChatAvatarURL,
+			Timestamp: time.Now().UnixMilli(),
+			Content:   text,
+		})
 	})
 }
 

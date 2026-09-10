@@ -121,6 +121,14 @@ type Config struct {
 	// why this is independent of, and much shorter than, this agent's own
 	// Reconnect budget).
 	EmptyRoomGrace time.Duration
+	// ChatName / ChatAvatarURL are the sender identity the agent stamps on
+	// every chat message it posts into the room (signaling.RoomMessage's
+	// name/avatar fields -- see signaling.Client.SendRoomMessage). Same for
+	// every room, so worker-manager passes them through unchanged. Avatar is
+	// a URL the receiving chat UI renders; empty is fine (UI falls back to
+	// an initials tile).
+	ChatName      string
+	ChatAvatarURL string
 }
 
 type ReconnectConfig struct {
@@ -218,6 +226,9 @@ func FromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("config: AGENT_EMPTY_ROOM_GRACE_SECONDS must be >= 0, got %d", emptyRoomGraceSeconds)
 	}
 	cfg.EmptyRoomGrace = time.Duration(emptyRoomGraceSeconds) * time.Second
+
+	cfg.ChatName = getEnv("AGENT_CHAT_NAME", "KOMU Agent")
+	cfg.ChatAvatarURL = getEnv("AGENT_CHAT_AVATAR_URL", "")
 
 	if cfg.Role != RoleAudience && cfg.Role != RoleSpeaker {
 		return Config{}, fmt.Errorf("config: invalid AGENT_ROLE %q (want %q or %q)", cfg.Role, RoleAudience, RoleSpeaker)
