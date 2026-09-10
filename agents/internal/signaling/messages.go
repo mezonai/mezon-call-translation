@@ -37,6 +37,33 @@ type pongMsg struct {
 	Type string `json:"type"`
 }
 
+// wireTypeSendMessage is the mezon-sfu WS wire type for posting a room chat
+// message as this peer (mezon-sfu commit c41e59b "add send message"). The
+// SFU echoes an ack (`message_sent`) to the sender and broadcasts
+// `room_message` to every other peer in the room. Requires the peer to have
+// finished joining (`joined_room` + `client_ufrag` set) -- otherwise the SFU
+// replies with an `error` "must_join_room_first".
+//
+// Deliberately NOT the same string as orchestratorclient's SSE
+// agent-request type that triggers a send ("send_chat_message", see
+// cmd/agent's registerRequestHandlers) -- one is this package's protocol
+// with the SFU, the other is the orchestrator contract; keeping them
+// separate constants means renaming one never silently moves the other.
+const wireTypeSendMessage = "send_message"
+
+// sendMessageMsg is the client -> SFU frame for wireTypeSendMessage.
+type sendMessageMsg struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+// maxRoomMessageBytes bounds a room chat message client-side so an
+// over-long one fails fast here instead of after a WS round-trip. The SFU's
+// own extraction buffer is 2048 bytes including the NUL terminator
+// (SFU_ROOM_MESSAGE_MAX_LEN in signaling.c); 2000 leaves headroom and is
+// far more than a chat line needs.
+const maxRoomMessageBytes = 2000
+
 // --- server -> client ---
 
 // ICEServer mirrors mezon-sfu's iceServers entries (signaling.c:61-78):

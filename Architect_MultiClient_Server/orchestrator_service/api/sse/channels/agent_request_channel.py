@@ -11,7 +11,6 @@ from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.sse_base import create_sse_response, event_generator
 from orchestrator_service.api.sse.sse_manager import SSEManager, SSEMessage
-from orchestrator_service.services.agents_bot_user_client import send_agents_bot_chat_message
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
@@ -111,13 +110,6 @@ class AgentRequestChannel:
         Returns:
             Dictionary with send status
         """
-        # send_chat_message routes to agents-bot directly instead of the SSE
-        # broadcast below -- see _send_chat_message's doc for why. This is
-        # the only request_type handled this way; tts_play/transcript_control
-        # keep going through the SSE path unchanged.
-        if request_type == "send_chat_message":
-            return await self._send_chat_message(payload=payload, room_name=room_name)
-
         context_key = self.get_context_key(room_name=room_name, agent_id=agent_id)
 
         # Check if context has active connections
@@ -147,43 +139,6 @@ class AgentRequestChannel:
             "context": context_key,
             "active_agents": await self.manager.get_connection_count(self.CHANNEL_TYPE, context_key),
             "sent_to": broadcast_count,
-        }
-
-    async def _send_chat_message(self, payload: dict[str, Any], room_name: str) -> dict[str, Any]:
-        """
-        Handle send_chat_message by calling agents-bot directly rather than
-        broadcasting over SSE (mezon-sfu-migration-plan.md). agents-bot --
-        not the per-room Go agent -- is the only thing holding a live Mezon
-        bot session, so there is no SSE agent-request listener that could
-        ever act on this request_type; routing it through one first would
-        just be a pass-through hop with no state of its own to add.
-
-        Response shape matches send_request's SSE-path contract
-        (SendAgentRequestResponse) for callers of the dispatch endpoint:
-        "room not currently active on agents-bot" is treated the same way
-        the SSE path treats "no active agent connection" -- a soft,
-        expected non-delivery (status "ok", sent_to 0), not an error. Any
-        other failure (agents-bot unreachable, the Mezon send itself
-        failing) propagates as an exception, same as an unhandled failure
-        in the SSE broadcast path above would.
-        """
-        request_id = str(uuid.uuid4())
-        message = payload.get("message", "")
-
-        sent = await send_agents_bot_chat_message(room_name=room_name, message=message)
-
-        logger.info(
-            f"[Agent Request Channel] send_chat_message {request_id} "
-            f"(room={room_name}, sent={sent}, message_length={len(message)})"
-        )
-
-        return {
-            "status": "ok",
-            "request_id": request_id,
-            "request_type": "send_chat_message",
-            "context": room_name,
-            "active_agents": 1 if sent else 0,
-            "sent_to": 1 if sent else 0,
         }
 
     async def get_active_agents(self, room_name: str, agent_id: str) -> int:

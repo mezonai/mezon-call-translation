@@ -46,6 +46,14 @@ import (
 // on failure rather than blocking startup/shutdown, see their call sites).
 const orchestratorCallTimeout = 3 * time.Second
 
+// sseRequestTypeSendChatMessage is the orchestrator SSE agent-request type
+// that asks this agent to post a room chat message. Deliberately a
+// different string from the mezon-sfu WS wire type the agent then sends
+// ("send_message", signaling.wireTypeSendMessage) -- one is the
+// orchestrator contract (kept stable so the caller side isn't affected),
+// the other is the SFU protocol; they are not renamed together.
+const sseRequestTypeSendChatMessage = "send_chat_message"
+
 func main() {
 	// Best-effort: only matters when bin/agent is run standalone for
 	// debugging (bypassing worker-manager) -- worker-manager already loads
@@ -178,12 +186,17 @@ func main() {
 
 // sessionRefs is how the long-lived orchestrator SSE listener's handlers
 // reach the current mezon-sfu session's audiopipeline.Bridge/ttsplayer.Player
-// -- both nil between sessions (mid-reconnect) or if the corresponding
+// -- all nil between sessions (mid-reconnect) or if the corresponding
 // feature isn't active this run (e.g. no Player unless Role is "speaker").
 type sessionRefs struct {
 	mu     sync.Mutex
 	bridge *audiopipeline.Bridge
 	player *ttsplayer.Player
+	// sigClient is the current session's WS client -- set right after
+	// signaling.Dial succeeds (before onJoined), cleared by session.close.
+	// The send_chat_message handler writes room messages through it; nil
+	// means "no live session", handled the same as a nil bridge/player.
+	sigClient *signaling.Client
 }
 
 func (r *sessionRefs) set(bridge *audiopipeline.Bridge, player *ttsplayer.Player) {
@@ -198,10 +211,23 @@ func (r *sessionRefs) get() (*audiopipeline.Bridge, *ttsplayer.Player) {
 	return r.bridge, r.player
 }
 
-// registerRequestHandlers wires the two orchestrator SSE agent-request
-// types this pass ports (see orchestratorclient's package doc for what's
-// deliberately not ported): tts_play drives ttsplayer.Player.Speak,
-// transcript_control drives audiopipeline.Bridge.SetSTTEnabled.
+func (r *sessionRefs) setSignalingClient(c *signaling.Client) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sigClient = c
+}
+
+func (r *sessionRefs) signalingClient() *signaling.Client {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sigClient
+}
+
+// registerRequestHandlers wires the orchestrator SSE agent-request types
+// this agent acts on: tts_play drives ttsplayer.Player.Speak,
+// transcript_control drives audiopipeline.Bridge.SetSTTEnabled, and
+// send_chat_message posts a room chat message via the WS session
+// (signaling.Client.SendRoomMessage).
 func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs) {
 	orch.RegisterHandler("tts_play", func(payload map[string]any) error {
 		_, player := refs.get()
@@ -233,6 +259,19 @@ func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs)
 			return fmt.Errorf("unknown action %q (want \"enable\" or \"disable\")", action)
 		}
 		return nil
+	})
+
+	orch.RegisterHandler(sseRequestTypeSendChatMessage, func(payload map[string]any) error {
+		sig := refs.signalingClient()
+		if sig == nil {
+			return fmt.Errorf("no active session to send a room message into")
+		}
+		text, _ := payload["message"].(string)
+		// Best-effort per the plan: SendRoomMessage validates and writes the
+		// frame, but the SFU may still reject it (e.g. peer not fully joined
+		// yet -> "must_join_room_first"), which surfaces only as a logged
+		// signaling handler error, not here.
+		return sig.SendRoomMessage(text)
 	})
 }
 
@@ -328,6 +367,10 @@ func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config,
 	if err != nil {
 		return err
 	}
+	// Expose this session's WS client to the long-lived SSE handlers (the
+	// send_chat_message handler writes room messages through it). Cleared by
+	// sess.close() in the defer below.
+	refs.setSignalingClient(client)
 	defer func() {
 		sess.close()
 		_ = client.Close()
@@ -670,6 +713,7 @@ func (s *session) close() {
 		s.emptyRoomTimer = nil
 	}
 	s.refs.set(nil, nil)
+	s.refs.setSignalingClient(nil)
 	if s.peerAgent != nil {
 		_ = s.peerAgent.Close()
 	}

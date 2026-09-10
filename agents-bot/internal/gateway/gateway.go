@@ -104,7 +104,6 @@ func (g *Gateway) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/rooms/register", g.handleRoomRegister)
 	mux.HandleFunc("POST /api/rooms/unregister", g.handleRoomUnregister)
 	mux.HandleFunc("GET /api/rooms/{room_name}/participants", g.handleGetRoomParticipants)
-	mux.HandleFunc("POST /api/rooms/{room_name}/chat", g.handleSendChatMessage)
 
 	addr := fmt.Sprintf(":%d", g.cfg.GatewayPort)
 	srv := &http.Server{Addr: addr, Handler: mux}
@@ -447,91 +446,6 @@ func (g *Gateway) handleGetRoomParticipants(w http.ResponseWriter, r *http.Reque
 		"room_name":    roomName,
 		"participants": participants,
 	})
-}
-
-// maxChatBodyBytes bounds the request body for handleSendChatMessage only --
-// scoped to this new handler deliberately, not retrofitted onto the older
-// handlers above (a separate, already-tracked finding, left alone here to
-// avoid conflicting with other in-flight work on this file). 64KB is
-// generous headroom over the SDK's own 8000 UTF-16-code-unit content cap
-// (content.go's maxContentLength, enforced inside Send below).
-const maxChatBodyBytes = 64 * 1024
-
-type chatMessageRequest struct {
-	Message string `json:"message"`
-}
-
-// handleSendChatMessage lets orchestrator post a message into a room's Mezon
-// chat as this bot -- the send_chat_message agent-request flow
-// (mezon-sfu-migration-plan.md). Orchestrator calls this directly instead of
-// relaying through the per-room Go agent's SSE agent-request listener
-// (unlike tts_play/transcript_control): agents-bot, not the Go agent, is the
-// only thing holding a live Mezon bot session, so routing this through the
-// Go agent first would just be a pass-through hop with no state of its own
-// to contribute.
-//
-// No auth on this endpoint yet -- deliberate, deferred to a dedicated
-// security epic (mezon-sfu-migration-plan.md) rather than bolted on here.
-func (g *Gateway) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
-	roomName := r.PathValue("room_name")
-	if roomName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing room_name"})
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodyBytes)
-	var req chatMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logging.L.Warn("agents-bot: send_chat_message: invalid request body",
-			append(logging.ErrAttrs(err), "room_name", roomName)...)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
-		return
-	}
-	message := strings.TrimSpace(req.Message)
-	if message == "" {
-		logging.L.Warn("agents-bot: send_chat_message: empty message, refusing to send", "room_name", roomName)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "message required"})
-		return
-	}
-
-	// Gate: only send into a room this instance currently considers live --
-	// same activeRooms registry forwardChatIfActive already gates the
-	// opposite (inbound) direction on, so "is this room active" has exactly
-	// one source of truth for both directions.
-	g.roomsMu.RLock()
-	_, active := g.activeRooms[roomName]
-	g.roomsMu.RUnlock()
-	if !active {
-		logging.L.Warn("agents-bot: send_chat_message: room not active, refusing to send", "room_name", roomName)
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "room_not_active", "room_name": roomName})
-		return
-	}
-
-	logging.L.Debug("agents-bot: send_chat_message: sending", "room_name", roomName, "message_length", len(message))
-
-	channel, err := g.client.Channels.Fetch(roomName)
-	if err != nil {
-		logging.L.Error("agents-bot: send_chat_message: fetch channel failed",
-			append(logging.ErrAttrs(err), "room_name", roomName)...)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "channel_fetch_failed"})
-		return
-	}
-
-	msg, err := channel.Send(mezon.Text(message), &mezon.SendOptions{})
-	if err != nil {
-		logging.L.Error("agents-bot: send_chat_message: send failed",
-			append(logging.ErrAttrs(err), "room_name", roomName)...)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "send_failed"})
-		return
-	}
-
-	messageID := ""
-	if msg != nil {
-		messageID = msg.MessageID()
-	}
-	logging.L.Info("agents-bot: send_chat_message: sent",
-		"room_name", roomName, "message_id", messageID, "message_length", len(message))
-	writeJSON(w, http.StatusOK, map[string]string{"status": "sent", "room_name": roomName, "message_id": messageID})
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
