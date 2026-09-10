@@ -36,6 +36,7 @@ type Callbacks struct {
 	OnPeerJoined   func(participantCount int, peer Member)
 	OnPeerLeft     func(ev PeerLeftEvent)
 	OnPeerUpdated  func(peer Member)
+	OnRoomMessage  func(message RoomMessage)
 }
 
 // Client is a single-use WS signaling session. mezon-sfu treats a WS
@@ -201,6 +202,19 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 		// Acks for our own state-changing messages; not used by the
 		// record-only (audience) path yet. Logged for observability.
 		logging.L.Debug("signaling: ack", "type", msgType)
+
+	case "room_message":
+		var m roomMessageMsg
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return fmt.Errorf("decode room_message: %w", err)
+		}
+		var message RoomMessage
+		if err := json.Unmarshal([]byte(m.Message), &message); err != nil {
+			return fmt.Errorf("decode room_message payload: %w", err)
+		}
+		if c.cb.OnRoomMessage != nil {
+			c.cb.OnRoomMessage(message)
+		}
 
 	default:
 		logging.L.Warn("signaling: unknown message type", "type", msgType)

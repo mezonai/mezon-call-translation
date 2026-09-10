@@ -416,6 +416,7 @@ func (s *session) callbacks() signaling.Callbacks {
 		OnPeerJoined:   s.onPeerJoined,
 		OnPeerLeft:     s.onPeerLeft,
 		OnPeerUpdated:  s.onPeerUpdated,
+		OnRoomMessage:  s.onRoomMessage,
 	}
 }
 
@@ -607,6 +608,51 @@ func (s *session) onPeerUpdated(peer signaling.Member) {
 	if s.peerAgent != nil {
 		s.peerAgent.UpsertRoster(peer)
 	}
+}
+
+func (s *session) onRoomMessage(message signaling.RoomMessage) {
+	if s.orch == nil {
+		return
+	}
+	if strings.TrimSpace(message.ID) == "" || strings.TrimSpace(message.Content) == "" {
+		return
+	}
+	timeStr := ""
+	if message.Timestamp > 0 {
+		const millisecondsThreshold int64 = 1_000_000_000_000
+		if message.Timestamp >= millisecondsThreshold {
+			timeStr = time.UnixMilli(message.Timestamp).UTC().Format(time.RFC3339Nano)
+		} else {
+			timeStr = time.Unix(message.Timestamp, 0).UTC().Format(time.RFC3339Nano)
+		}
+	}
+
+	orch := s.orch
+	roomName := s.roomName
+	roomID := s.roomID
+	participantIdentity := message.ID
+	content := message.Content
+
+	go func() {
+		ctx, cancel := context.WithTimeout(
+			context.Background(),
+			orchestratorCallTimeout,
+		)
+		defer cancel()
+
+		err := orch.PushChatExternal(ctx, roomName, roomID, participantIdentity, content, timeStr)
+		if err != nil {
+			logging.L.Error(
+				"orchestratorclient: push_chat_external failed",
+				append(
+					logging.ErrAttrs(err),
+					"room_name", roomName,
+					"room_id", roomID,
+					"participant_identity", participantIdentity,
+				)...,
+			)
+		}
+	}()
 }
 
 // close releases this session's resources, clears refs so the long-lived
