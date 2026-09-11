@@ -137,6 +137,51 @@ func (c *Client) RegisterRoom(ctx context.Context, roomName, roomID string) erro
 	return nil
 }
 
+// ParticipantSnapshot persists the participants observed in the initial
+// mezon-sfu room_snapshot. Username resolution remains orchestrator-owned.
+func (c *Client) ParticipantSnapshot(ctx context.Context, roomName, roomID string, participantIdentities []string) error {
+	if len(participantIdentities) == 0 {
+		return nil
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"room_name":              roomName,
+		"room_id":                roomID,
+		"participant_identities": participantIdentities,
+	})
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: encode participant snapshot: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/api/v2/room-registry/participant/snapshot",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: build participant snapshot request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	c.authHeader(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: participant snapshot: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf(
+			"orchestratorclient: participant snapshot: HTTP %d",
+			resp.StatusCode,
+		)
+	}
+
+	return nil
+}
+
 // ParticipantJoined reports a Mezon-SFU peer_joined event for this exact
 // room session. The event intentionally contains only the stable Mezon user
 // id: orchestrator resolves a display name through agents-bot, which owns the
