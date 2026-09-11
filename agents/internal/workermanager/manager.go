@@ -120,7 +120,7 @@ func (m *Manager) Start(ev StartEvent) error {
 
 	role := ev.Role
 	if role == "" {
-		role = string(config.RoleAudience)
+		role = string(config.RoleSpeaker)
 	}
 
 	m.mu.Lock()
