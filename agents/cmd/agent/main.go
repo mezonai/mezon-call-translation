@@ -440,6 +440,9 @@ type session struct {
 	// push_transcript/SSE/STT use.
 	roomName string
 	roomID   string
+	// Contains users successfully persisted through the external
+	// participant-chat endpoint.
+	savedUsers sync.Map // map[string]struct{}
 	// stop is the root ctx's cancel func (signal.NotifyContext in main) --
 	// checkEmptyRoom calls this directly, same as config.Config.MaxLifetime's
 	// timer, to end run()'s reconnect loop entirely rather than just this
@@ -717,6 +720,44 @@ func (s *session) onRoomMessage(message signaling.RoomMessage, userID string) {
 	roomID := s.roomID
 	participantIdentity := userID
 	content := message.Content
+	username := strings.TrimSpace(message.Name)
+
+	// Persist a chat participant once per successfully saved user ID. Multiple
+	// requests may be in flight before the first success; the database write is
+	// idempotent, and only a confirmed {"status":"ok"} is cached.
+	if username != "" {
+		if _, saved := s.savedUsers.Load(participantIdentity); !saved {
+			go func() {
+				ctx, cancel := context.WithTimeout(
+					context.Background(),
+					orchestratorCallTimeout,
+				)
+				defer cancel()
+
+				err := orch.SaveExternalChatParticipant(
+					ctx,
+					roomName,
+					roomID,
+					participantIdentity,
+					username,
+				)
+				if err != nil {
+					logging.L.Error(
+						"orchestratorclient: save external chat participant failed",
+						append(
+							logging.ErrAttrs(err),
+							"room_name", roomName,
+							"room_id", roomID,
+							"participant_identity", participantIdentity,
+						)...,
+					)
+					return
+				}
+
+				s.savedUsers.Store(participantIdentity, struct{}{})
+			}()
+		}
+	}
 
 	go func() {
 		ctx, cancel := context.WithTimeout(

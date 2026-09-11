@@ -103,6 +103,17 @@ class ParticipantJoinedRequest(BaseModel):  # type: ignore[explicit-any]
         return v
 
 
+class ParticipantChatRequest(ParticipantJoinedRequest):
+    """A participant discovered through an external chat message."""
+
+    username: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        description="Participant display name from the chat message",
+    )
+
+
 class ParticipantJoinedResponse(BaseModel):  # type: ignore[explicit-any]
     """Result of a participant-joined notification."""
 
