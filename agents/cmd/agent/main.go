@@ -569,6 +569,46 @@ func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, member
 	for _, m := range members {
 		s.peerAgent.UpsertRoster(m)
 	}
+
+	if s.orch == nil {
+		return
+	}
+
+	participantIdentities := make([]string, 0, len(members))
+
+	for _, member := range members {
+		participantIdentities = append(
+			participantIdentities,
+			strconv.FormatInt(member.UserID, 10),
+		)
+	}
+
+	if len(participantIdentities) == 0 {
+		return
+	}
+
+	roomName := s.roomName
+	roomID := s.roomID
+
+	go func() {
+		ctx, cancel := context.WithTimeout(
+			context.Background(),
+			orchestratorCallTimeout,
+		)
+		defer cancel()
+
+		if err := s.orch.ParticipantSnapshot(
+			ctx,
+			roomName,
+			roomID,
+			participantIdentities,
+		); err != nil {
+			logging.L.Error(
+				"orchestratorclient: participant_snapshot failed",
+				append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID)...,
+			)
+		}
+	}()
 }
 
 func (s *session) onPeerJoined(participantCount int, peer signaling.Member) {
