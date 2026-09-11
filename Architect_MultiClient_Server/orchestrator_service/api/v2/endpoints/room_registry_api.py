@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.room_registry_models import (
+    ParticipantChatRequest,
     ParticipantJoinedRequest,
     ParticipantJoinedResponse,
     ParticipantSnapshotRequest,
@@ -163,6 +164,30 @@ async def participant_joined(
         username=username,
     ):
         raise HTTPException(status_code=500, detail="Failed to persist participant")
+
+    return ParticipantJoinedResponse(
+        status="ok",
+        room_name=request.room_name,
+        room_id=request.room_id,
+        participant_identity=request.participant_identity,
+    )
+
+
+@router.post("/external/participant-chat", response_model=ParticipantJoinedResponse)
+async def external_participant_chat(
+    request: ParticipantChatRequest,
+    auth: dict[str, str | bool] = Depends(verify_api_key),
+) -> ParticipantJoinedResponse:
+    """Persist one participant discovered through a room chat message."""
+    if not await transcription_service.force_save_participant(
+        room_id=request.room_id,
+        participant_identity=request.participant_identity,
+        username=request.username,
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to persist external chat participant",
+        )
 
     return ParticipantJoinedResponse(
         status="ok",

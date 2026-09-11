@@ -220,6 +220,63 @@ func (c *Client) ParticipantJoined(ctx context.Context, roomName, roomID, partic
 	return nil
 }
 
+type participantChatResponse struct {
+	Status string `json:"status"`
+}
+
+// SaveExternalChatParticipant persists one participant discovered through
+// an incoming SFU room_message. It succeeds only when the orchestrator
+// response contains {"status":"ok"}.
+func (c *Client) SaveExternalChatParticipant(
+	ctx context.Context,
+	roomName string,
+	roomID string,
+	participantIdentity string,
+	username string,
+) error {
+	body, err := json.Marshal(map[string]string{
+		"room_name":            roomName,
+		"room_id":              roomID,
+		"participant_identity": participantIdentity,
+		"username":             username,
+	})
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: encode external chat participant: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/api/v2/room-registry/external/participant-chat",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: build external chat participant request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.authHeader(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: external chat participant: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("orchestratorclient: external chat participant: HTTP %d", resp.StatusCode)
+	}
+
+	var result participantChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("orchestratorclient: decode external chat participant response: %w", err)
+	}
+	if result.Status != "ok" {
+		return fmt.Errorf("orchestratorclient: unexpected external chat participant status %q", result.Status)
+	}
+
+	return nil
+}
+
 func (c *Client) PushChatExternal(ctx context.Context, roomName, roomID, participantIdentity, message, timeStr string) error {
 	payload := map[string]string{
 		"room_name":            roomName,

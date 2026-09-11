@@ -150,6 +150,63 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to finalize room: {e}")
             return False
+        
+
+    async def force_save_participant(
+        self,
+        room_id: str,
+        participant_identity: str,
+        timestamp: datetime | None = None,
+        username: str | None = None,
+    ) -> bool:
+        """Replace an existing participant entry or append it when absent."""
+        session_factory = get_session_factory()
+        ts = timestamp or datetime.now(UTC)
+
+        new_participant = [
+            {
+                "participant_identity": participant_identity,
+                "username": username,
+                "timestamp": ts.isoformat(),
+            }
+        ]
+
+        try:
+            async with session_factory() as session:
+                stmt = (
+                    update(Room)
+                    .where(Room.id == room_id)
+                    .values(
+                        participants=text(
+                            """
+                            (
+                                SELECT COALESCE(
+                                    jsonb_agg(item.value ORDER BY item.position),
+                                    '[]'::jsonb
+                                )
+                                FROM jsonb_array_elements(
+                                    COALESCE(participants, '[]'::jsonb)
+                                ) WITH ORDINALITY AS item(value, position)
+                                WHERE item.value->>'participant_identity'
+                                    <> :participant_identity
+                            )
+                            || CAST(:new_participant AS jsonb)
+                            """
+                        ).bindparams(
+                            participant_identity=participant_identity,
+                            new_participant=json.dumps(new_participant),
+                        )
+                    )
+                )
+
+                await session.execute(stmt)
+                await session.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to force-save participant: {e}")
+            return False
+
+
 
     async def save_participant(
         self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None
@@ -175,6 +232,7 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to save participant: {e}")
             return False
+    
 
     # TODO: Use `Any` type because `room_participants` input field from generate_summary() in SummaryService
     # has list[dict[str, Any]] type
