@@ -69,7 +69,7 @@
 
 | # | Chức năng dùng | Cách dùng hiện tại | mezon-sfu | Ghi chú |
 |---|---|---|---|---|
-| A5.1 | `room.on("data_received")`, topic `lk-chat-topic` | `datachannel_dispatcher.py`, `main.py:122` | ❌ Chưa có | Không có SCTP/DataChannel trong source (đã grep xác nhận không có dòng nào) |
+| A5.1 | `room.on("data_received")`, topic `lk-chat-topic` | `datachannel_dispatcher.py`, `main.py:122` | ⚠️ Một nửa | Không có SCTP/DataChannel. **[2026-09-10]** SFU commit `c41e59b` thêm WS `send_message` → broadcast `room_message` cho peer khác: đủ cho **outbound** (agent gửi chat, đã implement — `signaling.Client.SendRoomMessage`, xem plan mục 2.6). **Inbound** (nghe chat) vẫn cần conbot (2.6b) — `room_message` chỉ tới peer đang join SFU. |
 | A5.2 | `local_participant.publish_data(...)` | Gửi trạng thái ngược — `tts_manager.py:321` | ❌ Chưa có | Cùng lý do A5.1 |
 
 ### A6. Admin/Management API
@@ -113,6 +113,7 @@ Theo `audio-ingestion/PLAN.md`, đã thay `LiveKit Egress` bằng gRPC `agent �
 - Agent join `role:"speaker"` để publish TTS (A4.2) — có bị tính như 1 người tham gia bình thường không (chiếm slot, xuất hiện trong `room_snapshot`/`peer_joined` của người dùng thật, echo hook event `publish` như người thật)? Vẫn chưa có khái niệm "kind" cho bot (A1.2) — **còn mở**. **[Cập nhật 2026-08-24]** Team đồng ý: minor, để làm sau, không block.
 - Uplink tối đa mỗi peer = audio + camera + screen (`SFU_MAX_UPLINK_TRANSCEIVERS=3`) — agent chỉ publish audio có được không, hay bắt buộc mở đủ m-line theo offer mẫu? — **còn mở**. **[Cập nhật 2026-08-24]** Đã có quy trình test riêng cho luồng TTS/uplink độc lập với chat/STT — xem `mezon-sfu-migration-plan.md` mục 2.5 (dùng sẵn `POST /dispatch/agent-request` + `tools/webrtc_test_client.html`, không cần API mới).
 - **Data channel (A5): vẫn chưa có** — có kế hoạch thêm không, hay chat/text phải đi qua kênh hoàn toàn khác ngoài SFU? — **còn mở, ưu tiên cao**. **[Cập nhật 2026-08-24] Đã chốt hướng**: SFU thuần meeting, sẽ KHÔNG có data channel. Mezon tự lo chat qua 1 "conbot" join thẳng room chat Mezon (ngoài SFU) — kiến trúc đang research, xem `mezon-sfu-migration-plan.md` mục 2.6b. Outbound (agent → chat) đã có sẵn đường dây nửa chừng (`send_chat_message` ở orchestrator, chỉ thiếu implement handler phía agent); inbound (nghe chat) mới thật sự cần thiết kế mới, đang chờ xác nhận Mezon chat/bot API có multiplex nhiều room trên 1 session không trước khi chọn kiến trúc.
+  - **[Cập nhật 2026-09-10]** SFU commit `c41e59b` thêm WS `send_message` (broadcast `room_message` cho peer khác trong room). **Outbound đã xong**: `send_chat_message` giờ đi orchestrator SSE → agent handler → `signaling.Client.SendRoomMessage` → WS SFU (không qua agents-bot nữa, đã xoá dead code). Inbound vẫn nguyên trạng — conbot (2.6b) vì `room_message` không thay được việc đọc kênh chat Mezon thật.
 
 ### B3. Event agent thoát room / event participant — **đã được trả lời phần lớn bởi update 08-14**
 
