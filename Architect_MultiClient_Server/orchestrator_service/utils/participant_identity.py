@@ -144,20 +144,20 @@ def format_key_discussions(discussions: list[str]) -> list[str]:
 
     formatted = []
     pattern = re.compile(r'^\[([^\]]+)\]\s*(.*)')
-    
+
     for item in discussions:
         cleaned_item = item.strip()
         if not cleaned_item:
             continue
-            
+
         match = pattern.match(cleaned_item)
         if match:
             title = match.group(1).strip()
             content = match.group(2).strip()
-            
+
             formatted.append(f"- {title}: {content}")
         else:
             formatted.append(f"- {cleaned_item}" if not cleaned_item.startswith("-") else cleaned_item)
-                
+
     return formatted
 

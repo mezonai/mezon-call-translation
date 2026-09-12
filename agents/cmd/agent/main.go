@@ -1,0 +1,823 @@
+// Command agent is the per-room mezon-sfu WebRTC client. It is spawned as a
+// subprocess by the orchestrator's worker manager (mezon-sfu-migration-plan.md
+// section 1) and does not know or care what triggered the spawn -- it only
+// reads room_id/role/jwt_secret/user_id from the environment (internal/config),
+// joins the room, and keeps the session alive until the process is killed or
+// the WS session dies.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
+	"github.com/pion/webrtc/v4"
+
+	"github.com/mezonai/mezon-call-translation/agents/internal/agentcontrol"
+	"github.com/mezonai/mezon-call-translation/agents/internal/agentsbotclient"
+	"github.com/mezonai/mezon-call-translation/agents/internal/audiopipeline"
+	"github.com/mezonai/mezon-call-translation/agents/internal/config"
+	"github.com/mezonai/mezon-call-translation/agents/internal/logging"
+	"github.com/mezonai/mezon-call-translation/agents/internal/orchestratorclient"
+	"github.com/mezonai/mezon-call-translation/agents/internal/reconnect"
+	"github.com/mezonai/mezon-call-translation/agents/internal/recordclient"
+	"github.com/mezonai/mezon-call-translation/agents/internal/rtcagent"
+	"github.com/mezonai/mezon-call-translation/agents/internal/sfuauth"
+	"github.com/mezonai/mezon-call-translation/agents/internal/signaling"
+	"github.com/mezonai/mezon-call-translation/agents/internal/tracksink"
+	"github.com/mezonai/mezon-call-translation/agents/internal/ttsclient"
+	"github.com/mezonai/mezon-call-translation/agents/internal/ttsplayer"
+)
+
+// orchestratorCallTimeout bounds the register/unregister-room HTTP calls.
+// Small on purpose: guards against orchestrator/network being slow, not
+// genuinely necessary work -- a call that would succeed in 5s but not 3s
+// isn't worth optimizing for, and one to a genuinely down orchestrator won't
+// succeed no matter how long we wait (both calls already degrade gracefully
+// on failure rather than blocking startup/shutdown, see their call sites).
+const orchestratorCallTimeout = 3 * time.Second
+
+// sseRequestTypeSendChatMessage is the orchestrator SSE agent-request type
+// that asks this agent to post a room chat message. Deliberately a
+// different string from the mezon-sfu WS wire type the agent then sends
+// ("send_message", signaling.wireTypeSendMessage) -- one is the
+// orchestrator contract (kept stable so the caller side isn't affected),
+// the other is the SFU protocol; they are not renamed together.
+const sseRequestTypeSendChatMessage = "send_chat_message"
+
+func main() {
+	// Best-effort: only matters when bin/agent is run standalone for
+	// debugging (bypassing worker-manager) -- worker-manager already loads
+	// its own .env and passes the relevant vars through explicitly
+	// (internal/workermanager/config.go's agentPassthroughEnvKeys), so this
+	// is a no-op duplicate in that path, not a conflicting second source.
+	_ = godotenv.Load()
+
+	cfg, err := config.FromEnv()
+	if err != nil {
+		logging.L.Error("config: failed to load", logging.ErrAttrs(err)...)
+		os.Exit(1)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// MaxLifetime: self-imposed upper bound on how long this agent runs, tied
+	// to call/pricing plans (mezon-sfu-migration-plan.md). Firing this just
+	// cancels the same ctx SIGINT/SIGTERM already cancels -- same
+	// graceful-shutdown path, not a separate one. Deliberately enforced here
+	// (inside the agent itself) rather than by worker-manager watching a
+	// clock: worker-manager can be down when the deadline is reached (the
+	// restart-recovery gap this plan section exists for) or this agent may
+	// have been adopted (reconcile.go) by an instance that never even
+	// witnessed its actual start time -- a timer living in this process
+	// works regardless. See config.Config.MaxLifetime's doc for why no
+	// second "did shutdown actually finish" backstop timer is layered on top
+	// of this: every step of the shutdown path is already individually
+	// bounded, so plain ctx cancellation is enough.
+	if cfg.MaxLifetime > 0 {
+		maxLifetimeTimer := time.AfterFunc(cfg.MaxLifetime, func() {
+			logging.L.Warn("agent: max lifetime reached, shutting down", "max_lifetime", cfg.MaxLifetime)
+			stop()
+		})
+		defer maxLifetimeTimer.Stop()
+	}
+
+	// SIGUSR1 is worker-manager's Pdeathsig (internal/workermanager's
+	// manager.go Start, set on the agent's SysProcAttr) -- kernel-delivered
+	// the instant worker-manager dies, no polling. Handled separately from
+	// the SIGINT/SIGTERM context above: purely observational for now (this
+	// agent keeps serving its room regardless of whether worker-manager is
+	// alive), not a shutdown trigger. See internal/agentcontrol's package
+	// doc for the bigger picture (mezon-sfu-migration-plan.md.
+	parentDeathCh := make(chan os.Signal, 1)
+	signal.Notify(parentDeathCh, syscall.SIGUSR1)
+	go func() {
+		for range parentDeathCh {
+			logging.L.Warn("agent: worker-manager died (SIGUSR1/Pdeathsig), waiting for a new one to reconnect")
+		}
+	}()
+
+	// Best-effort, same posture as recordclient/orchestrator below: a
+	// worker-manager restart-recovery socket that fails to open must not
+	// stop the agent from joining the room, just disable that recovery
+	// path for this run (Phase 3, which would actually dial back in, isn't
+	// implemented yet anyway -- see internal/agentcontrol's package doc).
+	if ln, lnErr := agentcontrol.Listen(cfg.ControlSocketDir, cfg.RoomID); lnErr != nil {
+		logging.L.Error("agentcontrol: failed to open control socket, worker-manager restart recovery unavailable this run",
+			append(logging.ErrAttrs(lnErr), "dir", cfg.ControlSocketDir)...)
+	} else {
+		defer func() { _ = ln.Close() }()
+		go agentcontrol.Serve(ln)
+	}
+
+	// Recording is best-effort (audio-ingestion/PLAN.md D5): a dial failure
+	// here must not stop the agent from joining the room, just disable
+	// forwarding for this run.
+	recClient, recErr := recordclient.Dial(cfg.RecordService.GRPCAddr)
+	if recErr != nil {
+		logging.L.Error("recordclient: failed to dial record-service, recording disabled for this run",
+			append(logging.ErrAttrs(recErr), "grpc_addr", cfg.RecordService.GRPCAddr)...)
+		recClient = nil
+	} else {
+		defer func() { _ = recClient.Close() }()
+	}
+
+	// refs holds the *current* session's bridge/player -- both are rebuilt
+	// on every reconnect (see runSession), but the orchestrator SSE
+	// listener below is started once and outlives every individual
+	// mezon-sfu session, so its handlers need a way to reach "whatever
+	// session is live right now" (or no-op if none is, e.g. mid-reconnect).
+	refs := &sessionRefs{}
+
+	// Agents-bot client for registering active rooms used by chat forwarding.
+	// nil if AGENTS_BOT_BASE_URL is not set.
+	var agentsBotClient *agentsbotclient.Client
+	if cfg.AgentsBot.BaseURL != "" {
+		agentsBotClient = agentsbotclient.New(cfg.AgentsBot.BaseURL)
+		logging.L.Info("agentsbotclient: configured", "base_url", cfg.AgentsBot.BaseURL)
+	} else {
+		logging.L.Info("agentsbotclient: AGENTS_BOT_BASE_URL not set, running without chat forwarding registration")
+	}
+
+	var orch *orchestratorclient.Client
+	if cfg.Orchestrator.BaseURL != "" {
+		orch = orchestratorclient.New(cfg.Orchestrator.BaseURL, cfg.Orchestrator.APIKey)
+		registerRequestHandlers(orch, refs, cfg)
+
+		go func() {
+			agentID := strconv.FormatInt(cfg.AgentUserID, 10)
+			// room_name: see internal/orchestratorclient's package doc --
+			// this is room_id as a decimal string, an assumption pending
+			// confirmation from the orchestrator side, not a settled contract.
+			roomName := strconv.FormatUint(cfg.RoomID, 10)
+			if err := orch.RunAgentRequestListener(ctx, agentID, roomName); err != nil && ctx.Err() == nil {
+				logging.L.Error("orchestratorclient: sse listener exited unexpectedly", logging.ErrAttrs(err)...)
+			}
+		}()
+	} else {
+		logging.L.Info("orchestratorclient: ORCHESTRATOR_BASE_URL not set, running without TTS trigger/transcript push/transcript_control")
+	}
+
+	err = run(ctx, stop, cfg, recClient, orch, agentsBotClient, refs)
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, context.Canceled):
+		// Graceful shutdown (SIGINT/SIGTERM, e.g. worker manager's Stop()) --
+		// not a failure. Exiting 0 here matters: workermanager.reap logs the
+		// exit and this is what lets it (and anything else watching this
+		// process) tell "asked to leave" apart from "gave up"/crashed.
+		logging.L.Info("agent: stopped", "reason", "context canceled")
+	default:
+		logging.L.Error("agent: exiting", logging.ErrAttrs(err)...)
+		os.Exit(1)
+	}
+}
+
+// sessionRefs is how the long-lived orchestrator SSE listener's handlers
+// reach the current mezon-sfu session's audiopipeline.Bridge/ttsplayer.Player
+// -- all nil between sessions (mid-reconnect) or if the corresponding
+// feature isn't active this run (e.g. no Player unless Role is "speaker").
+type sessionRefs struct {
+	mu     sync.Mutex
+	bridge *audiopipeline.Bridge
+	player *ttsplayer.Player
+	// sigClient is the current session's WS client -- set right after
+	// signaling.Dial succeeds (before onJoined), cleared by session.close.
+	// The send_chat_message handler writes room messages through it; nil
+	// means "no live session", handled the same as a nil bridge/player.
+	sigClient *signaling.Client
+}
+
+func (r *sessionRefs) set(bridge *audiopipeline.Bridge, player *ttsplayer.Player) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bridge, r.player = bridge, player
+}
+
+func (r *sessionRefs) get() (*audiopipeline.Bridge, *ttsplayer.Player) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.bridge, r.player
+}
+
+func (r *sessionRefs) setSignalingClient(c *signaling.Client) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sigClient = c
+}
+
+func (r *sessionRefs) signalingClient() *signaling.Client {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sigClient
+}
+
+// registerRequestHandlers wires the orchestrator SSE agent-request types
+// this agent acts on: tts_play drives ttsplayer.Player.Speak,
+// transcript_control drives audiopipeline.Bridge.SetSTTEnabled, and
+// send_chat_message posts a room chat message via the WS session
+// (signaling.Client.SendRoomMessage). cfg supplies the chat sender
+// identity (id/name/avatar) stamped on send_chat_message.
+func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs, cfg config.Config) {
+	orch.RegisterHandler("tts_play", func(payload map[string]any) error {
+		_, player := refs.get()
+		if player == nil {
+			return fmt.Errorf("no active speaker-role session to play TTS into")
+		}
+		text, _ := payload["text"].(string)
+		if strings.TrimSpace(text) == "" {
+			return fmt.Errorf("missing/empty text")
+		}
+		voice, _ := payload["voice"].(string)
+		speed, _ := payload["speed"].(float64)
+		player.Speak(text, voice, speed)
+		return nil
+	})
+
+	orch.RegisterHandler("transcript_control", func(payload map[string]any) error {
+		bridge, _ := refs.get()
+		if bridge == nil {
+			return fmt.Errorf("no active session")
+		}
+		action, _ := payload["action"].(string)
+		switch action {
+		case "enable":
+			bridge.SetSTTEnabled(true)
+		case "disable":
+			bridge.SetSTTEnabled(false)
+		default:
+			return fmt.Errorf("unknown action %q (want \"enable\" or \"disable\")", action)
+		}
+		return nil
+	})
+
+	orch.RegisterHandler(sseRequestTypeSendChatMessage, func(payload map[string]any) error {
+		sig := refs.signalingClient()
+		if sig == nil {
+			return fmt.Errorf("no active session to send a room message into")
+		}
+		text, _ := payload["message"].(string)
+		// Best-effort per the plan: SendRoomMessage validates and writes the
+		// frame, but the SFU may still reject it (e.g. peer not fully joined
+		// yet -> "must_join_room_first"), which surfaces only as a logged
+		// signaling handler error, not here.
+		return sig.SendRoomMessage(signaling.RoomMessage{
+			ID:        strconv.FormatInt(cfg.AgentUserID, 10),
+			Name:      cfg.ChatName,
+			Avatar:    cfg.ChatAvatarURL,
+			Timestamp: time.Now().UnixMilli(),
+			Content:   text,
+		})
+	})
+}
+
+// run keeps a mezon-sfu session alive, retrying with backoff after a
+// session dies (see config.ReconnectConfig for why this is a full rejoin,
+// not a resume, and what it is not a substitute for). It only returns once
+// ctx is cancelled (graceful shutdown, e.g. worker manager sent SIGTERM --
+// no point retrying that) or the retry budget is exhausted.
+func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs) error {
+	backoff := reconnect.New(cfg.Reconnect)
+
+	for {
+		start := time.Now()
+		err := runSession(ctx, stop, cfg, recClient, orch, agentsBotClient, refs)
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err == nil {
+			// runSession blocks until error or ctx cancellation; a nil
+			// return with ctx still live shouldn't happen, but treat it as
+			// a terminal success rather than looping forever.
+			return nil
+		}
+
+		if time.Since(start) >= cfg.Reconnect.StableAfter {
+			backoff.Reset()
+		}
+
+		delay, ok := backoff.Next()
+		if !ok {
+			return fmt.Errorf("agent: giving up after %d reconnect attempt(s), last error: %w", backoff.Attempts(), err)
+		}
+
+		logging.L.Warn("agent: session ended, will reconnect",
+			append(logging.ErrAttrs(err), "attempt", backoff.Attempts(), "max_attempts", cfg.Reconnect.MaxAttempts, "retry_in", delay)...)
+
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// runSession performs one full join: sign a fresh JWT, dial, complete the
+// handshake, and block until the session ends (WS error/close) or ctx is
+// cancelled. Every call builds a brand new session -- mezon-sfu ties the
+// media session to the WS connection 1:1, so there is nothing to resume
+// from a previous attempt, and mid numbering restarts from scratch too.
+func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs) error {
+	token, err := sfuauth.SignJoinToken(cfg.JWTSecret, cfg.AgentUserID, cfg.RoomID, cfg.TokenTTL)
+	if err != nil {
+		return err
+	}
+
+	// roomName: see orchestratorclient's package doc -- mezon-sfu's own
+	// numeric room_id, used as room_name everywhere the old contract wanted
+	// one. roomID: orchestrator's own UUID for this session, minted and
+	// registered below (or roomName itself as a degrade fallback) -- these
+	// are two different identifiers, do not conflate them.
+	roomName := strconv.FormatUint(cfg.RoomID, 10)
+	roomID := registerRoomWithOrchestrator(ctx, orch, roomName)
+
+	sess := newSession(cfg, recClient, orch, refs, roomName, roomID, stop)
+
+	// Register room with agents-bot so it knows which channels to forward.
+	if agentsBotClient != nil {
+		gwCtx, gwCancel := context.WithTimeout(ctx, orchestratorCallTimeout)
+		err := agentsBotClient.RegisterRoom(gwCtx, roomName, roomID)
+		gwCancel()
+		if err != nil {
+			logging.L.Error("agentsbotclient: register_room failed", append(logging.ErrAttrs(err), "room_name", roomName)...)
+		} else {
+			logging.L.Info("agentsbotclient: room registered", "room_name", roomName, "room_id", roomID)
+			// Keep agents-bot cleanup local to this integration. This defer is
+			// installed before Dial so a failed SFU connection cannot leave a
+			// stale chat-forwarding registration behind.
+			defer func() {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
+				defer cleanupCancel()
+				if err := agentsBotClient.UnregisterRoom(cleanupCtx, roomName, roomID); err != nil {
+					logging.L.Error(
+						"agentsbotclient: unregister_room failed",
+						append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID)...,
+					)
+				}
+			}()
+		}
+	}
+
+	client, err := signaling.Dial(ctx, cfg.SFUWebSocketURL, token, string(cfg.Role), sess.callbacks())
+	if err != nil {
+		return err
+	}
+	// Expose this session's WS client to the long-lived SSE handlers (the
+	// send_chat_message handler writes room messages through it). Cleared by
+	// sess.close() in the defer below.
+	refs.setSignalingClient(client)
+	defer func() {
+		sess.close()
+		_ = client.Close()
+	}()
+
+	logging.L.Info("agent: dialed mezon-sfu, awaiting handshake",
+		"ws_url", cfg.SFUWebSocketURL, "room_id", cfg.RoomID, "orchestrator_room_id", roomID, "role", cfg.Role, "agent_user_id", cfg.AgentUserID)
+
+	return client.Run(ctx)
+}
+
+// registerRoomWithOrchestrator mints a fresh UUID and registers it with
+// orchestrator as this session's stable room_id (see
+// orchestratorclient.Client.RegisterRoom's doc for why this matters -- it's
+// what lets record-service's recording events for this session resolve to
+// a real room instead of getting silently dropped). Mirrors the old Python
+// agent's main.go: called before dialing mezon-sfu, so room_id is already
+// in hand before any track can possibly start recording.
+//
+// orch nil (ORCHESTRATOR_BASE_URL unset) or a failed/unreachable register
+// call both degrade to using roomName itself as the room_id, matching the
+// old Python agent's fallback ("room_id stays None, downstream code falls
+// back to ctx.room.name") -- recording still proceeds, just without a shot
+// at resolving through orchestrator's registry either, same as before.
+func registerRoomWithOrchestrator(ctx context.Context, orch *orchestratorclient.Client, roomName string) string {
+	if orch == nil {
+		return roomName
+	}
+	agentRoomID := uuid.NewString()
+	rctx, cancel := context.WithTimeout(ctx, orchestratorCallTimeout)
+	defer cancel()
+	if err := orch.RegisterRoom(rctx, roomName, agentRoomID); err != nil {
+		logging.L.Warn("orchestratorclient: register_room failed, recording events for this session may not resolve",
+			append(logging.ErrAttrs(err), "room_name", roomName)...)
+		return roomName
+	}
+	return agentRoomID
+}
+
+// session holds the mutable state of a single mezon-sfu join --
+// rtcagent.PeerAgent and (if speaking) ttsplayer.Player -- and is the
+// receiver for every signaling.Callbacks hook. Bundling these as fields
+// instead of closure-captured locals means the state each handler reads is
+// explicit and the handlers are independently readable/testable, rather
+// than a block of nested funcs all reaching into the same captured
+// variables.
+//
+// No locking needed: every signaling.Callbacks hook runs sequentially on
+// signaling.Client's single read-loop goroutine, and onJoined always fires
+// before onOffer per the join handshake order
+// (mezon-sfu-migration-checklist.md C.2).
+type session struct {
+	cfg       config.Config
+	recClient *recordclient.Client
+	orch      *orchestratorclient.Client
+	refs      *sessionRefs
+	// roomName/roomID: see runSession's comment at the call site and
+	// orchestratorclient's package doc -- two different identifiers, roomID
+	// is what record-service/TTS forwarding need, roomName is what
+	// push_transcript/SSE/STT use.
+	roomName string
+	roomID   string
+	// Contains users successfully persisted through the external
+	// participant-chat endpoint.
+	savedUsers sync.Map // map[string]struct{}
+	// stop is the root ctx's cancel func (signal.NotifyContext in main) --
+	// checkEmptyRoom calls this directly, same as config.Config.MaxLifetime's
+	// timer, to end run()'s reconnect loop entirely rather than just this
+	// session (retrying into an empty room makes no sense).
+	stop context.CancelFunc
+
+	peerAgent *rtcagent.PeerAgent
+	player    *ttsplayer.Player
+
+	// emptyRoomTimer: see checkEmptyRoom's doc. nil whenever the room isn't
+	// currently down to just this agent.
+	emptyRoomTimer *time.Timer
+}
+
+func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs, roomName, roomID string, stop context.CancelFunc) *session {
+	return &session{cfg: cfg, recClient: recClient, orch: orch, refs: refs, roomName: roomName, roomID: roomID, stop: stop}
+}
+
+func (s *session) callbacks() signaling.Callbacks {
+	return signaling.Callbacks{
+		OnJoined:       s.onJoined,
+		OnOffer:        s.onOffer,
+		OnRoomSnapshot: s.onRoomSnapshot,
+		OnPeerJoined:   s.onPeerJoined,
+		OnPeerLeft:     s.onPeerLeft,
+		OnPeerUpdated:  s.onPeerUpdated,
+		OnRoomMessage:  s.onRoomMessage,
+	}
+}
+
+func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
+	logging.L.Info("signaling: joined", "room", room, "ice_servers", len(iceServers))
+
+	var publishTrack *webrtc.TrackLocalStaticSample
+	if s.cfg.Role == config.RoleSpeaker {
+		// Channels must be 2 here per RFC 7587 (Opus RTP payload format):
+		// the SDP rtpmap always declares 2 channels regardless of actual
+		// mono/stereo content -- mezon-sfu's offer says "opus/48000/2"
+		// (sdp.c) and so does pion's own default Opus registration
+		// (mediaengine.go). Actual mono output is unaffected: that's
+		// controlled by the (absent, so default) fmtp "stereo" param, not
+		// this field. Declaring Channels:1 here made pion's codec fuzzy
+		// match (internal/fmtp.ChannelsEqual) fail against the negotiated
+		// "opus/48000/2" codec -- Bind() would return ErrUnsupportedCodec
+		// even with a working encoder.
+		track, err := webrtc.NewTrackLocalStaticSample(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2},
+			"tts-audio", "agent-tts",
+		)
+		if err != nil {
+			logging.L.Error("ttsplayer: failed to create publish track, joining as audience instead", logging.ErrAttrs(err)...)
+		} else {
+			publishTrack = track
+		}
+	}
+
+	// Classic Go typed-nil-interface trap: rtcagent.New takes webrtc.TrackLocal
+	// (an interface), and publishTrack's static type is the concrete
+	// *webrtc.TrackLocalStaticSample -- passing a nil publishTrack straight
+	// through would implicitly wrap it into a non-nil interface (type set,
+	// value nil), so rtcagent.New's own `!= nil` check would see it as
+	// non-nil and call pc.AddTrack on a nil pointer (confirmed: panics
+	// inside pion's AddTrack -> TrackLocalStaticSample.Kind, nil receiver).
+	// Converting explicitly here, while publishTrack is still the concrete
+	// type, keeps the interface genuinely nil for the audience case.
+	var rtcPublishTrack webrtc.TrackLocal
+	if publishTrack != nil {
+		rtcPublishTrack = publishTrack
+	}
+	pa, err := rtcagent.New(iceServers, rtcPublishTrack)
+	if err != nil {
+		logging.L.Error("rtcagent: failed to create peer connection", logging.ErrAttrs(err)...)
+		return
+	}
+
+	// recordFactory/sttFactory are nil when that consumer is disabled for
+	// this run (see tracksink's constructors); newRecordSink/newSTTSink must
+	// stay nil funcs (not a method value bound to a nil receiver) in that
+	// case -- Bridge nil-checks the func itself before calling it.
+	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID)
+	sttFactory := tracksink.NewSTTSinkFactory(s.cfg, s.orch)
+	var newRecordSink, newSTTSink func(info rtcagent.TrackInfo) audiopipeline.Sink
+	if recordFactory != nil {
+		newRecordSink = recordFactory.NewSink
+	}
+	if sttFactory != nil {
+		newSTTSink = sttFactory.NewSink
+	}
+
+	bridge := audiopipeline.NewBridge(newRecordSink, newSTTSink)
+	pa.OnAudioPacket = bridge.HandlePacket
+	pa.OnTrackEnded = bridge.HandleTrackEnded
+
+	var player *ttsplayer.Player
+	if publishTrack != nil && s.orch != nil {
+		p, err := ttsplayer.New(publishTrack, ttsclient.New(s.cfg.TTSService.BaseURL), s.cfg.TTSService.SampleRate,
+			s.recClient, s.roomID, s.cfg.AgentUserID, s.cfg.TTSService.MaxQueueSize, s.orch)
+		if err != nil {
+			// Best-effort per audio-ingestion/PLAN.md D5 -- an encoder
+			// init failure (see internal/opusenc) must not stop the agent
+			// from joining and record/transcribing normally, just means it
+			// can't speak this session.
+			logging.L.Warn("ttsplayer: unavailable this session", logging.ErrAttrs(err)...)
+		} else {
+			player = p
+		}
+	}
+
+	s.peerAgent = pa
+	s.player = player
+	s.refs.set(bridge, player)
+}
+
+func (s *session) onOffer(sdp string) (string, error) {
+	if s.peerAgent == nil {
+		return "", errNoPeerAgent
+	}
+	return s.peerAgent.HandleOffer(sdp)
+}
+
+func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, members []signaling.Member) {
+	logging.L.Info("signaling: room_snapshot", "self_peer_id", selfPeerID, "participant_count", participantCount)
+	s.checkEmptyRoom(participantCount)
+	if s.peerAgent == nil {
+		return
+	}
+	for _, m := range members {
+		s.peerAgent.UpsertRoster(m)
+	}
+
+	if s.orch == nil {
+		return
+	}
+
+	participantIdentities := make([]string, 0, len(members))
+
+	for _, member := range members {
+		participantIdentities = append(
+			participantIdentities,
+			strconv.FormatInt(member.UserID, 10),
+		)
+	}
+
+	if len(participantIdentities) == 0 {
+		return
+	}
+
+	roomName := s.roomName
+	roomID := s.roomID
+
+	go func() {
+		ctx, cancel := context.WithTimeout(
+			context.Background(),
+			orchestratorCallTimeout,
+		)
+		defer cancel()
+
+		if err := s.orch.ParticipantSnapshot(
+			ctx,
+			roomName,
+			roomID,
+			participantIdentities,
+		); err != nil {
+			logging.L.Error(
+				"orchestratorclient: participant_snapshot failed",
+				append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID)...,
+			)
+		}
+	}()
+}
+
+func (s *session) onPeerJoined(participantCount int, peer signaling.Member) {
+	logging.L.Info("signaling: peer_joined", "user_id", peer.UserID, "role", peer.Role, "participant_count", participantCount)
+	s.checkEmptyRoom(participantCount)
+	if s.peerAgent != nil {
+		s.peerAgent.UpsertRoster(peer)
+	}
+	if s.orch == nil || peer.UserID <= 0 {
+		return
+	}
+
+	// Signaling callbacks run on one read-loop goroutine. Persisting the
+	// roster is best-effort and must not stall WebRTC renegotiation or later
+	// peer events while orchestrator/agents-bot is slow or temporarily down.
+	roomName, roomID, participantIdentity := s.roomName, s.roomID, strconv.FormatInt(peer.UserID, 10)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
+		defer cancel()
+		if err := s.orch.ParticipantJoined(ctx, roomName, roomID, participantIdentity); err != nil {
+			logging.L.Error(
+				"orchestratorclient: participant_joined failed",
+				append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID, "participant_identity", participantIdentity)...,
+			)
+		}
+	}()
+}
+
+func (s *session) onPeerLeft(ev signaling.PeerLeftEvent) {
+	logging.L.Info("signaling: peer_left", "user_id", ev.UserID, "participant_count", ev.ParticipantCount)
+	s.checkEmptyRoom(ev.ParticipantCount)
+	if s.peerAgent != nil {
+		s.peerAgent.RemovePeer(ev.UserID)
+	}
+}
+
+// checkEmptyRoom implements EmptyRoomGrace (config.Config's doc has the
+// business rationale): called from every roster-changing callback
+// (onRoomSnapshot/onPeerJoined/onPeerLeft) with mezon-sfu's own
+// participant_count, which already counts this agent same as any real user
+// (mezon-sfu/CLAUDE.md section 9 -- "no bot participant kind, a bot looks
+// like any other user in the roster"). So participantCount <= 1 means this
+// agent is the only one left.
+//
+// A grace timer, not an immediate stop(): participant_count also dips on a
+// transient reconnect (the last human's own client blipping), not just a
+// deliberate leave. If a peer_joined arrives before the timer fires, it's
+// cancelled -- same person reconnecting or someone else joining both count.
+//
+// Deliberately much shorter than this agent's own Reconnect budget
+// (internal/reconnect, ~2-3 minutes worst case with defaults) -- the two
+// are independent, not layered: this only ever runs while *this* agent's own
+// WS session is alive and receiving events; if the agent's own connection
+// drops instead, this whole session (and any pending emptyRoomTimer) is
+// torn down via close() below before the *outer* run() reconnect loop even
+// starts a retry, so the two budgets never compound or race against each
+// other.
+//
+// No locking needed for the field itself, same invariant as the rest of
+// session -- every call here runs on signaling.Client's single read-loop
+// goroutine. The timer's own fired callback runs on a *different* goroutine
+// (time.AfterFunc), which is exactly why it only calls s.stop() (already
+// safe to call from any goroutine, same as MaxLifetime's timer in main) and
+// touches no other session field.
+func (s *session) checkEmptyRoom(participantCount int) {
+	if s.cfg.EmptyRoomGrace <= 0 {
+		return
+	}
+	if participantCount > 1 {
+		if s.emptyRoomTimer != nil {
+			s.emptyRoomTimer.Stop()
+			s.emptyRoomTimer = nil
+		}
+		return
+	}
+	if s.emptyRoomTimer != nil {
+		return // already counting down
+	}
+	s.emptyRoomTimer = time.AfterFunc(s.cfg.EmptyRoomGrace, func() {
+		logging.L.Warn("agent: room empty except self past grace period, shutting down", "grace", s.cfg.EmptyRoomGrace)
+		s.stop()
+	})
+}
+
+func (s *session) onPeerUpdated(peer signaling.Member) {
+	logging.L.Info("signaling: peer_updated", "user_id", peer.UserID, "role", peer.Role, "is_mute", peer.IsMute)
+	if s.peerAgent != nil {
+		s.peerAgent.UpsertRoster(peer)
+	}
+}
+
+func (s *session) onRoomMessage(message signaling.RoomMessage, userID string) {
+	if s.orch == nil {
+		return
+	}
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(message.Content) == "" {
+		return
+	}
+	timeStr := ""
+	if message.Timestamp > 0 {
+		timeStr = time.UnixMilli(message.Timestamp).UTC().Format(time.RFC3339Nano)
+	}
+
+	orch := s.orch
+	roomName := s.roomName
+	roomID := s.roomID
+	participantIdentity := userID
+	content := message.Content
+	username := strings.TrimSpace(message.Name)
+
+	// Persist a chat participant once per successfully saved user ID. Multiple
+	// requests may be in flight before the first success; the database write is
+	// idempotent, and only a confirmed {"status":"ok"} is cached.
+	if username != "" {
+		if _, saved := s.savedUsers.Load(participantIdentity); !saved {
+			go func() {
+				ctx, cancel := context.WithTimeout(
+					context.Background(),
+					orchestratorCallTimeout,
+				)
+				defer cancel()
+
+				err := orch.SaveExternalChatParticipant(
+					ctx,
+					roomName,
+					roomID,
+					participantIdentity,
+					username,
+				)
+				if err != nil {
+					logging.L.Error(
+						"orchestratorclient: save external chat participant failed",
+						append(
+							logging.ErrAttrs(err),
+							"room_name", roomName,
+							"room_id", roomID,
+							"participant_identity", participantIdentity,
+						)...,
+					)
+					return
+				}
+
+				s.savedUsers.Store(participantIdentity, struct{}{})
+			}()
+		}
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(
+			context.Background(),
+			orchestratorCallTimeout,
+		)
+		defer cancel()
+
+		err := orch.PushChatExternal(ctx, roomName, roomID, participantIdentity, content, timeStr)
+		if err != nil {
+			logging.L.Error(
+				"orchestratorclient: push_chat_external failed",
+				append(
+					logging.ErrAttrs(err),
+					"room_name", roomName,
+					"room_id", roomID,
+					"participant_identity", participantIdentity,
+				)...,
+			)
+		}
+	}()
+}
+
+// close releases this session's resources, clears refs so the long-lived
+// orchestrator SSE handlers stop seeing it as the active session, and
+// unregisters the room from orchestrator (see RegisterRoom's doc for what
+// that triggers -- room finalization/summary generation). Safe to call even
+// if onJoined never fired (peerAgent/player stay nil) or registration never
+// succeeded (roomID falls back to roomName -- unregistering that is a
+// harmless no-op orchestrator-side, matching the old Python agent, which
+// always called unregister_room in its cleanup path regardless).
+func (s *session) close() {
+	// Must happen before anything else that could block/take time below --
+	// this session is going away regardless of why (graceful stop, WS
+	// death, about to reconnect into a brand new session); an
+	// emptyRoomTimer left running from it would otherwise outlive it and
+	// could fire s.stop() later on top of an unrelated, healthy reconnect.
+	// See checkEmptyRoom's doc.
+	if s.emptyRoomTimer != nil {
+		s.emptyRoomTimer.Stop()
+		s.emptyRoomTimer = nil
+	}
+	s.refs.set(nil, nil)
+	s.refs.setSignalingClient(nil)
+	if s.peerAgent != nil {
+		_ = s.peerAgent.Close()
+	}
+	if s.player != nil {
+		s.player.Close()
+	}
+	if s.orch != nil {
+		// context.Background(), not runSession's ctx: this typically runs
+		// during shutdown (SIGTERM), by which point that ctx is already
+		// cancelled -- same pattern as transcriptForwarder.push.
+		uctx, cancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
+		defer cancel()
+		if err := s.orch.UnregisterRoom(uctx, s.roomName, s.roomID); err != nil {
+			logging.L.Warn("orchestratorclient: unregister_room failed", append(logging.ErrAttrs(err), "room_name", s.roomName)...)
+		}
+	}
+}
+
+var errNoPeerAgent = errors.New("received offer before joined/peer-connection setup completed")

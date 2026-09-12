@@ -4,10 +4,10 @@ This directory contains scripts to help you set up and manage the Mezon Call Tra
 
 ## 📋 Available Scripts
 
-### 1. `setup.sh` - Complete Setup Script
+### 1. `setup.sh` / `setup.ps1` - Complete Setup Script
 
 Automates the entire setup process including:
-- ✅ Downloading Vosk and Kokoro models
+- ✅ Downloading Nemotron and Kokoro models on Linux
 - ✅ Backing up existing `.env` files
 - ✅ Creating `.env` files from `.env.example`
 - ✅ Updating model paths in `.env` files
@@ -22,8 +22,8 @@ Automates the entire setup process including:
 # Skip model downloads (if already downloaded)
 ./scripts/setup.sh --skip-models
 
-# Use specific Vosk model
-./scripts/setup.sh --vosk-model vosk-model-en-us-0.22
+# Use a different Nemotron model directory name
+./scripts/setup.sh --nemotron-model nemotron-3.5-asr-streaming-0.6b-onnx-int4
 
 # Download all Kokoro voices
 ./scripts/setup.sh --all-kokoro-voices
@@ -35,15 +35,55 @@ Automates the entire setup process including:
 ./scripts/setup.sh --skip-env
 ```
 
+Windows PowerShell:
+
+```powershell
+# Full setup with defaults
+.\scripts\setup.ps1
+
+# Install missing Python 3.12 and FFmpeg with winget first
+.\scripts\setup.ps1 -InstallDeps
+
+# Skip selected setup stages
+.\scripts\setup.ps1 -SkipModels
+.\scripts\setup.ps1 -SkipVenv
+.\scripts\setup.ps1 -SkipEnv
+
+# The PowerShell setup still has legacy Vosk model logic. Skip that stage,
+# then use the Nemotron downloader from Git Bash or WSL as documented below.
+.\scripts\setup.ps1 -SkipModels
+python -m pip install "huggingface-hub>=0.24.0"
+bash ./scripts/download-nemotron-model.sh
+
+# Select Kokoro voices
+.\scripts\setup.ps1 -KokoroVoices 'af_heart,am_adam'
+.\scripts\setup.ps1 -AllKokoroVoices
+```
+
+The Windows setup requires the official 64-bit CPython 3.12 build. An
+MSYS2/MinGW Python installation is not used because it is incompatible with
+many standard Windows wheels. `-InstallDeps` installs the supported build.
+
+If script execution is disabled for the current PowerShell process, use:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup.ps1
+```
+
 #### Options
 
 - `--skip-models` - Skip model downloads
 - `--skip-venv` - Skip virtual environment setup
 - `--skip-env` - Skip .env file creation
-- `--vosk-model <name>` - Specify Vosk model name (default: vosk-model-small-en-us-0.15)
+- `--nemotron-model <name>` - Specify the Nemotron model directory name (default: `nemotron-3.5-asr-streaming-0.6b-onnx-int4`)
 - `--kokoro-voices <list>` - Comma-separated Kokoro voice names
 - `--all-kokoro-voices` - Download all Kokoro voices
 - `-h, --help` - Show help message
+
+PowerShell uses the corresponding `-SkipModels`, `-SkipVenv`, `-SkipEnv`,
+`-KokoroVoices`, `-AllKokoroVoices`, and `-InstallDeps` parameters. Use
+`download-nemotron-model.sh` separately for the Nemotron model.
 
 ---
 
@@ -132,7 +172,7 @@ Validates that all components are properly set up and running.
 #### What it checks
 
 - ✅ Python installation
-- ✅ Vosk and Kokoro models
+- ✅ Nemotron and Kokoro models
 - ✅ Service directories
 - ✅ Virtual environments
 - ✅ .env files
@@ -144,24 +184,78 @@ The script will provide a summary with passed, warning, and failed checks, along
 
 ---
 
-### 5. `download-vosk-model.sh` - Vosk Model Downloader
+### 5. `download-nemotron-model.sh` - Nemotron Model Downloader
 
-Downloads Vosk STT models.
+Downloads the ONNX INT4 Nemotron streaming STT model from Hugging Face. The
+script works on Linux, macOS, WSL, and Git Bash.
+
+#### Prerequisite
+
+```bash
+python -m pip install "huggingface-hub>=0.24.0"
+```
 
 #### Usage
 
 ```bash
-# Download default small model
-./scripts/download-vosk-model.sh
+# Download the default model to models/nemotron-model/
+bash scripts/download-nemotron-model.sh
 
-# Download large model
-./scripts/download-vosk-model.sh -m vosk-model-en-us-0.22
+# Select a different repository and local model directory name
+bash scripts/download-nemotron-model.sh \
+  --repository onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4 \
+  --model nemotron-3.5-asr-streaming-0.6b-onnx-int4
 
-# List available models
-./scripts/download-vosk-model.sh --list
+# Download under a different parent directory
+bash scripts/download-nemotron-model.sh --output /opt/mezon/models/nemotron-model
 
-# Force re-download
-./scripts/download-vosk-model.sh --force
+# Force a fresh download and replace the installed model only after success
+bash scripts/download-nemotron-model.sh --force
+
+# Show the configured repository and Nemotron model discovery link
+bash scripts/download-nemotron-model.sh --list
+```
+
+On Windows, run the shell script from WSL or Git Bash:
+
+```powershell
+python -m pip install "huggingface-hub>=0.24.0"
+bash ./scripts/download-nemotron-model.sh
+```
+
+The default result is:
+
+```text
+models/
+└── nemotron-model/
+    └── nemotron-3.5-asr-streaming-0.6b-onnx-int4/
+        ├── genai_config.json
+        ├── encoder.onnx
+        ├── encoder.onnx.data
+        ├── decoder.onnx
+        ├── decoder.onnx.data
+        ├── joint.onnx
+        ├── joint.onnx.data
+        └── tokenizer.json
+```
+
+Configure the STT service with either the default directory name:
+
+```dotenv
+NEMOTRON_MODEL_PATH=nemotron-3.5-asr-streaming-0.6b-onnx-int4
+```
+
+or an absolute path:
+
+```dotenv
+NEMOTRON_MODEL_PATH=/opt/mezon/models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4
+```
+
+Verify the download:
+
+```bash
+test -f models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4/genai_config.json \
+  && echo "Nemotron model found"
 ```
 
 ---
@@ -291,7 +385,7 @@ scripts/
 ├── create-systemd-services.sh         # Systemd service creator
 ├── manage-services.sh                 # Service management helper
 ├── health-check.sh                    # System health check
-├── download-vosk-model.sh             # Vosk model downloader
+├── download-nemotron-model.sh         # Nemotron model downloader
 ├── download-kokoro-model.sh           # Kokoro model downloader
 ```
 
@@ -325,13 +419,14 @@ scripts/
 
 1. Check if models are downloaded:
    ```bash
-   ls -la models/vosk-model/
+   ls -la models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4/
    ls -la models/kokoro_models/
    ```
 
 2. Re-download models:
    ```bash
-   ./scripts/download-vosk-model.sh --force
+   python -m pip install "huggingface-hub>=0.24.0"
+   bash scripts/download-nemotron-model.sh
    ./scripts/download-kokoro-model.sh --force
    ```
 
@@ -367,5 +462,5 @@ scripts/
 ## 🔗 Related Documentation
 
 - [Main Project README](../README.md)
-- [Vosk Models](https://alphacephei.com/vosk/models)
+- [Nemotron ONNX INT4 model](https://huggingface.co/onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4)
 - [Kokoro-82M TTS](https://huggingface.co/hexgrad/Kokoro-82M)

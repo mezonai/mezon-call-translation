@@ -18,50 +18,6 @@ except ImportError:
     pass
 
 
-@dataclass
-class LiveKitConfig:
-    """LiveKit server and API configuration"""
-
-    # Server URLs
-    url: str = ""  # WebSocket URL (wss://...)
-    http_url: str = ""  # HTTP URL for API calls
-
-    # API credentials
-    api_key: str = ""
-    api_secret: str = ""
-
-    # Agent configuration
-    agent_name: str = "vosk-agent"
-
-    # Webhook configuration (can use separate credentials)
-    webhook_api_key: str = ""
-    webhook_api_secret: str = ""
-    verify_webhooks: bool = True
-
-    # Recording
-    recordings_dir: str = "/recordings"
-
-    @classmethod
-    def from_env(cls) -> "LiveKitConfig":
-        """Create LiveKit config from environment variables"""
-        return cls(
-            url=os.getenv("LIVEKIT_URL", ""),
-            http_url=os.getenv("LIVEKIT_HTTP_URL", ""),
-            api_key=os.getenv("LIVEKIT_API_KEY", ""),
-            api_secret=os.getenv("LIVEKIT_API_SECRET", ""),
-            agent_name=os.getenv("LIVEKIT_AGENT_NAME", "vosk-agent"),
-            webhook_api_key=os.getenv("LIVEKIT_WEBHOOK_API_KEY", os.getenv("LIVEKIT_API_KEY", "")),
-            webhook_api_secret=os.getenv("LIVEKIT_WEBHOOK_API_SECRET", os.getenv("LIVEKIT_API_SECRET", "")),
-            verify_webhooks=os.getenv("LIVEKIT_VERIFY_WEBHOOKS", "true").lower() == "true",
-            recordings_dir=os.getenv("RECORDINGS_DIR", "/recordings"),
-        )
-
-    def validate(self) -> bool:
-        """Validate LiveKit configuration"""
-        # API key and secret are required
-        return bool(self.api_key and self.api_secret)
-
-
 # ============================================================================
 # PostgreSQL Configuration (primary database)
 # ============================================================================
@@ -501,6 +457,29 @@ class LightSummaryConfig:
 
 
 # ============================================================================
+# Agents Bot Configuration
+# ============================================================================
+
+
+@dataclass
+class AgentsBotConfig:
+    """
+    Base URL for the Go agents-bot service.
+
+    agents-bot owns the current voice-channel roster and user_id -> username
+    cache populated from Mezon events.
+    """
+
+    base_url: str = ""
+
+    @classmethod
+    def from_env(cls) -> "AgentsBotConfig":
+        return cls(
+            base_url=os.getenv("AGENTS_BOT_BASE_URL", "http://localhost:8003"),
+        )
+
+
+# ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
 
@@ -531,7 +510,6 @@ class Config:
         """
 
         # Load all configuration sections
-        self.livekit = LiveKitConfig.from_env()
         self.stt_service = STTServiceConfig.from_env()
         self.postgresql = PostgreSQLConfig.from_env()
         self.server = ServerConfig.from_env()
@@ -550,14 +528,13 @@ class Config:
         self.outbox = OutboxConfig.from_env()
         self.summary = SummaryConfig.from_env()
         self.light_summary = LightSummaryConfig.from_env()
+        self.agents_bot = AgentsBotConfig.from_env()
 
         self._initialized = True
         self._validate_all()
 
     def _validate_all(self) -> None:
         """Validate all configuration sections"""
-        if not self.livekit.validate():
-            raise ValueError("Invalid LiveKit configuration")
         if not self.minio.validate():
             raise ValueError("Invalid MinIO configuration")
         if not self.oauth2.validate():

@@ -66,10 +66,13 @@ class RecoverOrphanedSessions:
             if session.status in _NON_TERMINAL:
                 logger.warning(
                     "Session %s left in status=%s by a previous process instance -- "
-                    "finalizing with %d part(s) already uploaded",
+                    "finalizing with %d part(s) already uploaded (raw_bytes_received=%d, "
+                    "frames_received=%d)",
                     session.session_id,
                     session.status.value,
                     len(session.parts),
+                    session.raw_bytes_received,
+                    session.frames_received,
                 )
                 session.ended_at = session.ended_at or session.started_at
                 await complete_or_abort(session, self._blob_storage, self._policy)

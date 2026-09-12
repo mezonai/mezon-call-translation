@@ -103,6 +103,14 @@ class PendingTaskResponse(BaseModel):  # type: ignore[explicit-any]
     status: str = Field(default="pending", description="Task status")
 
 
+class PendingTaskListResponse(BaseModel): # type: ignore[explicit-any]
+    """Response model for pending task list."""
+
+    queue_name: str = Field(..., description="Queue identifier")
+    tasks: list[PendingTaskResponse] = Field(..., description="List of pending tasks")
+    count: int = Field(..., description="Number of pending tasks")
+
+
 class DLQTaskResponse(PendingTaskResponse):  # type: ignore[explicit-any]
     """Response model for DLQ task information."""
 
@@ -130,3 +138,9 @@ class DLQRetryAllResponse(DLQRetryBase):  # type: ignore[explicit-any]
     """Response model for bulk DLQ retry operation."""
 
     message: str = Field(..., description="Summary message")
+
+class QueueOverviewResponse(BaseModel):  # type: ignore[explicit-any]
+    """Response model for queue overview."""
+    queues: dict[str, QueueStatsResponse] = Field(..., description="Dictionary of queues")
+    count: int = Field(..., description="Number of queues")
+    timestamp: float = Field(..., description="Timestamp")

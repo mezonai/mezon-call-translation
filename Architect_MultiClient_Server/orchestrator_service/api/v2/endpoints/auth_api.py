@@ -11,31 +11,31 @@ Handles OAuth2 authentication flow with Mezon:
 
 """
 
-import re
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from orchestrator_service.auth.jwt_auth import JWTPayload, verify_jwt
 from orchestrator_service.models.auth_models import (
     BotLoginRequest,
     BotLoginResponse,
+    CurrentUserResponse,
     ExchangeCodeRequest,
     ExchangeCodeResponse,
     LogoutRequest,
+    LogoutResponse,
     RefreshTokenRequest,
     RefreshTokenResponse,
 )
 from orchestrator_service.services.auth_service import AuthService, get_auth_service
-from orchestrator_service.utils.logger import get_logger
-
-logger = get_logger(__name__)
 
 # Router
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 @router.post("/mezon/exchange", response_model=ExchangeCodeResponse)
-async def exchange_code_for_token(request: ExchangeCodeRequest, auth_service: AuthService = Depends(get_auth_service)):
+async def exchange_code_for_token(
+    request: ExchangeCodeRequest,
+    auth_service: AuthService = Depends(get_auth_service)
+) -> ExchangeCodeResponse:
     """
     Exchange authorization code for JWT token.
 
@@ -52,29 +52,14 @@ async def exchange_code_for_token(request: ExchangeCodeRequest, auth_service: Au
 
     Returns:
         ExchangeCodeResponse with JWT token and user information
-
-    Raises:
-        HTTPException: 400 if state invalid, 500 if OAuth2 exchange fails
     """
-    # Validate state parameter format (11 alphanumeric characters)
-    if not re.match(r"^[a-zA-Z0-9]{11}$", request.state):
-        logger.warning(f"Invalid state parameter format: {request.state}")
-        raise HTTPException(status_code=400, detail="Invalid state parameter. Must be 11 alphanumeric characters.")
-
-    try:
-        return await auth_service.exchange_code_for_token(request.code, request.state)
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error during OAuth2 exchange: {e}")
-        raise HTTPException(status_code=500, detail=f"Authentication failed: {e!s}") from e
+    return await auth_service.exchange_code_for_token(request.code,request.state)
 
 
-@router.get("/mezon/userinfo")
+@router.get("/mezon/userinfo", response_model=CurrentUserResponse)
 async def get_current_user(
     user: JWTPayload = Depends(verify_jwt), auth_service: AuthService = Depends(get_auth_service)
-):
+) -> CurrentUserResponse:
     """
     Get information about the currently authenticated user.
 
@@ -90,17 +75,14 @@ async def get_current_user(
     user_id = user.user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token: missing user_id")
-    try:
-        return await auth_service.get_current_user(user_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching user info: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    return await auth_service.get_current_user(user_id)
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
-async def refresh_access_token(request: RefreshTokenRequest, auth_service: AuthService = Depends(get_auth_service)):
+async def refresh_access_token(
+    request: RefreshTokenRequest,
+    auth_service: AuthService = Depends(get_auth_service)
+) -> RefreshTokenResponse:
     """
     Refresh an expired access token using a valid refresh token.
 
@@ -112,25 +94,16 @@ async def refresh_access_token(request: RefreshTokenRequest, auth_service: AuthS
 
     Returns:
         RefreshTokenResponse with new access_token and refresh_token
-
-    Raises:
-        HTTPException: 401 if refresh token is invalid or expired
     """
-    try:
-        return await auth_service.refresh_access_token(request.refresh_token)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error refreshing token: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to refresh token: {e!s}") from e
+    return await auth_service.refresh_access_token(request.refresh_token)
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=LogoutResponse)
 async def logout(
     request: LogoutRequest,
     user: JWTPayload = Depends(verify_jwt),
     auth_service: AuthService = Depends(get_auth_service),
-):
+) -> LogoutResponse:
     """
     Logout user and revoke access token + refresh token.
 
@@ -152,21 +125,29 @@ async def logout(
     exp = user.exp
 
     if not jti or not user_id or exp is None:
-        raise HTTPException(status_code=400, detail="Invalid token format: missing required claims")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid token format: missing required claims",
+        )
 
-    try:
-        await auth_service.logout(jti=jti, user_id=user_id, exp_timestamp=exp, refresh_token=request.refresh_token)
+    await auth_service.logout(
+        jti=jti,
+        user_id=user_id,
+        exp_timestamp=exp,
+        refresh_token=request.refresh_token
+    )
 
-        return {"status": "ok", "message": "Logged out successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error during logout: {e}")
-        raise HTTPException(status_code=500, detail=f"Logout failed: {e!s}") from e
+    return LogoutResponse(
+        status="ok",
+        message="Logged out successfully"
+    )
 
 
 @router.post("/mezon/bot/login", response_model=BotLoginResponse)
-async def bot_login(request: BotLoginRequest, auth_service: AuthService = Depends(get_auth_service)):
+async def bot_login(
+    request: BotLoginRequest,
+    auth_service: AuthService = Depends(get_auth_service)
+) -> BotLoginResponse:
     """
     Authenticate a bot account with Mezon and generate JWT tokens.
 
@@ -180,14 +161,5 @@ async def bot_login(request: BotLoginRequest, auth_service: AuthService = Depend
 
     Returns:
         BotLoginResponse with access_token, mezon_token, and other user info
-
-    Raises:
-        HTTPException: 401 if account authentication fails, 500 on server error
     """
-    try:
-        return await auth_service.bot_login(request.account.model_dump())
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Bot login error: {e}")
-        raise HTTPException(status_code=500, detail=f"Bot authentication failed: {e!s}") from e
+    return await auth_service.bot_login(request.account.model_dump())

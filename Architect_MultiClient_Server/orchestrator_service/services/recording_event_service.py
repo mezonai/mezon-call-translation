@@ -4,7 +4,7 @@ Recording Event Service - handles events posted by record-service
 audio-processing-service (derivative.completed/derivative.failed).
 
 See audio-ingestion/PLAN.md D18/D19/D26. Deliberately not shaped like the old
-LiveKit-egress webhook_handler.py flow it replaces (PLAN.md D2) -- this is
+Egress event flow it replaces (PLAN.md D2) -- this is
 the new, clean entrypoint.
 """
 
@@ -106,7 +106,7 @@ class RecordingEventService:
                 # started_at_ns/ended_at_ns (summary_service.py and
                 # room_service.py::get_audio_info() both parse/return them
                 # as nanosecond epoch integers, a convention that predates
-                # record-service and matched the old LiveKit-egress webhook
+                # record-service and matched the old egress event payload
                 # payload). Convert here, once, at the single point these
                 # values enter orchestrator -- every downstream consumer
                 # already assumes nanoseconds, so this is the one place
@@ -155,7 +155,7 @@ class RecordingEventService:
                     )
             return RecordingEventResponse(received=True, action="recording_failed")
 
-        logger.warning(f"Unknown recording event type: {payload.event}")
+        logger.warning(f"Unknown recording event type: {payload.event}") # type: ignore[unreachable]
         return RecordingEventResponse(received=True, action="ignored")
 
     async def handle_derivative_event(self, payload: DerivativeEventRequest) -> RecordingEventResponse:

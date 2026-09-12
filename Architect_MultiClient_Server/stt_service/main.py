@@ -8,7 +8,7 @@ from .service.metrics_service import metrics
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 # Import relative to Server package
-from stt_service.controller.ws_vosk_control import router as stt_router
+from stt_service.controller.ws_nemotron_control import router as stt_router
 from stt_service.service.migration_controller import pipeline_controller
 from stt_service.service.health_service import get_health_service
 from stt_service.service.redis.connection_pool import get_connection_manager

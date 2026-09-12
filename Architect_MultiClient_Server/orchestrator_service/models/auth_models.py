@@ -25,8 +25,16 @@ class MezonAuthResponse(BaseModel):  # type: ignore[explicit-any]
 
 
 class ExchangeCodeRequest(BaseModel):  # type: ignore[explicit-any]
-    code: str = Field(..., description="Authorization code from Mezon OAuth2 callback")
-    state: str = Field(..., description="State parameter for CSRF protection (11 alphanumeric chars)")
+    code: str = Field(
+        ...,
+        min_length=1,
+        description="Authorization code from Mezon OAuth2 callback"
+    )
+    state: str = Field(
+        ...,
+        pattern=r"^[a-zA-Z0-9]{11}$",
+        description="State parameter for CSRF protection (11 alphanumeric chars)",
+    )
 
 
 class TokenResponseBase(BaseModel):  # type: ignore[explicit-any]
@@ -71,6 +79,9 @@ class RefreshTokenResponse(TokenResponseBase):  # type: ignore[explicit-any]
 class LogoutRequest(BaseModel):  # type: ignore[explicit-any]
     refresh_token: str = Field(..., description="Refresh token to revoke")
 
+class LogoutResponse(BaseModel): # type: ignore[explicit-any]
+    status: str
+    message: str
 
 class AccountModel(BaseModel):  # type: ignore[explicit-any]
     appid: str = Field(..., description="App ID from Mezon")

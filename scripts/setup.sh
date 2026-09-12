@@ -1,7 +1,7 @@
 #!/bin/bash
 # Setup script for Mezon Call Translation Services
 # This script:
-# - Downloads Vosk and Kokoro models
+# - Downloads Nemotron and Kokoro models
 # - Backs up existing .env files
 # - Creates .env files from .env.example
 # - Sets up virtual environments for each service
@@ -30,7 +30,7 @@ TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
 
 # Model directories
 MODELS_DIR="$PROJECT_ROOT/models"
-VOSK_MODEL_DIR="$MODELS_DIR/vosk-model"
+NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 
 # Functions
@@ -77,7 +77,7 @@ OPTIONS:
     --skip-models           Skip model downloads
     --skip-venv             Skip virtual environment setup
     --skip-env              Skip .env file creation
-    --vosk-model <name>     Vosk model name (default: vosk-model-small-en-us-0.15)
+    --nemotron-model <name> Nemotron model name
     --kokoro-voices <list>  Comma-separated Kokoro voice names
     --all-kokoro-voices     Download all Kokoro voices
     --install-deps          Force installation of system dependencies (Python, FFmpeg, etc.)
@@ -93,8 +93,8 @@ EXAMPLES:
     # Skip model downloads (if already downloaded)
     ./scripts/setup.sh --skip-models
 
-    # Use specific Vosk model
-    ./scripts/setup.sh --vosk-model vosk-model-en-us-0.22
+    # Use a different Nemotron repository/model directory name
+    ./scripts/setup.sh --nemotron-model nemotron-3.5-asr-streaming-0.6b-onnx-int4
 
     # Download all Kokoro voices
     ./scripts/setup.sh --all-kokoro-voices
@@ -107,7 +107,7 @@ SKIP_MODELS=false
 SKIP_VENV=false
 SKIP_ENV=false
 INSTALL_DEPS=false
-VOSK_MODEL="vosk-model-small-en-us-0.15"
+NEMOTRON_MODEL="nemotron-3.5-asr-streaming-0.6b-onnx-int4"
 KOKORO_VOICES=""
 ALL_KOKORO_VOICES=false
 
@@ -130,8 +130,8 @@ while [[ $# -gt 0 ]]; do
             INSTALL_DEPS=true
             shift
             ;;
-        --vosk-model)
-            VOSK_MODEL="$2"
+        --nemotron-model)
+            NEMOTRON_MODEL="$2"
             shift 2
             ;;
         --kokoro-voices)
@@ -227,12 +227,17 @@ print_success "Using Python: $PYTHON_VERSION"
 if [ "$SKIP_MODELS" = false ]; then
     print_section "Step 1: Downloading Models"
     
-    # Download Vosk model
-    print_info "Downloading Vosk STT model: $VOSK_MODEL"
-    if [ -d "$VOSK_MODEL_DIR/$VOSK_MODEL" ]; then
-        print_warning "Vosk model already exists. Skipping download."
+    # Download Nemotron model
+    print_info "Downloading Nemotron STT model: $NEMOTRON_MODEL"
+    if [ -f "$NEMOTRON_MODEL_DIR/$NEMOTRON_MODEL/genai_config.json" ]; then
+        print_warning "Nemotron model already exists. Skipping download."
     else
-        bash "$SCRIPT_DIR/download-vosk-model.sh" --model "$VOSK_MODEL" --output "models/vosk-model"
+        if ! "$PYTHON_CMD" -c "import huggingface_hub" >/dev/null 2>&1; then
+            "$PYTHON_CMD" -m pip install huggingface-hub
+        fi
+        bash "$SCRIPT_DIR/download-nemotron-model.sh" \
+            --model "$NEMOTRON_MODEL" \
+            --output "$NEMOTRON_MODEL_DIR"
     fi
     
     # Download Kokoro model
@@ -301,19 +306,19 @@ if [ "$SKIP_ENV" = false ]; then
     print_info "Updating model paths in .env files..."
     
     # Get absolute paths for models
-    VOSK_MODEL_PATH="$VOSK_MODEL_DIR/$VOSK_MODEL"
+    NEMOTRON_MODEL_PATH="$NEMOTRON_MODEL_DIR/$NEMOTRON_MODEL"
     KOKORO_MODEL_PATH="$KOKORO_MODEL_DIR"
     
     # Update STT Service .env
     if [ -f "$STT_SERVICE_DIR/.env" ]; then
-        # Update VOSK_MODEL_PATH
-        if grep -q "^VOSK_MODEL_PATH=" "$STT_SERVICE_DIR/.env"; then
-            sed -i.tmp "s|^VOSK_MODEL_PATH=.*|VOSK_MODEL_PATH=$VOSK_MODEL_PATH|" "$STT_SERVICE_DIR/.env"
+        # Update NEMOTRON_MODEL_PATH
+        if grep -q "^NEMOTRON_MODEL_PATH=" "$STT_SERVICE_DIR/.env"; then
+            sed -i.tmp "s|^NEMOTRON_MODEL_PATH=.*|NEMOTRON_MODEL_PATH=$NEMOTRON_MODEL_PATH|" "$STT_SERVICE_DIR/.env"
             rm -f "$STT_SERVICE_DIR/.env.tmp"
         else
-            echo "VOSK_MODEL_PATH=$VOSK_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
+            echo "NEMOTRON_MODEL_PATH=$NEMOTRON_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
         fi
-        print_success "Updated VOSK_MODEL_PATH in STT Service"
+        print_success "Updated NEMOTRON_MODEL_PATH in STT Service"
     fi
     
     # Update Agents .env
@@ -398,7 +403,7 @@ print_section "Setup Complete!"
 echo -e "${GREEN}${BOLD}Summary:${NC}"
 echo ""
 echo -e "  ${GREEN}✓${NC} Models downloaded to: $MODELS_DIR"
-echo -e "  ${GREEN}✓${NC} Vosk model: $VOSK_MODEL"
+echo -e "  ${GREEN}✓${NC} Nemotron model: $NEMOTRON_MODEL"
 echo -e "  ${GREEN}✓${NC} Kokoro model: kokoro_models"
 echo ""
 echo -e "  ${GREEN}✓${NC} .env files created and configured"

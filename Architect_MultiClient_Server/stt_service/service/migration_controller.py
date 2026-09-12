@@ -15,7 +15,7 @@ class PipelineServiceController:
     
     def __init__(self):
         # Initialize the new pipeline-based service
-        from stt_service.service.new_vosk_service import stt_service_new
+        from stt_service.service.new_nemotron_service import stt_service_new
         self.pipeline_service = stt_service_new
         self.result_dispatcher = None  # NEW: For optimized dispatch
         
@@ -96,7 +96,7 @@ class PipelineServiceController:
             "service_type": "per_client_pipelines",
             "architecture": "dedicated_pipeline_per_client",
             "features": [
-                "Individual Vosk recognizer per client",
+                "Individual Nemotron stream per client",
                 "Dedicated audio buffer per client", 
                 "Independent processing task per client",
                 "Complete client isolation",

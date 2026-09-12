@@ -3,15 +3,18 @@ SSE Agent Request API
 Endpoints for agents to receive requests from orchestrator via SSE
 """
 
-from typing import Any, ClassVar
 
-from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from fastapi import APIRouter, Query
+from fastapi.responses import StreamingResponse
 
 from orchestrator_service.api.sse.channels.agent_request_channel import AgentRequestChannel
 from orchestrator_service.api.sse.sse_manager import SSEManager
-from orchestrator_service.models.agent_request_payloads import (
-    AgentRequestPayload,
+from orchestrator_service.models.room_registry_models import RoomNameField
+from orchestrator_service.models.sse_agent_request_models import (
+    SendAgentRequestBody,
+    SendAgentRequestResponse,
 )
 from orchestrator_service.utils.logger import get_logger
 
@@ -23,78 +26,15 @@ sse_manager = SSEManager()
 agent_request_channel = AgentRequestChannel(sse_manager)
 
 
-# ==================== Pydantic Models ====================
-
-
-class SendAgentRequestBody(BaseModel):  # type: ignore[explicit-any]
-    """Request body for sending requests to agents with discriminated union payload"""
-
-    payload: AgentRequestPayload = Field(
-        ..., discriminator="request_type", description="Request payload with type-specific schema"
-    )
-    room_name: str = Field(..., description="Room name to target agents in specific room")
-    agent_id: str = Field(..., description="Agent ID to target specific agent")
-
-    class Config:
-        # TODO: Use `Any` type becase json_schema_extra is defined by complex structure
-        json_schema_extra: ClassVar[dict[str, Any]] = {  # type: ignore[explicit-any]
-            "examples": [
-                {
-                    "payload": {"request_type": "transcript_control", "action": "enable"},
-                    "room_name": "my-room-123",
-                    "agent_id": "agent_123",
-                },
-                {
-                    "payload": {
-                        "request_type": "tts_play",
-                        "text": "Hello from orchestrator",
-                        "sender_identity": "orchestrator",
-                        "voice": "af_heart",
-                        "speed": 1.0,
-                    },
-                    "room_name": "my-room-123",
-                    "agent_id": "agent_123",
-                },
-                {
-                    "payload": {
-                        "request_type": "send_chat_message",
-                        "message": "Hello from orchestrator!",
-                        "sender_name": "System Bot",
-                    },
-                    "room_name": "my-room-123",
-                    "agent_id": "agent_123",
-                },
-            ]
-        }
-
-
-class SendAgentRequestResponse(BaseModel):  # type: ignore[explicit-any]
-    """Response for send agent request"""
-
-    status: str = Field(..., description="Status of operation")
-    request_id: str = Field(..., description="Unique request ID")
-    request_type: str = Field(..., description="Type of request")
-    context: str = Field(..., description="Context key (room/agent/global)")
-    active_agents: int = Field(..., description="Number of active agent connections")
-    sent_to: int = Field(..., description="Number of agents that received the request")
-
-
-class AgentStatusResponse(BaseModel):  # type: ignore[explicit-any]
-    """Response for agent status check"""
-
-    status: str = Field(..., description="Status of operation")
-    context: str = Field(..., description="Context key")
-    active_agents: int = Field(..., description="Number of active agents")
-
 
 # ==================== SSE Endpoint ====================
 
 
-@router.get("/sse/agent-requests")
+@router.get("/sse/agent-requests", response_class=StreamingResponse)
 async def sse_agent_requests_endpoint(
-    agent_id: str,
-    room_name: str,
-):
+    agent_id: Annotated[str, Query(min_length=1, description="Agent identifier")],
+    room_name: Annotated[RoomNameField, Query(description="Room containing the agent")],
+) -> StreamingResponse:
     """
     SSE endpoint for agents to receive requests from orchestrator.
 
@@ -113,7 +53,7 @@ async def sse_agent_requests_endpoint(
 
 
 @router.post("/dispatch/agent-request", response_model=SendAgentRequestResponse)
-async def send_agent_request(request: SendAgentRequestBody):
+async def send_agent_request(request: SendAgentRequestBody) -> SendAgentRequestResponse:
     """
     Send request to agent(s) via SSE with type-safe payloads.
 

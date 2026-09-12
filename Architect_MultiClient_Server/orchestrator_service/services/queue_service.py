@@ -9,6 +9,7 @@ import logging
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.exceptions import QueueNotFoundError
 from orchestrator_service.models.queue_models import DLQTaskResponse, PendingTaskResponse, QueueStatsResponse
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
 from orchestrator_service.models.stream_base import ProducerTaskProtocol
@@ -370,7 +371,7 @@ def get_queue_service_by_name(queue_name: str) -> QueueService[ProducerTaskProto
         QueueService instance for the specified queue
 
     Raises:
-        ValueError: If queue is not found in Redis
+        QueueNotFoundError: If queue is not found in Redis
     """
     # Map queue names to task classes
     # Only need to map for known types, new types can be added here
@@ -381,7 +382,7 @@ def get_queue_service_by_name(queue_name: str) -> QueueService[ProducerTaskProto
 
     # Check if queue name is registered
     if queue_name not in _task_class_map:
-        raise ValueError(f"Queue '{queue_name}' not found. Available queues: {', '.join(_task_class_map.keys())}")
+        raise QueueNotFoundError(f"Queue '{queue_name}' not found. Available queues: {', '.join(_task_class_map.keys())}")
 
     # Construct stream key from queue name
     stream_key = f"{queue_name}:stream"

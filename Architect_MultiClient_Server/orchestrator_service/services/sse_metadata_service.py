@@ -1,10 +1,9 @@
 from datetime import datetime
-from typing import Any
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
+from orchestrator_service.models.sse_metadata_models import MetadataEventResponse
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
@@ -14,21 +13,6 @@ from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
 
-
-class MetadataEventResponse(BaseModel):  # type: ignore[explicit-any]
-    """Data Transfer Object for Metadata Event (distinguish with ORM model)"""
-
-    id: str = Field(description="Event primary key")
-    event_id: str | None = Field(default=None, description="Event UUID")
-    event_type: str | None = Field(default=None, description="Event Type")
-    room_id: str | None = Field(default=None, description="Room ID")
-    room_name: str | None = Field(default=None, description="Room Name")
-
-    # TODO: Use `Any` type because metadata can have dynamic structures
-    metadata: dict[str, Any] | None = Field(default=None, description="Metadata")  # type: ignore[explicit-any]
-
-    timestamp: str | None = Field(default=None, description="Timestamp")
-    created_at: str | None = Field(default=None, description="Created At")
 
 
 class SseMetadataService:

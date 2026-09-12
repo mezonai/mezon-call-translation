@@ -20,10 +20,10 @@ from orchestrator_service.services.postgresql.pg_summary_repository import PgSum
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
     build_username_maps,
+    format_key_discussions,
     group_next_focus_by_user,
     mask_messages,
     sanitize_and_decode_list,
-    format_key_discussions,
 )
 from orchestrator_service.utils.retry_utils import WaitCustomStrategy
 from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
