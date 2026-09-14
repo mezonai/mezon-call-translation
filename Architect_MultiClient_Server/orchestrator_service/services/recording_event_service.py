@@ -180,15 +180,8 @@ class RecordingEventService:
 
         if derivative_status == "completed":
             try:
-                # Derivative and Whisper run independently.  This helper does
-                # a fresh DB read and deletes only if Whisper has also reached
-                # `completed`; otherwise the Whisper completion path will make
-                # the symmetric call later.
                 await self.raw_pcm_cleanup_service.maybe_delete_raw_pcm(payload.recording_id)
             except Exception as e:
-                # OGG creation already succeeded.  Cleanup is best-effort and
-                # retried by the periodic reconciler, so a MinIO cleanup error
-                # must not make audio-processing-service retry this event.
                 logger.error(
                     f"Raw PCM cleanup failed after derivative completion: "
                     f"track={payload.recording_id} error={e}",

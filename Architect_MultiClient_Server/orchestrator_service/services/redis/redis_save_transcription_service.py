@@ -248,16 +248,8 @@ class RedisSaveTranscriptionService:
                     room_ref_id = updated_track.room_ref_id
 
                     try:
-                        # This is the symmetric counterpart to the derivative
-                        # completion hook.  complete_track_with_vad_duration()
-                        # committed `status=completed` before this call; the
-                        # shared helper now performs a fresh read and deletes
-                        # only if the OGG pipeline is also completed.
                         await self._raw_pcm_cleanup_service.maybe_delete_raw_pcm(task.track_ref_id)
                     except Exception as e:
-                        # Transcription and its segments are already complete.
-                        # Never reject/retry the final save task just because
-                        # cleanup failed; the reconciler will retry the PCM.
                         logger.error(
                             f"Raw PCM cleanup failed after transcription completion: "
                             f"track={task.track_ref_id} error={e}",

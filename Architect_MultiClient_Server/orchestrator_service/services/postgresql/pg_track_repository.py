@@ -27,7 +27,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from orchestrator_service.services.postgresql.database import get_session_factory
@@ -75,39 +75,6 @@ class PgTrackRepository:
             logger.error(f"Failed to get track by id for PCM cleanup: {e}")
             return None
 
-    async def list_raw_pcm_cleanup_candidates(self, limit: int = 100) -> list[Track]:
-        """Find tracks whose PCM is no longer needed by either consumer.
-
-        `status` belongs to the Whisper pipeline and `derivative_status` to
-        the OGG pipeline.  Requiring both to be `completed` is the database
-        synchronization barrier: whichever pipeline finishes first is not
-        eligible, and a later reconciler pass sees the final committed state
-        after the second pipeline finishes.
-
-        Cleanup state is kept in the existing `audio_info` JSONB document, so
-        this feature needs no new track-table column or database migration.
-        """
-        session_factory = get_session_factory()
-        try:
-            async with session_factory() as session:
-                stmt = (
-                    select(Track)
-                    .where(
-                        Track.status == "completed",
-                        Track.derivative_status == "completed",
-                        Track.audio_info.is_not(None),
-                        Track.audio_info["filename"].as_string().like("%.pcm"),
-                        Track.audio_info["derivative_object_key"].as_string().is_not(None),
-                        Track.audio_info["raw_deleted_at"].as_string().is_(None),
-                    )
-                    .order_by(Track.updated_at.asc())
-                    .limit(limit)
-                )
-                return list((await session.scalars(stmt)).all())
-        except Exception as e:
-            logger.error(f"Failed to list raw PCM cleanup candidates: {e}")
-            return []
-
     async def mark_raw_pcm_deleted(self, record_id: str, deleted_at: datetime) -> bool:
         """Mark a successful deletion by merging into `audio_info` JSONB.
 
@@ -116,8 +83,6 @@ class PgTrackRepository:
         while a derivative completion adds `derivative_object_key`; replacing
         the whole JSON document here could silently discard either value.
 
-        If the object was deleted but this DB update fails, the reconciler may
-        try again.  S3 DeleteObject is idempotent, so that retry is safe.
         """
         session_factory = get_session_factory()
         try:
