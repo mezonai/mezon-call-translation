@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from orchestrator_service.models.room_models import RoomIdPath
+from orchestrator_service.models.dispatch_models import RoomIdPath
 from orchestrator_service.models.summary_models import (
     RoomSummaryResponse,
     SummaryDetailResponse,

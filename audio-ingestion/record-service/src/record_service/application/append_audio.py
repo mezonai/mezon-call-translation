@@ -92,3 +92,10 @@ class AppendAudio:
             self._policy.upload_retry, f"upload_part[{session.session_id}#{part_number}]", _do_upload
         )
         session.parts.append(UploadedPart(part_number=part_number, etag=etag))
+        logger.info(
+            "Uploaded part %d (%d bytes) for %s (raw_bytes_received=%d so far)",
+            part_number,
+            len(payload),
+            session.session_id,
+            session.raw_bytes_received,
+        )

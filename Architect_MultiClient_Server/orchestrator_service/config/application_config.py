@@ -18,50 +18,6 @@ except ImportError:
     pass
 
 
-@dataclass
-class LiveKitConfig:
-    """LiveKit server and API configuration"""
-
-    # Server URLs
-    url: str = ""  # WebSocket URL (wss://...)
-    http_url: str = ""  # HTTP URL for API calls
-
-    # API credentials
-    api_key: str = ""
-    api_secret: str = ""
-
-    # Agent configuration
-    agent_name: str = "vosk-agent"
-
-    # Webhook configuration (can use separate credentials)
-    webhook_api_key: str = ""
-    webhook_api_secret: str = ""
-    verify_webhooks: bool = True
-
-    # Recording
-    recordings_dir: str = "/recordings"
-
-    @classmethod
-    def from_env(cls) -> "LiveKitConfig":
-        """Create LiveKit config from environment variables"""
-        return cls(
-            url=os.getenv("LIVEKIT_URL", ""),
-            http_url=os.getenv("LIVEKIT_HTTP_URL", ""),
-            api_key=os.getenv("LIVEKIT_API_KEY", ""),
-            api_secret=os.getenv("LIVEKIT_API_SECRET", ""),
-            agent_name=os.getenv("LIVEKIT_AGENT_NAME", "vosk-agent"),
-            webhook_api_key=os.getenv("LIVEKIT_WEBHOOK_API_KEY", os.getenv("LIVEKIT_API_KEY", "")),
-            webhook_api_secret=os.getenv("LIVEKIT_WEBHOOK_API_SECRET", os.getenv("LIVEKIT_API_SECRET", "")),
-            verify_webhooks=os.getenv("LIVEKIT_VERIFY_WEBHOOKS", "true").lower() == "true",
-            recordings_dir=os.getenv("RECORDINGS_DIR", "/recordings"),
-        )
-
-    def validate(self) -> bool:
-        """Validate LiveKit configuration"""
-        # API key and secret are required
-        return bool(self.api_key and self.api_secret)
-
-
 # ============================================================================
 # PostgreSQL Configuration (primary database)
 # ============================================================================
@@ -393,35 +349,6 @@ class OAuth2Config:
 
 
 # ============================================================================
-# Outbox Worker Configuration
-# ============================================================================
-
-
-@dataclass
-class OutboxConfig:
-    """Configuration for the Summary Outbox Worker"""
-
-    check_interval_sec: int = 30
-    delay_between_items_sec: int = 30
-    batch_limit: int = 5
-    retry_summarization_target_hours: list[int] = field(default_factory=lambda: [19, 20, 21])
-
-    @classmethod
-    def from_env(cls) -> "OutboxConfig":
-        hours_str = os.getenv("OUTBOX_RETRY_SUMMARIZATION_TARGET_HOURS", "19,20,21")
-        try:
-            target_hours = [int(h.strip()) for h in hours_str.split(",") if h.strip()]
-        except ValueError:
-            target_hours = [19, 20, 21]
-        return cls(
-            check_interval_sec=int(os.getenv("OUTBOX_CHECK_INTERVAL_SEC", "30")),
-            delay_between_items_sec=int(os.getenv("OUTBOX_DELAY_BETWEEN_ITEMS_SEC", "30")),
-            batch_limit=int(os.getenv("OUTBOX_BATCH_LIMIT", "5")),
-            retry_summarization_target_hours=target_hours,
-        )
-
-
-# ============================================================================
 # Summary Configuration
 # ============================================================================
 
@@ -501,7 +428,7 @@ class LightSummaryConfig:
 
 
 # ============================================================================
-# Transcript Correction Configuration
+# Agents Bot Configuration
 # ============================================================================
 
 
@@ -544,6 +471,23 @@ class TranscriptCorrectionConfig:
             fallback_retry_count=int(os.getenv("CORRECTION_LLM_FALLBACK_RETRY_COUNT", "3")),
         )
 
+@dataclass
+class AgentsBotConfig:
+    """
+    Base URL for the Go agents-bot service.
+
+    agents-bot owns the current voice-channel roster and user_id -> username
+    cache populated from Mezon events.
+    """
+
+    base_url: str = ""
+
+    @classmethod
+    def from_env(cls) -> "AgentsBotConfig":
+        return cls(
+            base_url=os.getenv("AGENTS_BOT_BASE_URL", "http://localhost:8003"),
+        )
+
 
 # ============================================================================
 # Main Application Configuration (Singleton)
@@ -576,7 +520,6 @@ class Config:
         """
 
         # Load all configuration sections
-        self.livekit = LiveKitConfig.from_env()
         self.stt_service = STTServiceConfig.from_env()
         self.postgresql = PostgreSQLConfig.from_env()
         self.server = ServerConfig.from_env()
@@ -592,18 +535,16 @@ class Config:
         self.redis = RedisConfig.from_env()
         self.notification = NotificationConfig.from_env()
         self.oauth2 = OAuth2Config.from_env()
-        self.outbox = OutboxConfig.from_env()
         self.summary = SummaryConfig.from_env()
         self.light_summary = LightSummaryConfig.from_env()
         self.transcript_correction = TranscriptCorrectionConfig.from_env()
 
+        self.agents_bot = AgentsBotConfig.from_env()
         self._initialized = True
         self._validate_all()
 
     def _validate_all(self) -> None:
         """Validate all configuration sections"""
-        if not self.livekit.validate():
-            raise ValueError("Invalid LiveKit configuration")
         if not self.minio.validate():
             raise ValueError("Invalid MinIO configuration")
         if not self.oauth2.validate():

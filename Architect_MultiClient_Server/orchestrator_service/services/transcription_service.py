@@ -68,7 +68,7 @@ class TranscriptionService:
         flips this row to "completed" instead.
 
         Replaces the old enqueue(egress_info: Dict) which took a
-        LiveKit-egress-webhook-shaped dict (audio-ingestion PLAN.md D2: no
+        Recording event payload dict (audio-ingestion PLAN.md D2: no
         egress-shaped contracts survive the migration).
         """
         try:
@@ -167,6 +167,32 @@ class TranscriptionService:
         except Exception as e:
             logger.exception(f"✗ Unexpected error starting room: {e}")
             return False
+        
+
+    async def force_save_participant(
+        self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None
+    ) -> bool:
+        """
+        Save participant info to PostgreSQL
+
+        Args:
+            participant_identity: Participant identity
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            result = await self.pg_repo.force_save_participant(
+                room_id=room_id,
+                participant_identity=participant_identity,
+                timestamp=timestamp,
+                username=username,
+            )
+            return result
+        except Exception as e:
+            logger.exception(f"Failed to save participant: {e}")
+            return False
+
 
     async def save_participant(
         self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None

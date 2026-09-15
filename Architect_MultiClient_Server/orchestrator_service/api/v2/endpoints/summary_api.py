@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
-from orchestrator_service.models.room_models import RoomIdPath
+from orchestrator_service.models.dispatch_models import RoomIdPath
 from orchestrator_service.models.summary_models import (
     SummaryDetailResponse,
     SummaryListQuery,

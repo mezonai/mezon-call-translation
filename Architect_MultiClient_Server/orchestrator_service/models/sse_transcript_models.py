@@ -8,7 +8,7 @@ from orchestrator_service.models.room_registry_models import RoomNameField
 class PushMessageRequest(BaseModel): # type: ignore[explicit-any]
     """Request body for pushing a transcript message through SSE."""
 
-    room_name: RoomNameField = Field(description="LiveKit room name")
+    room_name: RoomNameField = Field(description="Room name")
     message: str = Field(min_length=1, description="Transcript message content")
     message_type: str = Field(min_length=1, description="Transcript message type")
     participant_identity: str = Field(

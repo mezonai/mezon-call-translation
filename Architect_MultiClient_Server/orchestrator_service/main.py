@@ -22,18 +22,14 @@ from orchestrator_service.api.summary_api import client_router as summary_client
 from orchestrator_service.api.v2.router import (
     api_router as api_router_v2,
 )  # Import the v2 API router
-from orchestrator_service.api.webhook_api import (
-    router as webhook_router,
-)
 from orchestrator_service.config.application_config import get_config
-from orchestrator_service.services.livekit_client import cleanup_livekit_service
+from orchestrator_service.services.agents_bot_user_client import close_agents_bot_user_client
 from orchestrator_service.services.postgresql.database import dispose_engine, get_engine
 from orchestrator_service.services.redis.connection_pool import get_connection_manager
 from orchestrator_service.services.redis.redis_save_transcription_service import (
     RedisSaveTranscriptionService,
 )
 from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.summary_outbox_worker import SummaryOutboxWorker
 from orchestrator_service.utils.logger import get_logger
 
 # Load config
@@ -98,10 +94,6 @@ async def lifespan(app: FastAPI):
         await save_transcription_service.start()
         logger.info("✅ Save Transcription consumer service started")
 
-        # Initialize Summary Outbox worker
-        summary_outbox_worker = SummaryOutboxWorker()
-        await summary_outbox_worker.start()
-        logger.info("✅ Summary Outbox worker started")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Redis services: {e}")
         raise
@@ -113,14 +105,6 @@ async def lifespan(app: FastAPI):
     # We just need to cleanup resources after generators are cancelled
     logger.info("🛑 FastAPI shutting down, cleaning up resources...")
 
-    # Step 0: Stop summary outbox worker
-    try:
-        logger.info("Step 0/6: Stopping Summary Outbox worker...")
-        summary_outbox_worker = SummaryOutboxWorker()
-        await summary_outbox_worker.stop()
-        logger.info("✅ Summary Outbox worker stopped")
-    except Exception as e:
-        logger.error(f"Error stopping Summary Outbox worker: {e}")
 
     # Step 1: Stop save transcription service
     try:
@@ -131,37 +115,39 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping Save Transcription service: {e}")
 
+    # Close the shared agents-bot HTTP connection pool
+    try:
+        await close_agents_bot_user_client()
+        logger.info("✅ Agents-bot HTTP client closed")
+    except Exception as e:
+        logger.error(f"Error closing agents-bot HTTP client: {e}")
+
     # Step 2: Cleanup SSE manager (clear data structures)
     # SSE connections were already notified by signal handler
-    logger.info("Step 2/6: Cleaning up SSE manager...")
+    logger.info("Step 2/5: Cleaning up SSE manager...")
     await sse_manager.cleanup()
     logger.info("✅ SSE manager cleanup completed")
 
-    # Step 3: Cleanup LiveKit service
-    logger.info("Step 3/6: Cleaning up LiveKit service...")
-    await cleanup_livekit_service()
-    logger.info("✅ LiveKit service cleanup completed")
-
-    # Step 4: Disconnect Redis Connection Pool
+    # Step 3: Disconnect Redis Connection Pool
     try:
-        logger.info("Step 4/6: Disconnecting Redis connection pool...")
+        logger.info("Step 3/5: Disconnecting Redis connection pool...")
         redis_manager = get_connection_manager()
         await redis_manager.disconnect()
         logger.info("✅ Redis connection pool closed")
     except Exception as e:
         logger.error(f"Error closing Redis connection pool: {e}")
 
-    # Step 5: 🛑 FastAPI shutdown
-    logger.info("Step 5/6: 🛑 FastAPI shutdown")
+    # Step 4: 🛑 FastAPI shutdown
+    logger.info("Step 4/5: 🛑 FastAPI shutdown")
 
     # Dispose PostgreSQL engine
     await dispose_engine()
 
-    logger.info("Step 6/6: ✅ Cleanup complete")
+    logger.info("Step 5/5: ✅ Cleanup complete")
     logger.info("🎉 All services cleanup completed successfully")
 
 
-app = FastAPI(title="LiveKit Orchestrator API", lifespan=lifespan)
+app = FastAPI(title="Orchestrator API", lifespan=lifespan)
 register_exception_handlers(app)
 app.add_middleware(
     CORSMiddleware,
@@ -177,7 +163,6 @@ app.include_router(stream_router, prefix="/api", tags=["sse transcript"])
 app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat external"])
 app.include_router(sse_metadata_router, prefix="/api", tags=["sse metadata"])
 app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent requests"])
-app.include_router(webhook_router, prefix="/api/webhook", tags=["webhook"])
 # TODO: legacy summary API, mounted with no auth (unlike /api/v2/summary which
 # requires ROOMS_VIEW_ALL/ROOMS_VIEW_OWN). Confirm no downstream still calls this,
 # then remove this router and its module (api/summary_api.py).

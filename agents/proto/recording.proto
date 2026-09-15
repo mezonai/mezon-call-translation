@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package record_service.v1;
+
+option go_package = "github.com/mezonai/mezon-call-translation/agents/internal/recordpb";
+
+// KEPT IN SYNC MANUALLY with audio-ingestion/record-service/proto/recording.proto
+// (source of truth) and Architect_MultiClient_Server/agents/src/proto/recording.proto
+// (the old Python agent's copy, kept around for reference until it's retired).
+// Three independent deployables each generate their own stubs from their own
+// copy of this file rather than sharing a package -- see
+// audio-ingestion/PLAN.md Phase 2 notes for why. The `go_package` option
+// below is the one addition specific to this copy (needed for protoc-gen-go;
+// the Python copies don't need it). If you change one, change all three and
+// regenerate.
+
+// Agent -> record-service. Bidi so the server can ack/reject the session
+// early (PLAN.md D5 tier 1) instead of only replying after the whole call
+// has ended, which a plain client-streaming RPC would force.
+service RecordingIngest {
+  rpc StreamAudio(stream AudioChunk) returns (stream RecordingAck);
+}
+
+message AudioChunk {
+  oneof payload {
+    SessionStart start = 1;
+    bytes pcm = 2;
+    DroppedFrames dropped = 3;
+  }
+}
+
+// First message of a stream. Doubles as the (re)connect handshake for
+// PLAN.md D5 tier 2 -- sending this again with the same room_id/track_id
+// within the grace period resumes the existing session instead of opening
+// a new upload.
+message SessionStart {
+  string room_id = 1;
+  string track_id = 2;
+  string participant_identity = 3;
+  string source = 4;           // "mic" | "screen"
+  int32 sample_rate = 5;
+  int32 channels = 6;
+}
+
+// Agent-side backpressure drop count (PLAN.md D12) -- record-service only
+// annotates on this, it never discards data or acts on it unilaterally.
+message DroppedFrames {
+  int32 count = 1;
+}
+
+message RecordingAck {
+  string status = 1;   // accepted | rejected | completed
+  string object_key = 2;
+  string error = 3;
+}

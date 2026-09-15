@@ -1,16 +1,10 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
 
 from orchestrator_service.auth.authorization import AuthContext
-from orchestrator_service.services.livekit_client import (
-    AudioTrackInfo,
-    DispatchActionResponseModel,
-    LiveKitServiceError,
-    ParticipantBasicInfo,
-    get_livekit_service,
-)
+from orchestrator_service.models.room_models import AudioTrackInfo, ParticipantModel
 from orchestrator_service.services.postgresql.models import Room
 from orchestrator_service.services.postgresql.pg_summary_repository import (
     PgSummaryRepository,
@@ -159,35 +153,51 @@ class RoomService:
 
         return file_results
 
-    async def create_dispatch(self, room_name: str) -> DispatchActionResponseModel:
-        livekit_service = get_livekit_service()
-        try:
-            return await livekit_service.ensure_dispatch(room_name)
-        except LiveKitServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
-
-    async def cancel_dispatch(self, room_name: str) -> DispatchActionResponseModel:
-        livekit_service = get_livekit_service()
-        try:
-            return await livekit_service.cancel_dispatch(room_name)
-        except LiveKitServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
-
-    async def list_participants(self, room_id: str) -> list[ParticipantBasicInfo]:
+    async def list_participants(self, room_id: str) -> list[ParticipantModel]:
         room = await self.pg_transcript_repo.get_room_by_id(room_id)
         if not room:
-            raise HTTPException(status_code=404, detail="Room not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Room with ID '{room_id}' not found",
+            )
 
-        room_name = room.room_name
-        if not room_name:
-            raise HTTPException(status_code=400, detail=f"Room with ID {room_id} has no assigned room_name")
+        participants_data = (
+            room.participants
+            if isinstance(room.participants, list)
+            else []
+        )
 
-        try:
-            livekit_service = get_livekit_service()
-            participants = await livekit_service.list_participants(room_name)
-            return participants
-        except LiveKitServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
+        result: list[ParticipantModel] = []
+
+        for participant in participants_data:
+            identity = participant.get("participant_identity")
+            if not identity:
+                continue
+
+            joined_at = 0
+            raw_timestamp = participant.get("timestamp")
+
+            if raw_timestamp:
+                try:
+                    joined_datetime = datetime.fromisoformat(str(raw_timestamp))
+                    if joined_datetime.tzinfo is None:
+                        joined_datetime = joined_datetime.replace(tzinfo=UTC)
+
+                    joined_at = int(joined_datetime.timestamp())
+                except (ValueError, OverflowError, OSError):
+                    joined_at = 0
+
+            result.append(
+                ParticipantModel(
+                    identity=identity,
+                    name=participant.get("username") or identity,
+                    state="ACTIVE",
+                    joined_at=joined_at,
+                    metadata={},
+                )
+            )
+
+        return result
 
 
 # Get singleton instance
