@@ -58,11 +58,10 @@ class PgOutboxRepository:
                         updated_at=now,
                     )
                     session.add(new_task)
-
                 await session.commit()
                 return True
         except Exception as e:
-            logger.error(f"Failed to add task to outbox: {e}", exc_info=True)
+            logger.error(f"Failed to add summarization outbox task: {e}")
             return False
 
     async def fetch_pending_outbox_tasks(
