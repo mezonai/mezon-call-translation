@@ -1,24 +1,27 @@
 # record-service
 
-Critical-path service that captures raw call audio and durably uploads it to
-S3/MinIO, replacing LiveKit Egress. Built Ports & Adapters style so the
-capture source (today: gRPC from `agents`) can later be swapped for direct
-SFU/RTP capture without touching the business logic.
+Critical-path service that captures raw call audio and durably uploads it to S3/MinIO, replacing the platform's old built-in recording (egress) pipeline. Built Ports & Adapters style so the capture source (today: gRPC from `agents`) can later be swapped for direct SFU/RTP capture without touching the business logic.
 
-Design rationale for every decision below lives in `../PLAN.md` (decisions
-D1-D26) — this README is "what the code does and how to read it", the plan is
-"why it's built this way".
+This README is "what the code does and how to read it" — it does not attempt to re-derive the full historical rationale behind every design choice.
+
+## Status note (2026-09-15): self-encoding change is prep-only so far
+
+There is an **uncommitted** change to this service's `Dockerfile` (`git diff -- audio-ingestion/record-service/Dockerfile`) whose comment describes a planned "PLAN.md D6-successor": record-service encoding PCM → OGG/Opus itself via an ffmpeg subprocess, in a module the comment names as `src/record_service/infra/transcode/`, so that `audio-processing-service` (below) is no longer needed.
+
+As of this writing, that module **does not exist** in this checkout, and nothing else in the codebase has changed to match it — the Dockerfile diff only adds `apt-get install ffmpeg` (with `libopus`) to the image. Every application module described in this README (`infra/naming.py`, `application/append_audio.py`, `application/report_event.py`, `infra/reporting/http_event_reporter.py`) is untouched and still implements exactly the old D6 raw-PCM-passthrough design documented below: object keys still end in `.pcm`, and the only events reported are still bare `recording.completed`/`recording.failed` with no derivative/format field anywhere in the payload. In other words, the live ingest path today produces raw PCM only, unconditionally, same as before this diff.
+
+Everything downstream still expects that: `orchestrator_service`'s `recording_event_service.py` unconditionally enqueues every `recording.completed` onto the `audio_derivative:stream` Redis Stream (`audio_derivative_service.py`), and `audio-processing-service` is still the live consumer of that stream — see its README for a fuller status note. The sibling `../docker-compose.yml` file (also new/uncommitted) has comments asserting audio-processing-service "is retired" and that record-service "now encodes to OGG/Opus itself" — treat that as a description of the *intended* end state this Dockerfile change is a first step toward, not of what this checkout's code actually does yet. There is currently no dated decision record for this change beyond the Dockerfile's own comment.
 
 ## End-to-end flow
 
 ```
-LiveKit room
-   │  (agent subscribes to a track, same lifecycle as STT)
+Call room (mezon-sfu, WebRTC)
+   │  agent's rtcagent.PeerAgent gets OnTrack for each mic track
    ▼
-Architect_MultiClient_Server/agents
-   EventHandlers._start_record_forwarding()          [event_handlers.py]
-   → independent rtc.AudioStream.from_track() subscription
-   → RecordForwarder (record_service_client.py)
+agents/cmd/agent  (Go)
+   internal/audiopipeline.Bridge      -- Opus-decodes the track once
+   → internal/tracksink.RecordSinkFactory  -- builds a per-track sink
+   → internal/recordclient.Forwarder  -- gRPC client
    │  gRPC bidi stream: StreamAudio(stream AudioChunk) → stream RecordingAck
    ▼
 record-service  (this repo)
@@ -32,20 +35,15 @@ Architect_MultiClient_Server/orchestrator_service
    POST /api/v2/recordings/events     (recording_events_api.py)
    → services/recording_event_service.py
    → tracks.derivative_status, rooms.record_notified_at (Postgres)
-   → audio_derivative:stream (Redis Stream, for future audio-processing-service)
+   → audio_derivative:stream (Redis Stream, consumed by audio-processing-service)
    → SSE room_record_done notice (once per room, bare notice, no file paths)
 ```
 
-record-service itself never talks to LiveKit, Postgres, or Redis. Its only
-two network dependencies are S3/MinIO (data plane) and one HTTP POST to
-orchestrator (control plane, best-effort/async).
+record-service itself never talks to the SFU, Postgres, or Redis. Its only two network dependencies are S3/MinIO (data plane) and one HTTP POST to orchestrator (control plane, best-effort/async).
 
 ## Why gRPC bidi streaming, not client-streaming
 
-`proto/recording.proto` defines `StreamAudio(stream AudioChunk) returns
-(stream RecordingAck)`. Bidi (not plain client-streaming) so record-service
-can `accepted`/`rejected` the session on the very first message, instead of
-the agent only finding out something was wrong after the whole call ended.
+`proto/recording.proto` defines `StreamAudio(stream AudioChunk) returns (stream RecordingAck)`. Bidi (not plain client-streaming) so record-service can `accepted`/`rejected` the session on the very first message, instead of the agent only finding out something was wrong after the whole call ended.
 
 ```protobuf
 message AudioChunk {
@@ -62,85 +60,25 @@ message RecordingAck {
 }
 ```
 
-One `RecordingSession` = one `(room_id, track_id)` = one S3 multipart upload.
-`session_id` is always `"{room_id}:{track_id}"` (`RecordingSession.make_session_id`).
+One `RecordingSession` = one `(room_id, track_id)` = one S3 multipart upload. `session_id` is always `"{room_id}:{track_id}"` (`RecordingSession.make_session_id`).
 
 ## Request lifecycle, file by file
 
-1. **`infra/grpc/ingest_server.py`** — `RecordingIngestServicer.StreamAudio`
-   is the only place that knows frames arrive over gRPC. It reads
-   `SessionStart` once, then `pcm`/`dropped` chunks in a loop, and drives
-   exactly three application use cases. Graceful vs. abrupt end is detected
-   structurally: the iterator finishing on its own = agent closed on purpose;
-   an exception while iterating = the connection broke.
+1. **`infra/grpc/ingest_server.py`** — `RecordingIngestServicer.StreamAudio` is the only place that knows frames arrive over gRPC. It reads `SessionStart` once, then `pcm`/`dropped` chunks in a loop, and drives exactly three application use cases. Graceful vs. abrupt end is detected structurally: the iterator finishing on its own = agent closed on purpose; an exception while iterating = the connection broke.
 
-2. **`application/start_recording.py`** (`StartRecording`) — opens a new S3
-   multipart upload (`create_multipart_upload`) and registers an
-   `ActiveSession` in the in-memory `SessionRegistry`, or **resumes** an
-   existing session if one is sitting in `GRACE_WAIT` for the same
-   `session_id` (reconnect within the grace window — see Recovery tiers
-   below). `SessionRegistry.creation_lock(session_id)` serializes the whole
-   decision so two concurrent starts for the same track can't both open
-   separate uploads — scoped per `session_id` (not a single global lock), so
-   starting one track never blocks starting an unrelated one (D24). Once a
-   genuinely new session is registered, fires `recording.started` to
-   orchestrator fire-and-forget (D26) — not awaited, so a slow/unreachable
-   orchestrator never delays accepting audio.
+2. **`application/start_recording.py`** (`StartRecording`) — opens a new S3 multipart upload (`create_multipart_upload`) and registers an `ActiveSession` in the in-memory `SessionRegistry`, or **resumes** an existing session if one is sitting in `GRACE_WAIT` for the same `session_id` (reconnect within the grace window — see Recovery tiers below). `SessionRegistry.creation_lock(session_id)` serializes the whole decision so two concurrent starts for the same track can't both open separate uploads — scoped per `session_id` (not a single global lock), so starting one track never blocks starting an unrelated one (D24). Once a genuinely new session is registered, fires `recording.started` to orchestrator fire-and-forget (D26) — not awaited, so a slow/unreachable orchestrator never delays accepting audio.
 
-3. **`application/append_audio.py`** (`AppendAudio`) — feeds incoming PCM
-   into the session's `StreamEncoder` (`domain/ports.py`, backed by
-   `infra/transcode/ffmpeg_opus_encoder.py`: an ffmpeg subprocess per
-   session, PCM16 in over `pipe:0`, OGG/Opus out over `pipe:1`), buffers the
-   *encoded* bytes, and flushes a part to S3 (`upload_part`, retried via
-   `with_retry`) every time the buffer crosses `part_size_bytes` (default
-   5 MiB — S3's multipart minimum, chosen to keep the unflushed-buffer
-   crash-loss window as small as the protocol allows; see `config.py`'s
-   `RecordingPolicyConfig` docstring for why that window is bigger now than
-   it was for raw PCM). If a session's encoder dies mid-stream, `AppendAudio`
-   transparently starts a replacement (Ogg's container allows concatenated
-   logical bitstreams) and appends an `encoder_restarted` `QualityAnnotation`
-   — same "annotate, never discard" philosophy as the drop-rate handling
-   below, just for encoder health instead of network drops. Also folds in
-   agent-reported `dropped_frame_count` and raises a `QualityAnnotation`
-   (never discards data, never restarts the session) if the cumulative drop
-   rate crosses `drop_rate_warning_threshold`.
+3. **`application/append_audio.py`** (`AppendAudio`) — dumb pass-through by design (D6: no decode/re-encode). Buffers PCM bytes per session and flushes a part to S3 (`upload_part`, retried via `with_retry`) every time the buffer crosses `part_size_bytes` (default 8 MiB, S3's multipart minimum is 5 MiB). Also folds in agent-reported `dropped_frame_count` and raises a `QualityAnnotation` (never discards data, never restarts the session) if the cumulative drop rate crosses `drop_rate_warning_threshold`.
 
-   This is a deliberate departure from the original D6 "dumb pass-through"
-   design, which kept all encoding off record-service's live ingest path
-   specifically to minimize risk there. Encoding in-process was chosen
-   anyway to avoid persisting the (much heavier) raw PCM capture and running
-   a second service/queue just to transcode it after the fact — see
-   `PLAN.md` for the full trade-off writeup. The risk is bounded by
-   one-ffmpeg-process-per-session (one session's encoder dying can't take
-   another down) and the restart-with-annotation behavior above, not
-   eliminated.
+4. **`application/stop_recording.py`** (`StopRecording`) — on graceful close, finalizes immediately. On abrupt disconnect, parks the session in `GRACE_WAIT` and starts a `grace_period_seconds` (default 45s) timer before finalizing best-effort — see Recovery tiers. `_finalize` flushes whatever's left in the buffer as a final part, then calls `finalize.complete_or_abort` and reports `recording.completed` / `recording.failed` to orchestrator.
 
-4. **`application/stop_recording.py`** (`StopRecording`) — on graceful close,
-   finalizes immediately. On abrupt disconnect, parks the session in
-   `GRACE_WAIT` and starts a `grace_period_seconds` (default 45s) timer
-   before finalizing best-effort — see Recovery tiers. `_finalize` flushes
-   whatever's left in the buffer as a final part, then calls
-   `finalize.complete_or_abort` and reports `recording.completed` /
-   `recording.failed` to orchestrator.
+5. **`application/finalize.py`** (`complete_or_abort`) — shared by both the live-session path (`stop_recording.py`) and the crash-recovery path (`recover_orphaned_sessions.py`). No parts uploaded → abort the multipart upload. Otherwise complete it; if the resulting byte count looks thin relative to elapsed time × nominal PCM byte rate (`byte_rate_tolerance`), flags a `low_byte_rate` annotation rather than silently reporting a clean `completed`.
 
-5. **`application/finalize.py`** (`complete_or_abort`) — shared by both the
-   live-session path (`stop_recording.py`) and the crash-recovery path
-   (`recover_orphaned_sessions.py`). No parts uploaded → abort the multipart
-   upload. Otherwise complete it; if the resulting byte count looks thin
-   relative to elapsed time × nominal PCM byte rate (`byte_rate_tolerance`),
-   flags a `low_byte_rate` annotation rather than silently reporting a clean
-   `completed`.
-
-6. **`application/report_event.py`** (`ReportEvent`) — POSTs the event to
-   orchestrator with its own retry policy. If every attempt fails, the
-   session is persisted with `reported=False` instead of the event being
-   dropped — the reconciler (`recover_orphaned_sessions.py`) picks it up
-   later.
+6. **`application/report_event.py`** (`ReportEvent`) — POSTs the event to orchestrator with its own retry policy. If every attempt fails, the session is persisted with `reported=False` instead of the event being dropped — the reconciler (`recover_orphaned_sessions.py`) picks it up later.
 
 ## Recovery tiers (why three separate mechanisms)
 
-Raw audio capture is the critical path, so failure handling is deliberately
-layered (`PLAN.md` D5):
+Raw audio capture is the critical path, so failure handling is deliberately layered:
 
 | Tier | Failure mode | Mechanism |
 |---|---|---|
@@ -148,87 +86,32 @@ layered (`PLAN.md` D5):
 | 2 | gRPC stream drops abruptly (network blip) | `GRACE_WAIT` + `grace_period_seconds` timer; a `SessionStart` with the same `session_id` within the window resumes the same `upload_id` instead of opening a new file |
 | 3 | Process crash / restart | `application/recover_orphaned_sessions.py`, run once at startup (`main.py::serve`) and on a `reconciler.interval_seconds` timer. Reads durable per-session JSON files off disk (`infra/state/file_session_state_repo.py`) and either finalizes a session a dead process left mid-upload, or retries reporting an already-terminal one that never made it to orchestrator |
 
-Tiers 2 and 3 share one subtlety worth reading if you're reviewing
-correctness: a resume (tier 2, in `start_recording.py`) and a grace-timeout
-finalize (tier 2's own timer, in `stop_recording.py::_grace_timeout`) can
-race each other. Both sides coordinate through the **same** `active.lock`
-object on the `ActiveSession`, and each re-checks status after acquiring the
-lock — so exactly one of "resume" or "finalize" wins, never both. Tier 3 is
-similarly guarded: the reconciler skips any `session_id` still present in the
-in-process `SessionRegistry`, so it never touches a session a live task
-already owns.
+Tiers 2 and 3 share one subtlety worth reading if you're reviewing correctness: a resume (tier 2, in `start_recording.py`) and a grace-timeout finalize (tier 2's own timer, in `stop_recording.py::_grace_timeout`) can race each other. Both sides coordinate through the **same** `active.lock` object on the `ActiveSession`, and each re-checks status after acquiring the lock — so exactly one of "resume" or "finalize" wins, never both. Tier 3 is similarly guarded: the reconciler skips any `session_id` still present in the in-process `SessionRegistry`, so it never touches a session a live task already owns.
 
-Local per-session state (`RECORD_STATE_DIR`, default
-`/data/record-service/state`) is *not* the source of truth for audio bytes —
-every uploaded part already durably exists in S3/MinIO via the multipart
-upload. It only remembers `(upload_id, parts, status)` so a restarted process
-can pick a session back up without re-reading any audio. See the module
-docstring in `infra/state/file_session_state_repo.py` for the one known
-limitation (ephemeral filesystem across pod reschedule).
+Local per-session state (`RECORD_STATE_DIR`, default `/data/record-service/state`) is *not* the source of truth for audio bytes — every uploaded part already durably exists in S3/MinIO via the multipart upload. It only remembers `(upload_id, parts, status)` so a restarted process can pick a session back up without re-reading any audio. See the module docstring in `infra/state/file_session_state_repo.py` for the one known limitation (ephemeral filesystem across pod reschedule).
 
 ## Object storage layout
 
-`infra/naming.py::build_object_key` computes the key locally (never asks
-orchestrator), so opening a recording never has a synchronous dependency on
-orchestrator being reachable:
+`infra/naming.py::build_object_key` computes the key locally (never asks orchestrator), so opening a recording never has a synchronous dependency on orchestrator being reachable:
 
 ```
 {room_id}/{participant_identity}-{source}-audio-{random_hex}.ogg
 ```
 
-OGG/Opus, encoded by record-service itself on the ingest path (see
-`application/append_audio.py` above) — this key names the final,
-client-playable artifact directly. There is no separate raw-capture key or
-derivative-transcode stage anymore; `audio-processing-service` (the service
-that used to own that second step) has been retired.
+Raw headerless PCM16 (no encode on the critical path — that's `audio-processing-service`'s job today; it's built and live, see its own README and this file's Status note above for the in-progress change to move encoding into record-service itself).
+
+The image's `Dockerfile` now installs `ffmpeg` (with `libopus`) as of an uncommitted change described in the Status note above — but as of this writing no Python code in this service invokes it; the binary sits unused until the referenced `infra/transcode/` module is actually written.
 
 ## Talking to orchestrator
 
-One outbound call: `POST {ORCHESTRATOR_BASE_URL}{RECORDING_EVENTS_PATH}`
-(default `/api/v2/recordings/events`), Bearer-authenticated via
-`ORCHESTRATOR_API_KEY` if set. Payload is a full self-describing session
-snapshot (see `infra/reporting/http_event_reporter.py::_to_payload`), same
-shape for all three events (`event` field is what orchestrator dispatches
-on).
+One outbound call: `POST {ORCHESTRATOR_BASE_URL}{RECORDING_EVENTS_PATH}` (default `/api/v2/recordings/events`), Bearer-authenticated via `ORCHESTRATOR_API_KEY` if set. Payload is a full self-describing session snapshot (see `infra/reporting/http_event_reporter.py::_to_payload`), same shape for all three events (`event` field is what orchestrator dispatches on).
 
-`room_id` throughout this file (`SessionStart.room_id`, `session_id`, the S3
-object key prefix) is whatever the agent sent at `StreamAudio` start --
-record-service treats it as an opaque string, no validation, no assumption
-about its shape. As of **PLAN.md D27** the agent sends orchestrator's own
-stable room UUID here (captured once at registration, before it even
-connects to the LiveKit room), not the LiveKit room name it used to send
-(PLAN.md D18) -- this is what lets orchestrator resolve `room_id` on an
-incoming event directly (existence check) instead of re-resolving a
-LiveKit-room-name-to-id mapping that could have been reassigned to a
-different call by the time a late event arrives. record-service itself
-needed zero code changes for this -- it was already agnostic to what
-`room_id` actually contains.
+`room_id` throughout this file (`SessionStart.room_id`, `session_id`, the S3 object key prefix) is whatever the agent sent at `StreamAudio` start -- record-service treats it as an opaque string, no validation, no assumption about its shape. The agent sends orchestrator's own stable room UUID here (captured once at registration, before it even connects to the call's room), not the room name it used to send previously -- this is what lets orchestrator resolve `room_id` on an incoming event directly (existence check) instead of re-resolving a room-name-to-id mapping that could have been reassigned to a different call by the time a late event arrives. record-service itself needed zero code changes for this -- it was already agnostic to what `room_id` actually contains.
 
-- `recording.started` — fired once, fire-and-forget, right after the session
-  is registered (`start_recording.py`). Orchestrator eagerly creates a
-  placeholder `tracks` row (`status`/`derivative_status` = `pending`) off
-  this so a still-recording track is visible/accounted-for the whole time
-  it's in flight, not just once it finishes — D22 originally skipped this
-  event to minimize scope, but that let a still-recording track's room
-  finalize (and even fire `room_record_done`) before the track had reported
-  anything at all. Reintroduced as **D26** (partial reversal of D22); see
-  `PLAN.md` for the full incident. Orchestrator inserts with
-  `ON CONFLICT (id) DO NOTHING` specifically because this can arrive *after*
-  `recording.completed`/`.failed` for very short recordings — it must never
-  clobber an already-terminal row.
-- `recording.completed` / `recording.failed` — unchanged, awaited from
-  `stop_recording.py`/`recover_orphaned_sessions.py`, upsert the same row via
-  `save_track_metadata`.
+- `recording.started` — fired once, fire-and-forget, right after the session is registered (`start_recording.py`). Orchestrator eagerly creates a placeholder `tracks` row (`status`/`derivative_status` = `pending`) off this so a still-recording track is visible/accounted-for the whole time it's in flight, not just once it finishes — this event was originally skipped to minimize scope, but that let a still-recording track's room finalize (and even fire `room_record_done`) before the track had reported anything at all, so it was reintroduced. Orchestrator inserts with `ON CONFLICT (id) DO NOTHING` specifically because this can arrive *after* `recording.completed`/`.failed` for very short recordings — it must never clobber an already-terminal row.
+- `recording.completed` / `recording.failed` — unchanged, awaited from `stop_recording.py`/`recover_orphaned_sessions.py`, upsert the same row via `save_track_metadata`.
 
-**Known open gap (D26)**: if a track's placeholder row is created by
-`recording.started` and record-service then crashes and loses its local
-durable state before ever delivering the terminal event for it (state is
-local disk, see the known limitation in
-`infra/state/file_session_state_repo.py`), that track's row stays
-`derivative_status='pending'` forever — nothing on the orchestrator side
-currently times it out. Not yet built; flagged in
-`pg_transcript_repository.py::check_and_notify_room_recordings_ready`'s
-docstring so it isn't lost.
+**Known open gap (D26)**: if a track's placeholder row is created by `recording.started` and record-service then crashes and loses its local durable state before ever delivering the terminal event for it (state is local disk, see the known limitation in `infra/state/file_session_state_repo.py`), that track's row stays `derivative_status='pending'` forever — nothing on the orchestrator side currently times it out. Not yet built; flagged in `pg_transcript_repository.py::check_and_notify_room_recordings_ready`'s docstring so it isn't lost.
 
 ```json
 {
@@ -246,9 +129,7 @@ docstring so it isn't lost.
 }
 ```
 
-Server errors (5xx) are retried by `report_event.py`; 4xx is treated as a
-final rejection (not retried); if retries are exhausted the event is
-persisted locally and picked up by the reconciler instead of being lost.
+Server errors (5xx) are retried by `report_event.py`; 4xx is treated as a final rejection (not retried); if retries are exhausted the event is persisted locally and picked up by the reconciler instead of being lost.
 
 ## Configuration
 
@@ -265,25 +146,11 @@ All env-driven, see `src/record_service/config.py` for defaults:
 | Reconciler | `RECORD_RECONCILE_INTERVAL_SECONDS` (30) |
 | Logging | `LOG_LEVEL` (INFO) |
 
-On the `agents` side, there is no enabled/disabled switch (D25 — LiveKit
-Egress is fully removed, so there's no fallback for a flag to roll back to;
-see `Architect_MultiClient_Server/agents/src/config/application_config.py`).
-Forwarding is always attempted; `RecordServiceClient.new_forwarder` fails
-soft per track if record-service isn't reachable.
+On the `agents` side, there is no enabled/disabled switch — the old built-in egress/recording pipeline is fully removed, so there's no fallback for a flag to roll back to. Forwarding is always attempted; `recordclient.NewForwarder` fails soft per track if record-service isn't reachable (`tracksink.RecordSinkFactory.NewSink` just returns a `nil` sink, logged, and the track keeps flowing without recording).
 
 ## Where the caller (agents) hooks in
 
-`Architect_MultiClient_Server/agents/src/services/record_service_client.py`
-(`RecordForwarder`) is the gRPC client counterpart. Deliberately **not**
-tied to the realtime-STT-enabled toggle — recording follows track/agent
-lifecycle, feeding a separate non-realtime Whisper pipeline that must keep
-running independent of whether live STT happens to be on for that room
-(`event_handlers.py::_start_record_forwarding`, triggered from
-`on_track_subscribed`, with its own `rtc.AudioStream.from_track()`
-subscription — not shared with `manage_speaker_transcription`). Forwarding
-is strictly non-blocking and best-effort from STT's point of view: a full
-queue drops the frame (and reports the drop count) rather than ever
-awaiting on record-service.
+[`agents/internal/recordclient`](../../agents/internal/recordclient/forwarder.go) (`Forwarder`, a Go port of the old Python `RecordForwarder`/`RecordServiceClient`) is the gRPC client counterpart, wired in by [`agents/internal/tracksink`](../../agents/internal/tracksink/tracksink.go)'s `RecordSinkFactory`. It's used by [`agents/internal/audiopipeline`](../../agents/internal/audiopipeline/bridge.go)'s per-track `Bridge`, which Opus-decodes each mic track exactly once and fans the PCM out to whichever sinks are attached. The record-service sink is attached unconditionally for every track (as long as record-service was configured/reachable at startup) and is deliberately **not** tied to the realtime-STT-enabled toggle — recording follows track/agent lifecycle, while the STT sink on the same track can be attached/detached independently at any time (`Bridge.SetSTTEnabled`) without affecting recording. Forwarding is strictly non-blocking and best-effort: `Forwarder.SendPCM` drops a frame (and counts the drop, reported to record-service on the next successful send) rather than ever blocking on a full per-track queue (`RECORD_SERVICE_MAX_QUEUE_SIZE`).
 
 ## Code layout (Ports & Adapters)
 
@@ -300,11 +167,7 @@ src/record_service/
   main.py       entrypoint: gRPC server + startup reconciliation + reconciler loop
 ```
 
-`application/*` and `infra/grpc/ingest_server.py` depend only on
-`domain/ports.py`. A future `infra/sfu/rtp_ingest.py` (direct RTP capture
-once LiveKit's SFU is swapped out, D3) would drive the same three use cases
-— `start_recording` / `append_audio` / `stop_recording` — without any
-application-layer change.
+`application/*` and `infra/grpc/ingest_server.py` depend only on `domain/ports.py`. A future `infra/sfu/rtp_ingest.py` (direct RTP capture once the SFU is swapped out, D3) would drive the same three use cases — `start_recording` / `append_audio` / `stop_recording` — without any application-layer change.
 
 ## Running locally
 
@@ -335,11 +198,9 @@ python scripts/dev_server_with_fakes.py [port] [max_wait_seconds]
 
 ## Running as a deployed service (dev/prod)
 
-No Docker in dev/prod (PLAN.md D14) -- systemd on the host instead. Full
-install steps, template unit file, and env file examples:
-**`deploy/systemd/README.md`**.
+No Docker in dev/prod -- systemd on the host instead. Full install steps, template unit file, and env file examples: **`deploy/systemd/README.md`**.
 
-## Benchmarking (PLAN.md D13)
+## Benchmarking
 
 ```bash
 # terminal 1 -- the target (pin to its own core if benchmarking on one
@@ -349,16 +210,9 @@ taskset -c 0 python -m record_service.main
 # terminal 2:
 taskset -c 1 python scripts/benchmark_concurrency.py --sweep 10,25,50,100 --csv results.csv
 ```
-Sweeps concurrency levels, feeding each simulated session real-cadence
-PCM16 silence, sampling the target process's CPU%/RSS to find where one
-instance/core starts to strain -- see `scripts/benchmark_concurrency.py`'s
-docstring for the full option list and `deploy/systemd/README.md` for how
-the result feeds into instance-count capacity planning.
+Sweeps concurrency levels, feeding each simulated session real-cadence PCM16 silence, sampling the target process's CPU%/RSS to find where one instance/core starts to strain -- see `scripts/benchmark_concurrency.py`'s docstring for the full option list and `deploy/systemd/README.md` for how the result feeds into instance-count capacity planning.
 
 ## Tests
 
-`tests/` uses fakes (`tests/fakes.py`) for `BlobStorage`/`EventReporter`, no
-mocks-of-mocks. Notably includes two tests that exist specifically to prove
-the tier-3 recovery race condition described above is closed:
-`test_reconciler_never_touches_a_session_live_in_this_process` and
-`test_late_reconnect_after_grace_timeout_claimed_the_session_gets_a_fresh_upload`.
+`tests/` uses fakes (`tests/fakes.py`) for `BlobStorage`/`EventReporter`, no mocks-of-mocks. Notably includes two tests that exist specifically to prove the tier-3 recovery race condition described above is closed: `test_reconciler_never_touches_a_session_live_in_this_process` and `test_late_reconnect_after_grace_timeout_claimed_the_session_gets_a_fresh_upload`.
+
