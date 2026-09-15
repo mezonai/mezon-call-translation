@@ -95,7 +95,7 @@ Local per-session state (`RECORD_STATE_DIR`, default `/data/record-service/state
 `infra/naming.py::build_object_key` computes the key locally (never asks orchestrator), so opening a recording never has a synchronous dependency on orchestrator being reachable:
 
 ```
-{room_id}/{participant_identity}-{source}-audio-{random_hex}.pcm
+{room_id}/{participant_identity}-{source}-audio-{random_hex}.ogg
 ```
 
 Raw headerless PCM16 (no encode on the critical path — that's `audio-processing-service`'s job today; it's built and live, see its own README and this file's Status note above for the in-progress change to move encoding into record-service itself).
@@ -139,7 +139,8 @@ All env-driven, see `src/record_service/config.py` for defaults:
 |---|---|
 | gRPC server | `RECORD_SERVICE_GRPC_HOST` (0.0.0.0), `RECORD_SERVICE_GRPC_PORT` (50051) |
 | MinIO/S3 | `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`, `MINIO_REGION`, `MINIO_SECURE`, `MINIO_FORCE_PATH_STYLE` |
-| Recording policy | `RECORD_PART_SIZE_MB` (8), `RECORD_MAX_UPLOAD_RETRIES` (3), `RECORD_UPLOAD_RETRY_BASE_DELAY_SECONDS` (0.2), `RECORD_GRACE_PERIOD_SECONDS` (45), `RECORD_BYTE_RATE_TOLERANCE` (0.5), `RECORD_DROP_RATE_WARNING_THRESHOLD` (0.1) |
+| Recording policy | `RECORD_PART_SIZE_MB` (5), `RECORD_MAX_UPLOAD_RETRIES` (3), `RECORD_UPLOAD_RETRY_BASE_DELAY_SECONDS` (0.2), `RECORD_GRACE_PERIOD_SECONDS` (45), `RECORD_BYTE_RATE_TOLERANCE` (0.5), `RECORD_DROP_RATE_WARNING_THRESHOLD` (0.1) |
+| Transcode (Opus encoder) | `FFMPEG_PATH` (ffmpeg), `TRANSCODE_OPUS_BITRATE_KBPS` (32), `TRANSCODE_FFMPEG_TIMEOUT_SECONDS` (30) |
 | Local state | `RECORD_STATE_DIR` (/data/record-service/state) |
 | Orchestrator | `ORCHESTRATOR_BASE_URL`, `RECORDING_EVENTS_PATH`, `ORCHESTRATOR_TIMEOUT_SECONDS` (5), `RECORD_MAX_REPORT_RETRIES` (3), `RECORD_REPORT_RETRY_BASE_DELAY_SECONDS` (0.5), `ORCHESTRATOR_API_KEY` |
 | Reconciler | `RECORD_RECONCILE_INTERVAL_SECONDS` (30) |

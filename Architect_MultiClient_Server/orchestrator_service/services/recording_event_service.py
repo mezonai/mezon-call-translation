@@ -1,7 +1,12 @@
 """
 Recording Event Service - handles events posted by record-service
-(recording.started/recording.completed/recording.failed) and, from Phase 5,
-audio-processing-service (derivative.completed/derivative.failed).
+(recording.started/recording.completed/recording.failed).
+
+audio-processing-service and its derivative.completed/.failed events are
+retired (PLAN.md D6-successor): record-service now encodes to OGG/Opus
+itself on the live ingest path and reports the final artifact directly via
+recording.completed, so there is no separate derivative stage left to post
+events for.
 
 See audio-ingestion/PLAN.md D18/D19/D26. Deliberately not shaped like the old
 Egress event flow it replaces (PLAN.md D2) -- this is
@@ -12,12 +17,10 @@ import uuid
 
 from orchestrator_service.api.sse_metadata_api import metadata_channel
 from orchestrator_service.models.recording_event_models import (
-    DerivativeEventRequest,
     RecordingEventRequest,
     RecordingEventResponse,
     TtsTranscriptEventRequest,
 )
-from orchestrator_service.services.audio_derivative_service import get_audio_derivative_service
 from orchestrator_service.services.postgresql.models import Track
 from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
@@ -39,7 +42,6 @@ class RecordingEventService:
         self.pg_repo = PgTranscriptRepository()
         self.track_repo = PgTrackRepository()
         self.transcription_service = TranscriptionService()
-        self.audio_derivative_service = get_audio_derivative_service()
 
     async def _resolve_room_ref_id(self, raw_room_id: str) -> str | None:
         """record-service sends whatever the agent gave it as room_id
@@ -122,14 +124,6 @@ class RecordingEventService:
                 # tts.transcript/.completed instead (handle_tts_transcript_event below).
                 skip_stt=(payload.track_id == AGENT_TTS_TRACK_ID),
             )
-            await self.audio_derivative_service.enqueue(
-                track_id=payload.recording_id,
-                room_id=room_ref_id,
-                bucket=payload.bucket,
-                object_key=payload.object_key,
-                sample_rate=payload.sample_rate,
-                channels=payload.channels,
-            )
             return RecordingEventResponse(received=True, action="recording_completed")
 
         if payload.event == "recording.failed":
@@ -139,14 +133,12 @@ class RecordingEventService:
                 room_ref_id=room_ref_id,
                 participant_identity=payload.participant_identity,
                 status="failed",
-                derivative_status="failed",  # nothing to transcode from a failed capture
                 error="record-service reported recording.failed",
             )
-            # Sets a terminal derivative_status directly (unlike
-            # recording.completed, there's no derivative job to wait on) --
-            # so this can just as well be the track that satisfies D19's
-            # room-ready condition. Same call site pattern as
-            # handle_derivative_event below.
+            # `status="failed"` above already moves this track off the
+            # "pending" placeholder check_and_notify_room_recordings_ready
+            # gates on (PLAN.md D32) -- so this can just as well be the
+            # track that satisfies D19's room-ready condition.
             if room_ref_id and await self.pg_repo.check_and_notify_room_recordings_ready(room_ref_id):
                 room = await self.pg_repo.get_room_by_id(room_ref_id)
                 if room:
@@ -157,39 +149,6 @@ class RecordingEventService:
 
         logger.warning(f"Unknown recording event type: {payload.event}") # type: ignore[unreachable]
         return RecordingEventResponse(received=True, action="ignored")
-
-    async def handle_derivative_event(self, payload: DerivativeEventRequest) -> RecordingEventResponse:
-        track = await self.pg_repo.get_track_by_id(payload.recording_id)
-        if not track:
-            logger.error(f"Unknown track for derivative event: {payload.recording_id}")
-            return RecordingEventResponse(received=True, action="track_not_found")
-
-        if payload.event not in ("derivative.completed", "derivative.failed"):
-            logger.warning(f"Unknown derivative event type: {payload.event}")
-            return RecordingEventResponse(received=True, action="ignored")
-
-        derivative_status = "completed" if payload.event == "derivative.completed" else "failed"
-        await self.track_repo.update_track_derivative(
-            record_id=payload.recording_id,
-            derivative_status=derivative_status,
-            derivative_error=payload.error if payload.event == "derivative.failed" else None,
-            derivative_object_key=payload.object_key if payload.event == "derivative.completed" else None,
-        )
-
-        # First of the two call sites required by D19 -- the other is
-        # TranscriptionService.final_room(). Either the room finalizes last
-        # (this call catches it) or this track's derivative finishes last
-        # (this call catches it); the atomic UPDATE guard makes it safe to
-        # check from both without double-firing.
-        room_ref_id: str | None = str(track.room_ref_id) if track.room_ref_id else None
-        if room_ref_id and await self.pg_repo.check_and_notify_room_recordings_ready(room_ref_id):
-            room = await self.pg_repo.get_room_by_id(room_ref_id)
-            if room:
-                await metadata_channel.push_room_record_done(
-                    room_id=str(room_ref_id), room_name=room.room_name or ""
-                )
-
-        return RecordingEventResponse(received=True, action=f"derivative_{derivative_status}")
 
     async def handle_tts_transcript_event(self, payload: TtsTranscriptEventRequest) -> RecordingEventResponse:
         """Agent-reported transcript for its own TTS track (PLAN.md D3x) --

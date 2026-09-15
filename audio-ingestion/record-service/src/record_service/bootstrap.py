@@ -22,6 +22,7 @@ from record_service.infra.grpc.ingest_server import RecordingIngestServicer
 from record_service.infra.reporting.http_event_reporter import HttpEventReporter
 from record_service.infra.state.file_session_state_repo import FileSessionStateRepository
 from record_service.infra.storage.s3_blob_storage import S3BlobStorage
+from record_service.infra.transcode.ffmpeg_opus_encoder import FfmpegOpusEncoderFactory
 
 
 @dataclass
@@ -59,10 +60,11 @@ def build_application(config: Config | None = None) -> Application:
     blob_storage = S3BlobStorage(config.minio)
     state_repo = FileSessionStateRepository(config.state_store.directory)
     event_reporter = HttpEventReporter(config.orchestrator)
+    encoder_factory = FfmpegOpusEncoderFactory(config.transcode)
 
     report_event = ReportEvent(event_reporter, state_repo, policy.report_retry)
-    start_recording = StartRecording(registry, blob_storage, state_repo, report_event)
-    append_audio = AppendAudio(registry, blob_storage, state_repo, policy)
+    start_recording = StartRecording(registry, blob_storage, state_repo, report_event, encoder_factory)
+    append_audio = AppendAudio(registry, blob_storage, state_repo, policy, encoder_factory)
     stop_recording = StopRecording(registry, blob_storage, state_repo, report_event, policy)
     recover_orphaned_sessions = RecoverOrphanedSessions(registry, blob_storage, state_repo, report_event, policy)
 
