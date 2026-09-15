@@ -1,9 +1,12 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import HTTPException
-
 from orchestrator_service.auth.authorization import AuthContext
+from orchestrator_service.exceptions import (
+    RoomAccessDeniedError,
+    RoomNotFoundError,
+    RoomTracksNotFoundError,
+)
 from orchestrator_service.models.room_models import AudioTrackInfo, ParticipantModel
 from orchestrator_service.services.postgresql.models import Room
 from orchestrator_service.services.postgresql.pg_summary_repository import (
@@ -66,11 +69,12 @@ class RoomService:
             has_access = await self.pg_transcript_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room {room_id}")
-                raise HTTPException(status_code=403, detail="You don't have access to this room")
+                raise RoomAccessDeniedError("You don't have access to this room")
 
         room = await self.pg_transcript_repo.get_room_by_id(room_id)
         if not room:
-            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+            logger.warning(f"Room with ID '{room_id}' not found")
+            raise RoomNotFoundError(f"Room with ID '{room_id}' not found")
 
         return self._serialize_room(room)
 
@@ -80,12 +84,13 @@ class RoomService:
             has_access = await self.pg_transcript_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
-                raise HTTPException(status_code=403, detail="You don't have access to this room")
+                raise RoomAccessDeniedError("You don't have access to this room")
 
         summary, room = await self.pg_summary_repo.get_summary_by_room_id(room_id)
         tracks = await self.pg_transcript_repo.get_tracks_by_room(room_id)
         if not room:
-            raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+            logger.warning(f"Room with ID '{room_id}' not found")
+            raise RoomNotFoundError(f"Room with ID '{room_id}' not found")
 
         total_segments = summary.total_segments if summary else 0
         total_tracks = len(tracks)
@@ -112,15 +117,12 @@ class RoomService:
         if not auth.can_view_all_rooms:
             has_access = await self.pg_transcript_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
-                logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
-                raise HTTPException(status_code=403, detail="You don't have access to this room")
+                logger.warning(f"User {auth.user_id} denied access to room tracks for {room_id}")
+                raise RoomAccessDeniedError("You don't have access to this room")
 
         tracks = await self.pg_transcript_repo.get_tracks_by_room(room_id)
         if not tracks:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No tracks found for room with ID '{room_id}'",
-            )
+            raise RoomTracksNotFoundError(f"No tracks found for room with ID '{room_id}'")
 
         file_results: list[AudioTrackInfo] = []
         for track in tracks:
@@ -156,16 +158,10 @@ class RoomService:
     async def list_participants(self, room_id: str) -> list[ParticipantModel]:
         room = await self.pg_transcript_repo.get_room_by_id(room_id)
         if not room:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Room with ID '{room_id}' not found",
-            )
+            logger.warning(f"Room with ID '{room_id}' not found")
+            raise RoomNotFoundError(f"Room with ID '{room_id}' not found")
 
-        participants_data = (
-            room.participants
-            if isinstance(room.participants, list)
-            else []
-        )
+        participants_data = room.participants if isinstance(room.participants, list) else []
 
         result: list[ParticipantModel] = []
 

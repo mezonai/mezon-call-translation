@@ -2,6 +2,8 @@ from google.genai import errors as genai_errors
 from openai import APIConnectionError, APIError, LengthFinishReasonError, RateLimitError
 from pydantic import ValidationError
 
+from orchestrator_service.exceptions import LlmInvalidResponseError
+
 RETRYABLE_EXCEPTIONS = (
     APIError,
     APIConnectionError,
@@ -12,4 +14,5 @@ RETRYABLE_EXCEPTIONS = (
     ValidationError,
     RuntimeError,
     TimeoutError,
+    LlmInvalidResponseError,
 )

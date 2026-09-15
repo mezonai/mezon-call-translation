@@ -13,6 +13,13 @@ from tenacity import (
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
+from orchestrator_service.exceptions import (
+    LlmInvalidResponseError,
+    RoomNotFoundError,
+    RoomSummaryNotFoundError,
+    SummaryGenerationError,
+    SummaryPersistenceError,
+)
 from orchestrator_service.models.summary_models import LightSummaryResult
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.prompt import build_light_summary_prompt
@@ -75,7 +82,6 @@ class LightSummaryService:
         real_messages = messages
         working_messages = mask_messages(messages, id_to_username)
 
-
         start_idx = 0
         section_index = 1
         previous_context = ""
@@ -94,8 +100,11 @@ class LightSummaryService:
                 last_section = existing_sections[-1]
 
                 resume_idx = next(
-                    (idx + 1 for idx, msg in enumerate(working_messages)
-                     if msg.get("timestamp") == last_section.end_time),
+                    (
+                        idx + 1
+                        for idx, msg in enumerate(working_messages)
+                        if msg.get("timestamp") == last_section.end_time
+                    ),
                     None,
                 )
 
@@ -133,29 +142,35 @@ class LightSummaryService:
                 transcript_str = json.dumps(candidate_messages, ensure_ascii=False, indent=2)
 
                 try:
-                    is_final = (candidate_end_idx == len(working_messages))
+                    is_final = candidate_end_idx == len(working_messages)
                     prompt = build_light_summary_prompt(
                         conversation_str=transcript_str,
                         previous_context=previous_context,
                         language=language,
-                        is_final_section=is_final
+                        is_final_section=is_final,
                     )
                     summary_result = await self._call_llm(prompt, LightSummaryResult)
 
                     if summary_result.key_discussions:
-                        summary_result.key_discussions = sanitize_and_decode_list(summary_result.key_discussions, {}, require_brackets=True)
+                        summary_result.key_discussions = sanitize_and_decode_list(
+                            summary_result.key_discussions, {}, require_brackets=True
+                        )
                         summary_result.key_discussions = format_key_discussions(summary_result.key_discussions)
                     if summary_result.next_focus:
-                        summary_result.next_focus = sanitize_and_decode_list(summary_result.next_focus, username_to_id, require_brackets=True)
+                        summary_result.next_focus = sanitize_and_decode_list(
+                            summary_result.next_focus, username_to_id, require_brackets=True
+                        )
                     if summary_result.detail:
-                        summary_result.detail = sanitize_and_decode_list(summary_result.detail, {}, require_brackets=False)
+                        summary_result.detail = sanitize_and_decode_list(
+                            summary_result.detail, {}, require_brackets=False
+                        )
 
                 except Exception as api_err:
                     logger.error(
                         f"LLM Error after all retries at start_idx={start_idx} room={room_id}. "
                         f"Error type={type(api_err).__name__}, detail={api_err!r}"
                     )
-                    raise ValueError(
+                    raise SummaryGenerationError(
                         f"Failed to process section due to LLM error: {type(api_err).__name__}: {api_err}"
                     ) from api_err
 
@@ -174,7 +189,7 @@ class LightSummaryService:
             if not summary_result or (
                 summary_result.end_message_time is None and candidate_end_idx < len(working_messages)
             ):
-                raise ValueError(f"Cannot find completed topic from start_idx={start_idx}")
+                raise SummaryGenerationError(f"Cannot find completed topic from start_idx={start_idx}")
 
             if candidate_end_idx == len(working_messages):
                 end_idx = len(working_messages) - 1
@@ -216,7 +231,7 @@ class LightSummaryService:
             saved = await self.pg_repo.upsert_room_section_summary(record)
             if not saved:
                 logger.error(f"Failed to save section summary room_id={room_id}, section_index={section_index}")
-                raise RuntimeError(f"Failed to save section {section_index}")
+                raise SummaryPersistenceError(f"Failed to save section {section_index}")
 
             logger.info(
                 f"Saved section summary room_id={room_id}, section_index={section_index}, "
@@ -240,11 +255,11 @@ class LightSummaryService:
         summary, room = await self.pg_repo.get_summary_by_room_id(room_id)
         if not room:
             logger.error(f"Room summary not found: {room_id}")
-            raise ValueError(f"Not found room: {room_id}")
+            raise RoomNotFoundError(f"Not found room: {room_id}")
 
         if not summary:
             logger.error(f"RoomSummary doc not found for room: {room_id}")
-            raise ValueError(f"Not found room summary doc for room: {room_id}")
+            raise RoomSummaryNotFoundError(f"Not found room summary doc for room: {room_id}")
 
         messages = summary.messages
         room_participants = room.participants if isinstance(room.participants, list) else []
@@ -282,7 +297,7 @@ class LightSummaryService:
             if messages[idx].get("timestamp") == end_message_time:
                 return idx
 
-        raise ValueError(
+        raise LlmInvalidResponseError(
             f"Cannot find end_message_time={end_message_time} "
             f"in candidate messages {start_idx}->{candidate_end_idx - 1}"
         )

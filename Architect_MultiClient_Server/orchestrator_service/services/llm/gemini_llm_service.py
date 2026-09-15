@@ -9,6 +9,7 @@ from google.genai import errors as genai_errors
 from pydantic import BaseModel
 
 from orchestrator_service.config.application_config import LLMConfig
+from orchestrator_service.exceptions import LlmInvalidResponseError
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.rate_limiter import estimate_tokens, get_rate_limiter
@@ -49,12 +50,11 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:  # type: ignore[expl
         Extracted JSON dictionary
 
     Raises:
-        RuntimeError: If response format is invalid
-        ValueError: If no valid JSON found in response
+        LlmInvalidResponseError: If response format is invalid or contains no valid JSON
     """
     raw = raw_text.strip()
     if not raw:
-        raise ValueError("Empty LLM output")
+        raise LlmInvalidResponseError("Empty LLM output")
 
     # 1) Direct JSON parse
     try:
@@ -95,7 +95,7 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:  # type: ignore[expl
             continue
 
     logger.error("Cannot extract JSON from local LLM output")
-    raise ValueError("No valid JSON found in LLM response")
+    raise LlmInvalidResponseError("No valid JSON found in LLM response")
 
 
 class GeminiLLMService(BaseLLMService):
@@ -131,6 +131,6 @@ class GeminiLLMService(BaseLLMService):
             raise
 
         if response.text is None:
-            raise ValueError("Empty response text from Gemini API")
+            raise LlmInvalidResponseError("Empty response text from Gemini API")
         parsed_json = extract_json_from_llm(response.text)
         return response_model.model_validate(parsed_json)

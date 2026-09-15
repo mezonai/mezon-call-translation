@@ -4,6 +4,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from orchestrator_service.config.application_config import LLMConfig
+from orchestrator_service.exceptions import LlmInvalidResponseError
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 
 T = TypeVar("T", bound=BaseModel)
@@ -29,6 +30,6 @@ class LocalLLMService(BaseLLMService):
         parsed_result = response.choices[0].message.parsed
 
         if parsed_result is None:
-            raise ValueError("Empty response text from Local LLM")
+            raise LlmInvalidResponseError("Empty response text from Local LLM")
 
         return parsed_result
