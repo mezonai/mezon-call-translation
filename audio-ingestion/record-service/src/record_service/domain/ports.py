@@ -63,3 +63,46 @@ class EventReporter(ABC):
     @abstractmethod
     async def report(self, session: RecordingSession, event: str) -> bool:
         """Returns True if the orchestrator acknowledged the event."""
+
+
+class StreamEncoder(ABC):
+    """Outbound port: incremental PCM16 -> OGG/Opus encoding for one
+    recording session (PLAN.md D6-successor -- record-service now produces
+    the final derivative itself instead of forwarding raw PCM to a second
+    service; see infra/transcode/ffmpeg_opus_encoder.py for the rationale).
+
+    One instance is bound to the lifetime of one underlying encoder process.
+    If it dies mid-session, callers get a *new* instance from
+    StreamEncoderFactory rather than trying to resurrect this one -- Ogg's
+    container format allows concatenated logical bitstreams in a single
+    file, so restarting is "begin a new chapter", not a fatal error for the
+    session (mirrors D12's "annotate, never discard" philosophy).
+    """
+
+    @abstractmethod
+    async def feed(self, pcm: bytes) -> None:
+        """Write raw PCM16 input. Raises if the encoder has died."""
+
+    @abstractmethod
+    async def drain(self) -> bytes:
+        """Return whatever encoded OGG/Opus bytes are ready so far."""
+
+    @abstractmethod
+    async def close(self) -> bytes:
+        """Signal end of input, wait for the encoder to flush, return the
+        remaining encoded bytes."""
+
+    @property
+    @abstractmethod
+    def alive(self) -> bool:
+        """False once the underlying process has died or hasn't started."""
+
+
+class StreamEncoderFactory(ABC):
+    """Outbound port: starts a StreamEncoder bound to one session's capture
+    format. Separate from StreamEncoder itself since a session can go
+    through more than one encoder instance (restart-on-death above)."""
+
+    @abstractmethod
+    async def create(self, sample_rate: int, channels: int) -> StreamEncoder:
+        """Starts a new encoder process. Raises if it fails to start."""

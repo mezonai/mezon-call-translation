@@ -249,9 +249,9 @@ class MetadataChannel:
 
         Fired exactly once per room, gated by
         PgTranscriptRepository.check_and_notify_room_recordings_ready()
-        (room finalized AND every track's derivative_status terminal) --
-        callers must go through that check, this method does not re-check
-        anything, it only broadcasts.
+        (room finalized AND every track past its "still recording"
+        placeholder state, PLAN.md D32) -- callers must go through that
+        check, this method does not re-check anything, it only broadcasts.
         """
         context_key = self.CONTEXT_KEY
 

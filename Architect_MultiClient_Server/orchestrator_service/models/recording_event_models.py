@@ -3,9 +3,14 @@ Request models for POST /api/v2/recordings/events.
 
 Deliberately NOT shaped like a LiveKit egress webhook (audio-ingestion
 PLAN.md D2) -- this is the clean, self-describing contract record-service
-and (later, Phase 5) audio-processing-service post to. Field names match
-record-service's HttpEventReporter._to_payload() exactly
-(record-service/src/record_service/infra/reporting/http_event_reporter.py).
+posts to. Field names match record-service's HttpEventReporter._to_payload()
+exactly (record-service/src/record_service/infra/reporting/http_event_reporter.py).
+
+audio-processing-service used to post a second event family here
+(DerivativeEventRequest, "derivative.completed"/".failed") -- retired along
+with that service (PLAN.md D6-successor): record-service now reports the
+final OGG/Opus artifact directly via recording.completed, so there's nothing
+left to post a derivative event about.
 """
 
 
@@ -49,19 +54,6 @@ class RecordingEventRequest(BaseModel):  # type: ignore[explicit-any]
     quality_annotations: list[QualityAnnotationModel] = []
 
 
-class DerivativeEventRequest(BaseModel):  # type: ignore[explicit-any]
-    """Posted by audio-processing-service (Phase 5). event: "derivative.completed" | "derivative.failed"."""
-
-    event: Literal[
-        "derivative.completed",
-        "derivative.failed"
-    ]
-    recording_id: str          # matches tracks.id from the originating RecordingEventRequest
-    bucket: str | None = None
-    object_key: str | None = None
-    error: str | None = None
-
-
 class TtsTranscriptEventRequest(BaseModel):  # type: ignore[explicit-any]
     """Posted directly by the agent for its own TTS track (audio-ingestion
     PLAN.md D3x) -- text is already known (came from orchestrator's own
@@ -84,7 +76,6 @@ class TtsTranscriptEventRequest(BaseModel):  # type: ignore[explicit-any]
 
 RecordingEventPayload = Annotated[
     RecordingEventRequest
-    | DerivativeEventRequest
     | TtsTranscriptEventRequest,
     Field(discriminator="event"),
 ]

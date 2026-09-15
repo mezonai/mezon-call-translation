@@ -17,7 +17,6 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 from dataclasses import dataclass
 
-import numpy as np
 from minio import Minio
 from faster_whisper import WhisperModel
 
@@ -28,32 +27,6 @@ from stt_service.config import get_config
 from stt_service.models import TranscriptionStreamTask, SaveTranscriptionTask
 
 logger = logging.getLogger(__name__)
-
-
-def _pcm16_bytes_to_float32(raw_bytes: bytes) -> np.ndarray:
-    """
-    Converts a raw, headerless PCM16 mono buffer (audio-ingestion PLAN.md D6
-    -- record-service's capture format) directly into the normalized float32
-    array faster_whisper's WhisperModel.transcribe() accepts as `audio`.
-
-    Bypasses transcribe()'s default path entirely: when `audio` is anything
-    other than a np.ndarray, it calls decode_audio() (faster_whisper/audio.py),
-    which shells out to PyAV to auto-detect the input's container/format --
-    that fails hard on headerless raw PCM (av.error.InvalidDataError:
-    "Invalid data found when processing input"), since there's no header for
-    it to sniff. Passing a np.ndarray skips that branch
-    (`if not isinstance(audio, np.ndarray): audio = decode_audio(...)`).
-
-    Does the exact same int16 -> float32 conversion decode_audio() itself
-    does internally (`astype(np.float32) / 32768.0`) so the numeric range
-    Whisper's feature extractor sees is identical either way.
-    """
-    # Defensive: drop a stray trailing byte rather than let np.frombuffer
-    # raise on a non-multiple-of-2 buffer (shouldn't happen in practice).
-    if len(raw_bytes) % 2:
-        raw_bytes = raw_bytes[:-1]
-    samples = np.frombuffer(raw_bytes, dtype=np.int16)
-    return samples.astype(np.float32) / 32768.0
 
 
 @dataclass
@@ -161,28 +134,6 @@ class WhisperTranscriptionProcessor:
         )
         logger.info(f"✅ Whisper model loaded: {whisper_config.model_size}")
 
-        # We now feed raw PCM16 straight in as a pre-decoded np.ndarray
-        # (see _pcm16_bytes_to_float32), skipping decode_audio()'s own
-        # resampling step entirely -- so the capture format MUST already
-        # match what the model's feature extractor expects, or every
-        # transcription would silently run on mis-rated audio (sped
-        # up/slowed down) instead of loudly failing like before. Raw
-        # capture is always mono (audio-ingestion PLAN.md D6); fail fast at
-        # startup rather than per-task if that ever stops being true.
-        audio_config = self._config.audio
-        extractor_rate = self._whisper_model.feature_extractor.sampling_rate
-        if audio_config.sample_rate != extractor_rate:
-            raise RuntimeError(
-                f"Capture sample_rate ({audio_config.sample_rate}) does not match "
-                f"Whisper's expected sampling_rate ({extractor_rate}) -- raw PCM is fed "
-                f"in directly without resampling, see _pcm16_bytes_to_float32."
-            )
-        if audio_config.channels != 1:
-            raise RuntimeError(
-                f"Capture channels ({audio_config.channels}) != 1 -- raw PCM is assumed "
-                f"mono and fed in directly without deinterleaving, see _pcm16_bytes_to_float32."
-            )
-
         self._initialized = True
     
     async def _download_from_minio(self, filename: str) -> tuple[Path, float]:
@@ -289,9 +240,14 @@ class WhisperTranscriptionProcessor:
         def transcribe_in_thread():
             """Transcribe audio and send batches via queue"""
             try:
-                audio_array = _pcm16_bytes_to_float32(audio_path.read_bytes())
+                # audio-ingestion PLAN.md D6-successor: record-service now
+                # delivers OGG/Opus, not headerless raw PCM -- pass the file
+                # path straight through so faster_whisper's own
+                # decode_audio() (PyAV-based) decodes and resamples it,
+                # instead of the old int16-reinterpret fast path that only
+                # worked because the capture format was guaranteed raw PCM.
                 segments_generator, info = self._whisper_model.transcribe(
-                    audio_array,
+                    str(audio_path),
                     language=whisper_config.language if whisper_config.language else None,
                     beam_size=whisper_config.beam_size,
                     vad_filter=whisper_config.vad_filter,

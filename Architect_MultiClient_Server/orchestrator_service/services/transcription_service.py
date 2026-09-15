@@ -54,13 +54,20 @@ class TranscriptionService:
         skip_stt: bool = False,
     ) -> bool:
         """
-        Raw capture done (record-service's recording.completed, audio-ingestion
+        Recording done (record-service's recording.completed, audio-ingestion
         PLAN.md D18) -- save track metadata (upserts: the row normally
         already exists from `recording.started`, PLAN.md D26, but this must
         still work standalone in case that event never made it) and kick off
-        Whisper STT via transcription:stream. Does NOT touch room_record_done
-        -- that fires on the separate, later derivative-completion path
-        (D19), not here.
+        Whisper STT via transcription:stream.
+
+        `filename`/`location` here are already the final, client-playable
+        OGG/Opus artifact (PLAN.md D6-successor: record-service encodes on
+        its own live ingest path now) -- there is no more separate
+        derivative pipeline/event to wait on, so room_service.get_audio_info
+        can use `filename` directly the moment this lands (audio-processing-
+        service, the old derivative.completed reporter, and the
+        `tracks.derivative_status` column it fed, are both retired -- PLAN.md
+        D32).
 
         skip_stt: the agent's own TTS track (PLAN.md D3x) -- still needs the
         track row (room-completion gating counts it), just not a Whisper job;
@@ -87,7 +94,6 @@ class TranscriptionService:
                         "source": source,
                     },
                     status="wait_process",
-                    derivative_status="pending",
                 )
                 if not track_result:
                     logger.warning(f"Failed to save track metadata for recording_id={recording_id}")
@@ -139,11 +145,15 @@ class TranscriptionService:
             if not updated:
                 return False
 
-            # Second of the two call sites required by D19 -- the other is
-            # RecordingEventService.handle_derivative_event(). Whichever
-            # condition (room finalized vs. last track's derivative done)
-            # is satisfied last is the one that actually fires the event;
-            # the atomic UPDATE guard inside makes this safe to call from both.
+            # D19: room finalization is the only remaining condition this
+            # gates on now (PLAN.md D32 retired the separate derivative-
+            # completion call site -- every track has already left its
+            # "still recording" placeholder status by the time
+            # recording.completed/.failed lands, see
+            # check_and_notify_room_recordings_ready's docstring). Kept as
+            # its own check_and_notify_room_recordings_ready call (not
+            # inlined) since the atomic UPDATE guard still needs to run
+            # exactly once per room regardless of call order.
             if await self.pg_repo.check_and_notify_room_recordings_ready(room_id):
                 await metadata_channel.push_room_record_done(
                     room_id=str(room_id), room_name=room_name

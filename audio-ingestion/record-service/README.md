@@ -87,14 +87,33 @@ One `RecordingSession` = one `(room_id, track_id)` = one S3 multipart upload.
    orchestrator fire-and-forget (D26) — not awaited, so a slow/unreachable
    orchestrator never delays accepting audio.
 
-3. **`application/append_audio.py`** (`AppendAudio`) — dumb pass-through by
-   design (D6: no decode/re-encode). Buffers PCM bytes per session and
-   flushes a part to S3 (`upload_part`, retried via `with_retry`) every time
-   the buffer crosses `part_size_bytes` (default 8 MiB, S3's multipart
-   minimum is 5 MiB). Also folds in agent-reported `dropped_frame_count` and
-   raises a `QualityAnnotation` (never discards data, never restarts the
-   session) if the cumulative drop rate crosses
-   `drop_rate_warning_threshold`.
+3. **`application/append_audio.py`** (`AppendAudio`) — feeds incoming PCM
+   into the session's `StreamEncoder` (`domain/ports.py`, backed by
+   `infra/transcode/ffmpeg_opus_encoder.py`: an ffmpeg subprocess per
+   session, PCM16 in over `pipe:0`, OGG/Opus out over `pipe:1`), buffers the
+   *encoded* bytes, and flushes a part to S3 (`upload_part`, retried via
+   `with_retry`) every time the buffer crosses `part_size_bytes` (default
+   5 MiB — S3's multipart minimum, chosen to keep the unflushed-buffer
+   crash-loss window as small as the protocol allows; see `config.py`'s
+   `RecordingPolicyConfig` docstring for why that window is bigger now than
+   it was for raw PCM). If a session's encoder dies mid-stream, `AppendAudio`
+   transparently starts a replacement (Ogg's container allows concatenated
+   logical bitstreams) and appends an `encoder_restarted` `QualityAnnotation`
+   — same "annotate, never discard" philosophy as the drop-rate handling
+   below, just for encoder health instead of network drops. Also folds in
+   agent-reported `dropped_frame_count` and raises a `QualityAnnotation`
+   (never discards data, never restarts the session) if the cumulative drop
+   rate crosses `drop_rate_warning_threshold`.
+
+   This is a deliberate departure from the original D6 "dumb pass-through"
+   design, which kept all encoding off record-service's live ingest path
+   specifically to minimize risk there. Encoding in-process was chosen
+   anyway to avoid persisting the (much heavier) raw PCM capture and running
+   a second service/queue just to transcode it after the fact — see
+   `PLAN.md` for the full trade-off writeup. The risk is bounded by
+   one-ffmpeg-process-per-session (one session's encoder dying can't take
+   another down) and the restart-with-annotation behavior above, not
+   eliminated.
 
 4. **`application/stop_recording.py`** (`StopRecording`) — on graceful close,
    finalizes immediately. On abrupt disconnect, parks the session in
@@ -154,11 +173,14 @@ orchestrator), so opening a recording never has a synchronous dependency on
 orchestrator being reachable:
 
 ```
-{room_id}/{participant_identity}-{source}-audio-{random_hex}.pcm
+{room_id}/{participant_identity}-{source}-audio-{random_hex}.ogg
 ```
 
-Raw headerless PCM16, matching D6 (no encode on the critical path — that's
-`audio-processing-service`'s job, not yet built, see `PLAN.md` Phase 5).
+OGG/Opus, encoded by record-service itself on the ingest path (see
+`application/append_audio.py` above) — this key names the final,
+client-playable artifact directly. There is no separate raw-capture key or
+derivative-transcode stage anymore; `audio-processing-service` (the service
+that used to own that second step) has been retired.
 
 ## Talking to orchestrator
 
@@ -236,7 +258,8 @@ All env-driven, see `src/record_service/config.py` for defaults:
 |---|---|
 | gRPC server | `RECORD_SERVICE_GRPC_HOST` (0.0.0.0), `RECORD_SERVICE_GRPC_PORT` (50051) |
 | MinIO/S3 | `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`, `MINIO_REGION`, `MINIO_SECURE`, `MINIO_FORCE_PATH_STYLE` |
-| Recording policy | `RECORD_PART_SIZE_MB` (8), `RECORD_MAX_UPLOAD_RETRIES` (3), `RECORD_UPLOAD_RETRY_BASE_DELAY_SECONDS` (0.2), `RECORD_GRACE_PERIOD_SECONDS` (45), `RECORD_BYTE_RATE_TOLERANCE` (0.5), `RECORD_DROP_RATE_WARNING_THRESHOLD` (0.1) |
+| Recording policy | `RECORD_PART_SIZE_MB` (5), `RECORD_MAX_UPLOAD_RETRIES` (3), `RECORD_UPLOAD_RETRY_BASE_DELAY_SECONDS` (0.2), `RECORD_GRACE_PERIOD_SECONDS` (45), `RECORD_BYTE_RATE_TOLERANCE` (0.5), `RECORD_DROP_RATE_WARNING_THRESHOLD` (0.1) |
+| Transcode (Opus encoder) | `FFMPEG_PATH` (ffmpeg), `TRANSCODE_OPUS_BITRATE_KBPS` (32), `TRANSCODE_FFMPEG_TIMEOUT_SECONDS` (30) |
 | Local state | `RECORD_STATE_DIR` (/data/record-service/state) |
 | Orchestrator | `ORCHESTRATOR_BASE_URL`, `RECORDING_EVENTS_PATH`, `ORCHESTRATOR_TIMEOUT_SECONDS` (5), `RECORD_MAX_REPORT_RETRIES` (3), `RECORD_REPORT_RETRY_BASE_DELAY_SECONDS` (0.5), `ORCHESTRATOR_API_KEY` |
 | Reconciler | `RECORD_RECONCILE_INTERVAL_SECONDS` (30) |

@@ -118,6 +118,14 @@ class StopRecording:
                 return
 
             session.ended_at = time.time()
+
+            if active.encoder is not None:
+                try:
+                    tail = await active.encoder.close()
+                    active.buffer.extend(tail)
+                except Exception as exc:  # noqa: BLE001 - still finalize with whatever's buffered
+                    logger.error("Failed to close encoder for %s: %s", session_id, exc)
+
             logger.info(
                 "Finalizing session %s: buffered=%dB pending flush, raw_bytes_received=%d, "
                 "frames_received=%d, dropped=%d, parts_uploaded=%d",
