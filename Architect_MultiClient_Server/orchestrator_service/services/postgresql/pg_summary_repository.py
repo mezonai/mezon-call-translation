@@ -58,6 +58,51 @@ class PgSummaryRepository:
             logger.error(f"Failed to update summary: {e}")
             return False
 
+    async def update_room_messages(self, room_id: str, messages: list[dict[str, Any]]) -> bool:  # type: ignore[explicit-any]
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                stmt = (
+                    update(RoomSummary)
+                    .where(RoomSummary.room_id == room_id)
+                    .values(
+                        messages=messages,
+                    )
+                    .returning(RoomSummary.id)
+                )
+                res = await session.execute(stmt)
+                await session.commit()
+                return res.scalar_one_or_none() is not None
+        except Exception as e:
+            logger.error(f"Failed to update room messages: {e}")
+            return False
+
+    async def flush_correction_progress(  # type: ignore[explicit-any]
+        self,
+        room_id: str,
+        messages: list[dict[str, Any]],  # type: ignore[explicit-any]
+        correction_progress: dict[str, Any],  # type: ignore[explicit-any]
+    ) -> bool:
+        """Atomically flush corrected messages AND progress tracker in one UPDATE."""
+        session_factory = get_session_factory()
+        try:
+            async with session_factory() as session:
+                stmt = (
+                    update(RoomSummary)
+                    .where(RoomSummary.room_id == room_id)
+                    .values(
+                        messages=messages,
+                        correction_progress=correction_progress,
+                    )
+                    .returning(RoomSummary.id)
+                )
+                res = await session.execute(stmt)
+                await session.commit()
+                return res.scalar_one_or_none() is not None
+        except Exception as e:
+            logger.error(f"Failed to flush correction progress for room {room_id}: {e}")
+            return False
+
     async def get_summary_by_room_id(self, room_id: str) -> tuple[RoomSummary | None, Room | None]:
         session_factory = get_session_factory()
         try:

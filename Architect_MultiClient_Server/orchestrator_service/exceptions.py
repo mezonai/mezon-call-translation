@@ -152,6 +152,12 @@ class RoomSummaryNotFoundError(ResourceNotFoundError):
     error_code: str = "ROOM_SUMMARY_NOT_FOUND"
 
 
+class TranscriptMessagesNotFoundError(ResourceNotFoundError):
+    """Raised when transcript messages are unavailable for a room."""
+
+    error_code: str = "TRANSCRIPT_MESSAGES_NOT_FOUND"
+
+
 class SummarySectionsUnavailableError(InvalidStateError):
     """Raised when summary sections are unavailable for creating a full summary."""
 
@@ -162,6 +168,12 @@ class SummaryPersistenceError(InternalServiceError):
     """Raised when summary persistence fails."""
 
     error_code: str = "SUMMARY_PERSISTENCE_ERROR"
+
+
+class TranscriptCorrectionPersistenceError(InternalServiceError):
+    """Raised when transcript correction progress cannot be persisted."""
+
+    error_code: str = "TRANSCRIPT_CORRECTION_PERSISTENCE_ERROR"
 
 
 # Redis connection error
