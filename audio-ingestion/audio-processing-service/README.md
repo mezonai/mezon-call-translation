@@ -1,18 +1,25 @@
 # audio-processing-service
 
-Non-critical, async worker: transcodes a call's raw PCM capture (written by
-`record-service`) into a client-playable OGG/Opus derivative and reports the
-result back to orchestrator. Scales independently from `record-service`
-(CPU-bound transcode vs. I/O-bound capture) -- see `../PLAN.md` section 4.
+Non-critical, async worker: transcodes a call's raw PCM capture (written by `record-service`) into a client-playable OGG/Opus derivative and reports the result back to orchestrator. Scales independently from `record-service` (CPU-bound transcode vs. I/O-bound capture).
 
-Design rationale lives in `../PLAN.md` (decision **D28** covers this
-service's own design choices; D17/D19/D20 cover the surrounding pipeline
-this plugs into) -- this README is "what the code does and how to read it".
+This README is "what the code does and how to read it" -- it does not attempt to re-derive the full historical rationale behind every design choice.
+
+## Status note (2026-09-15): this service is still fully active, not retired
+
+There is an **uncommitted** change in `../record-service/Dockerfile` (`git diff -- audio-ingestion/record-service/Dockerfile`) whose comment describes a "PLAN.md D6-successor" plan: record-service encoding PCM -> OGG/Opus itself, which would make this service's job redundant. A new, also-uncommitted `../docker-compose.yml` goes further and states in its comments that this service "is retired (PLAN.md D6-successor)".
+
+Having read the actual code on both sides as of this date, that is **not** an accurate description of the current system, on either end:
+
+- **record-service's own application code is unchanged.** No transcode module exists anywhere under `record-service/src/` (the Dockerfile comment names `src/record_service/infra/transcode/`, but it isn't there); `record-service`'s object-key naming, event payloads, and README all still describe pure raw-PCM capture, unmodified. The only actual change is a `Dockerfile` line installing the `ffmpeg` binary -- unused by any Python code so far. See `record-service/README.md`'s own Status note for detail.
+- **This service's own code, tests, and deployment are untouched.** `git log -- audio-ingestion/audio-processing-service` shows nothing since 2026-08-06 (init 2026-08-03, a small fix 2026-08-06) -- no deprecation marker, no removal, nothing.
+- **The orchestrator-side handoff that feeds this service is still fully wired and unconditional.** `Architect_MultiClient_Server/orchestrator_service/services/recording_event_service.py::handle_recording_event` still calls `self.audio_derivative_service.enqueue(...)` on every `recording.completed` event, and `services/audio_derivative_service.py::enqueue` still does a real `XADD` onto `audio_derivative:stream` -- the exact stream this service's `redis_derivative_queue_service.py` consumes from. There is no feature flag or conditional guarding this call; it runs every time.
+
+**Bottom line: as of 2026-09-15, audio-processing-service is fully active and load-bearing** -- every `recording.completed` event still gets a derivative job enqueued and this service is still the only thing that consumes it. The "retired" language in `../docker-compose.yml`'s comments describes an intended future state that this Dockerfile change is (at most) a first, code-incomplete step toward, not something that has landed. If and when record-service's own transcoding actually ships, this service, its `../docker-compose.yml` Redis references, and orchestrator's `audio_derivative_service.py`/`recording_event_service.py` dispatch will all need to be updated or removed together -- none of that has happened yet. Treat this file's "End-to-end flow" below as accurate for **today's** running system, not as superseded.
 
 ## End-to-end flow
 
 ```
-record-service                          [PLAN.md D5/D6]
+record-service
    │  raw PCM16 uploaded to MinIO, reports recording.completed
    ▼
 orchestrator_service
@@ -31,74 +38,34 @@ orchestrator_service
    POST /api/v2/recordings/events (recording_events_api.py)
    → services/recording_event_service.py::handle_derivative_event
    → tracks.derivative_status, tracks.audio_info.derivative_object_key
-   → check_and_notify_room_recordings_ready (room_record_done, PLAN.md D19)
+   → check_and_notify_room_recordings_ready (room_record_done)
 ```
 
-This service never talks to Postgres or LiveKit. Its only network
-dependencies are Redis (job queue), S3/MinIO (data plane), and one HTTP POST
-to orchestrator (control plane).
+This service never talks to Postgres. Its only network dependencies are Redis (job queue), S3/MinIO (data plane), and one HTTP POST to orchestrator (control plane).
 
 ## Why no Ports & Adapters here (unlike record-service)
 
-record-service is hexagonal because it's on the critical path and has a
-concrete future adapter swap planned (`infra/sfu/` once LiveKit's SFU is
-replaced, PLAN.md D3/D4). Neither applies here: this service has one job
-(download → transcode → upload → report), isn't critical (PLAN.md D7: fail
-→ retry, no risk to the raw capture already safe on MinIO), and has no
-planned adapter swap. Kept flatter, closer to `stt_service`'s shape, which
-is the service this one's Redis Stream consumer plumbing was copied from
-(see below).
+record-service is hexagonal because it's on the critical path and has a concrete future adapter swap planned.
+Neither applies here: this service has one job (download → transcode → upload → report), isn't critical (fail → retry, no risk to the raw capture already safe on MinIO), and has no planned adapter swap. Kept flatter, closer to `stt_service`'s shape, which is the service this one's Redis Stream consumer plumbing was copied from (see below).
 
 ## Why the Redis Stream consumer code looks copy-pasted (it is)
 
-`infra/redis/redis_stream_service.py`, `infra/redis/connection_pool.py`, and
-`services/redis_derivative_queue_service.py` are adapted copies of
-`stt_service/service/redis/redis_stream_service.py` /
-`redis_transcription_queue_service.py` (already duplicated once, between
-`stt_service` and `orchestrator_service` -- same convention continued here).
-**Reviewed but deliberately left as-is** (PLAN.md D28 point 3), including 2
-known bugs, both self-healing (no data loss, ~60-90s recovery delay, not
-worth the risk of touching code shared with two other services right now):
+`infra/redis/redis_stream_service.py`, `infra/redis/connection_pool.py`, and `services/redis_derivative_queue_service.py` are adapted copies of `stt_service/service/redis/redis_stream_service.py` / `redis_transcription_queue_service.py` (already duplicated once, between `stt_service` and `orchestrator_service` -- same convention continued here). **Reviewed but deliberately left as-is**, including 2 known bugs, both self-healing (no data loss, ~60-90s recovery delay, not worth the risk of touching code shared with two other services right now):
 
-1. `RedisStreamService.release_my_pending_tasks()` — the `XCLAIM ... force=True`
-   call meant to release a task "immediately" actually **resets its idle-time
-   counter**, so the task can't be auto-claimed by another consumer until
-   `claim_min_idle_time_ms` (60s default) elapses again — the opposite of
-   "immediately".
-2. `RedisDerivativeQueueService._process_task()`'s "already processing,
-   skip" branch returns without ack'ing or rejecting the message — it just
-   sits in the PEL until the next orphan-recovery pass (~30-90s) claims it.
+1. `RedisStreamService.release_my_pending_tasks()` — the `XCLAIM ... force=True` call meant to release a task "immediately" actually **resets its idle-time counter**, so the task can't be auto-claimed by another consumer until `claim_min_idle_time_ms` (60s default) elapses again — the opposite of "immediately".
+2. `RedisDerivativeQueueService._process_task()`'s "already processing, skip" branch returns without ack'ing or rejecting the message — it just sits in the PEL until the next orphan-recovery pass (~30-90s) claims it.
 
-If either needs fixing, fix all 3 copies together (same "sync by hand" note
-PLAN.md D15 already has for the duplicated `.proto` files).
+If either needs fixing, fix all 3 copies together -- these duplicated files are not automatically kept in sync with each other.
 
-## Format / naming decisions (PLAN.md D28)
+## Format / naming decisions
 
-- **sample_rate=16000, channels=1 are hardcoded** (`config.py::TranscodeConfig`),
-  not read per-track from DB metadata — matches record-service's fixed
-  capture format (D6). Simpler on purpose; revisit only if record-service's
-  capture format ever becomes variable.
-- **Derivative reuses record-service's bucket**, only the object key suffix
-  changes (`infra/naming.py::build_derivative_key`: `.pcm` → `.ogg`, same
-  path/prefix otherwise) — no new bucket/prefix to provision.
-- **ffmpeg command line** (`infra/transcoder.py`) is byte-for-byte the same
-  encoder settings the old LiveKit-Egress-era pipeline used (recovered from
-  `agents`' deleted `audio_recording_manager.py` via git history) — so the
-  output format is unchanged from what client/bot already integrate against
-  (PLAN.md D20).
+- **sample_rate=16000, channels=1 are hardcoded** (`config.py::TranscodeConfig`), not read per-track from DB metadata — matches record-service's fixed capture format. Simpler on purpose; revisit only if record-service's capture format ever becomes variable.
+- **Derivative reuses record-service's bucket**, only the object key suffix changes (`infra/naming.py::build_derivative_key`: `.pcm` → `.ogg`, same path/prefix otherwise) — no new bucket/prefix to provision.
+- **ffmpeg command line** (`infra/transcoder.py`) is byte-for-byte used (recovered from `agents`' deleted `audio_recording_manager.py` via git history) — so the output format is unchanged from what client/bot already integrate against.
 
 ## Failure reporting is retry-count-aware
 
-A transient failure (MinIO blip, ffmpeg hiccup) on an early attempt must
-**not** report `derivative.failed` to orchestrator — that would let
-`check_and_notify_room_recordings_ready` treat the track as done-but-failed
-and potentially fire `room_record_done` before a later retry gets a chance
-to succeed. `services/derivative_processor.py` only reports
-`derivative.failed` on the attempt `RedisStreamService.reject()` is about to
-send to the dead-letter queue (`task.retry_count >= config.redis.max_retries`,
-default 3 → 4th attempt). Earlier attempts fail silently — no event sent,
-the track just stays `derivative_status='pending'` in orchestrator's DB —
-and retry.
+A transient failure (MinIO blip, ffmpeg hiccup) on an early attempt must **not** report `derivative.failed` to orchestrator — that would let `check_and_notify_room_recordings_ready` treat the track as done-but-failed and potentially fire `room_record_done` before a later retry gets a chance to succeed. `services/derivative_processor.py` only reports `derivative.failed` on the attempt `RedisStreamService.reject()` is about to send to the dead-letter queue (`task.retry_count >= config.redis.max_retries`, default 3 → 4th attempt). Earlier attempts fail silently — no event sent, the track just stays `derivative_status='pending'` in orchestrator's DB — and retry.
 
 ## Configuration
 
@@ -112,8 +79,7 @@ All env-driven, see `src/audio_processing_service/config.py` for defaults:
 | Orchestrator | `ORCHESTRATOR_BASE_URL`, `RECORDING_EVENTS_PATH` (/api/v2/recordings/events), `ORCHESTRATOR_TIMEOUT_SECONDS` (5), `ORCHESTRATOR_API_KEY` |
 | Logging | `LOG_LEVEL` (INFO) |
 
-`ffmpeg` (with `libopus`) must be installed on the host -- it's invoked as a
-subprocess, not a Python dependency. `sudo apt-get install ffmpeg`.
+`ffmpeg` (with `libopus`) must be installed on the host -- it's invoked as a subprocess, not a Python dependency. `sudo apt-get install ffmpeg`.
 
 ## Code layout
 
@@ -150,25 +116,13 @@ pytest   # fakes for MinIO/HTTP (tests/fakes.py), real ffmpeg subprocess (skippe
 python -m audio_processing_service.main
 ```
 
-There's no `dev_server_with_fakes.py`-style standalone script here (unlike
-record-service) -- this service has no listening port to smoke-test against;
-its only external trigger is a real `audio_derivative:stream` message, which
-means a real Redis is the natural way to exercise it end-to-end. The test
-suite's fakes-based tests cover the processor logic without that
-dependency.
+There's no `dev_server_with_fakes.py`-style standalone script here (unlike record-service) -- this service has no listening port to smoke-test against; its only external trigger is a real `audio_derivative:stream` message, which means a real Redis is the natural way to exercise it end-to-end. The test suite's fakes-based tests cover the processor logic without that dependency.
 
 ## Running as a deployed service (dev/prod)
 
-No Docker in dev/prod (PLAN.md D14) -- systemd on the host instead. Full
-install steps, template unit file, and env file example:
-**`deploy/systemd/README.md`**.
+No Docker in dev/prod -- systemd on the host instead. Full install steps, template unit file, and env file example: **`deploy/systemd/README.md`**.
 
 ## Tests
 
-`tests/` uses fakes (`tests/fakes.py`) for MinIO/orchestrator HTTP, but runs
-**real ffmpeg** (skipped automatically if `ffmpeg` isn't on `PATH`) --
-`test_transcoder.py` verifies the actual command line produces a valid,
-`ffprobe`-parseable Opus stream from headerless raw PCM, and
-`test_derivative_processor.py` runs the full download→transcode→upload→report
-path end-to-end including the retry-count-aware failure-reporting rule
-above.
+`tests/` uses fakes (`tests/fakes.py`) for MinIO/orchestrator HTTP, but runs **real ffmpeg** (skipped automatically if `ffmpeg` isn't on `PATH`) -- `test_transcoder.py` verifies the actual command line produces a valid, `ffprobe`-parseable Opus stream from headerless raw PCM, and `test_derivative_processor.py` runs the full download→transcode→upload→report path end-to-end including the retry-count-aware failure-reporting rule above.
+
