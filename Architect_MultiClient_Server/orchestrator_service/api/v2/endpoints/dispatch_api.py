@@ -1,6 +1,7 @@
 from typing import ClassVar
-from pydantic import BaseModel, Field
+
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import AGENT_CONTROL

@@ -1,11 +1,19 @@
 from datetime import UTC, datetime
 
 import requests
-from fastapi import HTTPException
 
 from orchestrator_service.auth.verify_account import authenticate_account
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.permissions import DEFAULT_BOT_PERMISSIONS, DEFAULT_USER_PERMISSIONS
+from orchestrator_service.exceptions import (
+    AccountAuthenticationFailedError,
+    AuthConfigurationError,
+    InvalidRefreshTokenError,
+    MezonIntegrationError,
+    RefreshTokenRotationError,
+    TokenGenerationError,
+    UserNotFoundError,
+)
 from orchestrator_service.models.auth_models import (
     BotLoginResponse,
     CurrentUserResponse,
@@ -50,7 +58,7 @@ class AuthService:
             missing_configs.append("MEZON_CLIENT_SECRET")
 
         if missing_configs:
-            raise ValueError(
+            raise AuthConfigurationError(
                 f"CRITICAL CONFIG MISSING: {', '.join(missing_configs)} is not set. OAuth2 authentication will fail!"
             )
 
@@ -84,14 +92,13 @@ class AuthService:
 
             if token_response.status_code != 200:
                 logger.error(f"Token exchange failed: {token_response.status_code} - {token_response.text}")
-                raise HTTPException(status_code=500, detail=f"Failed to exchange code for token: {token_response.text}")
-
+                raise MezonIntegrationError(f"Failed to exchange code for token: {token_response.text}")
             token_json = token_response.json()
             access_token = token_json.get("access_token")
 
             if not access_token:
                 logger.error(f"No access_token in response: {token_json}")
-                raise HTTPException(status_code=500, detail="Mezon did not return an access token")
+                raise MezonIntegrationError("Mezon did not return an access token")
 
             logger.info("Successfully obtained access token from Mezon")
 
@@ -104,7 +111,7 @@ class AuthService:
 
             if userinfo_response.status_code != 200:
                 logger.error(f"Failed to get user info: {userinfo_response.status_code} - {userinfo_response.text}")
-                raise HTTPException(status_code=500, detail=f"Failed to get user information: {userinfo_response.text}")
+                raise MezonIntegrationError(f"Failed to get user information: {userinfo_response.text}")
 
             user_info = userinfo_response.json()
 
@@ -116,7 +123,7 @@ class AuthService:
             # Validate that we got a user_id
             if not user_id:
                 logger.error(f"No user ID found in Mezon response: {user_info}")
-                raise HTTPException(status_code=500, detail="Failed to retrieve user ID from Mezon")
+                raise MezonIntegrationError("Failed to retrieve user ID from Mezon")
 
             # Check if user already exists
             existing_user = await self.user_repo.get_user_info(user_id)
@@ -152,7 +159,7 @@ class AuthService:
             access_token_jti = get_token_jti(access_token)
 
             if not access_token_jti:
-                raise HTTPException(status_code=500, detail="Failed to generate token ID")
+                raise TokenGenerationError("Failed to generate token ID")
 
             refresh_token = await self.refresh_token_repo.create_refresh_token(
                 user_id=user_id, access_token_jti=access_token_jti, device_info=None
@@ -172,12 +179,12 @@ class AuthService:
 
         except requests.RequestException as e:
             logger.error(f"Network error during OAuth2 exchange: {e}")
-            raise HTTPException(status_code=500, detail=f"Network error communicating with Mezon: {e!s}") from e
+            raise MezonIntegrationError(f"Network error communicating with Mezon: {e!s}") from e
 
     async def get_current_user(self, user_id: str) -> CurrentUserResponse:
         user_info = await self.user_repo.get_user_info(user_id)
         if not user_info:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise UserNotFoundError("User not found")
 
         user_profile = UserProfile(
             user_id=user_info.id,
@@ -192,7 +199,7 @@ class AuthService:
         # Validate refresh token
         token_doc = await self.refresh_token_repo.validate_refresh_token(refresh_token)
         if not token_doc:
-            raise HTTPException(status_code=401, detail="Invalid or expired refresh token. Please login again.")
+            raise InvalidRefreshTokenError("Invalid or expired refresh token. Please login again.")
 
         # Get user_id from refresh token
         user_id = str(token_doc.user_id)
@@ -214,13 +221,13 @@ class AuthService:
         new_jti = get_token_jti(new_access_token)
 
         if not new_jti:
-            raise HTTPException(status_code=500, detail="Failed to generate new token")
+            raise TokenGenerationError("Failed to generate new token")
 
         # Rotate refresh token with new access token JTI and expiry
         new_refresh_token = await self.refresh_token_repo.rotate_refresh_token(str(token_doc.id), new_jti)
 
         if not new_refresh_token:
-            raise HTTPException(status_code=500, detail="Failed to rotate refresh token")
+            raise RefreshTokenRotationError("Failed to rotate refresh token")
 
         # Calculate expiry
         token_expiry = get_token_expiry(new_access_token)
@@ -246,7 +253,7 @@ class AuthService:
         auth_result = await authenticate_account(account_dict)
         if not auth_result:
             logger.warning("❌ Bot authentication failed")
-            raise HTTPException(status_code=401, detail="Account authentication failed. Invalid credentials.")
+            raise AccountAuthenticationFailedError("Account authentication failed. Invalid credentials.")
 
         # Extract authentication data
         user_id = auth_result.user_id
@@ -287,7 +294,7 @@ class AuthService:
         # Get JTI from access token for refresh token linking
         access_token_jti = get_token_jti(access_token)
         if not access_token_jti:
-            raise HTTPException(status_code=500, detail="Failed to generate token ID")
+            raise TokenGenerationError("Failed to generate token ID")
 
         # Create refresh token
         refresh_token = await self.refresh_token_repo.create_refresh_token(

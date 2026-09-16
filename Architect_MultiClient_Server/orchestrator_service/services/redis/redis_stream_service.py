@@ -31,6 +31,7 @@ from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.exceptions import RedisConnectionError
 from orchestrator_service.models.stream_base import (
     StreamTaskProtocol,
     StreamTaskStatus,
@@ -201,7 +202,7 @@ class RedisStreamService(Generic[T]):
         Initialize Redis connection pool and create consumer group.
 
         Raises:
-            ConnectionError: If cannot connect to Redis
+            RedisConnectionError: If cannot connect to Redis
         """
         if self._is_setup:
             logger.debug("Redis Stream Service already setup")
@@ -223,7 +224,7 @@ class RedisStreamService(Generic[T]):
 
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
-            raise ConnectionError(f"Redis connection failed: {e}") from e
+            raise RedisConnectionError(f"Redis connection failed: {e}") from e
 
     async def _ensure_consumer_group(self) -> None:
         """Create consumer group if it doesn't exist."""

@@ -1,8 +1,7 @@
 from datetime import datetime
 
-from fastapi import HTTPException
-
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
+from orchestrator_service.exceptions import MetadataEventNotFoundError
 from orchestrator_service.models.sse_metadata_models import MetadataEventResponse
 from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
@@ -12,7 +11,6 @@ from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
-
 
 
 class SseMetadataService:
@@ -84,7 +82,7 @@ class SseMetadataService:
     async def get_metadata_event_by_id(self, event_id: str) -> MetadataEventResponse:
         event_obj = await self.pg_repo.get_metadata_event_by_event_id(event_id)
         if not event_obj:
-            raise HTTPException(status_code=404, detail=f"Event not found: {event_id}")
+            raise MetadataEventNotFoundError(f"Event not found: {event_id}")
 
         return MetadataEventResponse(
             id=str(event_obj.id),
@@ -94,7 +92,9 @@ class SseMetadataService:
             room_name=event_obj.room_name,
             metadata=event_obj.event_metadata,
             timestamp=event_obj.timestamp,
-            created_at=convert_to_iso_8601(event_obj.created_at) if isinstance(event_obj.created_at, datetime) else None,
+            created_at=convert_to_iso_8601(event_obj.created_at)
+            if isinstance(event_obj.created_at, datetime)
+            else None,
         )
 
 
