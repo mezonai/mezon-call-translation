@@ -167,7 +167,7 @@ class TranscriptionService:
         except Exception as e:
             logger.exception(f"✗ Unexpected error starting room: {e}")
             return False
-        
+
 
     async def force_save_participant(
         self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None

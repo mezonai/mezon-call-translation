@@ -150,7 +150,7 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to finalize room: {e}")
             return False
-        
+
 
     async def force_save_participant(
         self,
@@ -232,7 +232,7 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to save participant: {e}")
             return False
-    
+
 
     # TODO: Use `Any` type because `room_participants` input field from generate_summary() in SummaryService
     # has list[dict[str, Any]] type
