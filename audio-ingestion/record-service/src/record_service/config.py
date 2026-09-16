@@ -51,9 +51,22 @@ class MinIOConfig:
 
 @dataclass
 class RecordingPolicyConfig:
-    """Tunables backing domain/policies.py (RecordingPolicy). See PLAN.md D5/D11/D12."""
+    """Tunables backing domain/policies.py (RecordingPolicy). See PLAN.md D5/D11/D12.
 
-    part_size_mb: int = 8
+    part_size_mb now chunks *encoded* OGG/Opus bytes, not raw PCM (PLAN.md
+    D6-successor). Default is 5 -- S3/MinIO's multipart floor for a
+    non-final part -- specifically to keep this as small as the protocol
+    allows: since Opus compresses far more than PCM, a given byte count now
+    represents much more audio time (tens of minutes at default bitrate vs.
+    a few minutes of raw PCM at the old 8MB default), so the unflushed
+    in-memory buffer lost on an unclean process crash covers a bigger time
+    window than before. Same failure *mechanism* as always (only
+    already-uploaded parts survive a crash, see domain/ports.py's
+    SessionStateRepository docstring) -- just a wider window now, bounded to
+    the minimum S3 allows.
+    """
+
+    part_size_mb: int = 5
     max_upload_retries: int = 3
     upload_retry_base_delay_seconds: float = 0.2
     grace_period_seconds: float = 45.0
@@ -82,6 +95,30 @@ class RecordingPolicyConfig:
     def validate(self) -> bool:
         # S3 multipart requires each non-final part >= 5MB.
         return self.part_size_mb >= 5 and self.max_upload_retries >= 0
+
+
+@dataclass
+class TranscodeConfig:
+    """ffmpeg opus-encode tunables for the in-process streaming encoder
+    (PLAN.md D6-successor -- record-service encodes PCM->OGG/Opus itself on
+    the live ingest path now; see infra/transcode/ffmpeg_opus_encoder.py).
+    Same codec settings the now-retired audio-processing-service used
+    (kept identical so the output format doesn't change for client/bot).
+    """
+
+    ffmpeg_path: str = "ffmpeg"
+    opus_bitrate_kbps: int = 32
+    # How long to wait for ffmpeg to flush remaining output after stdin
+    # closes (session end) or after a dead encoder's reader task is awaited.
+    ffmpeg_timeout_seconds: float = 30.0
+
+    @classmethod
+    def from_env(cls) -> "TranscodeConfig":
+        return cls(
+            ffmpeg_path=os.getenv("FFMPEG_PATH", "ffmpeg"),
+            opus_bitrate_kbps=int(os.getenv("TRANSCODE_OPUS_BITRATE_KBPS", "32")),
+            ffmpeg_timeout_seconds=float(os.getenv("TRANSCODE_FFMPEG_TIMEOUT_SECONDS", "30")),
+        )
 
 
 @dataclass
@@ -146,6 +183,7 @@ class Config:
         self.grpc = GrpcConfig.from_env()
         self.minio = MinIOConfig.from_env()
         self.recording_policy = RecordingPolicyConfig.from_env()
+        self.transcode = TranscodeConfig.from_env()
         self.state_store = StateStoreConfig.from_env()
         self.orchestrator = OrchestratorConfig.from_env()
         self.reconciler = ReconcilerConfig.from_env()

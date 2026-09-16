@@ -31,7 +31,12 @@ from record_service.application.stop_recording import StopRecording  # noqa: E40
 from record_service.domain.policies import RecordingPolicy  # noqa: E402
 from record_service.infra.grpc import recording_pb2_grpc  # noqa: E402
 from record_service.infra.grpc.ingest_server import RecordingIngestServicer  # noqa: E402
-from fakes import FakeBlobStorage, FakeEventReporter, FakeSessionStateRepository  # noqa: E402
+from fakes import (  # noqa: E402
+    FakeBlobStorage,
+    FakeEventReporter,
+    FakeSessionStateRepository,
+    FakeStreamEncoderFactory,
+)
 
 
 async def main() -> None:
@@ -44,9 +49,10 @@ async def main() -> None:
     state_repo = FakeSessionStateRepository()
     event_reporter = FakeEventReporter()
     report_event = ReportEvent(event_reporter, state_repo, policy.report_retry)
+    encoder_factory = FakeStreamEncoderFactory()
 
-    start = StartRecording(registry, blob_storage, state_repo, report_event)
-    append = AppendAudio(registry, blob_storage, state_repo, policy)
+    start = StartRecording(registry, blob_storage, state_repo, report_event, encoder_factory)
+    append = AppendAudio(registry, blob_storage, state_repo, policy, encoder_factory)
     stop = StopRecording(registry, blob_storage, state_repo, report_event, policy)
     servicer = RecordingIngestServicer(start, append, stop, minio_bucket="dev-bucket")
 

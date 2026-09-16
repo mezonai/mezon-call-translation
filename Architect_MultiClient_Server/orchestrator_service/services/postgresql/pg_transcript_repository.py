@@ -606,25 +606,40 @@ class PgTranscriptRepository:
     # ------------------------------------------------------------------
     # Kept here deliberately (not moved to pg_track_repository.py):
     # mixes room state (rooms.record_notified_at/status) and track state
-    # (tracks.derivative_status) in one atomic statement, so it doesn't
-    # belong in a track-only repository. Placed at the very end of the
-    # class instead of alongside the other room-completion checks above --
-    # this file predates `develop`'s in-progress ORM migration for this
-    # layer, so new methods land here (appended, not interleaved) to
-    # minimize merge-conflict surface with that work (this hotfix branched
-    # off `main`, not `develop` -- see audio-ingestion/PLAN.md D26).
+    # (tracks.status) in one atomic statement, so it doesn't belong in a
+    # track-only repository. Placed at the very end of the class instead of
+    # alongside the other room-completion checks above -- this file predates
+    # `develop`'s in-progress ORM migration for this layer, so new methods
+    # land here (appended, not interleaved) to minimize merge-conflict
+    # surface with that work (this hotfix branched off `main`, not
+    # `develop` -- see audio-ingestion/PLAN.md D26).
     # ------------------------------------------------------------------
     async def check_and_notify_room_recordings_ready(self, room_ref_id: str) -> bool:
         """Room-level, fire-once gate for room_record_done (audio-ingestion PLAN.md D19).
 
         True only when this call is the one that flips record_notified_at from
-        NULL -- i.e. the room is finalized AND every track in it has reached a
-        terminal derivative_status. Must be called from both places order can
-        arrive in (a track's derivative finishing, and room finalization)
+        NULL -- i.e. the room is finalized AND every track in it has left the
+        initial "still recording" placeholder state. Must be called from both
+        places order can arrive in (a track finishing, and room finalization)
         since either can happen first; the atomic UPDATE...WHERE guard (same
         technique as final_room_status()) ensures exactly one caller ever
         sees True for a given room, regardless of which order or how many
         times this is called concurrently.
+
+        Used to gate on `tracks.derivative_status` (whether the separate
+        derivative-transcode stage had finished) -- retired along with that
+        stage (PLAN.md D32: record-service now produces the final,
+        client-playable OGG/Opus artifact itself, reported directly via
+        recording.completed, so there's nothing left to wait on beyond
+        capture itself). `status != 'pending'` is the equivalent signal now:
+        `pending` is set exactly once, by create_track_placeholder() at
+        `recording.started`, and every terminal call
+        (`recording.completed` -> "wait_process", `recording.failed` ->
+        "failed", or later STT/tts.completed -> "completed") moves it away
+        from "pending" and never back -- so "no track still pending" means
+        exactly "every track's capture has reached a terminal outcome",
+        the same thing derivative_status used to mean, independent of
+        whichever STT status a track later moves through.
 
         This NOT EXISTS check is blind to a track that has no row at all --
         relies on every track that starts recording eventually getting a row
@@ -640,12 +655,12 @@ class PgTranscriptRepository:
         local durable state before it can ever deliver `recording.completed`/
         `.failed` for it (state_repo is local disk, PLAN.md D5 tier 3 -- an
         already-called-out loss scenario), that track's row sits at
-        derivative_status='pending' forever and this NOT EXISTS never clears
-        for its room. There is no timeout/reconciliation on the orchestrator
-        side that force-terminates an abandoned track today -- would need
+        status='pending' forever and this NOT EXISTS never clears for its
+        room. There is no timeout/reconciliation on the orchestrator side
+        that force-terminates an abandoned track today -- would need
         something like "track pending longer than N minutes with no live
-        record-service session -> mark derivative_status='failed'" before
-        this can be called fully closed.
+        record-service session -> mark status='failed'" before this can be
+        called fully closed.
         """
         uid = room_ref_id
         session_factory = get_session_factory()
@@ -657,7 +672,7 @@ class PgTranscriptRepository:
                         WHERE id = :id AND record_notified_at IS NULL AND status = 'final_room'
                           AND NOT EXISTS (
                             SELECT 1 FROM tracks WHERE room_ref_id = :id
-                            AND derivative_status NOT IN ('completed', 'failed')
+                            AND status = 'pending'
                           )
                         RETURNING id
                     """),

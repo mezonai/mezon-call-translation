@@ -13,16 +13,18 @@ import contextlib
 from collections.abc import AsyncIterator
 
 from record_service.domain.models import RecordingSession
+from record_service.domain.ports import StreamEncoder
 
 
 class ActiveSession:
-    __slots__ = ("session", "buffer", "lock", "grace_task")
+    __slots__ = ("session", "buffer", "lock", "grace_task", "encoder")
 
     def __init__(self, session: RecordingSession) -> None:
         self.session = session
-        self.buffer = bytearray()
+        self.buffer = bytearray()  # holds encoded OGG/Opus bytes pending multipart upload
         self.lock = asyncio.Lock()
         self.grace_task: asyncio.Task | None = None
+        self.encoder: StreamEncoder | None = None
 
 
 class _RefCountedLock:

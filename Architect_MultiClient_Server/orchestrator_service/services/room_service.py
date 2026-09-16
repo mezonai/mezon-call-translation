@@ -127,25 +127,20 @@ class RoomService:
             audio_info = track.audio_info
             if not audio_info:
                 continue
-            # "filename" here is the client-playable derivative (OGG/Opus),
-            # not the raw PCM capture (audio-ingestion PLAN.md D28) -- same
-            # field name/shape as before on purpose, so nothing downstream
-            # needs to change, it just now points at something the client
-            # can actually play instead of headerless raw PCM (D6). Written
-            # by audio-processing-service's derivative.completed report,
-            # see pg_track_repository.py::update_track_derivative. Skip the
-            # track entirely (rather than fall back to the raw filename) if
-            # the derivative isn't ready yet -- a raw PCM path isn't
-            # something the client can use either way, so there is nothing
-            # correct to show until it exists (D19: client polls this API
-            # again after room_record_done fires).
-            derivative_filename = audio_info.get("derivative_object_key")
-            if not derivative_filename:
+            # "filename" is the client-playable OGG/Opus artifact itself
+            # (audio-ingestion PLAN.md D6-successor): record-service encodes
+            # on its own live ingest path now and reports this key directly
+            # via recording.completed (transcription_service.py::
+            # handle_recording_completed), so it's ready the moment the
+            # track row exists -- no more separate derivative_object_key
+            # written later by audio-processing-service (retired).
+            filename = audio_info.get("filename")
+            if not filename:
                 continue
             file_results.append(
                 AudioTrackInfo(
                     participant_identity=str(track.participant_identity),
-                    filename=derivative_filename,
+                    filename=filename,
                     started_at_ns=audio_info.get("started_at_ns"),
                     ended_at_ns=audio_info.get("ended_at_ns"),
                 )

@@ -14,7 +14,7 @@ import logging
 from record_service.application.report_event import ReportEvent
 from record_service.application.session_registry import ActiveSession, SessionRegistry
 from record_service.domain.models import RecordingSession, RecordingStatus
-from record_service.domain.ports import BlobStorage, SessionStateRepository
+from record_service.domain.ports import BlobStorage, SessionStateRepository, StreamEncoderFactory
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +26,13 @@ class StartRecording:
         blob_storage: BlobStorage,
         state_repo: SessionStateRepository,
         report_event: ReportEvent,
+        encoder_factory: StreamEncoderFactory,
     ) -> None:
         self._registry = registry
         self._blob_storage = blob_storage
         self._state_repo = state_repo
         self._report_event = report_event
+        self._encoder_factory = encoder_factory
 
     async def execute(
         self,
@@ -78,7 +80,9 @@ class StartRecording:
                 object_key=object_key,
                 upload_id=upload_id,
             )
-            self._registry.put(ActiveSession(session))
+            active = ActiveSession(session)
+            active.encoder = await self._encoder_factory.create(sample_rate, channels)
+            self._registry.put(active)
             await self._state_repo.save(session)
             logger.info(
                 "Started session %s -> s3://%s/%s (upload_id=%s)",

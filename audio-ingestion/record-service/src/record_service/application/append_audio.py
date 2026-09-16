@@ -1,9 +1,14 @@
-"""Use case: feed raw PCM bytes (and/or an agent-side drop count) into a
-session's multipart upload buffer, flushing full parts as they fill.
+"""Use case: feed raw PCM bytes (and/or an agent-side drop count) through the
+session's streaming encoder, then into its multipart upload buffer, flushing
+full parts as they fill.
 
-Dumb pass-through by design (PLAN.md D6) -- no decode, no re-encode. The only
-"processing" here is chunking for S3's multipart API and the cheap D11/D12
-sanity signals, both O(1) arithmetic on counters already being tracked.
+PLAN.md D6-successor: record-service now encodes PCM->OGG/Opus itself on
+this path via a per-session StreamEncoder (domain/ports.py) instead of
+forwarding raw PCM to a second service -- see PLAN.md for the risk writeup.
+The chunking-for-S3's-multipart-API and D11/D12 sanity-signal logic below is
+otherwise unchanged from the original dumb-pass-through design; only the
+byte source going into `active.buffer` changed (encoded output, not raw
+input).
 """
 
 from __future__ import annotations
@@ -12,10 +17,10 @@ import logging
 import time
 
 from record_service.application.retry import with_retry
-from record_service.application.session_registry import SessionRegistry
+from record_service.application.session_registry import ActiveSession, SessionRegistry
 from record_service.domain.models import QualityAnnotation, RecordingSession, UploadedPart
 from record_service.domain.policies import RecordingPolicy
-from record_service.domain.ports import BlobStorage, SessionStateRepository
+from record_service.domain.ports import BlobStorage, SessionStateRepository, StreamEncoderFactory
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +32,13 @@ class AppendAudio:
         blob_storage: BlobStorage,
         state_repo: SessionStateRepository,
         policy: RecordingPolicy,
+        encoder_factory: StreamEncoderFactory,
     ) -> None:
         self._registry = registry
         self._blob_storage = blob_storage
         self._state_repo = state_repo
         self._policy = policy
+        self._encoder_factory = encoder_factory
 
     async def execute(self, session_id: str, pcm: bytes | None, dropped_count: int = 0) -> bool:
         """Returns False if the session is unknown (adapter should stop sending)."""
@@ -51,7 +58,9 @@ class AppendAudio:
 
             session.raw_bytes_received += len(pcm)
             session.frames_received += 1
-            active.buffer.extend(pcm)
+
+            encoded = await self._encode(session, active, pcm)
+            active.buffer.extend(encoded)
 
             while len(active.buffer) >= self._policy.part_size_bytes:
                 payload = bytes(active.buffer[: self._policy.part_size_bytes])
@@ -61,6 +70,35 @@ class AppendAudio:
             await self._state_repo.save(session)
 
         return True
+
+    async def _encode(self, session: RecordingSession, active: ActiveSession, pcm: bytes) -> bytes:
+        """Feeds `pcm` to the session's encoder and returns whatever it has
+        flushed so far. Transparently restarts a dead encoder -- see
+        domain/ports.py's StreamEncoder docstring for why a death isn't
+        fatal to the session -- and annotates the restart (D12 style) so
+        it's visible downstream without acting on it."""
+        if active.encoder is None or not active.encoder.alive:
+            await self._restart_encoder(session, active)
+
+        assert active.encoder is not None
+        try:
+            await active.encoder.feed(pcm)
+        except RuntimeError:
+            await self._restart_encoder(session, active)
+            await active.encoder.feed(pcm)
+
+        return await active.encoder.drain()
+
+    async def _restart_encoder(self, session: RecordingSession, active: ActiveSession) -> None:
+        logger.warning(
+            "Encoder for session %s is dead, starting a fresh one (chained Ogg stream)",
+            session.session_id,
+        )
+        active.encoder = await self._encoder_factory.create(session.sample_rate, session.channels)
+        offset_ms = int((time.time() - session.started_at) * 1000)
+        session.quality_annotations.append(
+            QualityAnnotation(start_offset_ms=offset_ms, reason="encoder_restarted")
+        )
 
     def _maybe_annotate_quality(self, session: RecordingSession) -> None:
         """PLAN.md D12: annotate only, never discard or restart the session."""
