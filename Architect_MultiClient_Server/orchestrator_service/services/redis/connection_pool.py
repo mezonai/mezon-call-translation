@@ -8,6 +8,10 @@ Uses decode_responses=False so stream workflows keep raw Redis behavior.
 from redis.asyncio import ConnectionPool, Redis
 
 from orchestrator_service.config.application_config import get_config
+from orchestrator_service.exceptions import (
+    RedisConnectionError,
+    RedisPoolNotInitializedError,
+)
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
 
@@ -35,7 +39,7 @@ class RedisConnectionManager:
         Create the shared connection pool.
 
         Raises:
-            ConnectionError: If cannot connect to Redis
+            RedisConnectionError: If cannot connect to Redis
         """
         if self._connected and self._pool is not None:
             logger.debug("Redis connection pool already created")
@@ -67,7 +71,7 @@ class RedisConnectionManager:
             logger.error(f"✗ Failed to create Redis connection pool: {e}")
             self._pool = None
             self._connected = False
-            raise ConnectionError(f"Redis connection failed: {e}") from e
+            raise RedisConnectionError(f"Redis connection failed: {e}") from e
 
     async def disconnect(self) -> None:
         """Close the shared connection pool."""
@@ -83,10 +87,10 @@ class RedisConnectionManager:
         Return the shared pool for Redis(connection_pool=...).
 
         Raises:
-            RuntimeError: If connect() has not completed successfully.
+            RedisPoolNotInitializedError: If connect() has not completed successfully.
         """
         if not self._pool:
-            raise RuntimeError("Redis connection pool not initialized. Call await connect() first.")
+            raise RedisPoolNotInitializedError("Redis connection pool not initialized. Call await connect() first.")
         return self._pool
 
     def get_client(self) -> Redis:
@@ -94,7 +98,7 @@ class RedisConnectionManager:
         Get a Redis client bound to the shared pool.
 
         Raises:
-            RuntimeError: If connection pool not initialized
+            RedisPoolNotInitializedError: If connection pool not initialized
         """
         return Redis(connection_pool=self.get_pool())
 
@@ -133,7 +137,7 @@ async def get_redis_connection() -> Redis:
         Redis client instance
 
     Raises:
-        ConnectionError: If cannot connect to Redis
+        RedisConnectionError: If cannot connect to Redis
     """
     manager = RedisConnectionManager()
 

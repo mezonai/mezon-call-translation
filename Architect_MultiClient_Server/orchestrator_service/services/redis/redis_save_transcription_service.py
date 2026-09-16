@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import time
 
+from orchestrator_service.exceptions import TrackCompletionError
 from orchestrator_service.models.save_transcription_task import SaveTranscriptionTask
 from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
@@ -261,7 +262,7 @@ class RedisSaveTranscriptionService:
                         await service.generate_summary(str(room_ref_id))
                 else:
                     logger.warning(f"Failed to update status for track {task.track_ref_id}")
-                    raise RuntimeError(
+                    raise TrackCompletionError(
                         f"Failed to complete track {task.track_ref_id}: Track not found or DB error"
                     )
 

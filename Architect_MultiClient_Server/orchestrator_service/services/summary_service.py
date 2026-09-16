@@ -7,7 +7,6 @@ import logging
 from datetime import datetime
 from typing import Any, TypeVar
 
-from fastapi import HTTPException
 from pydantic import BaseModel
 from tenacity import (
     before_sleep_log,
@@ -21,7 +20,12 @@ from orchestrator_service.api.sse.channels.metadata_channel import MetadataChann
 from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
-from orchestrator_service.exceptions import SummaryRetryNotFoundError
+from orchestrator_service.exceptions import (
+    RoomAccessDeniedError,
+    SummaryGenerationError,
+    SummaryRetryNotFoundError,
+    SummarySectionsUnavailableError,
+)
 from orchestrator_service.models.summary_models import (
     OverallContextResult,
     RetryType,
@@ -99,7 +103,12 @@ class SummaryService:
         )
         async def _inner() -> T:
             return await llm_service.generate(
-                prompt=prompt, response_model=response_model, model=model, temperature=temperature, top_p=top_p, timeout=timeout
+                prompt=prompt,
+                response_model=response_model,
+                model=model,
+                temperature=temperature,
+                top_p=top_p,
+                timeout=timeout,
             )
 
         return await _inner()
@@ -131,11 +140,11 @@ class SummaryService:
                 )
             raise
 
-    def merge_section_summaries(self, sections: list[RoomSectionSummary], overall_context: str) -> dict[str, Any]: # type: ignore[explicit-any]
+    def merge_section_summaries(self, sections: list[RoomSectionSummary], overall_context: str) -> dict[str, Any]:  # type: ignore[explicit-any]
         raw_data: dict[str, Any] = {  # type: ignore[explicit-any]
             "key_discussions": [],
             "next_focus": {},
-            "detail": []
+            "detail": [],
         }
 
         for sec in sections:
@@ -171,7 +180,7 @@ class SummaryService:
 
         if not sections:
             logger.error(f"No section summaries found for room_id={room_id}")
-            raise ValueError(f"No section summaries found for room_id={room_id}")
+            raise SummarySectionsUnavailableError(f"No section summaries found for room_id={room_id}")
 
         section_context = [
             {
@@ -191,13 +200,15 @@ class SummaryService:
             return self.merge_section_summaries(sections=sections, overall_context=result.context)
         except Exception as e:
             logger.error(f"Failed to generate overall summary for room_id={room_id}: {e}")
-            raise ValueError(f"Failed to generate overall summary for room_id={room_id}: {e}") from e
+            raise SummaryGenerationError(f"Failed to generate overall summary for room_id={room_id}: {e}") from e
 
     async def retry_overall_summary_only(self, room_id: str, language: str = "Vietnamese") -> dict[str, Any]:  # type: ignore[explicit-any]
         """Chỉ retry generate_overall_summary, không chạy lại sections."""
         sections = await self.pg_summary_repo.get_section_summaries_by_room_id(room_id)
         if not sections:
-            raise ValueError(f"No existing sections found for room_id={room_id}. Cannot retry overall only.")
+            raise SummarySectionsUnavailableError(
+                f"No existing sections found for room_id={room_id}. Cannot retry overall only."
+            )
 
         final_summary = await self.generate_overall_summary(room_id, language)
         await self.pg_summary_repo.update_room_summary_data(room_id, final_summary)
@@ -396,7 +407,9 @@ class SummaryService:
             if not updated:
                 logger.error(f"Failed to update generated light summary for room {room_id}")
                 outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id), retry_type=RetryType.OVERALL_CONTEXT, error_msg="Failed to save light summary to DB"
+                    room_id=str(room_id),
+                    retry_type=RetryType.OVERALL_CONTEXT,
+                    error_msg="Failed to save light summary to DB",
                 )
                 if not outbox_created:
                     logger.critical(
@@ -449,21 +462,27 @@ class SummaryService:
                 summary_parts.append(f"Context\n{summary_data_result.context}")
 
                 if summary_data_result.key_discussions:
-                    summary_data_result.key_discussions = sanitize_and_decode_list(summary_data_result.key_discussions, {}, require_brackets=True)
+                    summary_data_result.key_discussions = sanitize_and_decode_list(
+                        summary_data_result.key_discussions, {}, require_brackets=True
+                    )
                     summary_data_result.key_discussions = format_key_discussions(summary_data_result.key_discussions)
                     if summary_data_result.key_discussions:
                         summary_parts.append("Key Discussions\n" + "\n".join(summary_data_result.key_discussions))
 
                 if summary_data_result.next_focus:
-                    summary_data_result.next_focus = sanitize_and_decode_list(summary_data_result.next_focus, username_to_id, require_brackets=True)
+                    summary_data_result.next_focus = sanitize_and_decode_list(
+                        summary_data_result.next_focus, username_to_id, require_brackets=True
+                    )
 
                 if summary_data_result.detail:
-                    summary_data_result.detail = sanitize_and_decode_list(summary_data_result.detail, {}, require_brackets=False)
+                    summary_data_result.detail = sanitize_and_decode_list(
+                        summary_data_result.detail, {}, require_brackets=False
+                    )
 
             summary_data = {
                 "summary": "\n\n".join(summary_parts) if summary_parts else "",
                 "action_items": group_next_focus_by_user(summary_data_result.next_focus) if summary_data_result else {},
-                "detail": summary_data_result.detail if summary_data_result and summary_data_result.detail else []
+                "detail": summary_data_result.detail if summary_data_result and summary_data_result.detail else [],
             }
 
             final_summary = dict(draft_summary)
@@ -588,13 +607,17 @@ class SummaryService:
                     summary_parts = [f"Context\n{result.context}"]
 
                     if result.key_discussions:
-                        result.key_discussions = sanitize_and_decode_list(result.key_discussions, {}, require_brackets=True)
+                        result.key_discussions = sanitize_and_decode_list(
+                            result.key_discussions, {}, require_brackets=True
+                        )
                         result.key_discussions = format_key_discussions(result.key_discussions)
                         if result.key_discussions:
                             summary_parts.append("Key Discussions\n" + "\n".join(result.key_discussions))
 
                     if result.next_focus:
-                        result.next_focus = sanitize_and_decode_list(result.next_focus, username_to_id, require_brackets=True)
+                        result.next_focus = sanitize_and_decode_list(
+                            result.next_focus, username_to_id, require_brackets=True
+                        )
 
                     if result.detail:
                         result.detail = sanitize_and_decode_list(result.detail, {}, require_brackets=False)
@@ -602,7 +625,7 @@ class SummaryService:
                     summary_data = {
                         "summary": "\n\n".join(summary_parts),
                         "action_items": group_next_focus_by_user(result.next_focus) if result else {},
-                        "detail": result.detail if result and result.detail else []
+                        "detail": result.detail if result and result.detail else [],
                     }
 
                     is_success = True
@@ -666,7 +689,7 @@ class SummaryService:
             has_access = await self.pg_transcript_repo.user_has_room_access(room_id, auth.user_id)
             if not has_access:
                 logger.warning(f"User {auth.user_id} denied access to room statistics for {room_id}")
-                raise HTTPException(status_code=403, detail="You don't have access to this room")
+                raise RoomAccessDeniedError("You don't have access to this room")
 
         summary, room = await self.pg_summary_repo.get_summary_by_room_id(room_id)
         if not summary or not room:
@@ -718,16 +741,24 @@ def get_summary_service() -> SummaryService:
         pg_transcript_repo = get_pg_transcript_repository()
         pg_summary_repo = get_pg_summary_repository()
 
-        primary_llm = create_llm_service(config.summary.provider, config.summary.model, config.summary.temperature, config.summary.top_p)
+        primary_llm = create_llm_service(
+            config.summary.provider, config.summary.model, config.summary.temperature, config.summary.top_p
+        )
 
         fallback_llm = None
         if config.summary.fallback_enable:
             fallback_llm = create_llm_service(
-                config.summary.fallback_provider, config.summary.fallback_model, config.summary.fallback_temperature, config.summary.fallback_top_p
+                config.summary.fallback_provider,
+                config.summary.fallback_model,
+                config.summary.fallback_temperature,
+                config.summary.fallback_top_p,
             )
 
         light_summary_llm = create_llm_service(
-            config.light_summary.provider, config.light_summary.model, config.light_summary.temperature, config.light_summary.top_p
+            config.light_summary.provider,
+            config.light_summary.model,
+            config.light_summary.temperature,
+            config.light_summary.top_p,
         )
         light_summary_service = LightSummaryService(pg_summary_repo, light_summary_llm)
         _summary_service = SummaryService(

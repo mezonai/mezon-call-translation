@@ -2,6 +2,7 @@ import json
 import re
 from typing import Any
 
+from orchestrator_service.exceptions import LlmInvalidResponseError
 from orchestrator_service.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,12 +19,11 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:  # type: ignore[expl
         Extracted JSON dictionary
 
     Raises:
-        RuntimeError: If response format is invalid
-        ValueError: If no valid JSON found in response
+        LlmInvalidResponseError: If no valid JSON found in response or response format is invalid
     """
     raw = raw_text.strip()
     if not raw:
-        raise ValueError("Empty LLM output")
+        raise LlmInvalidResponseError("Empty LLM output")
 
     # 1) Direct JSON parse
     try:
@@ -64,4 +64,4 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:  # type: ignore[expl
             continue
 
     logger.error("Cannot extract JSON from LLM output")
-    raise ValueError("No valid JSON found in LLM response")
+    raise LlmInvalidResponseError("No valid JSON found in LLM response")

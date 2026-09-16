@@ -4,6 +4,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from orchestrator_service.config.application_config import LLMConfig
+from orchestrator_service.exceptions import LlmInvalidResponseError
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.utils.llm_utils import extract_json_from_llm
 
@@ -33,7 +34,7 @@ class MezonLLMService(BaseLLMService):
         raw_text = response.choices[0].message.content
 
         if not raw_text:
-            raise ValueError("Empty response text from Mezon LLM")
+            raise LlmInvalidResponseError("Empty response text from Mezon LLM")
 
         parsed_json = extract_json_from_llm(raw_text)
         return response_model.model_validate(parsed_json)
