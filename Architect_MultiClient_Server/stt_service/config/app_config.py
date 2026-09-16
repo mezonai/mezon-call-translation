@@ -7,7 +7,11 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+
+# Service configuration must not depend on the directory from which Uvicorn is
+# launched.  This is especially important for the Redis/MinIO non-realtime
+# worker, which is normally started from Architect_MultiClient_Server.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +107,16 @@ class RedisConfig:
 
 @dataclass
 class WhisperConfig:
-    """Whisper transcription configuration."""
-    model_size: str = "medium"  # tiny, base, small, medium, large-v3
-    device: str = "cpu"  # cuda or cpu
-    compute_type: str = "int8"  # float16, int8, int8_float16
-    cpu_threads: int = 4
-    beam_size: int = 1
-    vad_filter: bool = True
-    sample_rate: int = 16000
-    language: str = ""  # Empty = auto-detect, or specify: "en", "vi", "ja", etc.
+    """Non-realtime marker-based Whisper configuration.
 
+    ``model_size`` is passed directly to faster-whisper as a model name or a
+    local directory (e.g. ``large-v3-turbo``, ``/models/whisper``).
+    """
+    model_size: str = "large-v3-turbo"
+    compute_type: str = "int8"  # float16, int8, int8_float16
+    cpu_threads: int = 8
+    temperature: float | list[float] = 0.0
+    language: str = "vi"  # "auto" enables language detection
 @dataclass
 class TranscirptConfig:
     chunk_size: int = 50  # chunk_size is the number of segments to batch together before sending to Redis.
@@ -227,15 +231,21 @@ class ConfigManager:
         config.redis.heartbeat_interval_sec = float(os.getenv("REDIS_HEARTBEAT_INTERVAL_SEC", config.redis.heartbeat_interval_sec))
         config.redis.worker_timeout_sec = float(os.getenv("REDIS_WORKER_TIMEOUT_SEC", config.redis.worker_timeout_sec))
         
-        # Whisper configuration
+        # Non-realtime marker Whisper configuration
         config.whisper.model_size = os.getenv("WHISPER_MODEL_SIZE", config.whisper.model_size)
-        config.whisper.device = os.getenv("WHISPER_DEVICE", config.whisper.device)
         config.whisper.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", config.whisper.compute_type)
         config.whisper.cpu_threads = int(os.getenv("WHISPER_CPU_THREADS", config.whisper.cpu_threads))
-        config.whisper.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", config.whisper.beam_size))
-        config.whisper.vad_filter = os.getenv("WHISPER_VAD_FILTER", "true").lower() == "true"
-        config.whisper.sample_rate = int(os.getenv("WHISPER_SAMPLE_RATE", config.whisper.sample_rate))
-        config.whisper.language = os.getenv("WHISPER_LANGUAGE", config.whisper.language)  # "" for auto-detect
+
+        temp_env = os.getenv("WHISPER_TEMPERATURE", "")
+        if temp_env:
+            # Handle comma-separated list like "0.0, 0.2, 0.4"
+            if "," in temp_env:
+                config.whisper.temperature = [float(x.strip()) for x in temp_env.split(",") if x.strip()]
+            # Default single float
+            else:
+                config.whisper.temperature = float(temp_env)
+
+        config.whisper.language = os.getenv("WHISPER_LANGUAGE", config.whisper.language)
         
         # Metrics configuration
         config.metrics.enabled = os.getenv("METRICS_ENABLED", "false").lower() == "true"
