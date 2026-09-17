@@ -31,7 +31,7 @@ class STTConfig:
     nemotron_model_path: str = "nemotron-3.5-asr-streaming-0.6b-onnx-int4"
     nemotron_language_id: int = 0
     nemotron_vad_threshold: float = 0.3
-    nemotron_vad_silence_duration_ms: int = 1800
+    nemotron_vad_silence_duration_ms: int = 1200
     min_chunks: int = 2  # Process after just 1 chunk
     max_chunks: int = 4  # Reduced from 8 to be more responsive
     min_time_threshold: float = 0.1  # 50ms - very responsive
