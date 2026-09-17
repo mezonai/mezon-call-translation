@@ -20,6 +20,10 @@ type Config struct {
 	MezonUseSSL      bool
 	MezonTLSInsecure bool // skip TLS verify for dev self-signed certs
 
+	// Mezon gateway API
+	MezonGatewayBaseURL string
+	AgentsmithSecretKey string
+
 	// HTTP server
 	GatewayPort int
 
@@ -35,6 +39,8 @@ func FromEnv() (Config, error) {
 		MezonHost:           getEnv("MEZON_HOST", ""),
 		MezonPort:           getEnv("MEZON_PORT", ""),
 		MezonTLSInsecure:    getEnv("MEZON_TLS_INSECURE", "") == "true",
+		MezonGatewayBaseURL: getEnv("MEZON_GATEWAY_BASE_URL", "https://gw.mezon.ai"),
+		AgentsmithSecretKey: getEnv("AGENTSMITH_SECRET_KEY", ""),
 		OrchestratorBaseURL: getEnv("ORCHESTRATOR_BASE_URL", "http://localhost:8002"),
 		InternalAPISecret:   getEnv("INTERNAL_API_SECRET", ""),
 	}

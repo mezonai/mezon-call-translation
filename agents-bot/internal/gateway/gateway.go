@@ -20,6 +20,7 @@ import (
 
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/config"
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/logging"
+	"github.com/mezonai/mezon-call-translation/agents-bot/internal/mezonusers"
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/orchestratorclient"
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/userresolver"
 )
@@ -34,13 +35,18 @@ type orchestratorAPI interface {
 	PushChatExternal(ctx context.Context, roomName, roomID, participantIdentity, message, timeStr string) error
 }
 
+type mezonUserClient interface {
+	GetUsers(ctx context.Context, clanID string, userIDs []string) ([]mezonusers.UserInfo, error)
+}
+
 // Gateway is the main service struct.
 type Gateway struct {
-	cfg        config.Config
-	client     *mezon.MezonClient
-	accountAPI *mezon.MezonApi
-	resolver   *userresolver.Resolver
-	orch       orchestratorAPI
+	cfg             config.Config
+	client          *mezon.MezonClient
+	accountAPI      *mezon.MezonApi
+	resolver        *userresolver.Resolver
+	mezonUserClient mezonUserClient
+	orch            orchestratorAPI
 
 	// activeRooms maps room_name (SFU numeric id as string) → RoomInfo.
 	// The agent registers its room here so the gateway knows which
@@ -72,13 +78,18 @@ func New(cfg config.Config) (*Gateway, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gateway: init mezon client: %w", err)
 	}
+	mezonUserClient, err := mezonusers.New(cfg.MezonGatewayBaseURL, cfg.AgentsmithSecretKey, 0)
+	if err != nil {
+		return nil, fmt.Errorf("gateway: init Mezon users client: %w", err)
+	}
 
 	g := &Gateway{
-		cfg:         cfg,
-		client:      client,
-		resolver:    userresolver.New(),
-		orch:        orchestratorclient.New(cfg.OrchestratorBaseURL, cfg.InternalAPISecret),
-		activeRooms: make(map[string]*RoomInfo),
+		cfg:             cfg,
+		client:          client,
+		resolver:        userresolver.New(),
+		mezonUserClient: mezonUserClient,
+		orch:            orchestratorclient.New(cfg.OrchestratorBaseURL, cfg.InternalAPISecret),
+		activeRooms:     make(map[string]*RoomInfo),
 	}
 
 	g.registerEventHandlers()
@@ -324,9 +335,9 @@ type userResponseItem struct {
 }
 
 type batchResponse struct {
-	Users           []userResponseItem `json:"users"`
-	NotFound        []string           `json:"not_found"`
-	ContextResolved bool               `json:"context_resolved"`
+	FoundUsers          []userResponseItem `json:"users"`
+	NotFoundUserIDs     []string           `json:"not_found"`
+	ClanContextResolved bool               `json:"context_resolved"`
 }
 
 func (g *Gateway) handleBatchUsers(w http.ResponseWriter, r *http.Request) {
@@ -339,20 +350,67 @@ func (g *Gateway) handleBatchUsers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_ids required"})
 		return
 	}
-	clanID, contextResolved := g.resolveRoomClanContext(req.RoomName)
-	found, notFound := g.resolver.GetBatch(req.UserIDs)
-	users := make([]userResponseItem, 0, len(found))
-	for _, user := range found {
-		users = append(users, newUserResponseItem(user, clanID))
+	clanID, clanContextResolved := g.resolveRoomClanContext(req.RoomName)
+	if !clanContextResolved {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "clan_context_unavailable"})
+		return
 	}
-	if notFound == nil {
-		notFound = []string{}
+	if g.mezonUserClient == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "mezon_users_unavailable"})
+		return
 	}
+
+	foundUserInfos, err := g.mezonUserClient.GetUsers(r.Context(), clanID, req.UserIDs)
+	if err != nil {
+		attrs := append(
+			logging.ErrAttrs(err),
+			"room_name", req.RoomName,
+			"clan_id", clanID,
+			"requested_count", len(req.UserIDs),
+		)
+		logging.L.Error("agents-bot: Mezon users lookup failed", attrs...)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "mezon_users_lookup_failed"})
+		return
+	}
+
+	foundUserIDs := make(map[string]struct{}, len(foundUserInfos))
+	foundUsers := make([]userResponseItem, 0, len(foundUserInfos))
+	for _, foundUserInfo := range foundUserInfos {
+		foundUserIDs[foundUserInfo.UserID] = struct{}{}
+		foundUsers = append(foundUsers, mezonUserToResponseItem(foundUserInfo))
+	}
+
+	notFoundUserIDs := make([]string, 0)
+	for _, requestedUserID := range req.UserIDs {
+		_, userWasFound := foundUserIDs[requestedUserID]
+		if !userWasFound {
+			notFoundUserIDs = append(notFoundUserIDs, requestedUserID)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, batchResponse{
-		Users:           users,
-		NotFound:        notFound,
-		ContextResolved: contextResolved,
+		FoundUsers:          foundUsers,
+		NotFoundUserIDs:     notFoundUserIDs,
+		ClanContextResolved: clanContextResolved,
 	})
+}
+
+func mezonUserToResponseItem(userInfo mezonusers.UserInfo) userResponseItem {
+	displayLabel := strings.TrimSpace(userInfo.ClanNick)
+	if displayLabel == "" {
+		displayLabel = strings.TrimSpace(userInfo.DisplayName)
+	}
+	if displayLabel == "" {
+		displayLabel = strings.TrimSpace(userInfo.UserName)
+	}
+
+	return userResponseItem{
+		UserID:       userInfo.UserID,
+		Username:     userInfo.UserName,
+		DisplayName:  userInfo.DisplayName,
+		ClanNick:     userInfo.ClanNick,
+		DisplayLabel: displayLabel,
+	}
 }
 
 type roomRegisterRequest struct {
