@@ -25,7 +25,10 @@ AGENTS_DIR="$ARCH_DIR/agents"
 # Model directories
 MODELS_DIR="$PROJECT_ROOT/models"
 NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
+WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
+GIPFORMER_REPOSITORY="g-group-ai-lab/gipformer-65M-rnnt"
+GIPFORMER_FILES=("encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt")
 
 # Counters
 TOTAL_CHECKS=0
@@ -52,20 +55,20 @@ print_section() {
 
 check_pass() {
     echo -e "${GREEN}✅ $1${NC}"
-    ((PASSED_CHECKS++))
-    ((TOTAL_CHECKS++))
+    ((PASSED_CHECKS+=1))
+    ((TOTAL_CHECKS+=1))
 }
 
 check_fail() {
     echo -e "${RED}❌ $1${NC}"
-    ((FAILED_CHECKS++))
-    ((TOTAL_CHECKS++))
+    ((FAILED_CHECKS+=1))
+    ((TOTAL_CHECKS+=1))
 }
 
 check_warn() {
     echo -e "${YELLOW}⚠️  $1${NC}"
-    ((WARNING_CHECKS++))
-    ((TOTAL_CHECKS++))
+    ((WARNING_CHECKS+=1))
+    ((TOTAL_CHECKS+=1))
 }
 
 print_info() {
@@ -80,11 +83,9 @@ print_header
 # ============================================================================
 print_section "Python Installation"
 
-if command -v python3 &> /dev/null; then
-    PYTHON_VERSION=$(python3 --version 2>&1)
+if command -v python3 &> /dev/null && PYTHON_VERSION=$(python3 --version 2>&1); then
     check_pass "Python3 installed: $PYTHON_VERSION"
-elif command -v python &> /dev/null; then
-    PYTHON_VERSION=$(python --version 2>&1)
+elif command -v python &> /dev/null && PYTHON_VERSION=$(python --version 2>&1); then
     check_warn "Python installed: $PYTHON_VERSION (python3 recommended)"
 else
     check_fail "Python not found"
@@ -107,6 +108,36 @@ if [ -d "$NEMOTRON_MODEL_DIR" ]; then
 else
     check_fail "Nemotron model directory not found: $NEMOTRON_MODEL_DIR"
     print_info "  Run: bash scripts/download-nemotron-model.sh"
+fi
+
+# faster-whisper resolves and downloads/caches the model on STT startup.
+print_info "Non-realtime Whisper model is managed by faster-whisper cache"
+
+if [ -f "$STT_SERVICE_DIR/assets/whisper_marker.wav" ]; then
+    check_pass "Non-realtime Whisper marker asset found"
+else
+    check_fail "Non-realtime Whisper marker asset is missing"
+fi
+
+# Gipformer shares Hugging Face cache management with faster-whisper rather
+# than using a project-local models/ directory. Check the exact files used by
+# the fallback service at STT startup, without allowing a download.
+if command -v hf &> /dev/null; then
+    HF_DOWNLOAD_COMMAND=(hf download)
+elif command -v huggingface-cli &> /dev/null; then
+    HF_DOWNLOAD_COMMAND=(huggingface-cli download)
+else
+    HF_DOWNLOAD_COMMAND=()
+fi
+
+if [ "${#HF_DOWNLOAD_COMMAND[@]}" -eq 0 ]; then
+    check_warn "Hugging Face CLI not found; cannot verify Gipformer cache"
+    print_info "  Install huggingface-hub, then run: ./scripts/download-gipformer-model.sh"
+elif "${HF_DOWNLOAD_COMMAND[@]}" "$GIPFORMER_REPOSITORY" "${GIPFORMER_FILES[@]}" --local-files-only >/dev/null 2>&1; then
+    check_pass "Gipformer fallback model is present in Hugging Face cache"
+else
+    check_fail "Gipformer fallback model is missing or incomplete in Hugging Face cache"
+    print_info "  Run: ./scripts/download-gipformer-model.sh"
 fi
 
 # Check Kokoro model
@@ -174,6 +205,20 @@ check_venv() {
 check_venv "STT Service" "$STT_SERVICE_DIR/venv"
 check_venv "Orchestrator Service" "$ORCHESTRATOR_DIR/venv"
 check_venv "Agents Service" "$AGENTS_DIR/venv"
+
+# Gipformer runs in the STT virtual environment. Keep this separate from the
+# cache check so a missing Python dependency is distinguishable from a missing
+# Hugging Face artifact.
+if [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
+    if "$STT_SERVICE_DIR/venv/bin/python" -c "import sherpa_onnx" >/dev/null 2>&1; then
+        check_pass "STT venv has sherpa-onnx for Gipformer fallback"
+    else
+        check_fail "STT venv is missing sherpa-onnx for Gipformer fallback"
+        print_info "  Install STT requirements: $STT_SERVICE_DIR/venv/bin/pip install -r $STT_SERVICE_DIR/requirements-server.txt"
+    fi
+else
+    check_warn "Cannot verify sherpa-onnx because STT Linux venv is unavailable"
+fi
 
 # ============================================================================
 # Check .env Files
