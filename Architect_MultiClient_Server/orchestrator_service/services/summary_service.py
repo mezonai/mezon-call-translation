@@ -267,10 +267,12 @@ class SummaryService:
                             continue
 
                         seg_start_ns = track_start_ns + int((seg.get("start") or 0.0) * 1_000_000_000)
+                        seg_end_ns = track_start_ns + int((seg.get("end") or 0.0) * 1_000_000_000)
 
                         all_segments.append(
                             {
                                 "timestamp": seg_start_ns,
+                                "end_timestamp": seg_end_ns,
                                 "participant_id": participant,
                                 "text": text,
                             }
@@ -295,15 +297,29 @@ class SummaryService:
         id_to_username, username_to_id = build_username_maps(list(unique_participants), room_participants)
 
         turns = []
-        
-        for seg in all_segments:
-            dt = datetime.fromtimestamp(seg["timestamp"] / 1_000_000_000)
-            turns.append({
-                "timestamp": dt.strftime("%H:%M:%S"),
-                "participant_id": str(seg["participant_id"]),
-                "content": seg["text"],
-            })
+        last_end_time = 0.0
 
+        for seg in all_segments:
+            current_start_time = seg["timestamp"] / 1_000_000_000
+            current_end_time = seg["end_timestamp"] / 1_000_000_000
+            participant_id = seg["participant_id"]
+            text = seg["text"]
+
+            if (
+                turns
+                and turns[-1]["participant_id"] == participant_id
+                and (current_start_time - last_end_time) <= 3.0
+            ):
+                turns[-1]["content"] += f" {text}"
+            else:
+                dt = datetime.fromtimestamp(current_start_time)
+                turns.append({
+                    "timestamp": dt.strftime("%H:%M:%S"),
+                    "participant_id": participant_id,
+                    "content": text,
+                })
+
+            last_end_time = current_end_time
         for p in room_participants:
             user_id = p.get("participant_identity")
             if user_id:

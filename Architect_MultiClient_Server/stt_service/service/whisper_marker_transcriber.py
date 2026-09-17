@@ -8,6 +8,7 @@ try to infer a container format from a recording path.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -19,9 +20,10 @@ from faster_whisper import WhisperModel
 from faster_whisper.audio import decode_audio
 
 from stt_service.service.gipformer_service import GipformerService
+from stt_service.constants.constants import WHISPER_SAMPLE_RATE
 
+logger = logging.getLogger(__name__)
 
-SAMPLE_RATE = 16_000
 MAX_VAD_SEGMENT_S = 30.0
 MAX_PACKED_S = 30.0
 
@@ -53,6 +55,7 @@ class MarkerTranscriptionSegment:
     start: float
     end: float
     text: str
+    metadata: dict | None = None
 
 
 @dataclass
@@ -65,7 +68,7 @@ class PreparedMarkerAudio:
 
     @property
     def duration_after_vad_sec(self) -> float:
-        return sum(span["end"] - span["start"] for span in self.spans) / SAMPLE_RATE
+        return sum(span["end"] - span["start"] for span in self.spans) / WHISPER_SAMPLE_RATE
 
 
 def make_vad_options():
@@ -89,7 +92,7 @@ def detect_speech(audio: np.ndarray) -> list[dict]:
     timestamps = get_speech_timestamps(
         audio,
         vad_options=make_vad_options(),
-        sampling_rate=SAMPLE_RATE,
+        sampling_rate=WHISPER_SAMPLE_RATE,
     )
     spans = [
         {"start": max(0, int(item["start"])), "end": min(len(audio), int(item["end"]))}
@@ -118,14 +121,14 @@ def normalize_tokens(text: str) -> list[str]:
 
 def trim_marker(marker: np.ndarray) -> np.ndarray:
     """Remove silence around the versioned marker asset and apply its gain."""
-    frame_samples = round(0.01 * SAMPLE_RATE)
+    frame_samples = round(0.01 * WHISPER_SAMPLE_RATE)
     usable = len(marker) // frame_samples * frame_samples
     frames = marker[:usable].reshape(-1, frame_samples)
     rms = np.sqrt(np.mean(np.square(frames, dtype=np.float32), axis=1))
     active = np.flatnonzero(rms >= 10 ** (-45 / 20))
     if not len(active):
         raise ValueError("Marker has no detectable speech")
-    padding = round(0.01 * SAMPLE_RATE)
+    padding = round(0.01 * WHISPER_SAMPLE_RATE)
     start = max(0, active[0] * frame_samples - padding)
     end = min(len(marker), (active[-1] + 1) * frame_samples + padding)
     gain = 10 ** (MARKER_GAIN_DB / 20)
@@ -138,8 +141,8 @@ def pack_speech_with_marker(
     marker: np.ndarray,
 ) -> list[dict]:
     """Pack source VAD spans up to 30 seconds, bridged by the marker asset."""
-    max_samples = round(MAX_PACKED_S * SAMPLE_RATE)
-    guard = np.zeros(round(MARKER_GUARD_S * SAMPLE_RATE), dtype=np.float32)
+    max_samples = round(MAX_PACKED_S * WHISPER_SAMPLE_RATE)
+    guard = np.zeros(round(MARKER_GUARD_S * WHISPER_SAMPLE_RATE), dtype=np.float32)
     bridge = [guard, marker, guard]
     bridge_length = sum(len(part) for part in bridge)
     chunks: list[dict] = []
@@ -394,15 +397,12 @@ def partition_tokens(
         if 0 < position < len(tokens)
     }
 
-    if len(marker_hints) == len(children) - 1:
-        cuts = marker_hints
-    else:
-        cuts = estimate_boundaries(
-            clean_tokens,
-            children,
-            marker_hints,
-            clean_decoder_boundaries,
-        )
+    cuts = estimate_boundaries(
+        clean_tokens,
+        children,
+        marker_hints,
+        clean_decoder_boundaries,
+    )
     boundaries = [0, *cuts, len(clean_tokens)]
     return [
         clean_tokens[start:end]
@@ -410,9 +410,9 @@ def partition_tokens(
     ]
 
 
-def text_tokens(text: str) -> list[dict]:
+def text_tokens(text: str, metadata: dict | None = None) -> list[dict]:
     """Keep the token representation shared by Whisper and Gipformer."""
-    return [{"text": token} for token in text.strip().split()]
+    return [{"text": token, "metadata": metadata} for token in text.strip().split()]
 
 
 def resolved_slots(
@@ -475,7 +475,7 @@ class MarkerWhisperTranscriber:
             raise FileNotFoundError(f"Whisper marker asset not found: {self._marker_path}")
 
         marker = np.asarray(
-            decode_audio(str(self._marker_path), sampling_rate=SAMPLE_RATE),
+            decode_audio(str(self._marker_path), sampling_rate=WHISPER_SAMPLE_RATE),
             dtype=np.float32,
         )
         self._marker = trim_marker(marker)
@@ -518,7 +518,14 @@ class MarkerWhisperTranscriber:
         tokens: list[dict] = []
         decoder_boundaries = []
         for decoded_segment in stream:
-            segment_tokens = text_tokens(decoded_segment.text)
+            # Extract metadata metrics from faster-whisper
+            segment_meta = {
+                "temperature": decoded_segment.temperature,
+                "avg_logprob": decoded_segment.avg_logprob,
+                "compression_ratio": decoded_segment.compression_ratio,
+                "no_speech_prob": decoded_segment.no_speech_prob,
+            }
+            segment_tokens = text_tokens(decoded_segment.text, metadata=segment_meta)
             if segment_tokens:
                 if tokens:
                     decoder_boundaries.append(len(tokens))
@@ -557,7 +564,6 @@ class MarkerWhisperTranscriber:
     def iter_segments(
         self,
         prepared: PreparedMarkerAudio,
-        logger: logging.Logger | logging.LoggerAdapter | None = None,
     ) -> Iterator[MarkerTranscriptionSegment]:
         """Yield final segments in source order, one packed chunk at a time."""
         if self._model is None:
@@ -565,42 +571,49 @@ class MarkerWhisperTranscriber:
 
         for chunk_idx, chunk in enumerate(prepared.packed_chunks):
             whisper_tokens, decoder_boundaries = self._transcribe_with_whisper(chunk["audio"])
-            if logger:
-                whisper_text = " ".join(t["text"] for t in whisper_tokens)
-                logger.debug("Chunk %d - Whisper raw result: %r", chunk_idx, whisper_text)
+            whisper_text = " ".join(t["text"] for t in whisper_tokens)
+            logger.debug("Chunk %d - Whisper raw result: %r", chunk_idx, whisper_text)
                 
             slots = resolved_slots(whisper_tokens, chunk["children"], decoder_boundaries)
             
             if slots is None:
-                if logger:
-                    logger.warning("Chunk %d - Whisper marker alignment failed! Falling back to Gipformer (Chunk-level)", chunk_idx)
+                logger.warning("Chunk %d - Whisper marker alignment failed! Falling back to Gipformer (Chunk-level)", chunk_idx)
                     
                 gipformer_tokens = self._transcribe_with_gipformer(chunk["audio"])
-                if logger:
-                    gipformer_text = " ".join(t["text"] for t in gipformer_tokens)
-                    logger.info("Chunk %d - Gipformer chunk result: %r", chunk_idx, gipformer_text)
+                gipformer_text = " ".join(t["text"] for t in gipformer_tokens)
+                logger.info("Chunk %d - Gipformer chunk result: %r", chunk_idx, gipformer_text)
                     
                 slots = resolved_slots(gipformer_tokens, chunk["children"])
                 
             if slots is None:
-                if logger:
-                    logger.warning("Chunk %d - Gipformer chunk marker alignment failed! Falling back to Gipformer (Per-child)", chunk_idx)
+                logger.warning("Chunk %d - Gipformer chunk marker alignment failed! Falling back to Gipformer (Per-child)", chunk_idx)
                     
                 slots = self._transcribe_children_with_gipformer(
                     prepared.audio,
                     chunk["children"],
                 )
-                if logger:
-                    child_texts = [" ".join(t["text"] for t in slot) for slot in slots]
-                    logger.info("Chunk %d - Gipformer per-child result: %r", chunk_idx, child_texts)
+                child_texts = [" ".join(t["text"] for t in slot) for slot in slots]
+                logger.info("Chunk %d - Gipformer per-child result: %r", chunk_idx, child_texts)
                     
             for child, slot in zip(chunk["children"], slots):
                 text = " ".join(token["text"] for token in slot).strip()
                 if text:
+                    valid_metas = [t.get("metadata") for t in slot if t.get("metadata") is not None]
+                    if valid_metas:
+                        avg_meta = {
+                            "temperature": sum(m["temperature"] for m in valid_metas) / len(valid_metas),
+                            "avg_logprob": sum(m["avg_logprob"] for m in valid_metas) / len(valid_metas),
+                            "compression_ratio": sum(m["compression_ratio"] for m in valid_metas) / len(valid_metas),
+                            "no_speech_prob": sum(m["no_speech_prob"] for m in valid_metas) / len(valid_metas),
+                        }
+                    else:
+                        avg_meta = None
+                        
                     yield MarkerTranscriptionSegment(
-                        start=round(child["source_start"] / SAMPLE_RATE, 3),
-                        end=round(child["source_end"] / SAMPLE_RATE, 3),
+                        start=round(child["source_start"] / WHISPER_SAMPLE_RATE, 3),
+                        end=round(child["source_end"] / WHISPER_SAMPLE_RATE, 3),
                         text=text,
+                        metadata=avg_meta,
                     )
 
     def shutdown(self) -> None:

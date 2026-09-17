@@ -26,6 +26,7 @@ from stt_service.service.whisper_marker_transcriber import (
 from stt_service.utils.decorator import singleton
 
 from stt_service.config import get_config
+from stt_service.constants.constants import WHISPER_SAMPLE_RATE
 from stt_service.models import TranscriptionStreamTask, SaveTranscriptionTask
 
 logger = logging.getLogger(__name__)
@@ -179,10 +180,10 @@ class WhisperTranscriptionProcessor:
         # capture is always mono (audio-ingestion PLAN.md D6); fail fast at
         # startup rather than per-task if that ever stops being true.
         audio_config = self._config.audio
-        if audio_config.sample_rate != 16_000:
+        if audio_config.sample_rate != WHISPER_SAMPLE_RATE:
             raise RuntimeError(
                 f"Capture sample_rate ({audio_config.sample_rate}) does not match "
-                "marker Whisper's required sampling_rate (16000) -- raw PCM is fed "
+                f"marker Whisper's required sampling_rate ({WHISPER_SAMPLE_RATE}) -- raw PCM is fed "
                 f"in directly without resampling, see _pcm16_bytes_to_float32."
             )
         if audio_config.channels != 1:
@@ -322,7 +323,7 @@ class WhisperTranscriptionProcessor:
 
                 if audio_path.suffix.lower() in ('.ogg', '.wav', '.mp3', '.m4a', '.webm'):
                     logger.info(f"Decoding container format {audio_path.suffix} using PyAV")
-                    audio_array = decode_audio(str(audio_path), sampling_rate=16000)
+                    audio_array = decode_audio(str(audio_path), sampling_rate=WHISPER_SAMPLE_RATE)
                 else:
                     logger.info("Assuming raw headerless PCM16 format")
                     audio_array = _pcm16_bytes_to_float32(audio_path.read_bytes())
@@ -332,16 +333,20 @@ class WhisperTranscriptionProcessor:
                 # Collect segments into batches
                 current_batch = []
                 
-                for marker_segment in transcriber.iter_segments(prepared_audio, logger=logger):
+                for marker_segment in transcriber.iter_segments(prepared_audio):
+                    base_meta = {
+                        "engine": "whisper_marker_v1",
+                        "timestamp_source": "vad_span",
+                    }
+                    if marker_segment.metadata:
+                        base_meta.update(marker_segment.metadata)
+                        
                     segment = TranscriptionSegment(
                         start=marker_segment.start,
                         end=marker_segment.end,
                         text=marker_segment.text,
                         confidence=None,
-                        metadata={
-                            "engine": "whisper_marker_v1",
-                            "timestamp_source": "vad_span",
-                        }
+                        metadata=base_meta
                     )
                     
                     segment_dict = segment.to_dict()

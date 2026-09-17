@@ -8,8 +8,8 @@ from typing import Any
 
 import numpy as np
 
+from stt_service.constants.constants import WHISPER_SAMPLE_RATE
 
-SAMPLE_RATE = 16_000
 GIPFORMER_REPO_ID = "g-group-ai-lab/gipformer-65M-rnnt"
 GIPFORMER_USE_INT8 = True
 GIPFORMER_DECODING_METHOD = "modified_beam_search"
@@ -74,7 +74,7 @@ class GipformerService:
             tokens=str(files["tokens"]),
             provider="cpu",
             num_threads=self._cpu_threads,
-            sample_rate=SAMPLE_RATE,
+            sample_rate=WHISPER_SAMPLE_RATE,
             decoding_method=GIPFORMER_DECODING_METHOD,
             max_active_paths=GIPFORMER_MAX_ACTIVE_PATHS,
         )
@@ -86,7 +86,7 @@ class GipformerService:
         if waveform.ndim != 1:
             raise ValueError(f"Expected mono waveform, got shape {waveform.shape}")
         stream = self._recognizer.create_stream()
-        stream.accept_waveform(SAMPLE_RATE, waveform)
+        stream.accept_waveform(WHISPER_SAMPLE_RATE, waveform)
         self._recognizer.decode_stream(stream)
         return str(stream.result.text)
 

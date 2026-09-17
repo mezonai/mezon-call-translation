@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 from pathlib import Path
 from dotenv import load_dotenv
+from stt_service.constants.constants import WHISPER_SAMPLE_RATE
 
 # Service configuration must not depend on the directory from which Uvicorn is
 # launched.  This is especially important for the Redis/MinIO non-realtime
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AudioConfig:
     """Audio processing configuration."""
-    sample_rate: int = 16000
+    sample_rate: int = WHISPER_SAMPLE_RATE
     min_text_length: int = 2
     channels: int = 1
 
