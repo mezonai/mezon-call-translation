@@ -31,8 +31,18 @@ class NemotronModel:
                 "expected 'nemotron_speech'"
             )
 
-    def create_stream(self, language_id: int, empty_piece_limit: int) -> "NemotronStream":
-        return NemotronStream(self, language_id, empty_piece_limit)
+    def create_stream(
+        self,
+        language_id: int,
+        vad_threshold: float,
+        vad_silence_duration_ms: int,
+    ) -> "NemotronStream":
+        return NemotronStream(
+            self,
+            language_id,
+            vad_threshold,
+            vad_silence_duration_ms,
+        )
 
 
 class NemotronStream:
@@ -42,13 +52,18 @@ class NemotronStream:
         self,
         model: NemotronModel,
         language_id: int,
-        empty_piece_limit: int,
+        vad_threshold: float,
+        vad_silence_duration_ms: int,
     ):
-        if empty_piece_limit < 1:
-            raise ValueError("empty_piece_limit must be at least 1")
+        if not 0.0 <= vad_threshold <= 1.0:
+            raise ValueError("vad_threshold must be between 0.0 and 1.0")
+        if vad_silence_duration_ms < 1:
+            raise ValueError("vad_silence_duration_ms must be at least 1")
 
         self.processor = og.StreamingProcessor(model.runtime_model)
-        self.processor.set_option("use_vad", "false")
+        self.processor.set_option("use_vad", "true")
+        self.processor.set_option("vad_threshold", str(vad_threshold))
+        self.processor.set_option("silence_duration_ms", str(vad_silence_duration_ms))
         self.tokenizer = og.Tokenizer(model.runtime_model)
         self.tokenizer_stream = self.tokenizer.create_stream()
         self.generator = og.Generator(
@@ -57,8 +72,6 @@ class NemotronStream:
         )
         self.generator.set_runtime_option("lang_id", str(language_id))
 
-        self.empty_piece_limit = empty_piece_limit
-        self.empty_piece_count = 0
         self.current_text = ""
 
     def _decode(self, inputs) -> str:
@@ -81,25 +94,25 @@ class NemotronStream:
         if not self.current_text:
             piece = _UTTERANCE_PREFIX_RE.sub("", piece)
             # Remove erroneous punctuation, such as commas or periods, at the start of an utterance.
-        return piece.lstrip()
+        return piece
 
     def process(self, samples: np.ndarray) -> Tuple[str, bool]:
         model_inputs = self.processor.process(np.ascontiguousarray(samples, dtype=np.float32))
+
+        if model_inputs is None:
+            text = self.current_text.strip()
+            is_final = bool(text)
+
+            if is_final:
+                self.current_text = ""
+
+            return text, is_final
+
         decoded_piece = self._decode(model_inputs)
         piece = self._clean_piece(decoded_piece)
 
-        if piece == "":
-            self.empty_piece_count += 1
-        else:
+        if piece != "":
             self.current_text += piece
-            self.empty_piece_count = 0
 
         text = self.current_text.strip()
-        is_final = bool(text) and self.empty_piece_count >= self.empty_piece_limit
-
-        if is_final:
-            # Keep the cache-aware processor alive. Only the utterance state resets.
-            self.current_text = ""
-            self.empty_piece_count = 0
-
-        return text, is_final
+        return text, False

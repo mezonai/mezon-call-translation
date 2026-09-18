@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -36,6 +37,7 @@ type Callbacks struct {
 	OnPeerJoined   func(participantCount int, peer Member)
 	OnPeerLeft     func(ev PeerLeftEvent)
 	OnPeerUpdated  func(peer Member)
+	OnRoomMessage  func(message RoomMessage, userID string)
 }
 
 // Client is a single-use WS signaling session. mezon-sfu treats a WS
@@ -48,6 +50,14 @@ type Callbacks struct {
 type Client struct {
 	conn *websocket.Conn
 	cb   Callbacks
+
+	// writeMu serializes all writes to conn. Until send_message, every write
+	// happened on the single Run read-loop goroutine (pong/answer), so no
+	// lock was needed. SendRoomMessage is called from a different goroutine
+	// (cmd/agent's SSE agent-request handler), and gorilla/websocket allows
+	// only one concurrent writer -- without this the two can interleave and
+	// corrupt a frame.
+	writeMu sync.Mutex
 }
 
 // Dial connects and completes the join handshake up through the first
@@ -200,7 +210,25 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 	case "role_changed", "visibility_changed", "mute_changed", "screen_share_changed":
 		// Acks for our own state-changing messages; not used by the
 		// record-only (audience) path yet. Logged for observability.
-		logging.L.Debug("signaling: ack", "type", msgType)
+		logging.L.Info("signaling: ack", "type", msgType)
+
+	case "message_sent":
+		// Ack for our own SendRoomMessage; no request-id correlation, so
+		// nothing actionable -- logged for observability only.
+		logging.L.Info("signaling: ack", "type", msgType)
+
+	case "room_message":
+		var m roomMessageMsg
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return fmt.Errorf("decode room_message: %w", err)
+		}
+		var message RoomMessage
+		if err := json.Unmarshal([]byte(m.Message), &message); err != nil {
+			return fmt.Errorf("decode room_message payload: %w", err)
+		}
+		if c.cb.OnRoomMessage != nil {
+			c.cb.OnRoomMessage(message, m.UserID)
+		}
 
 	default:
 		logging.L.Warn("signaling: unknown message type", "type", msgType)
@@ -210,7 +238,34 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 }
 
 func (c *Client) send(v any) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return c.conn.WriteJSON(v)
+}
+
+// SendRoomMessage posts a chat message into the room as this peer (mezon-sfu
+// wireTypeSendMessage). msg is JSON-encoded into the frame's `message`
+// string -- the SFU treats that as an opaque blob and just relays it, and
+// the receiving side decodes it back into a RoomMessage (see the
+// "room_message" case in dispatch), so this must stay symmetric with that.
+//
+// Best-effort: the SFU broadcasts it to other peers and acks with
+// `message_sent`, but there's no per-message result on the wire, so a
+// success here only means the frame was written -- a later `error`
+// "must_join_room_first" (peer not fully joined yet) or "invalid_message"
+// only shows up as a logged handler error in Run's loop.
+//
+// Safe to call from any goroutine (see writeMu). Rejects an empty or
+// over-long message locally rather than after a WS round-trip.
+func (c *Client) SendRoomMessage(msg RoomMessage) error {
+	frame, err := encodeSendMessageFrame(msg)
+	if err != nil {
+		return err
+	}
+	if err := c.send(frame); err != nil {
+		return fmt.Errorf("signaling: send room message: %w", err)
+	}
+	return nil
 }
 
 // Close closes the underlying connection. mezon-sfu treats a closed WS as

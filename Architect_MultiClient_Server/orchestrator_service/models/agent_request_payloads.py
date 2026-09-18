@@ -63,14 +63,16 @@ class SendChatMessagePayload(BaseModel):  # type: ignore[explicit-any]
 
     request_type: Literal[AgentRequestType.SEND_CHAT_MESSAGE]
     message: str = Field(..., description="Chat message to send", min_length=1)
-    sender_name: str = Field(default="Agent", description="Display name of the sender")
+    # sender_name intentionally dropped (mezon-sfu-migration-plan.md): the
+    # mezon-sdk-go Send call agents-bot uses has no way to override the
+    # displayed sender -- a message always shows as the bot's own logged-in
+    # identity, so a "sender_name" field here could never actually be honored.
 
     class Config:
         json_schema_extra: ClassVar[dict[str, dict[str, str]]] = {
             "example": {
                 "request_type": "send_chat_message",
                 "message": "Hello from orchestrator!",
-                "sender_name": "System Bot",
             }
         }
 

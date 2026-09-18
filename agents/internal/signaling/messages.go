@@ -2,7 +2,11 @@
 // Reference: mezon-sfu/CLAUDE.md section 4 (2026-08-16 protocol).
 package signaling
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 // envelope is used to sniff `type` before decoding the full payload.
 type envelope struct {
@@ -36,6 +40,63 @@ type answerMsg struct {
 type pongMsg struct {
 	Type string `json:"type"`
 }
+
+// wireTypeSendMessage is the mezon-sfu WS wire type for posting a room chat
+// message as this peer (mezon-sfu commit c41e59b "add send message"). The
+// SFU echoes an ack (`message_sent`) to the sender and broadcasts
+// `room_message` to every other peer in the room. Requires the peer to have
+// finished joining (`joined_room` + `client_ufrag` set) -- otherwise the SFU
+// replies with an `error` "must_join_room_first".
+//
+// The frame's `message` field is not the plain text -- it's a JSON-encoded
+// RoomMessage ({id,name,avatar,timestamp,content}), which the SFU relays
+// opaquely and the receiving side decodes back (see SendRoomMessage and the
+// "room_message" case in dispatch -- the two must stay in sync).
+//
+// Deliberately NOT the same string as orchestratorclient's SSE
+// agent-request type that triggers a send ("send_chat_message", see
+// cmd/agent's registerRequestHandlers) -- one is this package's protocol
+// with the SFU, the other is the orchestrator contract; keeping them
+// separate constants means renaming one never silently moves the other.
+const wireTypeSendMessage = "send_message"
+
+// sendMessageMsg is the client -> SFU frame for wireTypeSendMessage.
+// Message is a JSON-encoded RoomMessage, not raw text -- see the const doc.
+type sendMessageMsg struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+// encodeSendMessageFrame builds the send_message frame from a RoomMessage:
+// trims Content, JSON-encodes the RoomMessage into the frame's `message`
+// string, and rejects an empty or over-long result. Pure (no I/O) so the
+// wire shape is testable on its own -- this is the format the receiving
+// side already decodes back, mistakes here are silent until someone reads
+// the chat.
+func encodeSendMessageFrame(msg RoomMessage) (sendMessageMsg, error) {
+	msg.Content = strings.TrimSpace(msg.Content)
+	if msg.Content == "" {
+		return sendMessageMsg{}, fmt.Errorf("signaling: room message is empty")
+	}
+	inner, err := json.Marshal(msg)
+	if err != nil {
+		return sendMessageMsg{}, fmt.Errorf("signaling: encode room message: %w", err)
+	}
+	// The SFU's limit (SFU_ROOM_MESSAGE_MAX_LEN) is on the `message` string
+	// it extracts, i.e. this encoded blob -- not on Content alone.
+	if len(inner) > maxRoomMessageBytes {
+		return sendMessageMsg{}, fmt.Errorf("signaling: room message is %d bytes encoded, over the %d-byte limit", len(inner), maxRoomMessageBytes)
+	}
+	return sendMessageMsg{Type: wireTypeSendMessage, Message: string(inner)}, nil
+}
+
+// maxRoomMessageBytes bounds the encoded RoomMessage client-side so an
+// over-long one fails fast here instead of after a WS round-trip. The SFU's
+// own extraction buffer is 2048 bytes including the NUL terminator
+// (SFU_ROOM_MESSAGE_MAX_LEN in signaling.c); 2000 leaves headroom for the
+// {id,name,avatar,timestamp} envelope and is still far more than a chat
+// line needs.
+const maxRoomMessageBytes = 2000
 
 // --- server -> client ---
 
@@ -117,6 +178,21 @@ type peerUpdatedMsg struct {
 type errorMsg struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+}
+
+type RoomMessage struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Avatar    string `json:"avatar"`
+	Timestamp int64  `json:"timestamp"`
+	Content   string `json:"content"`
+}
+
+type roomMessageMsg struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+	UserID  string `json:"user_id"`
+	PeerID  uint64 `json:"peer_id"`
 }
 
 func decodeType(raw []byte) (string, error) {

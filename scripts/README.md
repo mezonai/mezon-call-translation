@@ -2,16 +2,22 @@
 
 This directory contains scripts to help you set up and manage the Mezon Call Translation services.
 
+> **Scope:** these scripts currently set up and manage **`stt_service`, `orchestrator_service`, and `tts_service`** (all Python/FastAPI) plus the Nemotron/Kokoro model downloads. They do **not** cover the Go `agents`/`worker-manager` binaries, the Go `agents-bot` service, or the `audio-ingestion/*` services — those have their own setup/deploy docs, linked below and in [Known Gaps](#-known-gaps--not-covered-by-these-scripts). The repo used to run a Python-based agent at `Architect_MultiClient_Server/agents/`; that directory is now empty and its Python setup path is dead — see the migration note under script 1 and the Known Gaps section.
+
 ## 📋 Available Scripts
 
 ### 1. `setup.sh` / `setup.ps1` - Complete Setup Script
 
 Automates the entire setup process including:
-- ✅ Downloading Nemotron and Kokoro models on Linux
+- ✅ Downloading Nemotron, Gipformer fallback, and Kokoro models on Linux
 - ✅ Backing up existing `.env` files
 - ✅ Creating `.env` files from `.env.example`
 - ✅ Updating model paths in `.env` files
 - ✅ Setting up virtual environments for all services
+
+`setup.sh` actually provisions **`stt_service`, `orchestrator_service`, and `tts_service`** (`.env` + venv for each). It also still has an `Architect_MultiClient_Server/agents` entry left over from the old Python agent — that directory is now empty (no `.env.example`, no `requirements-agent.txt`), so `setup.sh` just prints a "not found, skipping" warning for it and moves on; it's a harmless no-op, not a working setup path. The replacement Go `agents`/`worker-manager` binaries and the Go `agents-bot` service are **not** Python venv services and are not touched by this script at all — build/configure/run them per `agents/README.md` and `agents-bot/README.md`.
+
+> **`setup.ps1` does not exist in this repository.** Only `setup.sh` is present in `scripts/`. The PowerShell usage below documents an intended/expected interface — until `setup.ps1` is actually added, Windows users should run `setup.sh` from WSL or Git Bash instead.
 
 #### Usage
 
@@ -60,9 +66,7 @@ bash ./scripts/download-nemotron-model.sh
 .\scripts\setup.ps1 -AllKokoroVoices
 ```
 
-The Windows setup requires the official 64-bit CPython 3.12 build. An
-MSYS2/MinGW Python installation is not used because it is incompatible with
-many standard Windows wheels. `-InstallDeps` installs the supported build.
+The Windows setup requires the official 64-bit CPython 3.12 build. An MSYS2/MinGW Python installation is not used because it is incompatible with many standard Windows wheels. `-InstallDeps` installs the supported build.
 
 If script execution is disabled for the current PowerShell process, use:
 
@@ -81,15 +85,13 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `--all-kokoro-voices` - Download all Kokoro voices
 - `-h, --help` - Show help message
 
-PowerShell uses the corresponding `-SkipModels`, `-SkipVenv`, `-SkipEnv`,
-`-KokoroVoices`, `-AllKokoroVoices`, and `-InstallDeps` parameters. Use
-`download-nemotron-model.sh` separately for the Nemotron model.
+PowerShell uses the corresponding `-SkipModels`, `-SkipVenv`, `-SkipEnv`, `-KokoroVoices`, `-AllKokoroVoices`, and `-InstallDeps` parameters. Use `download-nemotron-model.sh` separately for the Nemotron model.
 
 ---
 
 ### 2. `create-systemd-services.sh` - Systemd Service Creator
 
-Creates and configures systemd service files for all three services.
+Creates and configures systemd service files. As written today it only creates units for **`stt_service`** and **`orchestrator_service`**, plus a third `mezon-agents-service` unit that points at the now-empty `Architect_MultiClient_Server/agents` (dead — see below); a `create_tts_service` function exists in the script (would create `mezon-tts-service` on port 8008) but is never actually invoked, so **no `tts_service` unit is created**, even though the script's own pre-flight validation checks for a `tts_service` venv.
 
 #### Usage
 
@@ -119,14 +121,16 @@ sudo ./scripts/create-systemd-services.sh --dry-run
 #### Created Services
 
 - `mezon-stt-service` - STT Service (port 8000)
-- `mezon-orchestrator-service` - Orchestrator Service (port 8001)
-- `mezon-agents-service` - Agents Service (port 8002)
+- `mezon-orchestrator-service` - Orchestrator Service (port 8002 — this is what the generated unit and the service's own `AGENT_PORT` default actually use; older docs in this repo said 8001, that was wrong)
+- `mezon-agents-service` - **Broken.** Its `ExecStart` runs `Architect_MultiClient_Server/agents/venv/bin/python .../main.py`, but that directory is now empty (the old Python agent it configured was replaced by the Go binaries below). The unit will be created but will fail to start, and the script's own `validate_setup` pre-flight check will fail on this directory's missing venv unless you pass `--skip-validation`.
+
+**Not created by this script:** the Go `agents`/`worker-manager` binaries and `agents-bot` have their own systemd setup — see [`agents/deploy/systemd/README.md`](../agents/deploy/systemd/README.md) (`worker-manager` is the long-lived unit; it spawns/kills `agent` subprocesses itself). `agents-bot` currently has no documented deployment method in this repo (no systemd unit or Dockerfile exists for it yet).
 
 ---
 
 ### 3. `manage-services.sh` - Service Management Helper
 
-Quick helper script to control all services at once.
+Quick helper script to control all services at once. It hardcodes the same three systemd unit names `create-systemd-services.sh` creates (`mezon-stt-service`, `mezon-orchestrator-service`, `mezon-agents-service`) — so it does **not** manage `tts_service` or the Go `agents`/`worker-manager`/`agents-bot` binaries, and `mezon-agents-service` here is the dead unit described above, not the new Go agent.
 
 #### Usage
 
@@ -172,7 +176,7 @@ Validates that all components are properly set up and running.
 #### What it checks
 
 - ✅ Python installation
-- ✅ Nemotron and Kokoro models
+- ✅ Nemotron, Gipformer fallback, and Kokoro models
 - ✅ Service directories
 - ✅ Virtual environments
 - ✅ .env files
@@ -182,12 +186,16 @@ Validates that all components are properly set up and running.
 
 The script will provide a summary with passed, warning, and failed checks, along with recommendations for fixing issues.
 
+**Known gaps in this script (not fixed here, documenting current behavior):**
+- It only checks `stt_service`, `orchestrator_service`, and the dead `Architect_MultiClient_Server/agents` directory — `tts_service` isn't checked at all.
+- Its hardcoded port checks (8000/8001/8002) label 8001 as "Orchestrator Service", but `orchestrator_service`'s actual default port (and what `create-systemd-services.sh` generates) is **8002**. Expect a false "port not in use" warning on a correctly running orchestrator, not a real problem.
+- Its Kokoro-model check looks for `kokoro-v0_19.pth` (or `kokoro.onnx`), but `download-kokoro-model.sh` now downloads `kokoro-v1_0.pth`. This check will report the Kokoro model as **not found even after a successful download** — a stale filename check, not a real failure. `setup.sh` has the same stale check when deciding whether to skip re-downloading, so it will silently re-download the model (with `--force`) on every run instead of detecting the existing install.
+
 ---
 
 ### 5. `download-nemotron-model.sh` - Nemotron Model Downloader
 
-Downloads the ONNX INT4 Nemotron streaming STT model from Hugging Face. The
-script works on Linux, macOS, WSL, and Git Bash.
+Downloads the ONNX INT4 Nemotron streaming STT model from Hugging Face. The script works on Linux, macOS, WSL, and Git Bash.
 
 #### Prerequisite
 
@@ -260,7 +268,32 @@ test -f models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4/genai_co
 
 ---
 
-### 6. `download-kokoro-model.sh` - Kokoro TTS Model Downloader
+### 6. `download-gipformer-model.sh` - Gipformer Fallback Downloader
+
+Downloads the CPU Gipformer model used when the non-realtime Whisper marker
+flow cannot resolve a VAD-packed chunk. By default, it downloads the model
+into `models/gipformer-model` and sets `WHISPER_GIPFORMER_MODEL_PATH` in `.env`.
+
+```bash
+# Download the required ONNX and token files into models/gipformer-model
+./scripts/download-gipformer-model.sh
+
+# Download to a custom output directory
+./scripts/download-gipformer-model.sh -o /custom/path/to/gipformer-model
+
+# Confirm repository and expected artifacts
+./scripts/download-gipformer-model.sh --list
+
+# Refresh downloaded artifacts
+./scripts/download-gipformer-model.sh --force
+```
+
+After creating the STT virtual environment, `./scripts/health-check.sh` checks
+both the downloaded model files in `models/gipformer-model` and the `sherpa-onnx` runtime dependency.
+
+---
+
+### 7. `download-kokoro-model.sh` - Kokoro TTS Model Downloader
 
 Downloads Kokoro-82M TTS models and voices.
 
@@ -310,9 +343,10 @@ Downloads Kokoro-82M TTS models and voices.
 3. **Review and update `.env` files:**
    - `Architect_MultiClient_Server/stt_service/.env`
    - `Architect_MultiClient_Server/orchestrator_service/.env`
-   - `Architect_MultiClient_Server/agents/.env`
+   - `Architect_MultiClient_Server/tts_service/.env`
+   - ~~`Architect_MultiClient_Server/agents/.env`~~ — dead, this directory is empty. The old Python agent it used to configure has been replaced by the Go `agents`/`worker-manager` binaries (own `.env`, see `agents/README.md`) and the Go `agents-bot` service (own `.env`, see `agents-bot/README.md`). Neither is set up by `setup.sh`.
 
-4. **Create systemd services (optional):**
+4. **Create systemd services (optional, only covers stt_service + orchestrator_service today):**
    ```bash
    sudo ./scripts/create-systemd-services.sh --enable --start
    ```
@@ -326,16 +360,20 @@ cd Architect_MultiClient_Server/stt_service
 
 # Terminal 2 - Orchestrator Service
 cd Architect_MultiClient_Server/orchestrator_service
-./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8001
+./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8002
 
-# Terminal 3 - Agents Service
-cd Architect_MultiClient_Server/agents
-./venv/bin/python src/main.py
+# Terminal 3 - TTS Service
+cd Architect_MultiClient_Server/tts_service
+./venv/bin/python -m uvicorn tts_service.main:app --host 0.0.0.0 --port 8008
 ```
+
+The old "Terminal 3 - Agents Service" step (`Architect_MultiClient_Server/agents/venv/bin/python src/main.py`) is gone — that directory no longer contains a Python agent. To run the replacement Go services manually, see `agents/README.md` (`cmd/agent` and `cmd/worker-manager`) and `agents-bot/README.md` for their own build/run instructions; they are not part of this setup script's flow.
 
 ---
 
 ## 🔧 Systemd Service Management
+
+> As above, `mezon-agents-service` is the dead Python-agent unit (see script 2) — it exists if you ran `create-systemd-services.sh`, but won't start. There is no systemd unit here for `tts_service` or the Go `agents`/`worker-manager`/`agents-bot` binaries; see their own docs linked above.
 
 ### Individual Service Commands
 
@@ -386,8 +424,12 @@ scripts/
 ├── manage-services.sh                 # Service management helper
 ├── health-check.sh                    # System health check
 ├── download-nemotron-model.sh         # Nemotron model downloader
+├── download-gipformer-model.sh        # Gipformer fallback model downloader
 ├── download-kokoro-model.sh           # Kokoro model downloader
+├── edit_env.sh                        # Undocumented helper to set KEY=VALUE pairs in a service .env
 ```
+
+`edit_env.sh` isn't part of the numbered list above (it predates it and was never folded in). Its `--agent` target still points at `Architect_MultiClient_Server/agents/.env` — the now-empty, dead Python-agent directory — so that target is currently useless; `--orchestrator` and `--stt` still work.
 
 ---
 
@@ -420,6 +462,7 @@ scripts/
 1. Check if models are downloaded:
    ```bash
    ls -la models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4/
+   ls -la models/gipformer-model/
    ls -la models/kokoro_models/
    ```
 
@@ -427,6 +470,7 @@ scripts/
    ```bash
    python -m pip install "huggingface-hub>=0.24.0"
    bash scripts/download-nemotron-model.sh
+   bash scripts/download-gipformer-model.sh
    ./scripts/download-kokoro-model.sh --force
    ```
 
@@ -459,8 +503,28 @@ scripts/
 
 ---
 
+## ⚠️ Known Gaps / Not Covered by These Scripts
+
+This directory's scripts are the setup path for `stt_service`, `orchestrator_service`, and `tts_service` only. As part of the ongoing migration to `mezon-sfu`, several other components exist in this repo but are **not** wired into `setup.sh` / `create-systemd-services.sh` / `manage-services.sh` / `health-check.sh`, and have their own separate docs instead of being duplicated here:
+
+- **`agents/` (Go `cmd/agent` + `cmd/worker-manager`)** — replaces the old Python agent that used to live at `Architect_MultiClient_Server/agents/` (now empty). Compiled Go binaries, not a Python venv service. Build/run/config: [`agents/README.md`](../agents/README.md); systemd deploy: [`agents/deploy/systemd/README.md`](../agents/deploy/systemd/README.md).
+- **`agents-bot/`** — separate Go service that bridges Mezon chat/identity events. Build/run/config: [`agents-bot/README.md`](../agents-bot/README.md). No systemd unit or Dockerfile exists for it in this repo yet — it has no documented deployment method at all currently.
+- **`audio-ingestion/record-service` and `audio-ingestion/audio-processing-service`** — deployed via their own systemd docs, not these scripts: [`audio-ingestion/record-service/deploy/systemd/README.md`](../audio-ingestion/record-service/deploy/systemd/README.md) and [`audio-ingestion/audio-processing-service/deploy/systemd/README.md`](../audio-ingestion/audio-processing-service/deploy/systemd/README.md).
+- **`setup.ps1`** — referenced in script 1's usage docs but does not exist in this repository; only `setup.sh` is present.
+- **`tts_service` systemd unit** — `create-systemd-services.sh` contains a `create_tts_service` function but never calls it, so no `mezon-tts-service` unit is ever created even though `setup.sh` does provision the service's venv/`.env`.
+- **Stale Kokoro filename checks** — `setup.sh` and `health-check.sh` look for `kokoro-v0_19.pth`, but `download-kokoro-model.sh` now fetches `kokoro-v1_0.pth`; both checks are effectively always-false against a current install (see script 4's section above).
+- **Dead `Architect_MultiClient_Server/agents` references** — still present in `setup.sh`, `health-check.sh`, `create-systemd-services.sh`, and `edit_env.sh --agent`, all now no-ops or broken since that directory is empty.
+
+None of the above were fixed as part of this doc update — they're documented here so they aren't mistaken for working coverage.
+
+---
+
 ## 🔗 Related Documentation
 
 - [Main Project README](../README.md)
 - [Nemotron ONNX INT4 model](https://huggingface.co/onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4)
 - [Kokoro-82M TTS](https://huggingface.co/hexgrad/Kokoro-82M)
+- [`agents/README.md`](../agents/README.md) — Go `cmd/agent` / `cmd/worker-manager` (replaces the old Python agent), including their systemd deploy doc
+- [`agents-bot/README.md`](../agents-bot/README.md) — Go Mezon chat/identity bridge service
+- [`audio-ingestion/record-service/deploy/systemd/README.md`](../audio-ingestion/record-service/deploy/systemd/README.md) and [`audio-ingestion/audio-processing-service/deploy/systemd/README.md`](../audio-ingestion/audio-processing-service/deploy/systemd/README.md)
+
