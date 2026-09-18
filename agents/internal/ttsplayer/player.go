@@ -11,9 +11,6 @@
 // optional).
 //
 // NOT ported (interview-flow-specific, out of scope for this pass):
-//   - the silence-gap ticker that pads record-service's timeline through
-//     long silent gaps between utterances so the recorded file's duration
-//     tracks wall-clock time;
 //   - TTS status push-back to room participants (was LiveKit DataChannel
 //     `tts_status` -- mezon-sfu has no data channel yet).
 package ttsplayer
@@ -37,6 +34,7 @@ import (
 
 const (
 	frameDuration     = 20 * time.Millisecond
+	recordSilenceTick = 2 * time.Second
 	speakQueueSize    = 8
 	synthesizeTimeout = 30 * time.Second
 
@@ -73,8 +71,11 @@ type Player struct {
 	orch *orchestratorclient.Client // may be nil: no transcript/completed reporting then, see New's doc
 
 	mu                sync.Mutex
-	forwarder         *recordclient.Forwarder // lazily created on first utterance, lives for the Player's whole life
+	forwarder         *recordclient.Forwarder // lazily created on first request, lives for the Player's whole life
 	sessionStartEpoch time.Time               // set alongside forwarder; report_tts_transcript's start/end are relative to this
+	recordLastSentAt  time.Time               // wall-clock point through which PCM (real audio or silence) has been represented
+	recordSpeaking    bool                    // prevents the silence ticker from inserting silence inside an utterance
+	recordTickerDone  chan struct{}           // non-nil once the silence ticker has started; closed when the ticker exits
 
 	requests chan speakRequest
 	done     chan struct{}
@@ -186,6 +187,11 @@ func (p *Player) processQueue() {
 }
 
 func (p *Player) speakNow(ctx context.Context, text, voice string, speed float64) error {
+	// Match the old Python TTSManager: open the agent's recording before
+	// synthesis. The silence ticker then represents synthesis latency and all
+	// later idle gaps in the PCM timeline instead of compressing them out.
+	p.startRecordForwarding()
+
 	pcm, err := p.tts.Synthesize(ctx, text, voice, speed)
 	if err != nil {
 		return fmt.Errorf("synthesize: %w", err)
@@ -196,25 +202,52 @@ func (p *Player) speakNow(ctx context.Context, text, voice string, speed float64
 		return fmt.Errorf("invalid sample rate %d", p.sampleRate)
 	}
 
-	// utteranceStart: captured right before the real frames for this
+	// utteranceStart: captured while flushing the preceding silence gap and
+	// right before the real frames for this
 	// utterance start going out, matching the old Python TTSManager's
 	// _record_utterance_start_epoch (used, not request_start, so synthesis
 	// latency above doesn't leak into the reported segment timing).
-	utteranceStart := time.Now()
+	utteranceStart := p.beginRecordedUtterance()
 	samplesWritten := 0
-	for off := 0; off+frameSamples <= len(pcm); off += frameSamples {
-		frame := pcm[off : off+frameSamples]
 
-		opusPayload, err := p.encoder.Encode(frame)
-		if err != nil {
-			return fmt.Errorf("opus encode: %w", err)
+	playbackErr := func() error {
+		// Always release recordSpeaking as soon as live playback stops. The
+		// transcript HTTP report below may take seconds and is idle time in the
+		// reconstructed recording, just as it was in the old Python manager.
+		defer p.endRecordedUtterance()
+
+		playbackTicker := time.NewTicker(frameDuration)
+		// This ticker prevents emitting a multi-second utterance as one burst
+		// and keeps every following frame on the 20ms audio clock, avoiding
+		// discarded audio in the SFU/browser jitter buffer.
+		defer playbackTicker.Stop()
+		for off := 0; off+frameSamples <= len(pcm); off += frameSamples {
+			if off > 0 {
+				select {
+				case <-p.stopCtx.Done():
+					return p.stopCtx.Err()
+				case <-playbackTicker.C:
+				}
+			}
+
+			frame := pcm[off : off+frameSamples]
+
+			opusPayload, err := p.encoder.Encode(frame)
+			if err != nil {
+				return fmt.Errorf("opus encode: %w", err)
+			}
+			if err := p.track.WriteSample(media.Sample{Data: opusPayload, Duration: frameDuration}); err != nil {
+				return fmt.Errorf("write sample: %w", err)
+			}
+			p.forwardToRecordService(int16ToLEBytes(frame))
+			samplesWritten += len(frame)
 		}
-		if err := p.track.WriteSample(media.Sample{Data: opusPayload, Duration: frameDuration}); err != nil {
-			return fmt.Errorf("write sample: %w", err)
-		}
-		p.forwardToRecordService(int16ToLEBytes(frame))
-		samplesWritten += len(frame)
+		return nil
+	}()
+	if playbackErr != nil {
+		return playbackErr
 	}
+
 	// Fresh context, not the (possibly just-cancelled-by-Close) ctx above:
 	// this report matters even when the utterance finished writing frames
 	// right as Close() cancelled stopCtx -- see reportTTSTranscript's doc.
@@ -250,37 +283,122 @@ func (p *Player) reportTTSTranscript(ctx context.Context, text string, utterance
 	}
 }
 
-// forwardToRecordService lazily starts the forwarder on first use.
-// Guarded by p.mu because, unlike internal/audiopipeline's per-track
-// sessions (one goroutine owns a forwarder for its whole life), this
-// forwarder is touched by both processQueue's single worker goroutine and
-// Close (called from session teardown, a different goroutine) -- real
-// mutual exclusion, not just goroutine affinity, matters here.
+// startRecordForwarding opens the agent's direct record-service stream before
+// synthesis starts and launches the coarse silence top-up loop.
+func (p *Player) startRecordForwarding() {
+	p.mu.Lock()
+	if p.recClient == nil || p.forwarder != nil {
+		p.mu.Unlock()
+		return
+	}
+
+	fwd, err := recordclient.NewForwarder(p.recClient, recordclient.SessionMeta{
+		RoomID:              p.roomID,
+		TrackID:             p.trackID,
+		ParticipantIdentity: p.participant,
+		Source:              "mic",
+		SampleRate:          int32(p.sampleRate),
+		Channels:            1,
+	}, p.maxQueueSize)
+	if err != nil {
+		p.recClient = nil // best-effort per PLAN.md D5: don't retry every frame after one failure
+		p.mu.Unlock()
+		logging.L.Error("ttsplayer: failed to start record-service forwarder", logging.ErrAttrs(err)...)
+		return
+	}
+
+	now := time.Now()
+	p.forwarder = fwd
+	p.sessionStartEpoch = now
+	p.recordLastSentAt = now
+	p.recordTickerDone = make(chan struct{})
+	tickerDone := p.recordTickerDone
+	p.mu.Unlock()
+
+	go p.runRecordSilenceTicker(tickerDone)
+	logging.L.Info("ttsplayer: started record-service forwarding for agent TTS track")
+}
+
+// runRecordSilenceTicker periodically advances the recorded PCM timeline while
+// the agent is idle. It computes the real elapsed gap on every tick; the two-
+// second interval only keeps allocations and forwarding chunks bounded.
+func (p *Player) runRecordSilenceTicker(done chan struct{}) {
+	defer close(done)
+
+	ticker := time.NewTicker(recordSilenceTick)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			p.mu.Lock()
+			if !p.recordSpeaking {
+				// Match Python's time.monotonic() call after waking rather than
+				// using time.Ticker's scheduled tick timestamp. If this goroutine
+				// was delayed, the entire real elapsed gap is still represented.
+				p.sendRecordSilenceGapLocked(time.Now())
+			}
+			p.mu.Unlock()
+		case <-p.stopCtx.Done():
+			return
+		}
+	}
+}
+
+// sendRecordSilenceGapLocked fills the elapsed time since the last real or
+// silent PCM with mono PCM16 zeroes. p.mu must be held by the caller.
+func (p *Player) sendRecordSilenceGapLocked(now time.Time) {
+	if p.forwarder == nil || p.recordLastSentAt.IsZero() {
+		return
+	}
+
+	gap := now.Sub(p.recordLastSentAt)
+	p.recordLastSentAt = now
+	if gap <= 0 {
+		return
+	}
+	numSamples := int(gap.Seconds() * float64(p.sampleRate))
+	if numSamples <= 0 {
+		return
+	}
+
+	// Mono PCM16 uses two bytes per sample. make returns zero-filled bytes,
+	// which are digital silence.
+	p.forwarder.SendPCM(make([]byte, numSamples*2))
+}
+
+// beginRecordedUtterance prevents the background ticker from interleaving
+// silence with real speech and flushes the exact remaining idle gap before the
+// first real frame. The returned wall-clock time is used for transcript timing.
+func (p *Player) beginRecordedUtterance() time.Time {
+	p.mu.Lock()
+	p.recordSpeaking = true
+	utteranceStart := time.Now()
+	p.sendRecordSilenceGapLocked(time.Now())
+	p.mu.Unlock()
+	return utteranceStart
+}
+
+// endRecordedUtterance resets the silence anchor after the final real frame so
+// the next ticker event accounts only for idle time after this utterance.
+func (p *Player) endRecordedUtterance() {
+	p.mu.Lock()
+	if p.forwarder != nil {
+		p.recordLastSentAt = time.Now()
+	}
+	p.recordSpeaking = false
+	p.mu.Unlock()
+}
+
+// forwardToRecordService copies one real PCM frame into the reconstructed
+// agent recording. The stream is created by startRecordForwarding before
+// synthesis, so this method only has to serialize access with the idle ticker.
 func (p *Player) forwardToRecordService(pcm []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	if p.recClient == nil {
-		return
+	if p.forwarder != nil {
+		p.forwarder.SendPCM(pcm)
 	}
-	if p.forwarder == nil {
-		fwd, err := recordclient.NewForwarder(p.recClient, recordclient.SessionMeta{
-			RoomID:              p.roomID,
-			TrackID:             p.trackID,
-			ParticipantIdentity: p.participant,
-			Source:              "mic",
-			SampleRate:          int32(p.sampleRate),
-			Channels:            1,
-		}, p.maxQueueSize)
-		if err != nil {
-			logging.L.Error("ttsplayer: failed to start record-service forwarder", logging.ErrAttrs(err)...)
-			p.recClient = nil // best-effort per PLAN.md D5: don't retry every frame after one failure
-			return
-		}
-		p.forwarder = fwd
-		p.sessionStartEpoch = time.Now()
-	}
-	p.forwarder.SendPCM(pcm)
 }
 
 // Close cancels any in-flight utterance (aborting its Synthesize call
@@ -298,7 +416,18 @@ func (p *Player) Close() {
 	case <-time.After(closeGrace):
 	}
 
+	// stopCancel also stops the silence ticker. Wait for it before the final
+	// gap flush so it cannot race with closing the forwarder.
 	p.mu.Lock()
+	tickerDone := p.recordTickerDone
+	p.mu.Unlock()
+	if tickerDone != nil {
+		<-tickerDone
+	}
+
+	p.mu.Lock()
+	p.recordSpeaking = false
+	p.sendRecordSilenceGapLocked(time.Now())
 	fwd := p.forwarder
 	p.forwarder = nil
 	hadForwarder := fwd != nil

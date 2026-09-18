@@ -81,7 +81,7 @@ class NemotronStream:
         if not self.current_text:
             piece = _UTTERANCE_PREFIX_RE.sub("", piece)
             # Remove erroneous punctuation, such as commas or periods, at the start of an utterance.
-        return piece.lstrip()
+        return piece
 
     def process(self, samples: np.ndarray) -> Tuple[str, bool]:
         model_inputs = self.processor.process(np.ascontiguousarray(samples, dtype=np.float32))

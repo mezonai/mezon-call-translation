@@ -100,6 +100,54 @@ func TestDecodePeerLeft(t *testing.T) {
 	}
 }
 
+// TestEncodeSendMessageFrame locks down the send_message wire shape: the
+// outer frame is {"type":"send_message","message":"<string>"} and that
+// string is itself a JSON RoomMessage the receiving side decodes back --
+// keep symmetric with the "room_message" dispatch case.
+func TestEncodeSendMessageFrame(t *testing.T) {
+	frame, err := encodeSendMessageFrame(RoomMessage{
+		ID:        "900000001",
+		Name:      "KOMU Agent",
+		Avatar:    "https://cdn.example/komu.png",
+		Timestamp: 1757486400000,
+		Content:   "  hello room  ",
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if frame.Type != "send_message" {
+		t.Errorf("Type = %q, want send_message", frame.Type)
+	}
+
+	var inner RoomMessage
+	if err := json.Unmarshal([]byte(frame.Message), &inner); err != nil {
+		t.Fatalf("message field is not a JSON RoomMessage: %v (%q)", err, frame.Message)
+	}
+	want := RoomMessage{
+		ID:        "900000001",
+		Name:      "KOMU Agent",
+		Avatar:    "https://cdn.example/komu.png",
+		Timestamp: 1757486400000,
+		Content:   "hello room", // trimmed
+	}
+	if inner != want {
+		t.Errorf("decoded inner = %+v, want %+v", inner, want)
+	}
+}
+
+func TestEncodeSendMessageFrameRejects(t *testing.T) {
+	if _, err := encodeSendMessageFrame(RoomMessage{Content: "   "}); err == nil {
+		t.Error("empty content: want error, got nil")
+	}
+	big := make([]byte, maxRoomMessageBytes+1)
+	for i := range big {
+		big[i] = 'a'
+	}
+	if _, err := encodeSendMessageFrame(RoomMessage{Content: string(big)}); err == nil {
+		t.Error("over-long content: want error, got nil")
+	}
+}
+
 func TestDecodePeerUpdated(t *testing.T) {
 	raw := []byte(`{"type":"peer_updated","peer":{"peer_id":3,"user_id":"999001","role":"audience","is_mute":true}}`)
 	var m peerUpdatedMsg

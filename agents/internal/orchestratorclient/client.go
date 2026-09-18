@@ -10,6 +10,9 @@
 //     silently drops every recording event record-service reports for this
 //     session (this was originally left unported, then found to be a real
 //     gap and added back on 2026-08-18, see mezon-sfu-migration-plan.md).
+//   - participant_joined: reports each new Mezon-SFU peer to orchestrator;
+//     orchestrator resolves its display name through agents-bot and persists
+//     it in the room roster.
 //   - push_transcript: kept, unchanged wire contract.
 //   - ReportTTSTranscript / ReportTTSCompleted (report_tts_transcript/
 //     report_tts_completed): kept, added back 2026-08-18 alongside
@@ -18,6 +21,14 @@
 //     (GET /api/v2/sse/agent-requests?agent_id=&room_name=, text/event-stream).
 //   - tts_play / transcript_control request handling: kept (drives
 //     internal/ttsplayer and internal/audiopipeline.Bridge.SetSTTEnabled).
+//   - send_chat_message request handling: kept (posts a room chat message
+//     over the WS session -- see cmd/agent's registerRequestHandlers and
+//     signaling.Client.SendRoomMessage). Originally left unported (was a
+//     LiveKit DataChannel and mezon-sfu had no text channel); mezon-sfu
+//     commit c41e59b "add send message" added a `send_message` WS type, so
+//     it is ported now. The orchestrator SSE request type stays
+//     "send_chat_message" -- a different string from the SFU wire type, see
+//     cmd/agent's sseRequestTypeSendChatMessage.
 //
 // NOT ported (out of scope for this pass, see mezon-sfu-migration-plan.md
 // 2.5/2.6): push_event_session_started/ended -- checked against the old
@@ -26,8 +37,7 @@
 // orchestrator_service's register_room/unregister_room already push the
 // equivalent room_started/room_ended events themselves as a side effect
 // (room_registry_api.py) -- an explicit call here would just be a
-// duplicate. Also not ported: send_chat_message (was LiveKit DataChannel,
-// mezon-sfu has no data channel yet).
+// duplicate.
 //
 // room_name vs room_id, and why both still appear below: the old contract
 // had two distinct identifiers -- room_name (LiveKit room name / Mezon
@@ -123,6 +133,188 @@ func (c *Client) RegisterRoom(ctx context.Context, roomName, roomID string) erro
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("orchestratorclient: register_room: HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// ParticipantSnapshot persists the participants observed in the initial
+// mezon-sfu room_snapshot. Username resolution remains orchestrator-owned.
+func (c *Client) ParticipantSnapshot(ctx context.Context, roomName, roomID string, participantIdentities []string) error {
+	if len(participantIdentities) == 0 {
+		return nil
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"room_name":              roomName,
+		"room_id":                roomID,
+		"participant_identities": participantIdentities,
+	})
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: encode participant snapshot: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/api/v2/room-registry/participant/snapshot",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: build participant snapshot request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	c.authHeader(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: participant snapshot: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf(
+			"orchestratorclient: participant snapshot: HTTP %d",
+			resp.StatusCode,
+		)
+	}
+
+	return nil
+}
+
+// ParticipantJoined reports a Mezon-SFU peer_joined event for this exact
+// room session. The event intentionally contains only the stable Mezon user
+// id: orchestrator resolves a display name through agents-bot, which owns the
+// Mezon identity cache. roomID protects a reused roomName from a late event
+// emitted by an older agent process.
+func (c *Client) ParticipantJoined(ctx context.Context, roomName, roomID, participantIdentity string) error {
+	body, err := json.Marshal(map[string]string{
+		"room_name":            roomName,
+		"room_id":              roomID,
+		"participant_identity": participantIdentity,
+	})
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: encode participant_joined body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/api/v2/room-registry/participant-joined",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: build participant_joined request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.authHeader(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: participant_joined: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("orchestratorclient: participant_joined: HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+type participantChatResponse struct {
+	Status string `json:"status"`
+}
+
+// SaveExternalChatParticipant persists one participant discovered through
+// an incoming SFU room_message. It succeeds only when the orchestrator
+// response contains {"status":"ok"}.
+func (c *Client) SaveExternalChatParticipant(
+	ctx context.Context,
+	roomName string,
+	roomID string,
+	participantIdentity string,
+	username string,
+) error {
+	body, err := json.Marshal(map[string]string{
+		"room_name":            roomName,
+		"room_id":              roomID,
+		"participant_identity": participantIdentity,
+		"username":             username,
+	})
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: encode external chat participant: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/api/v2/room-registry/external/participant-chat",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: build external chat participant request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.authHeader(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: external chat participant: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("orchestratorclient: external chat participant: HTTP %d", resp.StatusCode)
+	}
+
+	var result participantChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("orchestratorclient: decode external chat participant response: %w", err)
+	}
+	if result.Status != "ok" {
+		return fmt.Errorf("orchestratorclient: unexpected external chat participant status %q", result.Status)
+	}
+
+	return nil
+}
+
+func (c *Client) PushChatExternal(ctx context.Context, roomName, roomID, participantIdentity, message, timeStr string) error {
+	payload := map[string]string{
+		"room_name":            roomName,
+		"room_id":              roomID,
+		"participant_identity": participantIdentity,
+		"message":              message,
+	}
+
+	if timeStr != "" {
+		payload["time"] = timeStr
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: encode push_chat_external body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.baseURL+"/api/v2/agent_push_chat_external",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: build push_chat_external request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.authHeader(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("orchestratorclient: push_chat_external http: %w", err)
+	}
+
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("orchestratorclient: push_chat_external: HTTP %d", resp.StatusCode)
 	}
 	return nil
 }

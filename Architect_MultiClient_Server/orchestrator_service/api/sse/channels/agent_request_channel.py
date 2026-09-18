@@ -110,7 +110,6 @@ class AgentRequestChannel:
         Returns:
             Dictionary with send status
         """
-
         context_key = self.get_context_key(room_name=room_name, agent_id=agent_id)
 
         # Check if context has active connections
