@@ -115,6 +115,7 @@ class WhisperConfig:
     local directory (e.g. ``large-v3-turbo``, ``/models/whisper``).
     """
     model_size: str = "large-v3-turbo"
+    gipformer_model_path: str = "models/gipformer-model"
     compute_type: str = "int8"  # float16, int8, int8_float16
     cpu_threads: int = 8
     temperature: float | list[float] = 0.0
@@ -238,6 +239,7 @@ class ConfigManager:
         
         # Non-realtime marker Whisper configuration
         config.whisper.model_size = os.getenv("WHISPER_MODEL_SIZE", config.whisper.model_size)
+        config.whisper.gipformer_model_path = os.getenv("WHISPER_GIPFORMER_MODEL_PATH", config.whisper.gipformer_model_path)
         config.whisper.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", config.whisper.compute_type)
         config.whisper.cpu_threads = int(os.getenv("WHISPER_CPU_THREADS", config.whisper.cpu_threads))
 

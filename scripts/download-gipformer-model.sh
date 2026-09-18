@@ -1,9 +1,8 @@
 #!/bin/bash
-# Download the CPU Gipformer fallback model into the Hugging Face cache.
+# Download the CPU Gipformer fallback model into a local directory.
 #
-# This deliberately has no --output directory: the runtime resolves Gipformer
-# through Hugging Face exactly as faster-whisper resolves Whisper. Keeping both
-# models in the standard cache avoids a second model-location configuration.
+# By default, downloads to models/gipformer-model (or specified via --output)
+# to keep model artifacts localized and consistent with Nemotron and Kokoro.
 
 set -e
 
@@ -15,6 +14,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 REPOSITORY="g-group-ai-lab/gipformer-65M-rnnt"
+OUTPUT_DIR="models/gipformer-model"
 FORCE=false
 LIST=false
 MODEL_FILES=(
@@ -32,10 +32,10 @@ print_header() {
     echo ""
 }
 
-print_info() { echo -e "${CYAN}â„¹ï¸  $1${NC}"; }
-print_success() { echo -e "${GREEN}âœ… $1${NC}"; }
-print_warning() { echo -e "${YELLOW}âš ï¸  $1${NC}"; }
-print_error() { echo -e "${RED}âŒ $1${NC}"; }
+print_info() { echo -e "${CYAN}ℹ️  $1${NC}"; }
+print_success() { echo -e "${GREEN}✅ $1${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
+print_error() { echo -e "${RED}❌ $1${NC}"; }
 
 show_help() {
     cat << EOF
@@ -45,17 +45,25 @@ USAGE:
     ./scripts/download-gipformer-model.sh [options]
 
 OPTIONS:
+    -o, --output <path> Output directory (default: models/gipformer-model)
     -f, --force  Force a fresh Hugging Face download
     -l, --list   Show the configured repository and required files
     -h, --help   Show this help message
 
-The model is saved in the active user's Hugging Face cache (or the cache
-selected by HF_HOME/HUGGINGFACE_HUB_CACHE), not in models/.
+The model is saved in the specified output directory.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        -o|--output)
+            if [ -z "${2:-}" ]; then
+                print_error "$1 requires a value."
+                exit 1
+            fi
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
         -f|--force)
             FORCE=true
             shift
@@ -87,10 +95,14 @@ if [ "$LIST" = true ]; then
     exit 0
 fi
 
-if command -v hf &> /dev/null; then
+if command -v hf >/dev/null 2>&1; then
     DOWNLOAD_COMMAND=(hf download)
-elif command -v huggingface-cli &> /dev/null; then
+elif command -v huggingface-cli >/dev/null 2>&1; then
     DOWNLOAD_COMMAND=(huggingface-cli download)
+elif python3 -m huggingface_hub.commands.huggingface_cli >/dev/null 2>&1; then
+    DOWNLOAD_COMMAND=(python3 -m huggingface_hub.commands.huggingface_cli download)
+elif python -m huggingface_hub.commands.huggingface_cli >/dev/null 2>&1; then
+    DOWNLOAD_COMMAND=(python -m huggingface_hub.commands.huggingface_cli download)
 else
     print_error "Hugging Face CLI not found."
     echo "Install it with:"
@@ -99,10 +111,23 @@ else
 fi
 
 print_header
-print_info "Repository: $REPOSITORY"
-print_info "Destination: Hugging Face cache"
 
-DOWNLOAD_ARGS=("$REPOSITORY" "${MODEL_FILES[@]}")
+# Get project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Resolve absolute path for output dir
+if [[ "$OUTPUT_DIR" != /* ]]; then
+    OUTPUT_DIR="$PROJECT_ROOT/$OUTPUT_DIR"
+fi
+
+TARGET_MODEL_DIR="$OUTPUT_DIR"
+mkdir -p "$TARGET_MODEL_DIR"
+
+print_info "Repository: $REPOSITORY"
+print_info "Destination: $TARGET_MODEL_DIR"
+
+DOWNLOAD_ARGS=("$REPOSITORY" --local-dir "$TARGET_MODEL_DIR")
 if [ "$FORCE" = true ]; then
     print_warning "Forcing a fresh model download."
     DOWNLOAD_ARGS+=(--force-download)
@@ -114,11 +139,18 @@ if ! "${DOWNLOAD_COMMAND[@]}" "${DOWNLOAD_ARGS[@]}"; then
     exit 1
 fi
 
-# A local-only read verifies every required file is available in precisely the
-# same cache that stt_service will use at startup.
-if ! "${DOWNLOAD_COMMAND[@]}" "$REPOSITORY" "${MODEL_FILES[@]}" --local-files-only >/dev/null; then
-    print_error "Download completed but the complete Gipformer cache cannot be verified."
+# Verify downloaded files
+missing=false
+for f in "${MODEL_FILES[@]}"; do
+    if [ ! -f "$TARGET_MODEL_DIR/$f" ]; then
+        print_error "Missing required file: $f"
+        missing=true
+    fi
+done
+
+if [ "$missing" = true ]; then
+    print_error "Download completed but the complete Gipformer model cannot be verified."
     exit 1
 fi
 
-print_success "Gipformer fallback model is cached and ready for STT startup."
+print_success "Gipformer fallback model is downloaded and ready for STT startup."

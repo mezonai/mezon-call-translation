@@ -27,7 +27,7 @@ MODELS_DIR="$PROJECT_ROOT/models"
 NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
 WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
-GIPFORMER_REPOSITORY="g-group-ai-lab/gipformer-65M-rnnt"
+GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
 GIPFORMER_FILES=("encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt")
 
 # Counters
@@ -119,25 +119,24 @@ else
     check_fail "Non-realtime Whisper marker asset is missing"
 fi
 
-# Gipformer shares Hugging Face cache management with faster-whisper rather
-# than using a project-local models/ directory. Check the exact files used by
-# the fallback service at STT startup, without allowing a download.
-if command -v hf &> /dev/null; then
-    HF_DOWNLOAD_COMMAND=(hf download)
-elif command -v huggingface-cli &> /dev/null; then
-    HF_DOWNLOAD_COMMAND=(huggingface-cli download)
+# Check Gipformer model
+if [ -d "$GIPFORMER_MODEL_DIR" ]; then
+    missing=false
+    for f in "${GIPFORMER_FILES[@]}"; do
+        if [ ! -f "$GIPFORMER_MODEL_DIR/$f" ]; then
+            missing=true
+            break
+        fi
+    done
+    if [ "$missing" = false ]; then
+        check_pass "Gipformer fallback model found in $GIPFORMER_MODEL_DIR"
+    else
+        check_fail "Gipformer fallback model is incomplete in $GIPFORMER_MODEL_DIR"
+        print_info "  Run: bash scripts/download-gipformer-model.sh"
+    fi
 else
-    HF_DOWNLOAD_COMMAND=()
-fi
-
-if [ "${#HF_DOWNLOAD_COMMAND[@]}" -eq 0 ]; then
-    check_warn "Hugging Face CLI not found; cannot verify Gipformer cache"
-    print_info "  Install huggingface-hub, then run: ./scripts/download-gipformer-model.sh"
-elif "${HF_DOWNLOAD_COMMAND[@]}" "$GIPFORMER_REPOSITORY" "${GIPFORMER_FILES[@]}" --local-files-only >/dev/null 2>&1; then
-    check_pass "Gipformer fallback model is present in Hugging Face cache"
-else
-    check_fail "Gipformer fallback model is missing or incomplete in Hugging Face cache"
-    print_info "  Run: ./scripts/download-gipformer-model.sh"
+    check_fail "Gipformer model directory not found: $GIPFORMER_MODEL_DIR"
+    print_info "  Run: bash scripts/download-gipformer-model.sh"
 fi
 
 # Check Kokoro model

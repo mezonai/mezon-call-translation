@@ -31,6 +31,7 @@ TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
 # Model directories
 MODELS_DIR="$PROJECT_ROOT/models"
 NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
+GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
 WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 
@@ -242,13 +243,13 @@ if [ "$SKIP_MODELS" = false ]; then
             --output "$NEMOTRON_MODEL_DIR"
     fi
     
-    # Gipformer is the CPU fallback for unresolved marker/VAD chunks. Like
-    # faster-whisper, it stays in the Hugging Face cache instead of models/.
+    # Gipformer is the CPU fallback for unresolved marker/VAD chunks.
     print_info "Downloading Gipformer fallback model..."
     if ! "$PYTHON_CMD" -c "import huggingface_hub" >/dev/null 2>&1; then
         "$PYTHON_CMD" -m pip install huggingface-hub
     fi
-    bash "$SCRIPT_DIR/download-gipformer-model.sh"
+    bash "$SCRIPT_DIR/download-gipformer-model.sh" \
+        --output "$GIPFORMER_MODEL_DIR"
 
     # Download Kokoro model
     print_info "Downloading Kokoro TTS model..."
@@ -317,6 +318,7 @@ if [ "$SKIP_ENV" = false ]; then
     
     # Get absolute paths for models
     NEMOTRON_MODEL_PATH="$NEMOTRON_MODEL_DIR/$NEMOTRON_MODEL"
+    GIPFORMER_MODEL_PATH="$GIPFORMER_MODEL_DIR"
     KOKORO_MODEL_PATH="$KOKORO_MODEL_DIR"
     
     # Update STT Service .env
@@ -329,6 +331,15 @@ if [ "$SKIP_ENV" = false ]; then
             echo "NEMOTRON_MODEL_PATH=$NEMOTRON_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
         fi
         print_success "Updated NEMOTRON_MODEL_PATH in STT Service"
+
+        # Update WHISPER_GIPFORMER_MODEL_PATH
+        if grep -q "^WHISPER_GIPFORMER_MODEL_PATH=" "$STT_SERVICE_DIR/.env"; then
+            sed -i.tmp "s|^WHISPER_GIPFORMER_MODEL_PATH=.*|WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH|" "$STT_SERVICE_DIR/.env"
+            rm -f "$STT_SERVICE_DIR/.env.tmp"
+        else
+            echo "WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
+        fi
+        print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in STT Service"
     fi
     
     # Update Agents .env
@@ -415,6 +426,7 @@ echo ""
 echo -e "  ${GREEN}✓${NC} Models downloaded to: $MODELS_DIR"
 echo -e "  ${GREEN}✓${NC} Nemotron model: $NEMOTRON_MODEL"
 echo -e "  ${GREEN}✓${NC} Non-realtime Whisper model: $WHISPER_MODEL"
+echo -e "  ${GREEN}✓${NC} Gipformer model: gipformer-model"
 echo -e "  ${GREEN}✓${NC} Kokoro model: kokoro_models"
 echo ""
 echo -e "  ${GREEN}✓${NC} .env files created and configured"

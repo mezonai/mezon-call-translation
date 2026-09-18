@@ -271,22 +271,25 @@ test -f models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4/genai_co
 ### 6. `download-gipformer-model.sh` - Gipformer Fallback Downloader
 
 Downloads the CPU Gipformer model used when the non-realtime Whisper marker
-flow cannot resolve a VAD-packed chunk. It uses the same Hugging Face cache
-strategy as Faster-Whisper; no `models/` directory or `.env` setting is used.
+flow cannot resolve a VAD-packed chunk. By default, it downloads the model
+into `models/gipformer-model` and sets `WHISPER_GIPFORMER_MODEL_PATH` in `.env`.
 
 ```bash
-# Download the required ONNX and token files into Hugging Face cache
+# Download the required ONNX and token files into models/gipformer-model
 ./scripts/download-gipformer-model.sh
+
+# Download to a custom output directory
+./scripts/download-gipformer-model.sh -o /custom/path/to/gipformer-model
 
 # Confirm repository and expected artifacts
 ./scripts/download-gipformer-model.sh --list
 
-# Refresh cached artifacts
+# Refresh downloaded artifacts
 ./scripts/download-gipformer-model.sh --force
 ```
 
 After creating the STT virtual environment, `./scripts/health-check.sh` checks
-both the cached model files and the `sherpa-onnx` runtime dependency.
+both the downloaded model files in `models/gipformer-model` and the `sherpa-onnx` runtime dependency.
 
 ---
 
@@ -459,6 +462,7 @@ scripts/
 1. Check if models are downloaded:
    ```bash
    ls -la models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4/
+   ls -la models/gipformer-model/
    ls -la models/kokoro_models/
    ```
 

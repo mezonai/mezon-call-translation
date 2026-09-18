@@ -434,6 +434,7 @@ class MarkerWhisperTranscriber:
         self,
         *,
         model_size: str | Path,
+        gipformer_model_path: str | Path,
         marker_path: Path,
         compute_type: str,
         cpu_threads: int,
@@ -459,7 +460,7 @@ class MarkerWhisperTranscriber:
         self._language = language
         self._model: WhisperModel | None = None
         self._marker: np.ndarray | None = None
-        self._gipformer = GipformerService(cpu_threads=cpu_threads)
+        self._gipformer = GipformerService(model_path=gipformer_model_path, cpu_threads=cpu_threads)
 
     def initialize(self) -> None:
         """Load/cache the models and marker asset before accepting Redis work."""
