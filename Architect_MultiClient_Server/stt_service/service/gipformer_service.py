@@ -19,9 +19,19 @@ GIPFORMER_MAX_ACTIVE_PATHS = 5
 class GipformerService:
     """Owns Gipformer model download/cache, inference, and health state."""
 
-    def __init__(self, *, cpu_threads: int) -> None:
+    def __init__(self, *, model_path: str | Path, cpu_threads: int) -> None:
         if cpu_threads < 1:
             raise ValueError("cpu_threads must be positive")
+        resolved_path = Path(model_path)
+        if not resolved_path.is_absolute() and str(model_path) != GIPFORMER_REPO_ID:
+            project_root = Path(__file__).resolve().parents[3]
+            if (project_root / resolved_path).is_dir():
+                resolved_path = project_root / resolved_path
+            elif (project_root / "models" / resolved_path).is_dir():
+                resolved_path = project_root / "models" / resolved_path
+            elif not resolved_path.is_dir():
+                resolved_path = project_root / resolved_path
+        self._model_path = resolved_path
         self._cpu_threads = cpu_threads
         self._recognizer: Any | None = None
         self._model_files: dict[str, Path] = {}
@@ -37,6 +47,17 @@ class GipformerService:
         }
 
     def _resolve_model_files(self, *, local_files_only: bool) -> dict[str, Path]:
+        if str(self._model_path) != GIPFORMER_REPO_ID:
+            if not self._model_path.is_dir():
+                raise FileNotFoundError(f"Gipformer model directory not found: {self._model_path}")
+            files = {}
+            for name, filename in self._required_filenames().items():
+                file_path = self._model_path / filename
+                if not file_path.is_file():
+                    raise FileNotFoundError(f"Missing required Gipformer file: {file_path}")
+                files[name] = file_path
+            return files
+
         from huggingface_hub import hf_hub_download
 
         return {
@@ -98,11 +119,14 @@ class GipformerService:
                 "initialized": False,
                 "error": "sherpa-onnx is not installed",
             }
+            
+        repository_info = str(self._model_path) if self._model_path.is_dir() else GIPFORMER_REPO_ID
+            
         if self._recognizer is not None:
             return {
                 "status": "healthy",
                 "initialized": True,
-                "repository": GIPFORMER_REPO_ID,
+                "repository": repository_info,
                 "model_files": {name: str(path) for name, path in self._model_files.items()},
             }
         try:
@@ -111,15 +135,15 @@ class GipformerService:
             return {
                 "status": "unhealthy",
                 "initialized": False,
-                "repository": GIPFORMER_REPO_ID,
-                "error": f"Gipformer model is not cached: {error}",
+                "repository": repository_info,
+                "error": f"Gipformer model is not available: {error}",
             }
         return {
             # The runtime dependency and all model files are ready. The
             # production process constructs its only recognizer at startup.
             "status": "healthy",
             "initialized": False,
-            "repository": GIPFORMER_REPO_ID,
+            "repository": repository_info,
             "model_files": {name: str(path) for name, path in files.items()},
         }
 
