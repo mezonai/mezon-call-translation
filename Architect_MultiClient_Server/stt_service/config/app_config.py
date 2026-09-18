@@ -7,7 +7,12 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+from stt_service.constants.constants import WHISPER_SAMPLE_RATE
+
+# Service configuration must not depend on the directory from which Uvicorn is
+# launched.  This is especially important for the Redis/MinIO non-realtime
+# worker, which is normally started from Architect_MultiClient_Server.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AudioConfig:
     """Audio processing configuration."""
-    sample_rate: int = 16000
+    sample_rate: int = WHISPER_SAMPLE_RATE
     min_text_length: int = 2
     channels: int = 1
 
@@ -25,7 +30,8 @@ class STTConfig:
     """Speech-to-Text configuration."""
     nemotron_model_path: str = "nemotron-3.5-asr-streaming-0.6b-onnx-int4"
     nemotron_language_id: int = 0
-    nemotron_empty_piece_limit: int = 2
+    nemotron_vad_threshold: float = 0.3
+    nemotron_vad_silence_duration_ms: int = 1200
     min_chunks: int = 2  # Process after just 1 chunk
     max_chunks: int = 4  # Reduced from 8 to be more responsive
     min_time_threshold: float = 0.1  # 50ms - very responsive
@@ -103,16 +109,17 @@ class RedisConfig:
 
 @dataclass
 class WhisperConfig:
-    """Whisper transcription configuration."""
-    model_size: str = "medium"  # tiny, base, small, medium, large-v3
-    device: str = "cpu"  # cuda or cpu
-    compute_type: str = "int8"  # float16, int8, int8_float16
-    cpu_threads: int = 4
-    beam_size: int = 1
-    vad_filter: bool = True
-    sample_rate: int = 16000
-    language: str = ""  # Empty = auto-detect, or specify: "en", "vi", "ja", etc.
+    """Non-realtime marker-based Whisper configuration.
 
+    ``model_size`` is passed directly to faster-whisper as a model name or a
+    local directory (e.g. ``large-v3-turbo``, ``/models/whisper``).
+    """
+    model_size: str = "large-v3-turbo"
+    gipformer_model_path: str = "models/gipformer-model"
+    compute_type: str = "int8"  # float16, int8, int8_float16
+    cpu_threads: int = 8
+    temperature: float | list[float] = 0.0
+    language: str = "vi"  # "auto" enables language detection
 @dataclass
 class TranscirptConfig:
     chunk_size: int = 50  # chunk_size is the number of segments to batch together before sending to Redis.
@@ -173,7 +180,10 @@ class ConfigManager:
         # STT configuration
         config.stt.nemotron_model_path = os.getenv("NEMOTRON_MODEL_PATH", config.stt.nemotron_model_path)
         config.stt.nemotron_language_id = int(os.getenv("NEMOTRON_LANGUAGE_ID", config.stt.nemotron_language_id))
-        config.stt.nemotron_empty_piece_limit = int(os.getenv("NEMOTRON_EMPTY_PIECE_LIMIT", config.stt.nemotron_empty_piece_limit))
+        config.stt.nemotron_vad_threshold = float(os.getenv("NEMOTRON_VAD_THRESHOLD", config.stt.nemotron_vad_threshold))
+        config.stt.nemotron_vad_silence_duration_ms = int(
+            os.getenv("NEMOTRON_VAD_SILENCE_DURATION_MS", config.stt.nemotron_vad_silence_duration_ms)
+        )
         config.stt.min_chunks = int(os.getenv("NEMOTRON_MIN_CHUNKS", config.stt.min_chunks))
         config.stt.max_chunks = int(os.getenv("NEMOTRON_MAX_CHUNKS", config.stt.max_chunks))
         config.stt.min_time_threshold = float(os.getenv("NEMOTRON_MIN_TIME_THRESHOLD", config.stt.min_time_threshold))
@@ -227,15 +237,22 @@ class ConfigManager:
         config.redis.heartbeat_interval_sec = float(os.getenv("REDIS_HEARTBEAT_INTERVAL_SEC", config.redis.heartbeat_interval_sec))
         config.redis.worker_timeout_sec = float(os.getenv("REDIS_WORKER_TIMEOUT_SEC", config.redis.worker_timeout_sec))
         
-        # Whisper configuration
+        # Non-realtime marker Whisper configuration
         config.whisper.model_size = os.getenv("WHISPER_MODEL_SIZE", config.whisper.model_size)
-        config.whisper.device = os.getenv("WHISPER_DEVICE", config.whisper.device)
+        config.whisper.gipformer_model_path = os.getenv("WHISPER_GIPFORMER_MODEL_PATH", config.whisper.gipformer_model_path)
         config.whisper.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", config.whisper.compute_type)
         config.whisper.cpu_threads = int(os.getenv("WHISPER_CPU_THREADS", config.whisper.cpu_threads))
-        config.whisper.beam_size = int(os.getenv("WHISPER_BEAM_SIZE", config.whisper.beam_size))
-        config.whisper.vad_filter = os.getenv("WHISPER_VAD_FILTER", "true").lower() == "true"
-        config.whisper.sample_rate = int(os.getenv("WHISPER_SAMPLE_RATE", config.whisper.sample_rate))
-        config.whisper.language = os.getenv("WHISPER_LANGUAGE", config.whisper.language)  # "" for auto-detect
+
+        temp_env = os.getenv("WHISPER_TEMPERATURE", "")
+        if temp_env:
+            # Handle comma-separated list like "0.0, 0.2, 0.4"
+            if "," in temp_env:
+                config.whisper.temperature = [float(x.strip()) for x in temp_env.split(",") if x.strip()]
+            # Default single float
+            else:
+                config.whisper.temperature = float(temp_env)
+
+        config.whisper.language = os.getenv("WHISPER_LANGUAGE", config.whisper.language)
         
         # Metrics configuration
         config.metrics.enabled = os.getenv("METRICS_ENABLED", "false").lower() == "true"
@@ -281,7 +298,8 @@ class ConfigManager:
             "stt": {
                 "nemotron_model_path": config.stt.nemotron_model_path,
                 "nemotron_language_id": config.stt.nemotron_language_id,
-                "nemotron_empty_piece_limit": config.stt.nemotron_empty_piece_limit,
+                "nemotron_vad_threshold": config.stt.nemotron_vad_threshold,
+                "nemotron_vad_silence_duration_ms": config.stt.nemotron_vad_silence_duration_ms,
                 "min_chunks": config.stt.min_chunks,
                 "max_chunks": config.stt.max_chunks,
                 "min_time_threshold": config.stt.min_time_threshold,

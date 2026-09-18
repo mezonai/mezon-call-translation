@@ -30,6 +30,7 @@ These two paths do not call each other and use two different engines. Do not con
 - Install: `pip install -r requirements-server.txt` (FastAPI/uvicorn, `onnxruntime-genai`, `faster-whisper`, `redis`, `minio`, `motor`/`pymongo` — the last two are pulled in as dependencies but this service does not talk to MongoDB directly today, only `orchestrator_service` does).
 - **Nemotron model files must exist on disk before the realtime path can start** (this is not lazy/optional for the WS path — `main.py`'s lifespan and `PipelineManager.__init__` construct the model eagerly and raise `FileNotFoundError`/fail startup if it's missing). Default expected location, resolved relative to the repo root when `NEMOTRON_MODEL_PATH` is a relative path (`service/new_nemotron_service.py`): `<repo-root>/models/nemotron-model/<NEMOTRON_MODEL_PATH>/genai_config.json`. Fetch it with `scripts/download-nemotron-model.sh` (downloads `onnx-community/nemotron-3.5-asr-streaming-0.6b-onnx-int4` from Hugging Face into `models/nemotron-model/` by default).
 - **Whisper model** is downloaded/cached by `faster-whisper` itself on first use of `WhisperTranscriptionProcessor.initialize()` (no manual download step), size controlled by `WHISPER_MODEL_SIZE`.
+- **Gipformer fallback model files** must exist on disk for non-realtime Whisper marker-VAD chunk recovery. Default expected location is `<repo-root>/models/gipformer-model`, configured via `WHISPER_GIPFORMER_MODEL_PATH`. Fetch it with `scripts/download-gipformer-model.sh`.
 - Running services this process depends on at startup: Redis (both paths; connection pool from `service/redis/connection_pool.py`) and MinIO (batch path only, to fetch recordings).
 
 ## Configuration
@@ -61,7 +62,8 @@ All configuration is centralized in `config/app_config.py` (`ConfigManager`/`get
 | `REDIS_MAX_CONNECTIONS` | no / `10` | Shared connection pool size. |
 | `REDIS_SOCKET_TIMEOUT` / `REDIS_SOCKET_CONNECT_TIMEOUT` | no / `30.0` / `10.0` | Redis socket timeouts. |
 | `REDIS_HEARTBEAT_INTERVAL_SEC` / `REDIS_WORKER_TIMEOUT_SEC` | no / `10.0` / `30.0` | Consumer heartbeat cadence and orphan-detection window. |
-| `WHISPER_MODEL_SIZE` | no / `medium` | faster-whisper model size (`tiny`..`large-v3`). |
+| `WHISPER_MODEL_SIZE` | no / `large-v3-turbo` | faster-whisper model size (`tiny`..`large-v3-turbo`) or local CTranslate2 path. |
+| `WHISPER_GIPFORMER_MODEL_PATH` | no / `models/gipformer-model` | Local directory containing Gipformer fallback model ONNX files. Resolved relative to repo root if relative. |
 | `WHISPER_DEVICE` | no / `cpu` | `cpu` or `cuda`. |
 | `WHISPER_COMPUTE_TYPE` | no / `int8` | faster-whisper compute type. |
 | `WHISPER_CPU_THREADS` | no / `4` | CPU thread count for Whisper inference. |

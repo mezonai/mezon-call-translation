@@ -9,7 +9,7 @@ This directory contains scripts to help you set up and manage the Mezon Call Tra
 ### 1. `setup.sh` / `setup.ps1` - Complete Setup Script
 
 Automates the entire setup process including:
-- ✅ Downloading Nemotron and Kokoro models on Linux
+- ✅ Downloading Nemotron, Gipformer fallback, and Kokoro models on Linux
 - ✅ Backing up existing `.env` files
 - ✅ Creating `.env` files from `.env.example`
 - ✅ Updating model paths in `.env` files
@@ -176,7 +176,7 @@ Validates that all components are properly set up and running.
 #### What it checks
 
 - ✅ Python installation
-- ✅ Nemotron and Kokoro models
+- ✅ Nemotron, Gipformer fallback, and Kokoro models
 - ✅ Service directories
 - ✅ Virtual environments
 - ✅ .env files
@@ -268,7 +268,32 @@ test -f models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4/genai_co
 
 ---
 
-### 6. `download-kokoro-model.sh` - Kokoro TTS Model Downloader
+### 6. `download-gipformer-model.sh` - Gipformer Fallback Downloader
+
+Downloads the CPU Gipformer model used when the non-realtime Whisper marker
+flow cannot resolve a VAD-packed chunk. By default, it downloads the model
+into `models/gipformer-model` and sets `WHISPER_GIPFORMER_MODEL_PATH` in `.env`.
+
+```bash
+# Download the required ONNX and token files into models/gipformer-model
+./scripts/download-gipformer-model.sh
+
+# Download to a custom output directory
+./scripts/download-gipformer-model.sh -o /custom/path/to/gipformer-model
+
+# Confirm repository and expected artifacts
+./scripts/download-gipformer-model.sh --list
+
+# Refresh downloaded artifacts
+./scripts/download-gipformer-model.sh --force
+```
+
+After creating the STT virtual environment, `./scripts/health-check.sh` checks
+both the downloaded model files in `models/gipformer-model` and the `sherpa-onnx` runtime dependency.
+
+---
+
+### 7. `download-kokoro-model.sh` - Kokoro TTS Model Downloader
 
 Downloads Kokoro-82M TTS models and voices.
 
@@ -399,6 +424,7 @@ scripts/
 ├── manage-services.sh                 # Service management helper
 ├── health-check.sh                    # System health check
 ├── download-nemotron-model.sh         # Nemotron model downloader
+├── download-gipformer-model.sh        # Gipformer fallback model downloader
 ├── download-kokoro-model.sh           # Kokoro model downloader
 ├── edit_env.sh                        # Undocumented helper to set KEY=VALUE pairs in a service .env
 ```
@@ -436,6 +462,7 @@ scripts/
 1. Check if models are downloaded:
    ```bash
    ls -la models/nemotron-model/nemotron-3.5-asr-streaming-0.6b-onnx-int4/
+   ls -la models/gipformer-model/
    ls -la models/kokoro_models/
    ```
 
@@ -443,6 +470,7 @@ scripts/
    ```bash
    python -m pip install "huggingface-hub>=0.24.0"
    bash scripts/download-nemotron-model.sh
+   bash scripts/download-gipformer-model.sh
    ./scripts/download-kokoro-model.sh --force
    ```
 
