@@ -1,3 +1,4 @@
+import os
 import logging
 import sys
 
@@ -18,7 +19,7 @@ def setup_logging(level: int | None = None) -> None:
     log_level = level or logging.INFO
     root_logger.setLevel(log_level)
 
-    # Formatter cho tất cả handlers
+    # Formatter for all handlers
     formatter = logging.Formatter(
         fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -30,12 +31,15 @@ def setup_logging(level: int | None = None) -> None:
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 
-    # File handler cho logging thường
+    # Ensure the logs directory exists
+    os.makedirs('logs', exist_ok=True)
+
+    # File handler for standard application logging
     app_handler = logging.FileHandler('logs/app.log', encoding='utf-8')
     app_handler.setLevel(log_level)
     app_handler.setFormatter(formatter)
     
-    # Chỉ lấy các log không phải metrics
+    # Filter out metrics logs from standard application logs
     class NoMetricsFilter(logging.Filter):
         def filter(self, record):
             return "Metrics |" not in record.getMessage()
@@ -43,12 +47,12 @@ def setup_logging(level: int | None = None) -> None:
     app_handler.addFilter(NoMetricsFilter())
     root_logger.addHandler(app_handler)
 
-    # File handler cho metrics
+    # File handler for metrics logging
     metrics_handler = logging.FileHandler('logs/metrics.log', encoding='utf-8')
     metrics_handler.setLevel(log_level)
     metrics_handler.setFormatter(formatter)
     
-    # Chỉ lấy các log metrics
+    # Filter to only include metrics logs
     class MetricsFilter(logging.Filter):
         def filter(self, record):
             return "Metrics |" in record.getMessage()
