@@ -29,6 +29,7 @@ class MezonLLMService(BaseLLMService):
             temperature=temperature,
             top_p=top_p,
             timeout=timeout,
+            response_format={"type": "json_object"},
         )
         raw_text = response.choices[0].message.content
 

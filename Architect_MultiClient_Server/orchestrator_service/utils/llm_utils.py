@@ -25,9 +25,12 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:  # type: ignore[expl
     if not raw:
         raise ValueError("Empty LLM output")
 
+    # Remove null
+    raw = raw.replace("\x00", "")
+
     # 1) Direct JSON parse
     try:
-        return json.loads(raw)  # type: ignore[no-any-return]
+        return json.loads(raw, strict=False)  # type: ignore[no-any-return]
     except Exception:
         logger.warning(f"Direct JSON parse failed, attempting to extract JSON from LLM output: {raw}")
         pass
@@ -49,7 +52,7 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:  # type: ignore[expl
 
     for candidate in reversed(candidates):
         try:
-            return json.loads(candidate)  # type: ignore[no-any-return]
+            return json.loads(candidate, strict=False)  # type: ignore[no-any-return]
         except Exception:
             logger.warning("Candidate JSON parse failed, trying next candidate")
             continue
@@ -58,7 +61,7 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:  # type: ignore[expl
     blocks = re.findall(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
     for block in reversed(blocks):
         try:
-            return json.loads(block)  # type: ignore[no-any-return]
+            return json.loads(block, strict=False)  # type: ignore[no-any-return]
         except Exception:
             logger.warning("Markdown code block JSON parse failed, trying next block")
             continue
