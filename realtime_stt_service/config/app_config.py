@@ -25,7 +25,8 @@ class STTConfig:
     """Speech-to-Text configuration."""
     nemotron_model_path: str = "nemotron-3.5-asr-streaming-0.6b-onnx-int4"
     nemotron_language_id: int = 0
-    nemotron_empty_piece_limit: int = 2
+    nemotron_vad_threshold: float = 0.3
+    nemotron_vad_silence_duration_ms: int = 1200
     min_chunks: int = 2  # Process after just 1 chunk
     max_chunks: int = 4  # Reduced from 8 to be more responsive
     min_time_threshold: float = 0.1  # 50ms - very responsive
@@ -123,7 +124,10 @@ class ConfigManager:
         # STT configuration
         config.stt.nemotron_model_path = os.getenv("NEMOTRON_MODEL_PATH", config.stt.nemotron_model_path)
         config.stt.nemotron_language_id = int(os.getenv("NEMOTRON_LANGUAGE_ID", config.stt.nemotron_language_id))
-        config.stt.nemotron_empty_piece_limit = int(os.getenv("NEMOTRON_EMPTY_PIECE_LIMIT", config.stt.nemotron_empty_piece_limit))
+        config.stt.nemotron_vad_threshold = float(os.getenv("NEMOTRON_VAD_THRESHOLD", config.stt.nemotron_vad_threshold))
+        config.stt.nemotron_vad_silence_duration_ms = int(
+            os.getenv("NEMOTRON_VAD_SILENCE_DURATION_MS", config.stt.nemotron_vad_silence_duration_ms)
+        )
         config.stt.min_chunks = int(os.getenv("NEMOTRON_MIN_CHUNKS", config.stt.min_chunks))
         config.stt.max_chunks = int(os.getenv("NEMOTRON_MAX_CHUNKS", config.stt.max_chunks))
         config.stt.min_time_threshold = float(os.getenv("NEMOTRON_MIN_TIME_THRESHOLD", config.stt.min_time_threshold))
@@ -197,7 +201,8 @@ class ConfigManager:
             "stt": {
                 "nemotron_model_path": config.stt.nemotron_model_path,
                 "nemotron_language_id": config.stt.nemotron_language_id,
-                "nemotron_empty_piece_limit": config.stt.nemotron_empty_piece_limit,
+                "nemotron_vad_threshold": config.stt.nemotron_vad_threshold,
+                "nemotron_vad_silence_duration_ms": config.stt.nemotron_vad_silence_duration_ms,
                 "min_chunks": config.stt.min_chunks,
                 "max_chunks": config.stt.max_chunks,
                 "min_time_threshold": config.stt.min_time_threshold,

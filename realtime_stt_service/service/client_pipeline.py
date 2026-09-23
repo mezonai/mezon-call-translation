@@ -71,7 +71,8 @@ class ClientInferencePipeline:
         # Initialize cache-aware Nemotron state (DEDICATED per client).
         self.nemotron_stream = self.model.create_stream(
             language_id=self.config.stt.nemotron_language_id,
-            empty_piece_limit=self.config.stt.nemotron_empty_piece_limit,
+            vad_threshold=self.config.stt.nemotron_vad_threshold,
+            vad_silence_duration_ms=self.config.stt.nemotron_vad_silence_duration_ms,
         )
         self.model_chunk_samples = self.model.chunk_samples
         self.model_chunk_bytes = self.model_chunk_samples * 2  # PCM16
