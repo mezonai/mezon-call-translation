@@ -5,10 +5,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
 	"github.com/mezonai/mezon-call-translation/agents/internal/logging"
+)
+
+const (
+	// nats.go sends a protocol PING at this interval.
+	natsPingInterval = 15 * time.Second
+
+	// Allow one unanswered PING. If the following check also receives no
+	// PONG, nats.go declares the connection stale. With a 15-second
+	// interval, silent disconnection is detected in approximately 30 seconds.
+	natsMaxPingsOutstanding = 1
+
+	// Connection lost, wait about 2 seconds, then try reconnecting
+	natsReconnectWait = 2 * time.Second
 )
 
 // RunSubscriber connects to NATS, subscribes to cfg.Subject (queue-grouped
@@ -29,7 +43,36 @@ import (
 // in order -- calling Start/Stop synchronously here would mean one room's
 // slow Stop blocks every other room's events until it's done.
 func RunSubscriber(ctx context.Context, cfg Config, m *Manager) error {
-	nc, err := nats.Connect(cfg.NATSURL)
+	nc, err := nats.Connect(
+		cfg.NATSURL,
+		nats.PingInterval(natsPingInterval),
+		nats.MaxPingsOutstanding(natsMaxPingsOutstanding),
+		nats.MaxReconnects(-1),
+		// Do not stop trying to reconnect.
+		nats.ReconnectWait(natsReconnectWait),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, disconnectErr error) {
+			if ctx.Err() != nil {
+				return
+			}
+			logging.L.Error("workermanager: disconnected from NATS; reconnecting",
+				logging.ErrAttrs(disconnectErr)...)
+		}),
+		nats.ReconnectHandler(func(conn *nats.Conn) {
+			if ctx.Err() != nil {
+				return
+			}
+			logging.L.Info("workermanager: reconnected to NATS",
+				"subject", cfg.Subject,
+				"queue_group", cfg.QueueGroup)
+		}),
+		nats.ClosedHandler(func(conn *nats.Conn) {
+			if ctx.Err() != nil {
+				return
+			}
+			logging.L.Error("workermanager: NATS connection closed permanently",
+				logging.ErrAttrs(conn.LastError())...)
+		}),
+	)
 	if err != nil {
 		return fmt.Errorf("workermanager: connect nats %s: %w", cfg.NATSURL, err)
 	}

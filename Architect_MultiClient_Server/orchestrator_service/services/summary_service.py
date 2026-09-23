@@ -14,6 +14,7 @@ from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
+    wait_exponential,
 )
 
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
@@ -51,7 +52,6 @@ from orchestrator_service.utils.participant_identity import (
     group_next_focus_by_user,
     sanitize_and_decode_list,
 )
-from orchestrator_service.utils.retry_utils import WaitCustomStrategy
 from orchestrator_service.utils.time_convert import convert_to_iso_8601
 
 logger = get_logger(__name__)
@@ -91,8 +91,8 @@ class SummaryService:
         max_attempts: int,
     ) -> T:
         @retry(
-            stop=stop_after_attempt(max_attempts * 3),
-            wait=WaitCustomStrategy(),
+            stop=stop_after_attempt(max_attempts),
+            wait=wait_exponential(multiplier=2, min=1, max=10),
             retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
             before_sleep=before_sleep_log(logger, logging.ERROR),
             reraise=True,
@@ -267,10 +267,12 @@ class SummaryService:
                             continue
 
                         seg_start_ns = track_start_ns + int((seg.get("start") or 0.0) * 1_000_000_000)
+                        seg_end_ns = track_start_ns + int((seg.get("end") or 0.0) * 1_000_000_000)
 
                         all_segments.append(
                             {
                                 "timestamp": seg_start_ns,
+                                "end_timestamp": seg_end_ns,
                                 "participant_id": participant,
                                 "text": text,
                             }
@@ -295,25 +297,29 @@ class SummaryService:
         id_to_username, username_to_id = build_username_maps(list(unique_participants), room_participants)
 
         turns = []
-        current_turn = None
+        last_end_time = 0.0
 
         for seg in all_segments:
-            real_p = str(seg["participant_id"])
+            current_start_time = seg["timestamp"] / 1_000_000_000
+            current_end_time = seg["end_timestamp"] / 1_000_000_000
+            participant_id = seg["participant_id"]
             text = seg["text"]
-            if current_turn and current_turn["participant_id"] == real_p:
-                current_turn["content"] += f"\n{text}"
-            else:
-                if current_turn:
-                    turns.append(current_turn)
-                dt = datetime.fromtimestamp(seg["timestamp"] / 1_000_000_000)
-                current_turn = {
-                    "timestamp": dt.strftime("%H:%M:%S"),
-                    "participant_id": real_p,
-                    "content": text,
-                }
-        if current_turn:
-            turns.append(current_turn)
 
+            if (
+                turns
+                and turns[-1]["participant_id"] == participant_id
+                and (current_start_time - last_end_time) <= 3.0
+            ):
+                turns[-1]["content"] += f" {text}"
+            else:
+                dt = datetime.fromtimestamp(current_start_time)
+                turns.append({
+                    "timestamp": dt.strftime("%H:%M:%S"),
+                    "participant_id": participant_id,
+                    "content": text,
+                })
+
+            last_end_time = current_end_time
         for p in room_participants:
             user_id = p.get("participant_identity")
             if user_id:
@@ -539,7 +545,7 @@ class SummaryService:
 
         if total_duration > self.config.threshold_min * 60:
             # Light summary flow
-            logger.info(f"Retrying room ({total_duration:.1f}s). Using Light Summary flow.")
+            logger.info(f"Retrying room ({total_duration:.1f}s) > {self.config.threshold_min} mins. Using Light Summary flow.")
 
             try:
                 if retry_type == RetryType.OVERALL_CONTEXT:
