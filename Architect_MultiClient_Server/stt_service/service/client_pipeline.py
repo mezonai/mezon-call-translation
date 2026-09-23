@@ -385,10 +385,10 @@ class ClientInferencePipeline:
 
                 self._emit_result("transcript", result_payload)
                 if is_final:
-                    logger.debug(f"Emitting final result for client {self.client_id}: {text[:50]}...")
+                    logger.info(f"Emitting final result for client {self.client_id}: {text[:50]}...")
                     self.stats.final_results += 1
                 else:
-                    logger.debug(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
+                    logger.info(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
                     self.stats.partial_results += 1
         
         except Exception as e:
