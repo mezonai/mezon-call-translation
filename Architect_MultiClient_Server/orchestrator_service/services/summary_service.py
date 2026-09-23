@@ -545,7 +545,7 @@ class SummaryService:
 
         if total_duration > self.config.threshold_min * 60:
             # Light summary flow
-            logger.info(f"Retrying room ({total_duration:.1f}s). Using Light Summary flow.")
+            logger.info(f"Retrying room ({total_duration:.1f}s) > {self.config.threshold_min} mins. Using Light Summary flow.")
 
             try:
                 if retry_type == RetryType.OVERALL_CONTEXT:
