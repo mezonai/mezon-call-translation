@@ -36,7 +36,7 @@ type orchestratorAPI interface {
 }
 
 type mezonUserClient interface {
-	GetUsers(ctx context.Context, clanID string, userIDs []string) ([]mezonusers.UserInfo, error)
+	GetUsers(ctx context.Context, roomName string, userIDs []string) ([]mezonusers.UserInfo, error)
 }
 
 // Gateway is the main service struct.
@@ -350,9 +350,9 @@ func (g *Gateway) handleBatchUsers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_ids required"})
 		return
 	}
-	clanID, clanContextResolved := g.resolveRoomClanContext(req.RoomName)
-	if !clanContextResolved {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "clan_context_unavailable"})
+	req.RoomName = strings.TrimSpace(req.RoomName)
+	if req.RoomName == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "room_name required"})
 		return
 	}
 	if g.mezonUserClient == nil {
@@ -360,12 +360,11 @@ func (g *Gateway) handleBatchUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	foundUserInfos, err := g.mezonUserClient.GetUsers(r.Context(), clanID, req.UserIDs)
+	foundUserInfos, err := g.mezonUserClient.GetUsers(r.Context(), req.RoomName, req.UserIDs)
 	if err != nil {
 		attrs := append(
 			logging.ErrAttrs(err),
 			"room_name", req.RoomName,
-			"clan_id", clanID,
 			"requested_count", len(req.UserIDs),
 		)
 		logging.L.Error("agents-bot: Mezon users lookup failed", attrs...)
@@ -391,7 +390,7 @@ func (g *Gateway) handleBatchUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, batchResponse{
 		FoundUsers:          foundUsers,
 		NotFoundUserIDs:     notFoundUserIDs,
-		ClanContextResolved: clanContextResolved,
+		ClanContextResolved: true,
 	})
 }
 

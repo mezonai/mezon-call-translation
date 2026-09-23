@@ -29,9 +29,13 @@ type UserInfo struct {
 }
 
 type batchUserLookupRequest struct {
-	// The upstream contract currently spells this field "cland_id".
-	ClanID  string   `json:"cland_id"`
-	UserIDs []string `json:"user_ids"`
+	RoomName string   `json:"room_name"`
+	UserIDs  []string `json:"user_ids"`
+}
+
+type batchUserLookupResponse struct {
+	Success bool       `json:"success"`
+	Users   []UserInfo `json:"users"`
 }
 
 // HTTPError reports a non-success response from the Mezon API.
@@ -75,16 +79,16 @@ func New(baseURL, bearerToken string, timeout time.Duration) (*Client, error) {
 }
 
 // GetUsers resolves all requested user IDs in one Mezon API request.
-func (c *Client) GetUsers(ctx context.Context, clanID string, userIDs []string) ([]UserInfo, error) {
-	clanID = strings.TrimSpace(clanID)
-	if clanID == "" {
-		return nil, errors.New("mezon users: clan id is required")
+func (c *Client) GetUsers(ctx context.Context, roomName string, userIDs []string) ([]UserInfo, error) {
+	roomName = strings.TrimSpace(roomName)
+	if roomName == "" {
+		return nil, errors.New("mezon users: room_name is required")
 	}
 	if len(userIDs) == 0 {
 		return nil, errors.New("mezon users: user_ids is required")
 	}
 
-	payload, err := json.Marshal(batchUserLookupRequest{ClanID: clanID, UserIDs: userIDs})
+	payload, err := json.Marshal(batchUserLookupRequest{RoomName: roomName, UserIDs: userIDs})
 	if err != nil {
 		return nil, fmt.Errorf("mezon users: encode request: %w", err)
 	}
@@ -113,9 +117,12 @@ func (c *Client) GetUsers(ctx context.Context, clanID string, userIDs []string) 
 		}
 	}
 
-	var foundUserInfos []UserInfo
-	if err := json.NewDecoder(resp.Body).Decode(&foundUserInfos); err != nil {
+	var batchResponse batchUserLookupResponse
+	if err := json.NewDecoder(resp.Body).Decode(&batchResponse); err != nil {
 		return nil, fmt.Errorf("mezon users: decode response: %w", err)
 	}
-	return foundUserInfos, nil
+	if !batchResponse.Success {
+		return nil, errors.New("mezon users: unsuccessful response")
+	}
+	return batchResponse.Users, nil
 }
