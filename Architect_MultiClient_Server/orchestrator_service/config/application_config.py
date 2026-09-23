@@ -444,7 +444,7 @@ class TranscriptCorrectionConfig:
     previous_context_min: int = 5
 
     fallback_enable: bool = True
-    fallback_provider: str = "gemini"
+    fallback_provider: str = "mezon"
     fallback_model: str = "gemini-3.7-flash-high"
     fallback_temperature: float = 0.2
     fallback_top_p: float = 0.4
@@ -463,7 +463,7 @@ class TranscriptCorrectionConfig:
             chunk_duration_min=int(os.getenv("CORRECTION_CHUNK_DURATION_MIN", "15")),
             previous_context_min=int(os.getenv("CORRECTION_PREVIOUS_CONTEXT_MIN", "5")),
             fallback_enable=os.getenv("CORRECTION_LLM_FALLBACK_ENABLE", "true").lower() == "true",
-            fallback_provider=os.getenv("CORRECTION_LLM_FALLBACK_PROVIDER", "gemini"),
+            fallback_provider=os.getenv("CORRECTION_LLM_FALLBACK_PROVIDER", "mezon"),
             fallback_model=os.getenv("CORRECTION_LLM_FALLBACK_MODEL", "gemini-3.7-flash-high"),
             fallback_temperature=float(os.getenv("CORRECTION_LLM_FALLBACK_TEMPERATURE", "0.2")),
             fallback_top_p=float(os.getenv("CORRECTION_LLM_FALLBACK_TOP_P", "0.4")),

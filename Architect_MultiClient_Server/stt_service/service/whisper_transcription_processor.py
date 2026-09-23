@@ -12,7 +12,8 @@ import asyncio
 import logging
 import tempfile
 import shutil
-from concurrent.futures import Future
+import threading
+from concurrent.futures import Future, wait
 from typing import Optional, Dict, Any
 from pathlib import Path
 from dataclasses import dataclass
@@ -295,24 +296,44 @@ class WhisperTranscriptionProcessor:
         # before decoding the next batch.  It also bounds memory for a long
         # recording when Redis is temporarily slower than ASR.
         batch_queue: asyncio.Queue[tuple[str, Any, Future[None] | None]] = asyncio.Queue(maxsize=1)
-        
+
         # Run transcription in thread pool
         loop = asyncio.get_running_loop()
-        
+        # Set when the consumer below stops reading the queue (error or
+        # cancellation), so the thread never blocks forever on put()/ack.
+        consumer_stopped = threading.Event()
+
         def transcribe_in_thread():
             """Transcribe audio and send batches via queue"""
             class DeliveryFailed(Exception):
                 """Redis-side failure; the outer task retry owns recovery."""
+
+            class ConsumerStopped(Exception):
+                """The consumer coroutine exited; nobody will read or ack."""
+
+            def wait_unless_stopped(future: Future) -> Any:
+                # Poll completion with wait() rather than result(timeout=...):
+                # since Python 3.11 the latter's timeout is the builtin
+                # TimeoutError, indistinguishable from a Redis timeout.
+                while True:
+                    done, _ = wait([future], timeout=0.5)
+                    if done:
+                        return future.result()
+                    if consumer_stopped.is_set():
+                        future.cancel()
+                        raise ConsumerStopped()
 
             def publish(message_type: str, data: Any, wait_for_enqueue: bool) -> None:
                 acknowledgement: Future[None] | None = Future() if wait_for_enqueue else None
                 put_future = asyncio.run_coroutine_threadsafe(
                     batch_queue.put((message_type, data, acknowledgement)), loop
                 )
-                put_future.result()
+                wait_unless_stopped(put_future)
                 if acknowledgement is not None:
                     try:
-                        acknowledgement.result()
+                        wait_unless_stopped(acknowledgement)
+                    except ConsumerStopped:
+                        raise
                     except Exception as error:
                         raise DeliveryFailed() from error
 
@@ -335,6 +356,8 @@ class WhisperTranscriptionProcessor:
                 current_batch = []
                 
                 for marker_segment in transcriber.iter_segments(prepared_audio):
+                    if consumer_stopped.is_set():
+                        return
                     base_meta = {
                         "engine": "whisper_marker_v1",
                         "timestamp_source": "vad_span",
@@ -368,7 +391,7 @@ class WhisperTranscriptionProcessor:
                     {"duration_after_vad_sec": prepared_audio.duration_after_vad_sec},
                     wait_for_enqueue=True,
                 )
-            except DeliveryFailed:
+            except (DeliveryFailed, ConsumerStopped):
                 # The coroutine that writes Redis already has the original
                 # error. Do not enqueue a failed marker after a partially
                 # delivered batch; retry of the source task handles it.
@@ -376,7 +399,12 @@ class WhisperTranscriptionProcessor:
             except Exception as e:
                 logger.error(f"❌ Transcription failed in thread: {e}", exc_info=True)
                 # Signal error
-                asyncio.run_coroutine_threadsafe(batch_queue.put(('error', str(e), None)), loop).result()
+                try:
+                    wait_unless_stopped(
+                        asyncio.run_coroutine_threadsafe(batch_queue.put(('error', str(e), None)), loop)
+                    )
+                except ConsumerStopped:
+                    return
         
         # Start transcription in thread
         transcription_task = loop.run_in_executor(None, transcribe_in_thread)
@@ -483,8 +511,14 @@ class WhisperTranscriptionProcessor:
             
             return chunk_index, " ".join(full_text_parts)
             
+        except asyncio.CancelledError:
+            # Don't block cancellation on the thread; it exits at its next
+            # segment or publish once it sees consumer_stopped.
+            consumer_stopped.set()
+            raise
         except Exception as e:
             # Ensure thread completes even on error
+            consumer_stopped.set()
             await transcription_task
             raise e
     
