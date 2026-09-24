@@ -58,7 +58,7 @@ func TestAnswerEchoesOfferGeneration(t *testing.T) {
 
 func TestDecodeRoomSnapshot(t *testing.T) {
 	raw := []byte(`{"type":"room_snapshot","room":"1","self_peer_id":2,"participant_count":1,` +
-		`"members":[{"peer_id":3,"user_id":"999001","metadata":"  Nguyễn Văn A  ;https://cdn.example/avatar.png","role":"speaker","is_mute":false,` +
+		`"members":[{"peer_id":3,"user_id":"999001","metadata":"{\"username\":\"  Nguyễn Văn A  \",\"avatar\":\"https://cdn.example/avatar.png\"}","role":"speaker","is_mute":false,` +
 		`"ufrag":"abc","mid_audio":3,"mid_video":4,"mid_screen":5}]}`)
 	var m roomSnapshotMsg
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -70,7 +70,7 @@ func TestDecodeRoomSnapshot(t *testing.T) {
 	if len(m.Members) != 1 {
 		t.Fatalf("Members = %+v", m.Members)
 	}
-	want := Member{PeerID: 3, UserID: 999001, Metadata: "  Nguyễn Văn A  ;https://cdn.example/avatar.png", Role: "speaker", IsMute: false, Ufrag: "abc", MidAudio: 3, MidVideo: 4, MidScreen: 5}
+	want := Member{PeerID: 3, UserID: 999001, Metadata: `{"username":"  Nguyễn Văn A  ","avatar":"https://cdn.example/avatar.png"}`, Role: "speaker", IsMute: false, Ufrag: "abc", MidAudio: 3, MidVideo: 4, MidScreen: 5}
 	if m.Members[0] != want {
 		t.Errorf("Members[0] = %+v, want %+v", m.Members[0], want)
 	}
@@ -82,7 +82,7 @@ func TestDecodeRoomSnapshot(t *testing.T) {
 
 func TestDecodePeerJoined(t *testing.T) {
 	raw := []byte(`{"type":"peer_joined","participant_count":2,"peer":{"peer_id":3,"user_id":"999001",` +
-		`"metadata":"  Linh Trần  ","role":"speaker","is_mute":false,"ufrag":"abc","mid_audio":3,"mid_video":4,"mid_screen":5}}`)
+		`"metadata":"{\"username\":\"  Linh Trần  \",\"avatar\":\"\"}","role":"speaker","is_mute":false,"ufrag":"abc","mid_audio":3,"mid_video":4,"mid_screen":5}}`)
 	var m peerJoinedMsg
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("decode peer_joined: %v", err)
@@ -157,7 +157,7 @@ func TestEncodeSendMessageFrameRejects(t *testing.T) {
 }
 
 func TestDecodePeerUpdated(t *testing.T) {
-	raw := []byte(`{"type":"peer_updated","peer":{"peer_id":3,"user_id":"999001","metadata":"  Đổi tên  ;https://cdn.example/avatar;v=2","role":"audience","is_mute":true}}`)
+	raw := []byte(`{"type":"peer_updated","peer":{"peer_id":3,"user_id":"999001","metadata":"{\"username\":\"  Đổi tên  \",\"avatar\":\"https://cdn.example/avatar;v=2\"}","role":"audience","is_mute":true}}`)
 	var m peerUpdatedMsg
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("decode peer_updated: %v", err)
@@ -179,11 +179,11 @@ func TestParseMemberMetadata(t *testing.T) {
 		avatarURL   string
 	}{
 		{name: "empty"},
-		{name: "empty name and avatar", metadata: ";"},
-		{name: "empty name", metadata: "  ;https://cdn.example/avatar.png", avatarURL: "https://cdn.example/avatar.png"},
-		{name: "no avatar separator", metadata: "  Nguyễn Văn A  ", displayName: "Nguyễn Văn A"},
-		{name: "empty avatar", metadata: "  Nguyễn Văn A  ;", displayName: "Nguyễn Văn A"},
-		{name: "first separator only", metadata: " A ;https://cdn.example/avatar;v=2", displayName: "A", avatarURL: "https://cdn.example/avatar;v=2"},
+		{name: "empty name and avatar", metadata: `{}`},
+		{name: "empty name", metadata: `{"username":"  ","avatar":"https://cdn.example/avatar.png"}`, avatarURL: "https://cdn.example/avatar.png"},
+		{name: "missing avatar", metadata: `{"username":"  Nguyễn Văn A  "}`, displayName: "Nguyễn Văn A"},
+		{name: "empty avatar", metadata: `{"username":"  Nguyễn Văn A  ","avatar":""}`, displayName: "Nguyễn Văn A"},
+		{name: "avatar contains semicolon", metadata: `{"username":" A ","avatar":"https://cdn.example/avatar;v=2"}`, displayName: "A", avatarURL: "https://cdn.example/avatar;v=2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
