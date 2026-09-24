@@ -116,38 +116,6 @@ class AgentsBotUserClient:
 
         return result
 
-    async def get_room_participants(self, room_name: str) -> list[dict[str, str]]:
-        """Get list participants in room from agents-bot."""
-        if not self._base_url or not room_name:
-            return []
-        try:
-            resp = await self._http.get(f"/api/rooms/{room_name}/participants")
-            if resp.status_code != 200:
-                logger.warning(f"agents_bot_user_client: get_room_participants HTTP {resp.status_code}")
-                return []
-            data = resp.json()
-            raw_participants = data.get("participants", [])
-
-            # data normalization
-            result = []
-            seen = set()
-            for p in raw_participants:
-                if not isinstance(p, dict):
-                    continue
-                identity = str(p.get("participant_identity") or "").strip()
-                raw_username = p.get("username")
-                username = raw_username.strip() if isinstance(raw_username, str) else ""
-                if identity and identity not in seen:
-                    seen.add(identity)
-                    item = {"participant_identity": identity}
-                    if username:
-                        item["username"] = username
-                    result.append(item)
-            return result
-        except Exception as e:
-            logger.warning(f"agents_bot_user_client: failed to fetch room participants ({e})")
-            return []
-
 
 _agents_bot_user_client: AgentsBotUserClient | None = None
 
@@ -193,10 +161,3 @@ async def close_agents_bot_user_client() -> None:
     if _agents_bot_user_client is not None:
         await _agents_bot_user_client.close()
         _agents_bot_user_client = None
-
-
-async def get_agents_bot_room_participants(room_name: str) -> list[dict[str, str]]:
-    client = get_agents_bot_user_client()
-    if client is None:
-        return []
-    return await client.get_room_participants(room_name)

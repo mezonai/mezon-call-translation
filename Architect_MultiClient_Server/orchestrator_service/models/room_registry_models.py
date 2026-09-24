@@ -103,6 +103,17 @@ class ParticipantJoinedRequest(BaseModel):  # type: ignore[explicit-any]
         return v
 
 
+class ParticipantChatRequest(ParticipantJoinedRequest):
+    """A participant discovered through an external chat message."""
+
+    username: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        description="Participant display name from the chat message",
+    )
+
+
 class ParticipantJoinedResponse(BaseModel):  # type: ignore[explicit-any]
     """Result of a participant-joined notification."""
 
@@ -110,6 +121,30 @@ class ParticipantJoinedResponse(BaseModel):  # type: ignore[explicit-any]
     room_name: str
     room_id: str
     participant_identity: str
+
+
+class ParticipantSnapshotRequest(BaseModel):  # type: ignore[explicit-any]
+    room_name: RoomNameField = Field(..., description="Register room name")
+    room_id: str = Field(..., description="The registering agent session UUID")
+    participant_identities: list[str] = Field(..., min_length=1, max_length=300, description="Mezon user ids")
+
+    @field_validator("room_id")
+    @classmethod
+    def validate_room_id_uuid(cls, value: str) -> str:
+        try:
+            UUID(value)
+        except ValueError as e:
+            raise ValueError("room_id must be a valid UUID string") from e
+        return value
+
+
+class ParticipantSnapshotResponse(BaseModel):  # type: ignore[explicit-any]
+    status: Literal["ok"]
+    room_name: str
+    room_id: str
+    participant_count: int
+    resolved_username_count: int
+    unresolved_username_count: int
 
 
 class RoomUnregisterResponse(BaseModel): # type: ignore[explicit-any]

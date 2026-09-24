@@ -8,8 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.room_registry_models import (
+    ParticipantChatRequest,
     ParticipantJoinedRequest,
     ParticipantJoinedResponse,
+    ParticipantSnapshotRequest,
+    ParticipantSnapshotResponse,
     RoomRegisterRequest,
     RoomRegisterResponse,
     RoomRegistryClearResponse,
@@ -18,10 +21,7 @@ from orchestrator_service.models.room_registry_models import (
     RoomUnregisterRequest,
     RoomUnregisterResponse,
 )
-from orchestrator_service.services.agents_bot_user_client import (
-    get_agents_bot_room_participants,
-    resolve_agents_bot_usernames,
-)
+from orchestrator_service.services.agents_bot_user_client import resolve_agents_bot_usernames
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
@@ -81,11 +81,6 @@ async def register_room(
     # 3. Point the name -> id cache at this session (always overwrites).
     await registry.register_room(request.room_name, request.room_id)
 
-    # 4. Save existing participants (best effort). Fetches the current
-    # voice channel roster from agents-bot in the background so registration
-    # latency remains minimal and non-blocking for the agent.
-    asyncio_create_task_safety(_fetch_and_save_existing_participants(request.room_name, request.room_id))
-
     metadata_channel = MetadataChannel()
     asyncio_create_task_safety(metadata_channel.push_room_started(request.room_id, request.room_name))
 
@@ -97,26 +92,53 @@ async def register_room(
     )
 
 
-async def _fetch_and_save_existing_participants(room_name: str, room_id: str) -> None:
-    """Fetch initial voice channel participants from agents-bot and persist to database."""
-    try:
-        participants = await get_agents_bot_room_participants(room_name)
+@router.post("/participant/snapshot", response_model=ParticipantSnapshotResponse)
+async def participant_snapshot(
+    request: ParticipantSnapshotRequest,
+    auth: dict[str, str | bool] = Depends(verify_api_key),
+) -> ParticipantSnapshotResponse:
+    """Persist a snapshot of participants from a room."""
+    participant_identities = list(dict.fromkeys(request.participant_identities))
 
-        if participants:
-            saved = await transcription_service.save_participants_batch(room_id, participants)
-            if saved:
-                logger.info(
-                    f"Saved {len(participants)} participants for room '{room_name}' (room_id={room_id})"
-                )
-            else:
-                logger.error(
-                    f"Failed to save participants for room '{room_name}' (room_id={room_id})"
-                )
-    except Exception as e:
-        logger.error(
-            f"Failed to fetch and save participants for room '{room_name}' (room_id={room_id}): {e}",
-            exc_info=True,
+    usernames = await resolve_agents_bot_usernames(
+        participant_identities,
+        room_name=request.room_name,
+    )
+
+    participants = [
+        {
+            "participant_identity": identity,
+            "username": usernames.get(identity),
+        }
+        for identity in participant_identities
+    ]
+
+    if not await transcription_service.save_participants_batch(
+        room_id=request.room_id,
+        participants=participants,
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save participant snapshot",
         )
+
+    resolved_count = sum(
+        1 for identity in participant_identities if identity in usernames
+    )
+    unresolved_count = len(participants) - resolved_count
+    logger.info(
+        f"Participant snapshot for room '{request.room_name}' (room_id={request.room_id}): "
+        f"{len(participants)} participants, {resolved_count} resolved, {unresolved_count} unresolved"
+    )
+
+    return ParticipantSnapshotResponse(
+        status="ok",
+        room_name=request.room_name,
+        room_id=request.room_id,
+        participant_count=len(participants),
+        resolved_username_count=resolved_count,
+        unresolved_username_count=unresolved_count,
+    )
 
 
 @router.post("/participant-joined", response_model=ParticipantJoinedResponse)
@@ -142,6 +164,30 @@ async def participant_joined(
         username=username,
     ):
         raise HTTPException(status_code=500, detail="Failed to persist participant")
+
+    return ParticipantJoinedResponse(
+        status="ok",
+        room_name=request.room_name,
+        room_id=request.room_id,
+        participant_identity=request.participant_identity,
+    )
+
+
+@router.post("/external/participant-chat", response_model=ParticipantJoinedResponse)
+async def external_participant_chat(
+    request: ParticipantChatRequest,
+    auth: dict[str, str | bool] = Depends(verify_api_key),
+) -> ParticipantJoinedResponse:
+    """Persist one participant discovered through a room chat message."""
+    if not await transcription_service.force_save_participant(
+        room_id=request.room_id,
+        participant_identity=request.participant_identity,
+        username=request.username,
+    ):
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to persist external chat participant",
+        )
 
     return ParticipantJoinedResponse(
         status="ok",

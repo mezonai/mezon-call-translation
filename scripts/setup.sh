@@ -1,7 +1,7 @@
 #!/bin/bash
 # Setup script for Mezon Call Translation Services
 # This script:
-# - Downloads Nemotron and Kokoro models
+# - Downloads Nemotron, non-realtime Whisper, and Kokoro models
 # - Backs up existing .env files
 # - Creates .env files from .env.example
 # - Sets up virtual environments for each service
@@ -24,6 +24,7 @@ ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 
 # Service directories
 STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+NON_REALTIME_STT_DIR="$PROJECT_ROOT/non_realtime_stt_service"
 ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
 TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
@@ -31,6 +32,8 @@ TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
 # Model directories
 MODELS_DIR="$PROJECT_ROOT/models"
 NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
+GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
+WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 
 # Functions
@@ -108,6 +111,7 @@ SKIP_VENV=false
 SKIP_ENV=false
 INSTALL_DEPS=false
 NEMOTRON_MODEL="nemotron-3.5-asr-streaming-0.6b-onnx-int4"
+WHISPER_MODEL="large-v3-turbo"
 KOKORO_VOICES=""
 ALL_KOKORO_VOICES=false
 
@@ -240,6 +244,14 @@ if [ "$SKIP_MODELS" = false ]; then
             --output "$NEMOTRON_MODEL_DIR"
     fi
     
+    # Gipformer is the CPU fallback for unresolved marker/VAD chunks.
+    print_info "Downloading Gipformer fallback model..."
+    if ! "$PYTHON_CMD" -c "import huggingface_hub" >/dev/null 2>&1; then
+        "$PYTHON_CMD" -m pip install huggingface-hub
+    fi
+    bash "$SCRIPT_DIR/download-gipformer-model.sh" \
+        --output "$GIPFORMER_MODEL_DIR"
+
     # Download Kokoro model
     print_info "Downloading Kokoro TTS model..."
     KOKORO_ARGS=("$SCRIPT_DIR/download-kokoro-model.sh" "--output" "models/kokoro_models")
@@ -298,6 +310,7 @@ if [ "$SKIP_ENV" = false ]; then
     
     # Setup .env for each service
     setup_env_file "$STT_SERVICE_DIR" "STT Service"
+    setup_env_file "$NON_REALTIME_STT_DIR" "Non-Realtime STT Service"
     setup_env_file "$ORCHESTRATOR_DIR" "Orchestrator Service"
     setup_env_file "$AGENTS_DIR" "Agents Service"
     setup_env_file "$TTS_SERVICE_DIR" "TTS Service"
@@ -307,6 +320,7 @@ if [ "$SKIP_ENV" = false ]; then
     
     # Get absolute paths for models
     NEMOTRON_MODEL_PATH="$NEMOTRON_MODEL_DIR/$NEMOTRON_MODEL"
+    GIPFORMER_MODEL_PATH="$GIPFORMER_MODEL_DIR"
     KOKORO_MODEL_PATH="$KOKORO_MODEL_DIR"
     
     # Update STT Service .env
@@ -319,6 +333,26 @@ if [ "$SKIP_ENV" = false ]; then
             echo "NEMOTRON_MODEL_PATH=$NEMOTRON_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
         fi
         print_success "Updated NEMOTRON_MODEL_PATH in STT Service"
+
+        # Update WHISPER_GIPFORMER_MODEL_PATH
+        if grep -q "^WHISPER_GIPFORMER_MODEL_PATH=" "$STT_SERVICE_DIR/.env"; then
+            sed -i.tmp "s|^WHISPER_GIPFORMER_MODEL_PATH=.*|WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH|" "$STT_SERVICE_DIR/.env"
+            rm -f "$STT_SERVICE_DIR/.env.tmp"
+        else
+            echo "WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
+        fi
+        print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in STT Service"
+    fi
+
+    # Update Non-Realtime STT Service .env
+    if [ -f "$NON_REALTIME_STT_DIR/.env" ]; then
+        if grep -q "^WHISPER_GIPFORMER_MODEL_PATH=" "$NON_REALTIME_STT_DIR/.env"; then
+            sed -i.tmp "s|^WHISPER_GIPFORMER_MODEL_PATH=.*|WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH|" "$NON_REALTIME_STT_DIR/.env"
+            rm -f "$NON_REALTIME_STT_DIR/.env.tmp"
+        else
+            echo "WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH" >> "$NON_REALTIME_STT_DIR/.env"
+        fi
+        print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in Non-Realtime STT Service"
     fi
     
     # Update Agents .env
@@ -385,6 +419,7 @@ if [ "$SKIP_VENV" = false ]; then
     
     # Setup venv for each service
     setup_venv "$STT_SERVICE_DIR" "STT Service" "requirements-server.txt"
+    setup_venv "$NON_REALTIME_STT_DIR" "Non-Realtime STT Service" "requirements.txt"
     setup_venv "$ORCHESTRATOR_DIR" "Orchestrator Service" "requirements-orchestrator.txt"
     setup_venv "$AGENTS_DIR" "Agents Service" "requirements-agent.txt"
     setup_venv "$TTS_SERVICE_DIR" "TTS Service" "requirements-tts.txt"
@@ -404,6 +439,8 @@ echo -e "${GREEN}${BOLD}Summary:${NC}"
 echo ""
 echo -e "  ${GREEN}✓${NC} Models downloaded to: $MODELS_DIR"
 echo -e "  ${GREEN}✓${NC} Nemotron model: $NEMOTRON_MODEL"
+echo -e "  ${GREEN}✓${NC} Non-realtime Whisper model: $WHISPER_MODEL"
+echo -e "  ${GREEN}✓${NC} Gipformer model: gipformer-model"
 echo -e "  ${GREEN}✓${NC} Kokoro model: kokoro_models"
 echo ""
 echo -e "  ${GREEN}✓${NC} .env files created and configured"
@@ -413,6 +450,7 @@ echo -e "${CYAN}${BOLD}Next Steps:${NC}"
 echo ""
 echo -e "  1. Review and update .env files with your specific configuration:"
 echo -e "     - $STT_SERVICE_DIR/.env"
+echo -e "     - $NON_REALTIME_STT_DIR/.env"
 echo -e "     - $ORCHESTRATOR_DIR/.env"
 echo -e "     - $AGENTS_DIR/.env"
 echo ""
@@ -421,7 +459,8 @@ echo -e "     ${CYAN}sudo ./scripts/create-systemd-services.sh${NC}"
 echo ""
 echo -e "  3. Start the services manually:"
 echo -e "     ${CYAN}cd $STT_SERVICE_DIR && ./venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000${NC}"
-echo -e "     ${CYAN}cd $ORCHESTRATOR_DIR && ./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8001${NC}"
+echo -e "     ${CYAN}cd $NON_REALTIME_STT_DIR && ./venv/bin/python -m uvicorn non_realtime_stt_service.main:app --host 0.0.0.0 --port 8001${NC}"
+echo -e "     ${CYAN}cd $ORCHESTRATOR_DIR && ./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8002${NC}"
 echo -e "     ${CYAN}cd $AGENTS_DIR && ./venv/bin/python src/main.py${NC}"
 echo ""
 print_success "Setup completed successfully! 🎉"

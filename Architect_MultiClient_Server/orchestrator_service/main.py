@@ -30,7 +30,6 @@ from orchestrator_service.services.redis.redis_save_transcription_service import
     RedisSaveTranscriptionService,
 )
 from orchestrator_service.services.room_registry import get_room_registry
-from orchestrator_service.services.summary_outbox_worker import SummaryOutboxWorker
 from orchestrator_service.utils.logger import get_logger
 
 # Load config
@@ -95,10 +94,6 @@ async def lifespan(app: FastAPI):
         await save_transcription_service.start()
         logger.info("✅ Save Transcription consumer service started")
 
-        # Initialize Summary Outbox worker
-        summary_outbox_worker = SummaryOutboxWorker()
-        await summary_outbox_worker.start()
-        logger.info("✅ Summary Outbox worker started")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Redis services: {e}")
         raise
@@ -110,14 +105,6 @@ async def lifespan(app: FastAPI):
     # We just need to cleanup resources after generators are cancelled
     logger.info("🛑 FastAPI shutting down, cleaning up resources...")
 
-    # Step 0: Stop summary outbox worker
-    try:
-        logger.info("Step 0/6: Stopping Summary Outbox worker...")
-        summary_outbox_worker = SummaryOutboxWorker()
-        await summary_outbox_worker.stop()
-        logger.info("✅ Summary Outbox worker stopped")
-    except Exception as e:
-        logger.error(f"Error stopping Summary Outbox worker: {e}")
 
     # Step 1: Stop save transcription service
     try:

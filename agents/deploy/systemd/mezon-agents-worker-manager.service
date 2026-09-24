@@ -48,8 +48,8 @@ ProtectHome=true
 #     a start) -- exactly the KillMode=process tradeoff above: an agent
 #     surviving its parent's restart is only useful if worker-manager can
 #     still reach it afterward.
-StateDirectory=mezon-agents
-RuntimeDirectory=mezon-agents
+StateDirectory=/var/lib/mezon-agents
+RuntimeDirectory=/run/mezon-agents
 RuntimeDirectoryPreserve=restart
 
 [Install]

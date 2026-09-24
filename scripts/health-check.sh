@@ -19,13 +19,17 @@ ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 
 # Service directories
 STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+NON_REALTIME_STT_DIR="$PROJECT_ROOT/non_realtime_stt_service"
 ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
 
 # Model directories
 MODELS_DIR="$PROJECT_ROOT/models"
 NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
+WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
+GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
+GIPFORMER_FILES=("encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt")
 
 # Counters
 TOTAL_CHECKS=0
@@ -52,20 +56,20 @@ print_section() {
 
 check_pass() {
     echo -e "${GREEN}✅ $1${NC}"
-    ((PASSED_CHECKS++))
-    ((TOTAL_CHECKS++))
+    ((PASSED_CHECKS+=1))
+    ((TOTAL_CHECKS+=1))
 }
 
 check_fail() {
     echo -e "${RED}❌ $1${NC}"
-    ((FAILED_CHECKS++))
-    ((TOTAL_CHECKS++))
+    ((FAILED_CHECKS+=1))
+    ((TOTAL_CHECKS+=1))
 }
 
 check_warn() {
     echo -e "${YELLOW}⚠️  $1${NC}"
-    ((WARNING_CHECKS++))
-    ((TOTAL_CHECKS++))
+    ((WARNING_CHECKS+=1))
+    ((TOTAL_CHECKS+=1))
 }
 
 print_info() {
@@ -80,11 +84,9 @@ print_header
 # ============================================================================
 print_section "Python Installation"
 
-if command -v python3 &> /dev/null; then
-    PYTHON_VERSION=$(python3 --version 2>&1)
+if command -v python3 &> /dev/null && PYTHON_VERSION=$(python3 --version 2>&1); then
     check_pass "Python3 installed: $PYTHON_VERSION"
-elif command -v python &> /dev/null; then
-    PYTHON_VERSION=$(python --version 2>&1)
+elif command -v python &> /dev/null && PYTHON_VERSION=$(python --version 2>&1); then
     check_warn "Python installed: $PYTHON_VERSION (python3 recommended)"
 else
     check_fail "Python not found"
@@ -107,6 +109,35 @@ if [ -d "$NEMOTRON_MODEL_DIR" ]; then
 else
     check_fail "Nemotron model directory not found: $NEMOTRON_MODEL_DIR"
     print_info "  Run: bash scripts/download-nemotron-model.sh"
+fi
+
+# faster-whisper resolves and downloads/caches the model on STT startup.
+print_info "Non-realtime Whisper model is managed by faster-whisper cache"
+
+if [ -f "$NON_REALTIME_STT_DIR/non_realtime_stt_service/assets/whisper_marker.wav" ] || [ -f "$STT_SERVICE_DIR/assets/whisper_marker.wav" ]; then
+    check_pass "Non-realtime Whisper marker asset found"
+else
+    check_fail "Non-realtime Whisper marker asset is missing"
+fi
+
+# Check Gipformer model
+if [ -d "$GIPFORMER_MODEL_DIR" ]; then
+    missing=false
+    for f in "${GIPFORMER_FILES[@]}"; do
+        if [ ! -f "$GIPFORMER_MODEL_DIR/$f" ]; then
+            missing=true
+            break
+        fi
+    done
+    if [ "$missing" = false ]; then
+        check_pass "Gipformer fallback model found in $GIPFORMER_MODEL_DIR"
+    else
+        check_fail "Gipformer fallback model is incomplete in $GIPFORMER_MODEL_DIR"
+        print_info "  Run: bash scripts/download-gipformer-model.sh"
+    fi
+else
+    check_fail "Gipformer model directory not found: $GIPFORMER_MODEL_DIR"
+    print_info "  Run: bash scripts/download-gipformer-model.sh"
 fi
 
 # Check Kokoro model
@@ -147,6 +178,7 @@ check_service_dir() {
 }
 
 check_service_dir "STT Service" "$STT_SERVICE_DIR"
+check_service_dir "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR"
 check_service_dir "Orchestrator Service" "$ORCHESTRATOR_DIR"
 check_service_dir "Agents Service" "$AGENTS_DIR"
 
@@ -172,8 +204,30 @@ check_venv() {
 }
 
 check_venv "STT Service" "$STT_SERVICE_DIR/venv"
+check_venv "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/venv"
 check_venv "Orchestrator Service" "$ORCHESTRATOR_DIR/venv"
 check_venv "Agents Service" "$AGENTS_DIR/venv"
+
+# Gipformer runs in the STT / Non-Realtime STT virtual environment. Keep this separate from the
+# cache check so a missing Python dependency is distinguishable from a missing
+# Hugging Face artifact.
+if [ -x "$NON_REALTIME_STT_DIR/venv/bin/python" ]; then
+    if "$NON_REALTIME_STT_DIR/venv/bin/python" -c "import sherpa_onnx" >/dev/null 2>&1; then
+        check_pass "Non-Realtime STT venv has sherpa-onnx for Gipformer fallback"
+    else
+        check_fail "Non-Realtime STT venv is missing sherpa-onnx for Gipformer fallback"
+        print_info "  Install requirements: $NON_REALTIME_STT_DIR/venv/bin/pip install -r $NON_REALTIME_STT_DIR/requirements.txt"
+    fi
+elif [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
+    if "$STT_SERVICE_DIR/venv/bin/python" -c "import sherpa_onnx" >/dev/null 2>&1; then
+        check_pass "STT venv has sherpa-onnx for Gipformer fallback"
+    else
+        check_fail "STT venv is missing sherpa-onnx for Gipformer fallback"
+        print_info "  Install STT requirements: $STT_SERVICE_DIR/venv/bin/pip install -r $STT_SERVICE_DIR/requirements-server.txt"
+    fi
+else
+    check_warn "Cannot verify sherpa-onnx because STT Linux venv is unavailable"
+fi
 
 # ============================================================================
 # Check .env Files
@@ -198,6 +252,7 @@ check_env_file() {
 }
 
 check_env_file "STT Service" "$STT_SERVICE_DIR/.env" "$STT_SERVICE_DIR/.env.example"
+check_env_file "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/.env" "$NON_REALTIME_STT_DIR/.env.example"
 check_env_file "Orchestrator Service" "$ORCHESTRATOR_DIR/.env" "$ORCHESTRATOR_DIR/.env.example"
 check_env_file "Agents Service" "$AGENTS_DIR/.env" "$AGENTS_DIR/.env.example"
 
@@ -218,6 +273,7 @@ check_requirements() {
 }
 
 check_requirements "STT Service" "$STT_SERVICE_DIR/requirements-server.txt"
+check_requirements "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/requirements.txt"
 check_requirements "Orchestrator Service" "$ORCHESTRATOR_DIR/requirements-orchestrator.txt"
 check_requirements "Agents Service" "$AGENTS_DIR/requirements-agent.txt"
 
@@ -247,6 +303,7 @@ if command -v systemctl &> /dev/null; then
     }
     
     check_systemd_service "mezon-stt-service"
+    check_systemd_service "mezon-non-realtime-stt-service"
     check_systemd_service "mezon-orchestrator-service"
     check_systemd_service "mezon-agents-service"
 fi
@@ -278,8 +335,8 @@ check_port() {
 }
 
 check_port "8000" "STT Service"
-check_port "8001" "Orchestrator Service"
-check_port "8002" "Agents Service"
+check_port "8001" "Non-Realtime STT Service"
+check_port "8002" "Orchestrator Service"
 
 # ============================================================================
 # Summary

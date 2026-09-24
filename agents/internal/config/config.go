@@ -187,7 +187,7 @@ func FromEnv() (Config, error) {
 	cfg := Config{
 		SFUWebSocketURL:  getEnv("SFU_WS_URL", "ws://127.0.0.1:8000/ws"),
 		JWTSecret:        getEnv("SFU_JWT_SECRET", "default"),
-		Role:             Role(getEnv("AGENT_ROLE", string(RoleAudience))),
+		Role:             Role(getEnv("AGENT_ROLE", string(RoleSpeaker))),
 		ControlSocketDir: getEnv("AGENT_SOCKET_DIR", "/tmp/mezon-agents"),
 	}
 
