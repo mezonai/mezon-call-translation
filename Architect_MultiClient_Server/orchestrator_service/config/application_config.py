@@ -427,11 +427,6 @@ class LightSummaryConfig:
         )
 
 
-# ============================================================================
-# Agents Bot Configuration
-# ============================================================================
-
-
 @dataclass
 class TranscriptCorrectionConfig:
     provider: str = "mezon"
@@ -469,23 +464,6 @@ class TranscriptCorrectionConfig:
             fallback_top_p=float(os.getenv("CORRECTION_LLM_FALLBACK_TOP_P", "0.4")),
             fallback_timeout=int(os.getenv("CORRECTION_LLM_FALLBACK_TIMEOUT", "120")),
             fallback_retry_count=int(os.getenv("CORRECTION_LLM_FALLBACK_RETRY_COUNT", "3")),
-        )
-
-@dataclass
-class AgentsBotConfig:
-    """
-    Base URL for the Go agents-bot service.
-
-    agents-bot owns the current voice-channel roster and user_id -> username
-    cache populated from Mezon events.
-    """
-
-    base_url: str = ""
-
-    @classmethod
-    def from_env(cls) -> "AgentsBotConfig":
-        return cls(
-            base_url=os.getenv("AGENTS_BOT_BASE_URL", "http://localhost:8003"),
         )
 
 
@@ -539,7 +517,6 @@ class Config:
         self.light_summary = LightSummaryConfig.from_env()
         self.transcript_correction = TranscriptCorrectionConfig.from_env()
 
-        self.agents_bot = AgentsBotConfig.from_env()
         self._initialized = True
         self._validate_all()
 
