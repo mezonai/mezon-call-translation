@@ -169,31 +169,6 @@ class TranscriptionService:
             return False
         
 
-    async def force_save_participant(
-        self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None
-    ) -> bool:
-        """
-        Save participant info to PostgreSQL
-
-        Args:
-            participant_identity: Participant identity
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            result = await self.pg_repo.force_save_participant(
-                room_id=room_id,
-                participant_identity=participant_identity,
-                timestamp=timestamp,
-                username=username,
-            )
-            return result
-        except Exception as e:
-            logger.exception(f"Failed to save participant: {e}")
-            return False
-
-
     async def save_participant(
         self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None
     ) -> bool:
