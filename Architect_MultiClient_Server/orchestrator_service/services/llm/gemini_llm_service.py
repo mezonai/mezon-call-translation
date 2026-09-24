@@ -7,6 +7,7 @@ from google.genai import errors as genai_errors
 from pydantic import BaseModel
 
 from orchestrator_service.config.application_config import LLMConfig
+from orchestrator_service.exceptions import LlmInvalidResponseError
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.utils.llm_utils import extract_json_from_llm
 from orchestrator_service.utils.logger import get_logger
@@ -34,6 +35,7 @@ def _extract_retry_delay_seconds(error_payload: Any) -> float | None:  # type: i
                 except ValueError:
                     return None
     return None
+
 
 class GeminiLLMService(BaseLLMService):
     def __init__(self, config: LLMConfig):
@@ -68,6 +70,6 @@ class GeminiLLMService(BaseLLMService):
             raise
 
         if response.text is None:
-            raise ValueError("Empty response text from Gemini API")
+            raise LlmInvalidResponseError("Empty response text from Gemini API")
         parsed_json = extract_json_from_llm(response.text)
         return response_model.model_validate(parsed_json)

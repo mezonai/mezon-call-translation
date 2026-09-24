@@ -17,6 +17,11 @@ from tenacity import (
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
+from orchestrator_service.exceptions import (
+    RoomSummaryNotFoundError,
+    TranscriptCorrectionPersistenceError,
+    TranscriptMessagesNotFoundError,
+)
 from orchestrator_service.models.transcript_models import TranscriptCorrectionResult, TranscriptCorrectionRetryType
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.llm_factory import create_llm_service
@@ -148,11 +153,11 @@ class TranscriptCorrectionService:
         """
         summary_doc, _room_doc = await self.pg_summary_repo.get_summary_by_room_id(room_id)
         if not summary_doc:
-            raise ValueError(f"Room summary not found for room_id: {room_id}")
+            raise RoomSummaryNotFoundError(f"Room summary not found for room_id: {room_id}")
 
         messages = summary_doc.messages
         if not messages:
-            raise ValueError(f"No messages found for room_id: {room_id}")
+            raise TranscriptMessagesNotFoundError(f"No messages found for room_id: {room_id}")
 
         # Ensure we have a clean copy to update
         corrected_messages = list(messages)
@@ -235,7 +240,7 @@ class TranscriptCorrectionService:
             )
             if not flushed:
                 logger.error(f"Failed to flush progress at chunk {start_idx}->{end_idx - 1} for room {room_id}")
-                raise RuntimeError(f"DB flush failed at chunk ending idx {end_idx - 1}")
+                raise TranscriptCorrectionPersistenceError(f"DB flush failed at chunk ending idx {end_idx - 1}")
 
             logger.info(f"✅ Flushed chunk {start_idx}->{end_idx - 1} for room {room_id}")
             start_idx = end_idx

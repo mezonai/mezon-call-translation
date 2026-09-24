@@ -103,7 +103,7 @@ class ParticipantJoinedRequest(BaseModel):  # type: ignore[explicit-any]
         return v
 
 
-class ParticipantChatRequest(ParticipantJoinedRequest):
+class ParticipantChatRequest(ParticipantJoinedRequest):  # type: ignore[explicit-any]
     """A participant discovered through an external chat message."""
 
     username: str = Field(

@@ -3,6 +3,7 @@ Factory for creating LLM service instances based on provider type
 """
 
 from orchestrator_service.config.application_config import LLMProvider, get_config
+from orchestrator_service.exceptions import UnsupportedLlmProviderError
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.gemini_llm_service import GeminiLLMService
 from orchestrator_service.services.llm.mezon_llm_service import MezonLLMService
@@ -25,7 +26,7 @@ def create_llm_service(provider: str, model: str, temperature: float, top_p: flo
         Concrete implementation of BaseLLMService
 
     Raises:
-        ValueError: If provider is unknown or unsupported
+        UnsupportedLlmProviderError: If provider is unknown or unsupported
     """
     provider = provider.lower()
     config = get_config()
@@ -38,10 +39,12 @@ def create_llm_service(provider: str, model: str, temperature: float, top_p: flo
         llm_config = config.mezon_llm_config
         service = MezonLLMService(llm_config)
     else:
-        raise ValueError(
+        raise UnsupportedLlmProviderError(
             f"Unknown LLM provider: {provider}. "
             f"Supported providers: {LLMProvider.GEMINI.value}, {LLMProvider.MEZON.value}"
         )
 
-    logger.info(f"Creating LLM service for provider: {provider}, model: {model}, temperature: {temperature}, top_p: {top_p}.")
+    logger.info(
+        f"Creating LLM service for provider: {provider}, model: {model}, temperature: {temperature}, top_p: {top_p}."
+    )
     return service
