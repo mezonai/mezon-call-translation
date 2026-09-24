@@ -385,10 +385,10 @@ class ClientInferencePipeline:
 
                 self._emit_result("transcript", result_payload)
                 if is_final:
-                    logger.debug(f"Emitting final result for client {self.client_id}: {text[:50]}...")
+                    logger.info(f"Emitting final result for client {self.client_id}: {text[:50]}...")
                     self.stats.final_results += 1
                 else:
-                    logger.debug(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
+                    logger.info(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
                     self.stats.partial_results += 1
         
         except Exception as e:
@@ -468,6 +468,21 @@ class ClientInferencePipeline:
                 # But when a speaker disconnects, the remaining audio might be shorter: eg 300 ms remaining,
                 # Without padding, that audio cannot form a complete 560 ms Nemotron block and would never be transcribed.
                 self._process_accumulated_chunks(pad_to_model_chunk=True)
+            # The padded tail is shorter than the VAD silence window, so the
+            # last utterance would otherwise stay a partial forever.
+            final_text = self.nemotron_stream.flush()
+            if final_text:
+                result_payload = {
+                    "text": final_text,
+                    "is_final": True,
+                    "client_id": self.client_id,
+                    "session_id": self.session_id,
+                    "timestamp": time.time()
+                }
+                if self.last_chunk_id is not None:
+                    result_payload["chunk_id"] = self.last_chunk_id
+                self._emit_result("transcript", result_payload)
+                self.stats.final_results += 1
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error processing final chunks: {e}")
         

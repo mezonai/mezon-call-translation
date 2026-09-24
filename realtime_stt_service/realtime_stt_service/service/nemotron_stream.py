@@ -116,3 +116,9 @@ class NemotronStream:
 
         text = self.current_text.strip()
         return text, False
+
+    def flush(self) -> str:
+        """Finalize pending text at end of stream, when VAD never saw enough silence to end the utterance."""
+        text = self.current_text.strip()
+        self.current_text = ""
+        return text

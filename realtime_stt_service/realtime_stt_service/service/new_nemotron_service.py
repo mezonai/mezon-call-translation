@@ -30,7 +30,7 @@ class NewSTTNemotronService:
         configured_path = model_path or self.config.stt.nemotron_model_path
         resolved_path = Path(configured_path)
         if not resolved_path.is_absolute():
-            project_root = Path(__file__).resolve().parents[2]
+            project_root = Path(__file__).resolve().parents[3]
             resolved_path = project_root / "models" / "nemotron-model" / resolved_path
 
         if not resolved_path.exists():
