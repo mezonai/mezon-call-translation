@@ -1,7 +1,7 @@
 // Package gateway is the core of agents-bot: it initializes the mezon-sdk-go
-// client, listens for voice/chat events to populate the user cache, manages
-// an active-room registry, and serves an HTTP API for agents to resolve
-// user profiles and register rooms.
+// client, forwards chat messages from active rooms to orchestrator, manages
+// the active-room registry, and serves room-registration, health, and bot-profile
+// HTTP endpoints.
 package gateway
 
 import (
@@ -9,19 +9,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	mezon "github.com/quangledang23/mezon-sdk-go"
 	mezonapi "github.com/quangledang23/mezon-sdk-go/api"
-	"github.com/quangledang23/mezon-sdk-go/rtapi"
 
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/config"
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/logging"
 	"github.com/mezonai/mezon-call-translation/agents-bot/internal/orchestratorclient"
-	"github.com/mezonai/mezon-call-translation/agents-bot/internal/userresolver"
 )
 
 // RoomInfo holds the active room metadata registered by an agent.
@@ -39,7 +35,6 @@ type Gateway struct {
 	cfg        config.Config
 	client     *mezon.MezonClient
 	accountAPI *mezon.MezonApi
-	resolver   *userresolver.Resolver
 	orch       orchestratorAPI
 
 	// activeRooms maps room_name (SFU numeric id as string) → RoomInfo.
@@ -76,7 +71,6 @@ func New(cfg config.Config) (*Gateway, error) {
 	g := &Gateway{
 		cfg:         cfg,
 		client:      client,
-		resolver:    userresolver.New(),
 		orch:        orchestratorclient.New(cfg.OrchestratorBaseURL, cfg.InternalAPISecret),
 		activeRooms: make(map[string]*RoomInfo),
 	}
@@ -99,11 +93,8 @@ func (g *Gateway) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", g.handleHealthz)
 	mux.HandleFunc("GET /api/bot/profile", g.handleGetBotProfile)
-	mux.HandleFunc("GET /api/users/{id}", g.handleGetUser)
-	mux.HandleFunc("POST /api/users", g.handleBatchUsers)
 	mux.HandleFunc("POST /api/rooms/register", g.handleRoomRegister)
 	mux.HandleFunc("POST /api/rooms/unregister", g.handleRoomUnregister)
-	mux.HandleFunc("GET /api/rooms/{room_name}/participants", g.handleGetRoomParticipants)
 
 	addr := fmt.Sprintf(":%d", g.cfg.GatewayPort)
 	srv := &http.Server{Addr: addr, Handler: mux}
@@ -125,45 +116,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 
 // registerEventHandlers wires SDK event listeners.
 func (g *Gateway) registerEventHandlers() {
-	// VoiceJoinedEvent: primary source of user_id → participant name mapping
-	g.client.On(mezon.EventVoiceJoined, func(payload any) {
-		ev, ok := payload.(*rtapi.VoiceJoinedEvent)
-		if !ok || ev == nil {
-			return
-		}
-		userID := strconv.FormatInt(ev.UserId, 10)
-		channelID := strconv.FormatInt(ev.VoiceChannelId, 10)
-		clanID := ""
-		if ev.ClanId != 0 {
-			clanID = strconv.FormatInt(ev.ClanId, 10)
-		}
-
-		g.resolver.CacheFromVoiceJoined(userID, ev.Participant, channelID, clanID)
-		logging.L.Debug(
-			"agents-bot: voice joined",
-			"user_id", userID,
-			"name", ev.Participant,
-			"channel_id", channelID,
-			"clan_id", clanID,
-			"channel_label", ev.VoiceChannelLabel,
-			"clan_name", ev.ClanName,
-		)
-	})
-
-	// VoiceLeavedEvent: remove current channel membership but keep the user
-	// profile cache because the user may rejoin later.
-	g.client.On(mezon.EventVoiceLeaved, func(payload any) {
-		ev, ok := payload.(*rtapi.VoiceLeavedEvent)
-		if !ok || ev == nil {
-			return
-		}
-		userID := strconv.FormatInt(ev.VoiceUserId, 10)
-		channelID := strconv.FormatInt(ev.VoiceChannelId, 10)
-		g.resolver.RemoveFromVoiceChannel(userID, channelID)
-		logging.L.Debug("agents-bot: voice left", "user_id", userID, "channel_id", channelID)
-	})
-
-	// ChannelMessage: cache user info + forward to orchestrator if room is active
+	// ChannelMessage: forward to orchestrator if room is active
 	g.client.OnChannelMessage(func(m *mezon.ChannelMessage) {
 		if m == nil {
 			return
@@ -181,14 +134,6 @@ func (g *Gateway) registerEventHandlers() {
 			"message_id", m.MessageID,
 		)
 
-		// Cache user profile from message fields
-		if m.SenderID != "" {
-			g.resolver.CacheFromMessage(
-				m.SenderID, m.Username, m.DisplayName, m.ClanID, m.ClanNick, m.Avatar,
-			)
-		}
-
-		// Forward chat to orchestrator if this channel belongs to an active room
 		g.forwardChatIfActive(m)
 	})
 
@@ -197,7 +142,6 @@ func (g *Gateway) registerEventHandlers() {
 			"agents-bot: SDK ready",
 			"client_id", g.client.ClientID,
 			"clans", g.client.Clans.Size(),
-			"user_cache", g.resolver.Size(),
 		)
 	})
 }
@@ -214,8 +158,8 @@ func (g *Gateway) forwardChatIfActive(m *mezon.ChannelMessage) {
 		return
 	}
 
-	// Stable numeric identity -- match the agent's STT pipeline (SenderID).
-	// Display names are resolved at render time via agents-bot's /api/users.
+	// Forward the stable numeric identity used by the agent's STT pipeline.
+	// Participant username persistence is handled separately from SFU metadata.
 	identity := m.SenderID
 
 	message := m.ContentText()
@@ -250,8 +194,7 @@ func (g *Gateway) forwardChatIfActive(m *mezon.ChannelMessage) {
 
 func (g *Gateway) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":     "ok",
-		"user_cache": g.resolver.Size(),
+		"status": "ok",
 	})
 }
 
@@ -286,72 +229,6 @@ func (g *Gateway) handleGetBotProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, botProfileResponse{
 		Username: user.GetUsername(),
 		Avatar:   user.GetAvatarUrl(),
-	})
-}
-
-func (g *Gateway) handleGetUser(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing user id"})
-		return
-	}
-
-	user := g.resolver.Get(id)
-	if user == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error":   "user_not_found",
-			"user_id": id,
-		})
-		return
-	}
-
-	clanID, _ := g.resolveRoomClanContext(r.URL.Query().Get("room_name"))
-	writeJSON(w, http.StatusOK, newUserResponseItem(user, clanID))
-}
-
-type batchRequest struct {
-	UserIDs  []string `json:"user_ids"`
-	RoomName string   `json:"room_name,omitempty"`
-}
-
-type userResponseItem struct {
-	UserID       string `json:"user_id"`
-	Username     string `json:"username"`
-	DisplayName  string `json:"display_name"`
-	ClanNick     string `json:"clan_nick,omitempty"`
-	DisplayLabel string `json:"display_label"`
-	Avatar       string `json:"avatar,omitempty"`
-}
-
-type batchResponse struct {
-	Users           []userResponseItem `json:"users"`
-	NotFound        []string           `json:"not_found"`
-	ContextResolved bool               `json:"context_resolved"`
-}
-
-func (g *Gateway) handleBatchUsers(w http.ResponseWriter, r *http.Request) {
-	var req batchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
-		return
-	}
-	if len(req.UserIDs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_ids required"})
-		return
-	}
-	clanID, contextResolved := g.resolveRoomClanContext(req.RoomName)
-	found, notFound := g.resolver.GetBatch(req.UserIDs)
-	users := make([]userResponseItem, 0, len(found))
-	for _, user := range found {
-		users = append(users, newUserResponseItem(user, clanID))
-	}
-	if notFound == nil {
-		notFound = []string{}
-	}
-	writeJSON(w, http.StatusOK, batchResponse{
-		Users:           users,
-		NotFound:        notFound,
-		ContextResolved: contextResolved,
 	})
 }
 
@@ -420,61 +297,7 @@ func (g *Gateway) handleRoomUnregister(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "room_name": req.RoomName})
 }
 
-type roomParticipant struct {
-	ParticipantIdentity string `json:"participant_identity"`
-	Username            string `json:"username,omitempty"`
-}
-
-func (g *Gateway) handleGetRoomParticipants(w http.ResponseWriter, r *http.Request) {
-	roomName := r.PathValue("room_name")
-	if roomName == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing room_name"})
-		return
-	}
-
-	clanID := g.resolver.GetChannelClan(roomName)
-	users := g.resolver.GetChannelUsers(roomName)
-
-	participants := make([]roomParticipant, 0, len(users))
-	for _, u := range users {
-		participants = append(participants, roomParticipant{
-			ParticipantIdentity: u.UserID,
-			Username:            u.KnownDisplayLabel(clanID),
-		})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"room_name":    roomName,
-		"participants": participants,
-	})
-}
-
 // ─── Helpers ────────────────────────────────────────────────────────────
-
-func newUserResponseItem(user *userresolver.UserInfo, clanID string) userResponseItem {
-	return userResponseItem{
-		UserID:       user.UserID,
-		Username:     user.Username,
-		DisplayName:  user.DisplayName,
-		ClanNick:     user.ClanNick(clanID),
-		DisplayLabel: user.KnownDisplayLabel(clanID),
-		Avatar:       user.Avatar,
-	}
-}
-
-// resolveRoomClanContext looks up the clan internally from the room/channel ID.
-// A request without a room intentionally uses the generic, non-clan label.
-func (g *Gateway) resolveRoomClanContext(roomName string) (string, bool) {
-	roomName = strings.TrimSpace(roomName)
-	if roomName == "" {
-		return "", true
-	}
-
-	roomClanID := g.resolver.GetChannelClan(roomName)
-	if roomClanID == "" {
-		return "", false
-	}
-	return roomClanID, true
-}
 
 func newAccountAPI(client *mezon.MezonClient) *mezon.MezonApi {
 	scheme := "http"
@@ -491,11 +314,4 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
-}
-
-// splitPath is unused in Go 1.22+ (PathValue handles routing) but kept
-// for potential fallback if needed.
-func splitPath(path string) []string {
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	return parts
 }

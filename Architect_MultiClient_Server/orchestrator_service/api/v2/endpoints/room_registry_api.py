@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from orchestrator_service.api.sse.channels.metadata_channel import MetadataChannel
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.room_registry_models import (
-    ParticipantChatRequest,
     ParticipantJoinedRequest,
     ParticipantJoinedResponse,
     ParticipantSnapshotRequest,
@@ -21,7 +20,6 @@ from orchestrator_service.models.room_registry_models import (
     RoomUnregisterRequest,
     RoomUnregisterResponse,
 )
-from orchestrator_service.services.agents_bot_user_client import resolve_agents_bot_usernames
 from orchestrator_service.services.room_registry import get_room_registry
 from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.utils.asyncio_task_manager import asyncio_create_task_safety
@@ -98,44 +96,40 @@ async def participant_snapshot(
     auth: dict[str, str | bool] = Depends(verify_api_key),
 ) -> ParticipantSnapshotResponse:
     """Persist a snapshot of participants from a room."""
-    participant_identities = list(dict.fromkeys(request.participant_identities))
-
-    usernames = await resolve_agents_bot_usernames(
-        participant_identities,
-        room_name=request.room_name,
-    )
-
-    participants = [
-        {
-            "participant_identity": identity,
-            "username": usernames.get(identity),
+    participants_by_identity: dict[str, dict[str, str]] = {}
+    for participant in request.participants:
+        # The last entry wins when the same identity appears more than once
+        # in one snapshot, preventing duplicate JSONB participant records.
+        participants_by_identity[participant.participant_identity] = {
+            "participant_identity": participant.participant_identity,
+            "username": participant.username,
         }
-        for identity in participant_identities
-    ]
+
+    room_participants = list(participants_by_identity.values())
+    resolved_count = sum(
+        1 for participant in room_participants if participant["username"].strip()
+    )
+    unresolved_count = len(room_participants) - resolved_count
 
     if not await transcription_service.save_participants_batch(
         room_id=request.room_id,
-        participants=participants,
+        participants=room_participants,
     ):
         raise HTTPException(
             status_code=500,
             detail="Failed to save participant snapshot",
         )
 
-    resolved_count = sum(
-        1 for identity in participant_identities if identity in usernames
-    )
-    unresolved_count = len(participants) - resolved_count
     logger.info(
         f"Participant snapshot for room '{request.room_name}' (room_id={request.room_id}): "
-        f"{len(participants)} participants, {resolved_count} resolved, {unresolved_count} unresolved"
+        f"{len(room_participants)} participants, {resolved_count} resolved, "
+        f"{unresolved_count} unresolved"
     )
 
     return ParticipantSnapshotResponse(
         status="ok",
         room_name=request.room_name,
         room_id=request.room_id,
-        participant_count=len(participants),
         resolved_username_count=resolved_count,
         unresolved_username_count=unresolved_count,
     )
@@ -146,48 +140,14 @@ async def participant_joined(
     request: ParticipantJoinedRequest,
     auth: dict[str, str | bool] = Depends(verify_api_key),
 ) -> ParticipantJoinedResponse:
-    """Persist a participant from the Go agent's ``peer_joined`` event.
+    """Persist the identity and SFU metadata display name from ``peer_joined``."""
 
-    The agent only forwards the stable Mezon user id.  Username resolution is
-    deliberately owned by agents-bot, the service that receives Mezon identity
-    events.
-    """
-    usernames = await resolve_agents_bot_usernames(
-        [request.participant_identity],
-        room_name=request.room_name,
-    )
-
-    username = usernames.get(request.participant_identity)
     if not await transcription_service.save_participant(
-        room_id=request.room_id,
-        participant_identity=request.participant_identity,
-        username=username,
-    ):
-        raise HTTPException(status_code=500, detail="Failed to persist participant")
-
-    return ParticipantJoinedResponse(
-        status="ok",
-        room_name=request.room_name,
-        room_id=request.room_id,
-        participant_identity=request.participant_identity,
-    )
-
-
-@router.post("/external/participant-chat", response_model=ParticipantJoinedResponse)
-async def external_participant_chat(
-    request: ParticipantChatRequest,
-    auth: dict[str, str | bool] = Depends(verify_api_key),
-) -> ParticipantJoinedResponse:
-    """Persist one participant discovered through a room chat message."""
-    if not await transcription_service.force_save_participant(
         room_id=request.room_id,
         participant_identity=request.participant_identity,
         username=request.username,
     ):
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to persist external chat participant",
-        )
+        raise HTTPException(status_code=500, detail="Failed to persist participant")
 
     return ParticipantJoinedResponse(
         status="ok",

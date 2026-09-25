@@ -130,6 +130,11 @@ type offerMsg struct {
 	SDP             string `json:"sdp"`
 }
 
+type memberMetadata struct {
+	Username string `json:"username"`
+	Avatar   string `json:"avatar"`
+}
+
 // Member is the roster entry shape shared by room_snapshot.members[],
 // peer_joined.peer and peer_updated.peer. See joinedMsg.Room's doc for why
 // UserID needs `,string` while PeerID/MidAudio/MidVideo/MidScreen don't --
@@ -138,12 +143,24 @@ type offerMsg struct {
 type Member struct {
 	PeerID    uint64 `json:"peer_id"`
 	UserID    int64  `json:"user_id,string"`
+	Metadata  string `json:"metadata"`
 	Role      string `json:"role"`
 	IsMute    bool   `json:"is_mute"`
 	Ufrag     string `json:"ufrag"`
 	MidAudio  uint32 `json:"mid_audio"`
 	MidVideo  uint32 `json:"mid_video"`
 	MidScreen uint32 `json:"mid_screen"`
+}
+
+// ParseMemberMetadata decodes the SFU metadata JSON string containing
+// username and avatar. Username is presentation data; use Member.UserID for
+// participant identity.
+func ParseMemberMetadata(metadata string) (displayName, avatarURL string) {
+	var parser memberMetadata
+	if err := json.Unmarshal([]byte(metadata), &parser); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(parser.Username), parser.Avatar
 }
 
 type roomSnapshotMsg struct {

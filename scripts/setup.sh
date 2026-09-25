@@ -24,6 +24,7 @@ ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 
 # Service directories
 STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+NON_REALTIME_STT_DIR="$PROJECT_ROOT/non_realtime_stt_service"
 ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
 TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
@@ -309,6 +310,7 @@ if [ "$SKIP_ENV" = false ]; then
     
     # Setup .env for each service
     setup_env_file "$STT_SERVICE_DIR" "STT Service"
+    setup_env_file "$NON_REALTIME_STT_DIR" "Non-Realtime STT Service"
     setup_env_file "$ORCHESTRATOR_DIR" "Orchestrator Service"
     setup_env_file "$AGENTS_DIR" "Agents Service"
     setup_env_file "$TTS_SERVICE_DIR" "TTS Service"
@@ -340,6 +342,17 @@ if [ "$SKIP_ENV" = false ]; then
             echo "WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
         fi
         print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in STT Service"
+    fi
+
+    # Update Non-Realtime STT Service .env
+    if [ -f "$NON_REALTIME_STT_DIR/.env" ]; then
+        if grep -q "^WHISPER_GIPFORMER_MODEL_PATH=" "$NON_REALTIME_STT_DIR/.env"; then
+            sed -i.tmp "s|^WHISPER_GIPFORMER_MODEL_PATH=.*|WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH|" "$NON_REALTIME_STT_DIR/.env"
+            rm -f "$NON_REALTIME_STT_DIR/.env.tmp"
+        else
+            echo "WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH" >> "$NON_REALTIME_STT_DIR/.env"
+        fi
+        print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in Non-Realtime STT Service"
     fi
     
     # Update Agents .env
@@ -406,6 +419,7 @@ if [ "$SKIP_VENV" = false ]; then
     
     # Setup venv for each service
     setup_venv "$STT_SERVICE_DIR" "STT Service" "requirements-server.txt"
+    setup_venv "$NON_REALTIME_STT_DIR" "Non-Realtime STT Service" "requirements.txt"
     setup_venv "$ORCHESTRATOR_DIR" "Orchestrator Service" "requirements-orchestrator.txt"
     setup_venv "$AGENTS_DIR" "Agents Service" "requirements-agent.txt"
     setup_venv "$TTS_SERVICE_DIR" "TTS Service" "requirements-tts.txt"
@@ -436,6 +450,7 @@ echo -e "${CYAN}${BOLD}Next Steps:${NC}"
 echo ""
 echo -e "  1. Review and update .env files with your specific configuration:"
 echo -e "     - $STT_SERVICE_DIR/.env"
+echo -e "     - $NON_REALTIME_STT_DIR/.env"
 echo -e "     - $ORCHESTRATOR_DIR/.env"
 echo -e "     - $AGENTS_DIR/.env"
 echo ""
@@ -444,7 +459,8 @@ echo -e "     ${CYAN}sudo ./scripts/create-systemd-services.sh${NC}"
 echo ""
 echo -e "  3. Start the services manually:"
 echo -e "     ${CYAN}cd $STT_SERVICE_DIR && ./venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000${NC}"
-echo -e "     ${CYAN}cd $ORCHESTRATOR_DIR && ./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8001${NC}"
+echo -e "     ${CYAN}cd $NON_REALTIME_STT_DIR && ./venv/bin/python -m uvicorn non_realtime_stt_service.main:app --host 0.0.0.0 --port 8001${NC}"
+echo -e "     ${CYAN}cd $ORCHESTRATOR_DIR && ./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8002${NC}"
 echo -e "     ${CYAN}cd $AGENTS_DIR && ./venv/bin/python src/main.py${NC}"
 echo ""
 print_success "Setup completed successfully! 🎉"

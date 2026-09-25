@@ -2,7 +2,7 @@
 
 This directory contains scripts to help you set up and manage the Mezon Call Translation services.
 
-> **Scope:** these scripts currently set up and manage **`stt_service`, `orchestrator_service`, and `tts_service`** (all Python/FastAPI) plus the Nemotron/Kokoro model downloads. They do **not** cover the Go `agents`/`worker-manager` binaries, the Go `agents-bot` service, or the `audio-ingestion/*` services — those have their own setup/deploy docs, linked below and in [Known Gaps](#-known-gaps--not-covered-by-these-scripts). The repo used to run a Python-based agent at `Architect_MultiClient_Server/agents/`; that directory is now empty and its Python setup path is dead — see the migration note under script 1 and the Known Gaps section.
+> **Scope:** these scripts currently set up and manage **`stt_service`, `non_realtime_stt_service`, `orchestrator_service`, and `tts_service`** (all Python/FastAPI) plus the Nemotron/Gipformer/Kokoro model downloads. They do **not** cover the Go `agents`/`worker-manager` binaries, the Go `agents-bot` service, or the `audio-ingestion/*` services — those have their own setup/deploy docs, linked below and in [Known Gaps](#-known-gaps--not-covered-by-these-scripts). The repo used to run a Python-based agent at `Architect_MultiClient_Server/agents/`; that directory is now empty and its Python setup path is dead — see the migration note under script 1 and the Known Gaps section.
 
 ## 📋 Available Scripts
 
@@ -15,7 +15,7 @@ Automates the entire setup process including:
 - ✅ Updating model paths in `.env` files
 - ✅ Setting up virtual environments for all services
 
-`setup.sh` actually provisions **`stt_service`, `orchestrator_service`, and `tts_service`** (`.env` + venv for each). It also still has an `Architect_MultiClient_Server/agents` entry left over from the old Python agent — that directory is now empty (no `.env.example`, no `requirements-agent.txt`), so `setup.sh` just prints a "not found, skipping" warning for it and moves on; it's a harmless no-op, not a working setup path. The replacement Go `agents`/`worker-manager` binaries and the Go `agents-bot` service are **not** Python venv services and are not touched by this script at all — build/configure/run them per `agents/README.md` and `agents-bot/README.md`.
+`setup.sh` actually provisions **`stt_service`, `non_realtime_stt_service`, `orchestrator_service`, and `tts_service`** (`.env` + venv for each). It also still has an `Architect_MultiClient_Server/agents` entry left over from the old Python agent — that directory is now empty (no `.env.example`, no `requirements-agent.txt`), so `setup.sh` just prints a "not found, skipping" warning for it and moves on; it's a harmless no-op, not a working setup path. The replacement Go `agents`/`worker-manager` binaries and the Go `agents-bot` service are **not** Python venv services and are not touched by this script at all — build/configure/run them per `agents/README.md` and `agents-bot/README.md`.
 
 > **`setup.ps1` does not exist in this repository.** Only `setup.sh` is present in `scripts/`. The PowerShell usage below documents an intended/expected interface — until `setup.ps1` is actually added, Windows users should run `setup.sh` from WSL or Git Bash instead.
 
@@ -91,7 +91,7 @@ PowerShell uses the corresponding `-SkipModels`, `-SkipVenv`, `-SkipEnv`, `-Koko
 
 ### 2. `create-systemd-services.sh` - Systemd Service Creator
 
-Creates and configures systemd service files. As written today it only creates units for **`stt_service`** and **`orchestrator_service`**, plus a third `mezon-agents-service` unit that points at the now-empty `Architect_MultiClient_Server/agents` (dead — see below); a `create_tts_service` function exists in the script (would create `mezon-tts-service` on port 8008) but is never actually invoked, so **no `tts_service` unit is created**, even though the script's own pre-flight validation checks for a `tts_service` venv.
+Creates and configures systemd service files. It creates units for **`stt_service`**, **`non_realtime_stt_service`**, and **`orchestrator_service`**, plus a legacy `mezon-agents-service` unit that points at the now-empty `Architect_MultiClient_Server/agents` (dead — see below); a `create_tts_service` function exists in the script (would create `mezon-tts-service` on port 8008) but is never actually invoked, so **no `tts_service` unit is created**, even though the script's own pre-flight validation checks for a `tts_service` venv.
 
 #### Usage
 
@@ -120,8 +120,9 @@ sudo ./scripts/create-systemd-services.sh --dry-run
 
 #### Created Services
 
-- `mezon-stt-service` - STT Service (port 8000)
-- `mezon-orchestrator-service` - Orchestrator Service (port 8002 — this is what the generated unit and the service's own `AGENT_PORT` default actually use; older docs in this repo said 8001, that was wrong)
+- `mezon-stt-service` - Realtime STT Service (port 8000)
+- `mezon-non-realtime-stt-service` - Non-Realtime STT Service (port 8001)
+- `mezon-orchestrator-service` - Orchestrator Service (port 8002)
 - `mezon-agents-service` - **Broken.** Its `ExecStart` runs `Architect_MultiClient_Server/agents/venv/bin/python .../main.py`, but that directory is now empty (the old Python agent it configured was replaced by the Go binaries below). The unit will be created but will fail to start, and the script's own `validate_setup` pre-flight check will fail on this directory's missing venv unless you pass `--skip-validation`.
 
 **Not created by this script:** the Go `agents`/`worker-manager` binaries and `agents-bot` have their own systemd setup — see [`agents/deploy/systemd/README.md`](../agents/deploy/systemd/README.md) (`worker-manager` is the long-lived unit; it spawns/kills `agent` subprocesses itself). `agents-bot` currently has no documented deployment method in this repo (no systemd unit or Dockerfile exists for it yet).
@@ -130,7 +131,7 @@ sudo ./scripts/create-systemd-services.sh --dry-run
 
 ### 3. `manage-services.sh` - Service Management Helper
 
-Quick helper script to control all services at once. It hardcodes the same three systemd unit names `create-systemd-services.sh` creates (`mezon-stt-service`, `mezon-orchestrator-service`, `mezon-agents-service`) — so it does **not** manage `tts_service` or the Go `agents`/`worker-manager`/`agents-bot` binaries, and `mezon-agents-service` here is the dead unit described above, not the new Go agent.
+Quick helper script to control all services at once. It controls the four systemd unit names `create-systemd-services.sh` defines (`mezon-stt-service`, `mezon-non-realtime-stt-service`, `mezon-orchestrator-service`, `mezon-agents-service`) — so it does **not** manage `tts_service` or the Go `agents`/`worker-manager`/`agents-bot` binaries, and `mezon-agents-service` here is the dead unit described above, not the new Go agent.
 
 #### Usage
 
@@ -187,8 +188,11 @@ Validates that all components are properly set up and running.
 The script will provide a summary with passed, warning, and failed checks, along with recommendations for fixing issues.
 
 **Known gaps in this script (not fixed here, documenting current behavior):**
-- It only checks `stt_service`, `orchestrator_service`, and the dead `Architect_MultiClient_Server/agents` directory — `tts_service` isn't checked at all.
-- Its hardcoded port checks (8000/8001/8002) label 8001 as "Orchestrator Service", but `orchestrator_service`'s actual default port (and what `create-systemd-services.sh` generates) is **8002**. Expect a false "port not in use" warning on a correctly running orchestrator, not a real problem.
+- It checks `stt_service`, `non_realtime_stt_service`, `orchestrator_service`, and the dead `Architect_MultiClient_Server/agents` directory — `tts_service` isn't checked at all.
+- Its network port checks cover:
+  - Port 8000: Realtime STT Service
+  - Port 8001: Non-Realtime STT Service
+  - Port 8002: Orchestrator Service
 - Its Kokoro-model check looks for `kokoro-v0_19.pth` (or `kokoro.onnx`), but `download-kokoro-model.sh` now downloads `kokoro-v1_0.pth`. This check will report the Kokoro model as **not found even after a successful download** — a stale filename check, not a real failure. `setup.sh` has the same stale check when deciding whether to skip re-downloading, so it will silently re-download the model (with `--force`) on every run instead of detecting the existing install.
 
 ---
@@ -342,11 +346,12 @@ Downloads Kokoro-82M TTS models and voices.
 
 3. **Review and update `.env` files:**
    - `Architect_MultiClient_Server/stt_service/.env`
+   - `non_realtime_stt_service/.env`
    - `Architect_MultiClient_Server/orchestrator_service/.env`
    - `Architect_MultiClient_Server/tts_service/.env`
    - ~~`Architect_MultiClient_Server/agents/.env`~~ — dead, this directory is empty. The old Python agent it used to configure has been replaced by the Go `agents`/`worker-manager` binaries (own `.env`, see `agents/README.md`) and the Go `agents-bot` service (own `.env`, see `agents-bot/README.md`). Neither is set up by `setup.sh`.
 
-4. **Create systemd services (optional, only covers stt_service + orchestrator_service today):**
+4. **Create systemd services (optional, covers stt_service, non_realtime_stt_service, and orchestrator_service):**
    ```bash
    sudo ./scripts/create-systemd-services.sh --enable --start
    ```
@@ -354,15 +359,19 @@ Downloads Kokoro-82M TTS models and voices.
 ### Manual Service Start (without systemd)
 
 ```bash
-# Terminal 1 - STT Service
+# Terminal 1 - Realtime STT Service
 cd Architect_MultiClient_Server/stt_service
 ./venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000
 
-# Terminal 2 - Orchestrator Service
+# Terminal 2 - Non-Realtime STT Service
+cd non_realtime_stt_service
+./venv/bin/python -m uvicorn non_realtime_stt_service.main:app --host 0.0.0.0 --port 8001
+
+# Terminal 3 - Orchestrator Service
 cd Architect_MultiClient_Server/orchestrator_service
 ./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8002
 
-# Terminal 3 - TTS Service
+# Terminal 4 - TTS Service
 cd Architect_MultiClient_Server/tts_service
 ./venv/bin/python -m uvicorn tts_service.main:app --host 0.0.0.0 --port 8008
 ```
@@ -380,23 +389,29 @@ The old "Terminal 3 - Agents Service" step (`Architect_MultiClient_Server/agents
 ```bash
 # Start a service
 sudo systemctl start mezon-stt-service
+sudo systemctl start mezon-non-realtime-stt-service
 sudo systemctl start mezon-orchestrator-service
 sudo systemctl start mezon-agents-service
 
 # Stop a service
 sudo systemctl stop mezon-stt-service
+sudo systemctl stop mezon-non-realtime-stt-service
 
 # Restart a service
 sudo systemctl restart mezon-stt-service
+sudo systemctl restart mezon-non-realtime-stt-service
 
 # Check service status
 sudo systemctl status mezon-stt-service
+sudo systemctl status mezon-non-realtime-stt-service
 
 # Enable service to start on boot
 sudo systemctl enable mezon-stt-service
+sudo systemctl enable mezon-non-realtime-stt-service
 
 # View service logs
 sudo journalctl -u mezon-stt-service -f
+sudo journalctl -u mezon-non-realtime-stt-service -f
 sudo journalctl -u mezon-stt-service -n 50
 ```
 
