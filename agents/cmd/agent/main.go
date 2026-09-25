@@ -172,6 +172,8 @@ func main() {
 	switch {
 	case err == nil:
 		return
+	case signaling.IsExpectedClose(err):
+		logging.L.Info("agent: stopped", append(logging.ErrAttrs(err), "reason", "mezon-sfu closed the session")...)
 	case errors.Is(err, context.Canceled):
 		// Graceful shutdown (SIGINT/SIGTERM, e.g. worker manager's Stop()) --
 		// not a failure. Exiting 0 here matters: workermanager.reap logs the
@@ -315,9 +317,9 @@ func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recCli
 		}
 	}
 
-	for {
+	for conn := 1; ; conn++ {
 		start := time.Now()
-		err := runSession(ctx, stop, cfg, recClient, orch, agentsBotClient, refs, roomName, roomID)
+		err := runSession(ctx, stop, cfg, recClient, orch, agentsBotClient, refs, roomName, roomID, conn)
 
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -327,6 +329,10 @@ func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recCli
 			// return with ctx still live shouldn't happen, but treat it as
 			// a terminal success rather than looping forever.
 			return nil
+		}
+
+		if !signaling.ShouldReconnect(err) {
+			return fmt.Errorf("agent: mezon-sfu closed the session, not reconnecting: %w", err)
 		}
 
 		if time.Since(start) >= cfg.Reconnect.StableAfter {
@@ -354,13 +360,13 @@ func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recCli
 // cancelled. Every call builds a brand new session -- mezon-sfu ties the
 // media session to the WS connection 1:1, so there is nothing to resume
 // from a previous attempt, and mid numbering restarts from scratch too.
-func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs) error {
+func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs, roomName, roomID string, conn int) error {
 	token, err := sfuauth.SignJoinToken(cfg.JWTSecret, cfg.AgentUserID, cfg.RoomID, cfg.ChatAvatarURL, cfg.TokenTTL)
 	if err != nil {
 		return err
 	}
 
-	sess := newSession(cfg, recClient, orch, refs, roomName, roomID, stop)
+	sess := newSession(cfg, recClient, orch, refs, roomName, roomID, conn, stop)
 
 	// Register room with agents-bot so it knows which channels to forward.
 	if agentsBotClient != nil {
@@ -438,6 +444,10 @@ type session struct {
 	// push_transcript/SSE/STT use.
 	roomName string
 	roomID   string
+	// conn is this signaling connection's 1-based ordinal within the run. It
+	// is part of every record-service track_id so reconnects sharing the same
+	// roomID never collide on the (room_id, track_id) key.
+	conn int
 	// stop is the root ctx's cancel func (signal.NotifyContext in main) --
 	// checkEmptyRoom calls this directly, same as config.Config.MaxLifetime's
 	// timer, to end run()'s reconnect loop entirely rather than just this
@@ -452,8 +462,8 @@ type session struct {
 	emptyRoomTimer *time.Timer
 }
 
-func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs, roomName, roomID string, stop context.CancelFunc) *session {
-	return &session{cfg: cfg, recClient: recClient, orch: orch, refs: refs, roomName: roomName, roomID: roomID, stop: stop}
+func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs, roomName, roomID string, conn int, stop context.CancelFunc) *session {
+	return &session{cfg: cfg, recClient: recClient, orch: orch, refs: refs, roomName: roomName, roomID: roomID, conn: conn, stop: stop}
 }
 
 func (s *session) callbacks() signaling.Callbacks {
@@ -517,7 +527,7 @@ func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
 	// this run (see tracksink's constructors); newRecordSink/newSTTSink must
 	// stay nil funcs (not a method value bound to a nil receiver) in that
 	// case -- Bridge nil-checks the func itself before calling it.
-	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID)
+	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID, s.conn)
 	sttFactory := tracksink.NewSTTSinkFactory(s.cfg, s.orch)
 	var newRecordSink, newSTTSink func(info rtcagent.TrackInfo) audiopipeline.Sink
 	if recordFactory != nil {
