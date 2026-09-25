@@ -14,6 +14,7 @@ from tenacity import (
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
+from orchestrator_service.exceptions import TopicCompletionNotFoundError
 from orchestrator_service.models.summary_models import LightSummaryResult
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.prompt import build_light_summary_prompt
@@ -174,7 +175,8 @@ class LightSummaryService:
             if not summary_result or (
                 summary_result.end_message_time is None and candidate_end_idx < len(working_messages)
             ):
-                raise ValueError(f"Cannot find completed topic from start_idx={start_idx}")
+                logger.error(f"Cannot find completed topic from start_idx={start_idx}")
+                raise TopicCompletionNotFoundError(f"Cannot find completed topic from start_idx={start_idx}")
 
             if candidate_end_idx == len(working_messages):
                 end_idx = len(working_messages) - 1
