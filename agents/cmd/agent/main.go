@@ -172,6 +172,8 @@ func main() {
 	switch {
 	case err == nil:
 		return
+	case signaling.IsExpectedClose(err):
+		logging.L.Info("agent: stopped", append(logging.ErrAttrs(err), "reason", "mezon-sfu closed the session")...)
 	case errors.Is(err, context.Canceled):
 		// Graceful shutdown (SIGINT/SIGTERM, e.g. worker manager's Stop()) --
 		// not a failure. Exiting 0 here matters: workermanager.reap logs the
@@ -289,10 +291,35 @@ func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs,
 // no point retrying that) or the retry budget is exhausted.
 func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs) error {
 	backoff := reconnect.New(cfg.Reconnect)
+	roomName := strconv.FormatUint(cfg.RoomID, 10)
+	roomID := roomName
 
-	for {
+	// The orchestrator room belongs to this logical agent run, not to one
+	// signaling connection. Generate and register its UUID once, then reuse it
+	// for every WebSocket reconnect below.
+	if orch != nil {
+		candidateRoomID := uuid.NewString()
+		if err := registerRoomWithOrchestrator(ctx, orch, roomName, candidateRoomID); err != nil {
+			logging.L.Warn("orchestratorclient: register_room failed, recording events for this run may not resolve",
+				append(logging.ErrAttrs(err), "room_name", roomName, "room_id", candidateRoomID)...)
+		} else {
+			roomID = candidateRoomID
+			// Unregister/finalize once when the complete logical run ends, not
+			// when an individual WebSocket connection drops.
+			defer func() {
+				uctx, cancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
+				defer cancel()
+				if err := orch.UnregisterRoom(uctx, roomName, roomID); err != nil {
+					logging.L.Warn("orchestratorclient: unregister_room failed",
+						append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID)...)
+				}
+			}()
+		}
+	}
+
+	for conn := 1; ; conn++ {
 		start := time.Now()
-		err := runSession(ctx, stop, cfg, recClient, orch, agentsBotClient, refs)
+		err := runSession(ctx, stop, cfg, recClient, orch, agentsBotClient, refs, roomName, roomID, conn)
 
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -302,6 +329,10 @@ func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recCli
 			// return with ctx still live shouldn't happen, but treat it as
 			// a terminal success rather than looping forever.
 			return nil
+		}
+
+		if !signaling.ShouldReconnect(err) {
+			return fmt.Errorf("agent: mezon-sfu closed the session, not reconnecting: %w", err)
 		}
 
 		if time.Since(start) >= cfg.Reconnect.StableAfter {
@@ -314,7 +345,7 @@ func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recCli
 		}
 
 		logging.L.Warn("agent: session ended, will reconnect",
-			append(logging.ErrAttrs(err), "attempt", backoff.Attempts(), "max_attempts", cfg.Reconnect.MaxAttempts, "retry_in", delay)...)
+			append(logging.ErrAttrs(err), "orchestrator_room_id", roomID, "attempt", backoff.Attempts(), "max_attempts", cfg.Reconnect.MaxAttempts, "retry_in", delay)...)
 
 		select {
 		case <-time.After(delay):
@@ -329,21 +360,13 @@ func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recCli
 // cancelled. Every call builds a brand new session -- mezon-sfu ties the
 // media session to the WS connection 1:1, so there is nothing to resume
 // from a previous attempt, and mid numbering restarts from scratch too.
-func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs) error {
+func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs, roomName, roomID string, conn int) error {
 	token, err := sfuauth.SignJoinToken(cfg.JWTSecret, cfg.AgentUserID, cfg.RoomID, cfg.ChatAvatarURL, cfg.TokenTTL)
 	if err != nil {
 		return err
 	}
 
-	// roomName: see orchestratorclient's package doc -- mezon-sfu's own
-	// numeric room_id, used as room_name everywhere the old contract wanted
-	// one. roomID: orchestrator's own UUID for this session, minted and
-	// registered below (or roomName itself as a degrade fallback) -- these
-	// are two different identifiers, do not conflate them.
-	roomName := strconv.FormatUint(cfg.RoomID, 10)
-	roomID := registerRoomWithOrchestrator(ctx, orch, roomName)
-
-	sess := newSession(cfg, recClient, orch, refs, roomName, roomID, stop)
+	sess := newSession(cfg, recClient, orch, refs, roomName, roomID, conn, stop)
 
 	// Register room with agents-bot so it knows which channels to forward.
 	if agentsBotClient != nil {
@@ -389,32 +412,13 @@ func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config,
 	return client.Run(ctx)
 }
 
-// registerRoomWithOrchestrator mints a fresh UUID and registers it with
-// orchestrator as this session's stable room_id (see
-// orchestratorclient.Client.RegisterRoom's doc for why this matters -- it's
-// what lets record-service's recording events for this session resolve to
-// a real room instead of getting silently dropped). Mirrors the old Python
-// agent's main.go: called before dialing mezon-sfu, so room_id is already
-// in hand before any track can possibly start recording.
-//
-// orch nil (ORCHESTRATOR_BASE_URL unset) or a failed/unreachable register
-// call both degrade to using roomName itself as the room_id, matching the
-// old Python agent's fallback ("room_id stays None, downstream code falls
-// back to ctx.room.name") -- recording still proceeds, just without a shot
-// at resolving through orchestrator's registry either, same as before.
-func registerRoomWithOrchestrator(ctx context.Context, orch *orchestratorclient.Client, roomName string) string {
-	if orch == nil {
-		return roomName
-	}
-	agentRoomID := uuid.NewString()
+// registerRoomWithOrchestrator registers the caller-owned logical room ID.
+// run generates that ID once so retries use the same database room instead
+// of creating a new one for each WebSocket connection.
+func registerRoomWithOrchestrator(ctx context.Context, orch *orchestratorclient.Client, roomName, roomID string) error {
 	rctx, cancel := context.WithTimeout(ctx, orchestratorCallTimeout)
 	defer cancel()
-	if err := orch.RegisterRoom(rctx, roomName, agentRoomID); err != nil {
-		logging.L.Warn("orchestratorclient: register_room failed, recording events for this session may not resolve",
-			append(logging.ErrAttrs(err), "room_name", roomName)...)
-		return roomName
-	}
-	return agentRoomID
+	return orch.RegisterRoom(rctx, roomName, roomID)
 }
 
 // session holds the mutable state of a single mezon-sfu join --
@@ -440,6 +444,10 @@ type session struct {
 	// push_transcript/SSE/STT use.
 	roomName string
 	roomID   string
+	// conn is this signaling connection's 1-based ordinal within the run. It
+	// is part of every record-service track_id so reconnects sharing the same
+	// roomID never collide on the (room_id, track_id) key.
+	conn int
 	// stop is the root ctx's cancel func (signal.NotifyContext in main) --
 	// checkEmptyRoom calls this directly, same as config.Config.MaxLifetime's
 	// timer, to end run()'s reconnect loop entirely rather than just this
@@ -454,8 +462,8 @@ type session struct {
 	emptyRoomTimer *time.Timer
 }
 
-func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs, roomName, roomID string, stop context.CancelFunc) *session {
-	return &session{cfg: cfg, recClient: recClient, orch: orch, refs: refs, roomName: roomName, roomID: roomID, stop: stop}
+func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs, roomName, roomID string, conn int, stop context.CancelFunc) *session {
+	return &session{cfg: cfg, recClient: recClient, orch: orch, refs: refs, roomName: roomName, roomID: roomID, conn: conn, stop: stop}
 }
 
 func (s *session) callbacks() signaling.Callbacks {
@@ -519,7 +527,7 @@ func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
 	// this run (see tracksink's constructors); newRecordSink/newSTTSink must
 	// stay nil funcs (not a method value bound to a nil receiver) in that
 	// case -- Bridge nil-checks the func itself before calling it.
-	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID)
+	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID, s.conn)
 	sttFactory := tracksink.NewSTTSinkFactory(s.cfg, s.orch)
 	var newRecordSink, newSTTSink func(info rtcagent.TrackInfo) audiopipeline.Sink
 	if recordFactory != nil {
@@ -742,14 +750,10 @@ func (s *session) onRoomMessage(message signaling.RoomMessage, userID string) {
 	}()
 }
 
-// close releases this session's resources, clears refs so the long-lived
-// orchestrator SSE handlers stop seeing it as the active session, and
-// unregisters the room from orchestrator (see RegisterRoom's doc for what
-// that triggers -- room finalization/summary generation). Safe to call even
-// if onJoined never fired (peerAgent/player stay nil) or registration never
-// succeeded (roomID falls back to roomName -- unregistering that is a
-// harmless no-op orchestrator-side, matching the old Python agent, which
-// always called unregister_room in its cleanup path regardless).
+// close releases this signaling/WebRTC attempt's resources and clears refs
+// so long-lived orchestrator SSE handlers stop seeing it as active. The
+// enclosing run owns and unregisters the logical room after all reconnect
+// attempts have ended. Safe to call if onJoined never fired.
 func (s *session) close() {
 	// Must happen before anything else that could block/take time below --
 	// this session is going away regardless of why (graceful stop, WS
@@ -768,16 +772,6 @@ func (s *session) close() {
 	}
 	if s.player != nil {
 		s.player.Close()
-	}
-	if s.orch != nil {
-		// context.Background(), not runSession's ctx: this typically runs
-		// during shutdown (SIGTERM), by which point that ctx is already
-		// cancelled -- same pattern as transcriptForwarder.push.
-		uctx, cancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
-		defer cancel()
-		if err := s.orch.UnregisterRoom(uctx, s.roomName, s.roomID); err != nil {
-			logging.L.Warn("orchestratorclient: unregister_room failed", append(logging.ErrAttrs(err), "room_name", s.roomName)...)
-		}
 	}
 }
 
