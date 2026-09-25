@@ -36,6 +36,15 @@ type RecordSinkFactory struct {
 	client *recordclient.Client
 	cfg    config.Config
 	roomID string
+	conn   int
+}
+
+// RecordTrackID is unique per (peer, kind, signaling connection). The
+// connection ordinal keeps a reconnect from reusing the previous
+// connection's record-service session / orchestrator tracks row, which are
+// keyed by room_id:track_id and stay the same across reconnects.
+func RecordTrackID(peerID uint64, kind rtcagent.TrackKind, conn int) string {
+	return fmt.Sprintf("peer%d-%s-c%d", peerID, kind, conn)
 }
 
 // NewRecordSinkFactory returns nil if recording is disabled for this run
@@ -51,11 +60,11 @@ type RecordSinkFactory struct {
 // this value verbatim, and orchestrator only resolves it back to a room if
 // it's either that UUID or a room_name RegisterRoom populated its Redis
 // fallback cache with -- see orchestratorclient.Client.RegisterRoom's doc.
-func NewRecordSinkFactory(recClient *recordclient.Client, cfg config.Config, roomID string) *RecordSinkFactory {
+func NewRecordSinkFactory(recClient *recordclient.Client, cfg config.Config, roomID string, conn int) *RecordSinkFactory {
 	if recClient == nil {
 		return nil
 	}
-	return &RecordSinkFactory{client: recClient, cfg: cfg, roomID: roomID}
+	return &RecordSinkFactory{client: recClient, cfg: cfg, roomID: roomID, conn: conn}
 }
 
 func (f *RecordSinkFactory) NewSink(info rtcagent.TrackInfo) audiopipeline.Sink {
@@ -65,7 +74,7 @@ func (f *RecordSinkFactory) NewSink(info rtcagent.TrackInfo) audiopipeline.Sink 
 		// publication SID (mezon-sfu-migration-checklist.md A3.6) --
 		// peer_id+kind is unique for the life of that remote peer's WS
 		// session, as stable an identifier as the protocol offers.
-		TrackID:             fmt.Sprintf("peer%d-%s", info.PeerID, info.Kind),
+		TrackID:             RecordTrackID(info.PeerID, info.Kind, f.conn),
 		ParticipantIdentity: strconv.FormatInt(info.UserID, 10),
 		Source:              string(info.Kind), // always "mic": callers only ever see KindAudio tracks here, see rtcagent
 		SampleRate:          audiopipeline.PCMSampleRate,

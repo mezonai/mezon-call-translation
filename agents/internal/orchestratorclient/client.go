@@ -10,9 +10,9 @@
 //     silently drops every recording event record-service reports for this
 //     session (this was originally left unported, then found to be a real
 //     gap and added back on 2026-08-18, see mezon-sfu-migration-plan.md).
-//   - participant_joined: reports each new Mezon-SFU peer to orchestrator;
-//     orchestrator resolves its display name through agents-bot and persists
-//     it in the room roster.
+//   - participant_snapshot / participant_joined: report each Mezon-SFU peer's
+//     stable user ID and SFU metadata display name; orchestrator persists both
+//     directly in the room roster.
 //   - push_transcript: kept, unchanged wire contract.
 //   - ReportTTSTranscript / ReportTTSCompleted (report_tts_transcript/
 //     report_tts_completed): kept, added back 2026-08-18 alongside
@@ -137,17 +137,23 @@ func (c *Client) RegisterRoom(ctx context.Context, roomName, roomID string) erro
 	return nil
 }
 
+type Participant struct {
+	ParticipantIdentity string `json:"participant_identity"`
+	Username            string `json:"username"`
+}
+
 // ParticipantSnapshot persists the participants observed in the initial
-// mezon-sfu room_snapshot. Username resolution remains orchestrator-owned.
-func (c *Client) ParticipantSnapshot(ctx context.Context, roomName, roomID string, participantIdentities []string) error {
-	if len(participantIdentities) == 0 {
+// mezon-sfu room_snapshot. Each username comes directly from the SFU member
+// metadata; orchestrator persists it without doing another identity lookup.
+func (c *Client) ParticipantSnapshot(ctx context.Context, roomName, roomID string, participants []Participant) error {
+	if len(participants) == 0 {
 		return nil
 	}
 
 	body, err := json.Marshal(map[string]any{
-		"room_name":              roomName,
-		"room_id":                roomID,
-		"participant_identities": participantIdentities,
+		"room_name":    roomName,
+		"room_id":      roomID,
+		"participants": participants,
 	})
 	if err != nil {
 		return fmt.Errorf("orchestratorclient: encode participant snapshot: %w", err)
@@ -183,15 +189,14 @@ func (c *Client) ParticipantSnapshot(ctx context.Context, roomName, roomID strin
 }
 
 // ParticipantJoined reports a Mezon-SFU peer_joined event for this exact
-// room session. The event intentionally contains only the stable Mezon user
-// id: orchestrator resolves a display name through agents-bot, which owns the
-// Mezon identity cache. roomID protects a reused roomName from a late event
-// emitted by an older agent process.
-func (c *Client) ParticipantJoined(ctx context.Context, roomName, roomID, participantIdentity string) error {
+// room session, including the stable Mezon user ID and the display name from
+// SFU member metadata.
+func (c *Client) ParticipantJoined(ctx context.Context, roomName, roomID, participantIdentity string, username string) error {
 	body, err := json.Marshal(map[string]string{
 		"room_name":            roomName,
 		"room_id":              roomID,
 		"participant_identity": participantIdentity,
+		"username":             username,
 	})
 	if err != nil {
 		return fmt.Errorf("orchestratorclient: encode participant_joined body: %w", err)
@@ -217,63 +222,6 @@ func (c *Client) ParticipantJoined(ctx context.Context, roomName, roomID, partic
 	if resp.StatusCode >= http.StatusBadRequest {
 		return fmt.Errorf("orchestratorclient: participant_joined: HTTP %d", resp.StatusCode)
 	}
-	return nil
-}
-
-type participantChatResponse struct {
-	Status string `json:"status"`
-}
-
-// SaveExternalChatParticipant persists one participant discovered through
-// an incoming SFU room_message. It succeeds only when the orchestrator
-// response contains {"status":"ok"}.
-func (c *Client) SaveExternalChatParticipant(
-	ctx context.Context,
-	roomName string,
-	roomID string,
-	participantIdentity string,
-	username string,
-) error {
-	body, err := json.Marshal(map[string]string{
-		"room_name":            roomName,
-		"room_id":              roomID,
-		"participant_identity": participantIdentity,
-		"username":             username,
-	})
-	if err != nil {
-		return fmt.Errorf("orchestratorclient: encode external chat participant: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		c.baseURL+"/api/v2/room-registry/external/participant-chat",
-		strings.NewReader(string(body)),
-	)
-	if err != nil {
-		return fmt.Errorf("orchestratorclient: build external chat participant request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	c.authHeader(req)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("orchestratorclient: external chat participant: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("orchestratorclient: external chat participant: HTTP %d", resp.StatusCode)
-	}
-
-	var result participantChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("orchestratorclient: decode external chat participant response: %w", err)
-	}
-	if result.Status != "ok" {
-		return fmt.Errorf("orchestratorclient: unexpected external chat participant status %q", result.Status)
-	}
-
 	return nil
 }
 
