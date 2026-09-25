@@ -21,7 +21,10 @@ from orchestrator_service.api.sse.channels.metadata_channel import MetadataChann
 from orchestrator_service.auth.authorization import AuthContext
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
-from orchestrator_service.exceptions import SummaryRetryNotFoundError
+from orchestrator_service.exceptions import (
+    SummaryRetryNotFoundError,
+    TopicCompletionNotFoundError,
+)
 from orchestrator_service.models.summary_models import (
     OverallContextResult,
     RetryType,
@@ -35,7 +38,12 @@ from orchestrator_service.services.llm.prompt import (
     build_overall_context_prompt,
     build_prompt_summary,
 )
-from orchestrator_service.services.postgresql.models import RoomSectionSummary, TranscriptChunk
+from orchestrator_service.services.postgresql.models import (
+    Room,
+    RoomSectionSummary,
+    RoomSummary,
+    TranscriptChunk,
+)
 from orchestrator_service.services.postgresql.pg_outbox_repository import PgOutboxRepository, get_pg_outbox_repository
 from orchestrator_service.services.postgresql.pg_summary_repository import (
     PgSummaryRepository,
@@ -371,6 +379,21 @@ class SummaryService:
                 # Phase 1: Sections
                 await self.light_summary_service.process_room_by_id(room_id, language=self.config.language)
             except Exception as e:
+                if isinstance(e, TopicCompletionNotFoundError) or "Cannot find completed topic from start_idx" in str(e):
+                    logger.error(
+                        f"Cannot find completed topic from start_idx in light summary for room {room_id}: {e}. "
+                        f"Falling back to normal summary flow."
+                    )
+                    await self.pg_summary_repo.delete_section_summaries_by_room_id(room_id)
+                    return await self._execute_normal_summary_flow(
+                        room_id=room_id,
+                        room_doc=room_doc,
+                        full_text=full_text,
+                        username_to_id=username_to_id,
+                        draft_summary=draft_summary,
+                        saved_id=saved_id,
+                    )
+
                 logger.warning(f"Section processing failed for room {room_id}: {e}. Creating outbox task.")
                 outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
                     room_id=str(room_id), retry_type=RetryType.SECTIONS, error_msg=str(e)
@@ -429,82 +452,100 @@ class SummaryService:
             logger.info(
                 f"Room duration ({total_duration:.1f}s) <= {self.config.threshold_min} mins. Using Normal Summary flow."
             )
-            summary_data_result = None
+            return await self._execute_normal_summary_flow(
+                room_id=room_id,
+                room_doc=room_doc,
+                full_text=full_text,
+                username_to_id=username_to_id,
+                draft_summary=draft_summary,
+                saved_id=saved_id,
+            )
 
-            try:
-                summary_prompt = build_prompt_summary(full_text, self.config.language)
-                summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult)
-            except Exception as e:
-                logger.warning(f"Summary task failed for room {room_id}: {e}")
+    async def _execute_normal_summary_flow(
+        self,
+        room_id: str,
+        room_doc: Room,
+        full_text: str,
+        username_to_id: dict[str, str],
+        draft_summary: dict[str, Any],  # type: ignore[explicit-any]
+        saved_id: str | None,
+    ) -> dict[str, Any]:  # type: ignore[explicit-any]
+        summary_data_result = None
 
-            # If summary failed -> Outbox SUMMARY
-            if not summary_data_result:
-                outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id), retry_type=RetryType.SUMMARY, error_msg="Summary failed"
+        try:
+            summary_prompt = build_prompt_summary(full_text, self.config.language)
+            summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult)
+        except Exception as e:
+            logger.warning(f"Summary task failed for room {room_id}: {e}")
+
+        # If summary failed -> Outbox SUMMARY
+        if not summary_data_result:
+            outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
+                room_id=str(room_id), retry_type=RetryType.SUMMARY, error_msg="Summary failed"
+            )
+            if not outbox_created:
+                logger.critical(
+                    f"Room {room_id} has NO summary AND outbox retry task creation FAILED "
+                    f"(retry_type={RetryType.SUMMARY}) - needs manual re-trigger"
                 )
-                if not outbox_created:
-                    logger.critical(
-                        f"Room {room_id} has NO summary AND outbox retry task creation FAILED "
-                        f"(retry_type={RetryType.SUMMARY}) - needs manual re-trigger"
-                    )
-                return {**draft_summary, "id": saved_id}
+            return {**draft_summary, "id": saved_id}
 
-            # Concate data
-            summary_parts = []
-            if summary_data_result:
-                summary_parts.append(f"Context\n{summary_data_result.context}")
+        # Concate data
+        summary_parts = []
+        if summary_data_result:
+            summary_parts.append(f"Context\n{summary_data_result.context}")
 
+            if summary_data_result.key_discussions:
+                summary_data_result.key_discussions = sanitize_and_decode_list(summary_data_result.key_discussions, {}, require_brackets=True)
+                summary_data_result.key_discussions = format_key_discussions(summary_data_result.key_discussions)
                 if summary_data_result.key_discussions:
-                    summary_data_result.key_discussions = sanitize_and_decode_list(summary_data_result.key_discussions, {}, require_brackets=True)
-                    summary_data_result.key_discussions = format_key_discussions(summary_data_result.key_discussions)
-                    if summary_data_result.key_discussions:
-                        summary_parts.append("Key Discussions\n" + "\n".join(summary_data_result.key_discussions))
+                    summary_parts.append("Key Discussions\n" + "\n".join(summary_data_result.key_discussions))
 
-                if summary_data_result.next_focus:
-                    summary_data_result.next_focus = sanitize_and_decode_list(summary_data_result.next_focus, username_to_id, require_brackets=True)
+            if summary_data_result.next_focus:
+                summary_data_result.next_focus = sanitize_and_decode_list(summary_data_result.next_focus, username_to_id, require_brackets=True)
 
-                if summary_data_result.detail:
-                    summary_data_result.detail = sanitize_and_decode_list(summary_data_result.detail, {}, require_brackets=False)
+            if summary_data_result.detail:
+                summary_data_result.detail = sanitize_and_decode_list(summary_data_result.detail, {}, require_brackets=False)
 
-            summary_data = {
-                "summary": "\n\n".join(summary_parts) if summary_parts else "",
-                "action_items": group_next_focus_by_user(summary_data_result.next_focus) if summary_data_result else {},
-                "detail": summary_data_result.detail if summary_data_result and summary_data_result.detail else []
-            }
+        summary_data = {
+            "summary": "\n\n".join(summary_parts) if summary_parts else "",
+            "action_items": group_next_focus_by_user(summary_data_result.next_focus) if summary_data_result else {},
+            "detail": summary_data_result.detail if summary_data_result and summary_data_result.detail else []
+        }
 
-            final_summary = dict(draft_summary)
-            final_summary["summary_data"] = summary_data
+        final_summary = dict(draft_summary)
+        final_summary["summary_data"] = summary_data
 
-            # Save reuslt to DB
-            updated = await self.pg_summary_repo.update_room_summary(room_id, summary_data)
-            if not updated:
-                logger.error(f"Failed to update generated summary for room {room_id}")
-                return {**draft_summary, "id": saved_id}
+        # Save result to DB
+        updated = await self.pg_summary_repo.update_room_summary(room_id, summary_data)
+        if not updated:
+            logger.error(f"Failed to update generated summary for room {room_id}")
+            return {**draft_summary, "id": saved_id}
 
-            logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
-            result = dict(final_summary)
-            result["id"] = saved_id
+        logger.info(f"Generated summary for room {room_id} (ID: {saved_id})")
+        result = dict(final_summary)
+        result["id"] = saved_id
 
-            # Send notice to SSE
-            if summary_data_result:
-                # ALL pass
-                metadata_channel = MetadataChannel()
-                await metadata_channel.push_room_summary_done(
-                    room_id=str(room_id), room_name=room_doc.room_name or "Unknown"
+        # Send notice to SSE
+        if summary_data_result:
+            # ALL pass
+            metadata_channel = MetadataChannel()
+            await metadata_channel.push_room_summary_done(
+                room_id=str(room_id), room_name=room_doc.room_name or "Unknown"
+            )
+        elif not summary_data_result:
+            # Summary failed
+            logger.warning(f"Summary failed for room {room_id}. Creating SUMMARY outbox task.")
+            outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
+                room_id=str(room_id), retry_type=RetryType.SUMMARY, error_msg="Summary generation failed"
+            )
+            if not outbox_created:
+                logger.critical(
+                    f"Room {room_id} has NO summary AND outbox retry task creation FAILED "
+                    f"(retry_type={RetryType.SUMMARY}) - needs manual re-trigger"
                 )
-            elif not summary_data_result:
-                # Summary failed
-                logger.warning(f"Summary failed for room {room_id}. Creating SUMMARY outbox task.")
-                outbox_created = await self.outbox_repo.add_retry_summarization_task_to_outbox(
-                    room_id=str(room_id), retry_type=RetryType.SUMMARY, error_msg="Summary generation failed"
-                )
-                if not outbox_created:
-                    logger.critical(
-                        f"Room {room_id} has NO summary AND outbox retry task creation FAILED "
-                        f"(retry_type={RetryType.SUMMARY}) - needs manual re-trigger"
-                    )
 
-            return result
+        return result
 
     # TODO: Use `Any` type because `summary_data` response from this function has complex type
     async def retry_summary_from_full_text(  # type: ignore[explicit-any]
@@ -573,6 +614,13 @@ class SummaryService:
                 )
                 return summary_data
             except Exception as e:
+                if isinstance(e, TopicCompletionNotFoundError) or "Cannot find completed topic from start_idx" in str(e):
+                    logger.error(
+                        f"Cannot find completed topic during light summary retry for room {room_id}: {e}. "
+                        f"Falling back to normal summary flow."
+                    )
+                    await self.pg_summary_repo.delete_section_summaries_by_room_id(room_id)
+                    return await self._retry_normal_summary(room_id, summary_doc, full_text, username_to_id)
                 logger.error(f"Failed to retry light summary for room {room_id}: {e}")
                 return None
 
@@ -581,58 +629,58 @@ class SummaryService:
             logger.info(
                 f"Retrying room ({total_duration:.1f}s) <= {self.config.threshold_min} mins. Using Normal Summary flow."
             )
-
             logger.info(f"Retrying LLM with type '{retry_type.value}' for room {room_id} ({len(full_text)} chars)")
+            return await self._retry_normal_summary(room_id, summary_doc, full_text, username_to_id)
 
-            is_success = False
-            try:
-                if retry_type == RetryType.SUMMARY:
-                    prompt = build_prompt_summary(full_text, self.config.language)
-                    result = await self._call_llm_with_fallback(prompt, SummaryResult)
+    async def _retry_normal_summary(
+        self,
+        room_id: str,
+        summary_doc: RoomSummary,
+        full_text: str,
+        username_to_id: dict[str, str],
+    ) -> dict[str, Any] | None:  # type: ignore[explicit-any]
+        try:
+            prompt = build_prompt_summary(full_text, self.config.language)
+            result = await self._call_llm_with_fallback(prompt, SummaryResult)
 
-                    # Format summary with only non-empty fields
-                    summary_parts = [f"Context\n{result.context}"]
+            summary_parts = [f"Context\n{result.context}"]
 
-                    if result.key_discussions:
-                        result.key_discussions = sanitize_and_decode_list(result.key_discussions, {}, require_brackets=True)
-                        result.key_discussions = format_key_discussions(result.key_discussions)
-                        if result.key_discussions:
-                            summary_parts.append("Key Discussions\n" + "\n".join(result.key_discussions))
+            if result.key_discussions:
+                result.key_discussions = sanitize_and_decode_list(result.key_discussions, {}, require_brackets=True)
+                result.key_discussions = format_key_discussions(result.key_discussions)
+                if result.key_discussions:
+                    summary_parts.append("Key Discussions\n" + "\n".join(result.key_discussions))
 
-                    if result.next_focus:
-                        result.next_focus = sanitize_and_decode_list(result.next_focus, username_to_id, require_brackets=True)
+            if result.next_focus:
+                result.next_focus = sanitize_and_decode_list(result.next_focus, username_to_id, require_brackets=True)
 
-                    if result.detail:
-                        result.detail = sanitize_and_decode_list(result.detail, {}, require_brackets=False)
+            if result.detail:
+                result.detail = sanitize_and_decode_list(result.detail, {}, require_brackets=False)
 
-                    summary_data = {
-                        "summary": "\n\n".join(summary_parts),
-                        "action_items": group_next_focus_by_user(result.next_focus) if result else {},
-                        "detail": result.detail if result and result.detail else []
-                    }
+            summary_data = {
+                "summary": "\n\n".join(summary_parts),
+                "action_items": group_next_focus_by_user(result.next_focus) if result else {},
+                "detail": result.detail if result and result.detail else [],
+            }
 
-                    is_success = True
-
-                updated = await self.pg_summary_repo.update_room_summary(room_id, summary_data)
-                logger.info(f"Updated summary for room {room_id}")
-                if not updated:
-                    logger.error(f"Failed to update summary for room {room_id}")
-                    return None
-
-                # Notify clients via SSE if summary generation is successful
-                if is_success:
-                    metadata_channel = MetadataChannel()
-                    await metadata_channel.push_room_summary_done(
-                        room_id=room_id, room_name=summary_doc.room_name or "Unknown"
-                    )
-
-                logger.info(
-                    f"Successfully updated summary for room {room_id} and notified clients (success={is_success})"
-                )
-                return summary_data
-            except Exception as e:
-                logger.error(f"Failed to retry summary for room {room_id} with type '{retry_type.value}': {e}")
+            updated = await self.pg_summary_repo.update_room_summary(room_id, summary_data)
+            logger.info(f"Updated summary for room {room_id}")
+            if not updated:
+                logger.error(f"Failed to update summary for room {room_id}")
                 return None
+
+            metadata_channel = MetadataChannel()
+            await metadata_channel.push_room_summary_done(
+                room_id=room_id, room_name=summary_doc.room_name or "Unknown"
+            )
+
+            logger.info(
+                f"Successfully updated summary for room {room_id} and notified clients (success=True)"
+            )
+            return summary_data
+        except Exception as e:
+            logger.error(f"Failed to retry normal summary for room {room_id}: {e}")
+            return None
 
     async def get_summary_by_room_name(
         self, room_name: str, start_time: datetime | None, end_time: datetime | None, auth: AuthContext
