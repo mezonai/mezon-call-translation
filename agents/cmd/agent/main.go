@@ -330,7 +330,7 @@ func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recCli
 // media session to the WS connection 1:1, so there is nothing to resume
 // from a previous attempt, and mid numbering restarts from scratch too.
 func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs) error {
-	token, err := sfuauth.SignJoinToken(cfg.JWTSecret, cfg.AgentUserID, cfg.RoomID, cfg.TokenTTL)
+	token, err := sfuauth.SignJoinToken(cfg.JWTSecret, cfg.AgentUserID, cfg.RoomID, cfg.ChatAvatarURL, cfg.TokenTTL)
 	if err != nil {
 		return err
 	}
@@ -440,9 +440,6 @@ type session struct {
 	// push_transcript/SSE/STT use.
 	roomName string
 	roomID   string
-	// Contains users successfully persisted through the external
-	// participant-chat endpoint.
-	savedUsers sync.Map // map[string]struct{}
 	// stop is the root ctx's cancel func (signal.NotifyContext in main) --
 	// checkEmptyRoom calls this directly, same as config.Config.MaxLifetime's
 	// timer, to end run()'s reconnect loop entirely rather than just this
@@ -577,17 +574,17 @@ func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, member
 		return
 	}
 
-	participantIdentities := make([]string, 0, len(members))
+	participants := make([]orchestratorclient.Participant, 0, len(members))
 
 	for _, member := range members {
-		participantIdentities = append(
-			participantIdentities,
-			strconv.FormatInt(member.UserID, 10),
-		)
-	}
-
-	if len(participantIdentities) == 0 {
-		return
+		if member.UserID <= 0 {
+			continue
+		}
+		username, _ := signaling.ParseMemberMetadata(member.Metadata)
+		participants = append(participants, orchestratorclient.Participant{
+			ParticipantIdentity: strconv.FormatInt(member.UserID, 10),
+			Username:            username,
+		})
 	}
 
 	roomName := s.roomName
@@ -604,7 +601,7 @@ func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, member
 			ctx,
 			roomName,
 			roomID,
-			participantIdentities,
+			participants,
 		); err != nil {
 			logging.L.Error(
 				"orchestratorclient: participant_snapshot failed",
@@ -626,12 +623,14 @@ func (s *session) onPeerJoined(participantCount int, peer signaling.Member) {
 
 	// Signaling callbacks run on one read-loop goroutine. Persisting the
 	// roster is best-effort and must not stall WebRTC renegotiation or later
-	// peer events while orchestrator/agents-bot is slow or temporarily down.
+	// peer events while orchestrator is slow or temporarily down.
 	roomName, roomID, participantIdentity := s.roomName, s.roomID, strconv.FormatInt(peer.UserID, 10)
+	username, _ := signaling.ParseMemberMetadata(peer.Metadata)
+
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), orchestratorCallTimeout)
 		defer cancel()
-		if err := s.orch.ParticipantJoined(ctx, roomName, roomID, participantIdentity); err != nil {
+		if err := s.orch.ParticipantJoined(ctx, roomName, roomID, participantIdentity, username); err != nil {
 			logging.L.Error(
 				"orchestratorclient: participant_joined failed",
 				append(logging.ErrAttrs(err), "room_name", roomName, "room_id", roomID, "participant_identity", participantIdentity)...,
@@ -720,44 +719,6 @@ func (s *session) onRoomMessage(message signaling.RoomMessage, userID string) {
 	roomID := s.roomID
 	participantIdentity := userID
 	content := message.Content
-	username := strings.TrimSpace(message.Name)
-
-	// Persist a chat participant once per successfully saved user ID. Multiple
-	// requests may be in flight before the first success; the database write is
-	// idempotent, and only a confirmed {"status":"ok"} is cached.
-	if username != "" {
-		if _, saved := s.savedUsers.Load(participantIdentity); !saved {
-			go func() {
-				ctx, cancel := context.WithTimeout(
-					context.Background(),
-					orchestratorCallTimeout,
-				)
-				defer cancel()
-
-				err := orch.SaveExternalChatParticipant(
-					ctx,
-					roomName,
-					roomID,
-					participantIdentity,
-					username,
-				)
-				if err != nil {
-					logging.L.Error(
-						"orchestratorclient: save external chat participant failed",
-						append(
-							logging.ErrAttrs(err),
-							"room_name", roomName,
-							"room_id", roomID,
-							"participant_identity", participantIdentity,
-						)...,
-					)
-					return
-				}
-
-				s.savedUsers.Store(participantIdentity, struct{}{})
-			}()
-		}
-	}
 
 	go func() {
 		ctx, cancel := context.WithTimeout(
