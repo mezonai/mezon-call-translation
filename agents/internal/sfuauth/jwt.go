@@ -7,7 +7,6 @@
 package sfuauth
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -23,21 +22,10 @@ type joinClaims struct {
 	jwt.RegisteredClaims
 }
 
-type joinMetadata struct {
-	Username string `json:"username"`
-	Avatar   string `json:"avatar"`
-}
-
 // SignJoinToken produces the HS256 token to send as `join.token`.
 func SignJoinToken(secret string, agentUserID int64, roomID uint64, avatarURL string, ttl time.Duration) (string, error) {
 	now := time.Now()
-	metadata, err := json.Marshal(joinMetadata{
-		Username: "KOMU Agent",
-		Avatar:   avatarURL,
-	})
-	if err != nil {
-		return "", fmt.Errorf("sfuauth: marshal metadata: %w", err)
-	}
+	metadata := "KOMU Agent;" + avatarURL
 
 	claims := joinClaims{
 		Identity: strconv.FormatInt(agentUserID, 10),
