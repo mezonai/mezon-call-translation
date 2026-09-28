@@ -6,54 +6,61 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// mezon-sfu application-specific WebSocket close codes (sfu_disconnect_reason_t).
+// mezon-sfu WebSocket close codes this agent treats specially
+// (sfu_disconnect_reason_t, agents/../mezon-sfu source of truth).
 const (
-	CloseIdleTimeout    = 4001 // client idle too long
-	ClosePingFailed     = 4002 // server failed to send ping
-	CloseKicked         = 4006 // kicked by admin
-	CloseRecvError      = 4008 // WebSocket recv failure
-	CloseTransportError = 4010 // UV_DISCONNECT / poll error
-	CloseAloneTimeout   = 4011 // alone participant timeout
-	CloseDuplicate      = 4012 // new session joined with same user_id
+	CloseKicked       = 4006 // kicked by admin
+	CloseAloneTimeout = 4011 // alone participant timeout
+	CloseDuplicate    = 4012 // a new session joined with the same user_id
 )
 
-// reconnectableCloseCodes is the only set of server-sent close codes after
-// which the agent rejoins (per the SFU team). Every other explicit close
-// code ends the run.
-var reconnectableCloseCodes = map[int]struct{}{
-	CloseIdleTimeout:    {},
-	ClosePingFailed:     {},
-	CloseRecvError:      {},
-	CloseTransportError: {},
+// terminalCloseCodes are the only server-sent close codes after which the
+// agent does not rejoin. Mirrors mezon-sfu's own frontend client
+// (handleWebSocketClose), which the SFU team gave as the canonical
+// reconnect policy on 2026-09-27, superseding an earlier, narrower
+// allowlist-based version of this file: that switch reconnects by default
+// and only special-cases 1000/4006/4011/4012 as "stop".
+//
+// The frontend's other two special cases -- 4003/4004/4005 (refresh the
+// token, then reconnect) and 4013 (destroy the RTCPeerConnection, build a
+// new one, then reconnect) -- need no equivalent here. runSession signs a
+// brand new JWT and builds a brand new rtcagent.PeerAgent on every single
+// call, never resuming a previous attempt's token or PeerConnection (see
+// runSession's doc) -- so an ordinary reconnect already does both of those
+// things unconditionally. They fall through to the same "reconnect with
+// backoff" path as everything else below, with no special-casing needed.
+var terminalCloseCodes = map[int]struct{}{
+	websocket.CloseNormalClosure: {}, // 1000
+	CloseKicked:                  {}, // 4006
+	CloseAloneTimeout:            {}, // 4011
+	CloseDuplicate:               {}, // 4012
 }
 
 // ShouldReconnect reports whether a session that ended with err should be
-// retried. Only an explicit close code sent by the SFU can veto a retry;
-// anything without one (dial failure, connection reset, and gorilla's
-// synthetic 1005/1006 for a drop with no close frame) stays retryable.
+// retried. Defaults to true, matching the frontend switch's own `default:`
+// case -- only one of the four terminal codes above can veto a retry. That
+// includes every code not (yet) in sfu_disconnect_reason_t: an unknown
+// close code is exactly the case the frontend's default arm exists for.
 func ShouldReconnect(err error) bool {
 	var ce *websocket.CloseError
 	if !errors.As(err, &ce) {
 		return true
 	}
-	switch ce.Code {
-	case websocket.CloseNoStatusReceived, websocket.CloseAbnormalClosure:
-		return true
-	}
-	_, ok := reconnectableCloseCodes[ce.Code]
-	return ok
+	_, terminal := terminalCloseCodes[ce.Code]
+	return !terminal
 }
 
-// IsExpectedClose reports whether err is an SFU close that is a normal way
-// for the agent's run to end (as opposed to a configuration/auth failure).
+// IsExpectedClose reports whether err is a terminal close that is a normal,
+// graceful way for the agent's run to end (kicked, left alone too long,
+// superseded by a new session, or a plain normal closure) -- as opposed to
+// a crash or the reconnect budget running out. Same set as
+// terminalCloseCodes: every terminal code here is a graceful end state,
+// there is no separate "configuration error" bucket anymore.
 func IsExpectedClose(err error) bool {
 	var ce *websocket.CloseError
 	if !errors.As(err, &ce) {
 		return false
 	}
-	switch ce.Code {
-	case websocket.CloseNormalClosure, CloseKicked, CloseAloneTimeout, CloseDuplicate:
-		return true
-	}
-	return false
+	_, terminal := terminalCloseCodes[ce.Code]
+	return terminal
 }
