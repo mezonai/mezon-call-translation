@@ -30,6 +30,8 @@ WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
 GIPFORMER_FILES=("encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt")
+PARAKEET_MODEL_DIR="$MODELS_DIR/parakeet-model"
+PARAKEET_FILES=("config.json" "decoder_joint-model.fp16.onnx" "encoder-model.fp16.onnx" "nemo128.onnx" "vocab.txt")
 
 # Counters
 TOTAL_CHECKS=0
@@ -140,6 +142,26 @@ else
     print_info "  Run: bash scripts/download-gipformer-model.sh"
 fi
 
+# Check Parakeet model
+if [ -d "$PARAKEET_MODEL_DIR" ]; then
+    missing=false
+    for f in "${PARAKEET_FILES[@]}"; do
+        if [ ! -f "$PARAKEET_MODEL_DIR/$f" ]; then
+            missing=true
+            break
+        fi
+    done
+    if [ "$missing" = false ]; then
+        check_pass "Parakeet TDT FP16 model found in $PARAKEET_MODEL_DIR"
+    else
+        check_fail "Parakeet TDT FP16 model is incomplete in $PARAKEET_MODEL_DIR"
+        print_info "  Run: bash scripts/download-parakeet-model.sh"
+    fi
+else
+    check_fail "Parakeet model directory not found: $PARAKEET_MODEL_DIR"
+    print_info "  Run: bash scripts/download-parakeet-model.sh"
+fi
+
 # Check Kokoro model
 if [ -f "$KOKORO_MODEL_DIR/kokoro.onnx" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
     check_pass "Kokoro model found: kokoro-v0_19.pth"
@@ -208,15 +230,27 @@ check_venv "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/venv"
 check_venv "Orchestrator Service" "$ORCHESTRATOR_DIR/venv"
 check_venv "Agents Service" "$AGENTS_DIR/venv"
 
-# Gipformer runs in the STT / Non-Realtime STT virtual environment. Keep this separate from the
-# cache check so a missing Python dependency is distinguishable from a missing
-# Hugging Face artifact.
+# Runtime dependencies for Gipformer & Parakeet in Non-Realtime STT / STT virtual environments.
+NON_REALTIME_PYTHON=""
 if [ -x "$NON_REALTIME_STT_DIR/venv/bin/python" ]; then
-    if "$NON_REALTIME_STT_DIR/venv/bin/python" -c "import sherpa_onnx" >/dev/null 2>&1; then
+    NON_REALTIME_PYTHON="$NON_REALTIME_STT_DIR/venv/bin/python"
+elif [ -f "$NON_REALTIME_STT_DIR/venv/Scripts/python.exe" ]; then
+    NON_REALTIME_PYTHON="$NON_REALTIME_STT_DIR/venv/Scripts/python.exe"
+fi
+
+if [ -n "$NON_REALTIME_PYTHON" ]; then
+    if "$NON_REALTIME_PYTHON" -c "import sherpa_onnx" >/dev/null 2>&1; then
         check_pass "Non-Realtime STT venv has sherpa-onnx for Gipformer fallback"
     else
         check_fail "Non-Realtime STT venv is missing sherpa-onnx for Gipformer fallback"
-        print_info "  Install requirements: $NON_REALTIME_STT_DIR/venv/bin/pip install -r $NON_REALTIME_STT_DIR/requirements.txt"
+        print_info "  Install requirements: pip install -r $NON_REALTIME_STT_DIR/requirements.txt"
+    fi
+
+    if "$NON_REALTIME_PYTHON" -c "import onnx_asr" >/dev/null 2>&1; then
+        check_pass "Non-Realtime STT venv has onnx-asr for Parakeet TDT ASR"
+    else
+        check_fail "Non-Realtime STT venv is missing onnx-asr for Parakeet TDT ASR"
+        print_info "  Install requirements: pip install -r $NON_REALTIME_STT_DIR/requirements.txt"
     fi
 elif [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
     if "$STT_SERVICE_DIR/venv/bin/python" -c "import sherpa_onnx" >/dev/null 2>&1; then
@@ -226,7 +260,7 @@ elif [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
         print_info "  Install STT requirements: $STT_SERVICE_DIR/venv/bin/pip install -r $STT_SERVICE_DIR/requirements-server.txt"
     fi
 else
-    check_warn "Cannot verify sherpa-onnx because STT Linux venv is unavailable"
+    check_warn "Cannot verify STT dependencies because STT venv python is unavailable"
 fi
 
 # ============================================================================

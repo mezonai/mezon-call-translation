@@ -26,6 +26,8 @@ from non_realtime_stt_service.service.whisper_transcription_processor import (
     transcribe_task,
     WhisperTranscriptionProcessor,
 )
+from non_realtime_stt_service.service.parakeet import get_parakeet_engine
+from non_realtime_stt_service.api.stt_router import router as stt_router
 from non_realtime_stt_service.config import get_config
 from non_realtime_stt_service.utils.logging_config import setup_logging
 
@@ -93,8 +95,21 @@ async def lifespan(app: FastAPI):
     transcription_queue = RedisTranscriptionQueueService()
     transcription_queue.set_processor(transcribe_task)
     await transcription_queue.start()
+
+    # 4. Initialize Parakeet TDT FP16 ASR Engine
+    parakeet_engine = get_parakeet_engine()
+    config = get_config()
+    if config.parakeet.enabled:
+        health_service.register_health_check(
+            "parakeet_engine",
+            parakeet_engine.health_status,
+        )
+        try:
+            await parakeet_engine.initialize()
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Parakeet ASR engine: {e}", exc_info=True)
     
-    # 4. Optional background metrics loop
+    # 5. Optional background metrics loop
     system_metrics_task = asyncio.create_task(system_metrics_loop())
     
     logger.info("✅ STT Non-Realtime Service fully initialized and ready for tasks")
@@ -103,10 +118,13 @@ async def lifespan(app: FastAPI):
     
     # ===== SHUTDOWN =====
     logger.info("🛑 Shutting down STT Non-Realtime Service...")
+    if parakeet_engine is not None:
+        await parakeet_engine.shutdown()
     if transcription_queue is not None:
         await transcription_queue.stop()
     if whisper_processor is not None:
         await whisper_processor.shutdown()
+    get_health_service().unregister_health_check("parakeet_engine")
     get_health_service().unregister_health_check("gipformer_fallback")
     try:
         await redis_manager.disconnect()
@@ -122,6 +140,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="STT Non-Realtime Service", lifespan=lifespan)
+app.include_router(stt_router)
 
 
 @app.get("/health")

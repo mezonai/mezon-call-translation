@@ -115,6 +115,32 @@ class STTServiceConfig:
 
 
 # ============================================================================
+# Non-Realtime STT Service Configuration
+# ============================================================================
+
+
+@dataclass
+class NonRealtimeSTTConfig:
+    """HTTP client configuration for Non-Realtime STT Service"""
+
+    host: str = "localhost"
+    port: int = 8001
+    timeout: float = 300.0
+
+    @classmethod
+    def from_env(cls) -> "NonRealtimeSTTConfig":
+        return cls(
+            host=os.getenv("NON_REALTIME_STT_HOST", "localhost"),
+            port=int(os.getenv("NON_REALTIME_STT_PORT", "8001")),
+            timeout=float(os.getenv("NON_REALTIME_STT_TIMEOUT", "300.0")),
+        )
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+
+# ============================================================================
 # Server Configuration
 # ============================================================================
 
@@ -538,6 +564,7 @@ class Config:
         self.summary = SummaryConfig.from_env()
         self.light_summary = LightSummaryConfig.from_env()
         self.transcript_correction = TranscriptCorrectionConfig.from_env()
+        self.non_realtime_stt = NonRealtimeSTTConfig.from_env()
 
         self.agents_bot = AgentsBotConfig.from_env()
         self._initialized = True

@@ -14,6 +14,7 @@ from orchestrator_service.api.v2.endpoints.sse_agent_request_api import router a
 from orchestrator_service.api.v2.endpoints.sse_chat_external_api import router as sse_chat_external_router
 from orchestrator_service.api.v2.endpoints.sse_metadata_api import router as sse_metadata_router
 from orchestrator_service.api.v2.endpoints.sse_transcript_api import router as stream_router
+from orchestrator_service.api.v2.endpoints.stt_api import router as stt_router
 from orchestrator_service.api.v2.endpoints.summary_api import client_router as summary_client_router
 from orchestrator_service.api.v2.endpoints.transcript_api import router as transcript_router
 
@@ -32,6 +33,7 @@ api_router.include_router(room_registry_router)  # Has prefix="/api/room-registr
 api_router.include_router(summary_client_router)
 api_router.include_router(recording_events_router, tags=["recording events"])
 api_router.include_router(transcript_router)
+api_router.include_router(stt_router)
 
 
 __all__ = ["api_router"]

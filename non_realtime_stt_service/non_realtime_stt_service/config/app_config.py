@@ -49,6 +49,18 @@ class WhisperConfig:
 
 
 @dataclass
+class ParakeetConfig:
+    """Parakeet TDT FP16 ASR model and dynamic batching configuration."""
+    enabled: bool = True
+    model_path: str = "models/parakeet-model"
+    model_repo: str = "grikdotnet/parakeet-tdt-0.6b-fp16"
+    gpu_mem_limit_mb: int = 4500
+    max_batch_size: int = 5
+    max_wait_time: float = 0.2
+    device_id: str = "0"
+
+
+@dataclass
 class TranscriptConfig:
     """Transcription batching configuration."""
     chunk_size: int = 50  # Number of segments to batch together before sending to Redis.
@@ -118,6 +130,7 @@ class AppConfig:
     """Main application configuration for non-realtime STT."""
     audio: AudioConfig = field(default_factory=AudioConfig)
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
+    parakeet: ParakeetConfig = field(default_factory=ParakeetConfig)
     transcript: TranscriptConfig = field(default_factory=TranscriptConfig)
     minio: MinIOConfig = field(default_factory=MinIOConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
@@ -166,6 +179,15 @@ class ConfigManager:
         
         # Transcription batching
         config.transcript.chunk_size = int(os.getenv("TRANSCRIPT_CHUNK_SIZE", config.transcript.chunk_size))
+
+        # Parakeet configuration
+        config.parakeet.enabled = os.getenv("PARAKEET_ENABLED", "true").lower() == "true"
+        config.parakeet.model_path = os.getenv("PARAKEET_MODEL_PATH", config.parakeet.model_path)
+        config.parakeet.model_repo = os.getenv("PARAKEET_MODEL_REPO", config.parakeet.model_repo)
+        config.parakeet.gpu_mem_limit_mb = int(os.getenv("GPU_MEM_LIMIT_MB", config.parakeet.gpu_mem_limit_mb))
+        config.parakeet.max_batch_size = int(os.getenv("MAX_BATCH_SIZE", config.parakeet.max_batch_size))
+        config.parakeet.max_wait_time = float(os.getenv("MAX_WAIT_TIME", config.parakeet.max_wait_time))
+        config.parakeet.device_id = os.getenv("CUDA_DEVICE_ID", config.parakeet.device_id)
 
         # MinIO configuration
         config.minio.endpoint = os.getenv("MINIO_ENDPOINT", config.minio.endpoint)
