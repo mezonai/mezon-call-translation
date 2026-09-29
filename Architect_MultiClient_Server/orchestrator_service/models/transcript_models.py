@@ -167,8 +167,11 @@ class TranscriptCorrectionRetryType(StrEnum):
     ALL = "all"
 
 class CorrectedEntry(BaseModel):  # type: ignore[explicit-any]
-    index: int = Field(description="Original index of the message")
+    index: int = Field(description="Original index of the message that was modified")
     corrected_content: str = Field(description="Corrected text content")
 
 class TranscriptCorrectionResult(BaseModel):  # type: ignore[explicit-any]
-    entries: list[CorrectedEntry] = Field(description="List of corrected transcript entries")
+    entries: list[CorrectedEntry] = Field(
+        default_factory=list,
+        description="List of ONLY the entries that were modified. DO NOT include unchanged entries.",
+    )

@@ -53,6 +53,7 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
 )
+from orchestrator_service.utils.llm_utils import create_retry_logger
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
     build_username_maps,
@@ -97,12 +98,13 @@ class SummaryService:
         temperature: float,
         top_p: float,
         max_attempts: int,
+        room_id: str | None = None,
     ) -> T:
         @retry(
             stop=stop_after_attempt(max_attempts),
             wait=wait_exponential(multiplier=2, min=1, max=10),
             retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
-            before_sleep=before_sleep_log(logger, logging.ERROR),
+            before_sleep=create_retry_logger(logger, room_id=room_id, max_attempts=max_attempts),
             reraise=True,
         )
         async def _inner() -> T:
@@ -112,7 +114,12 @@ class SummaryService:
 
         return await _inner()
 
-    async def _call_llm_with_fallback(self, prompt: str, response_model: type[T]) -> T:
+    async def _call_llm_with_fallback(
+        self,
+        prompt: str,
+        response_model: type[T],
+        room_id: str | None = None,
+    ) -> T:
         try:
             return await self._call_llm(
                 llm_service=self.llm_service,
@@ -123,10 +130,12 @@ class SummaryService:
                 top_p=self.config.top_p,
                 timeout=self.config.timeout,
                 max_attempts=self.config.retry_count,
+                room_id=room_id,
             )
         except Exception as e:
             if self.config.fallback_enable and self.llm_service_fallback:
-                logger.warning(f"All primary attempts failed ({e}). Switching to fallback LLM.")
+                room_tag = f"[Room: {room_id}] " if room_id else ""
+                logger.warning(f"{room_tag}All primary attempts failed ({e}). Switching to fallback LLM.")
                 return await self._call_llm(
                     llm_service=self.llm_service_fallback,
                     prompt=prompt,
@@ -136,6 +145,7 @@ class SummaryService:
                     top_p=self.config.fallback_top_p,
                     timeout=self.config.fallback_timeout,
                     max_attempts=self.config.fallback_retry_count,
+                    room_id=room_id,
                 )
             raise
 
@@ -194,7 +204,7 @@ class SummaryService:
         try:
             section_context_str = json.dumps(section_context, ensure_ascii=False, indent=2)
             prompt = build_overall_context_prompt(section_context_str, language)
-            result = await self._call_llm_with_fallback(prompt, OverallContextResult)
+            result = await self._call_llm_with_fallback(prompt, OverallContextResult, room_id=room_id)
 
             return self.merge_section_summaries(sections=sections, overall_context=result.context)
         except Exception as e:
@@ -461,16 +471,11 @@ class SummaryService:
                 saved_id=saved_id,
             )
 
-    async def _execute_normal_summary_flow(
-        self,
-        room_id: str,
-        room_doc: Room,
-        full_text: str,
-        username_to_id: dict[str, str],
-        draft_summary: dict[str, Any],  # type: ignore[explicit-any]
-        saved_id: str | None,
-    ) -> dict[str, Any]:  # type: ignore[explicit-any]
-        summary_data_result = None
+            try:
+                summary_prompt = build_prompt_summary(full_text, self.config.language)
+                summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult, room_id=str(room_id))
+            except Exception as e:
+                logger.warning(f"Summary task failed for room {room_id}: {e}")
 
         try:
             summary_prompt = build_prompt_summary(full_text, self.config.language)
@@ -632,6 +637,7 @@ class SummaryService:
             logger.info(f"Retrying LLM with type '{retry_type.value}' for room {room_id} ({len(full_text)} chars)")
             return await self._retry_normal_summary(room_id, summary_doc, full_text, username_to_id)
 
+<<<<<<< HEAD
     async def _retry_normal_summary(
         self,
         room_id: str,
@@ -642,6 +648,13 @@ class SummaryService:
         try:
             prompt = build_prompt_summary(full_text, self.config.language)
             result = await self._call_llm_with_fallback(prompt, SummaryResult)
+=======
+            is_success = False
+            try:
+                if retry_type == RetryType.SUMMARY:
+                    prompt = build_prompt_summary(full_text, self.config.language)
+                    result = await self._call_llm_with_fallback(prompt, SummaryResult, room_id=str(room_id))
+>>>>>>> e0d23c4 (optimize and update prompt for ALL CAPS word from Gipformer, fix error log not contain room_id in _call_llm func)
 
             summary_parts = [f"Context\n{result.context}"]
 
