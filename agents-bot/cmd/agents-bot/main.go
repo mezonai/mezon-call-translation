@@ -1,7 +1,6 @@
 // Command agents-bot is the agents-bot service entrypoint. It initializes the
-// mezon-sdk-go bot client, listens for voice/chat events from the Mezon
-// platform, and serves an HTTP API for agents to resolve user profiles and
-// register active meeting rooms.
+// mezon-sdk-go bot client, forwards chat messages from active Mezon rooms,
+// and serves HTTP APIs for room registration and the authenticated bot profile.
 package main
 
 import (

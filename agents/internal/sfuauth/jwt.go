@@ -18,16 +18,20 @@ type joinClaims struct {
 	Identity string `json:"identity"`
 	RoomJoin bool   `json:"roomJoin"`
 	Room     uint64 `json:"room"`
+	Metadata string `json:"metadata"`
 	jwt.RegisteredClaims
 }
 
 // SignJoinToken produces the HS256 token to send as `join.token`.
-func SignJoinToken(secret string, agentUserID int64, roomID uint64, ttl time.Duration) (string, error) {
+func SignJoinToken(secret string, agentUserID int64, roomID uint64, avatarURL string, ttl time.Duration) (string, error) {
 	now := time.Now()
+	metadata := "KOMU Agent;" + avatarURL
+
 	claims := joinClaims{
 		Identity: strconv.FormatInt(agentUserID, 10),
 		RoomJoin: true,
 		Room:     roomID,
+		Metadata: string(metadata),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			NotBefore: jwt.NewNumericDate(now.Add(-1 * time.Minute)),

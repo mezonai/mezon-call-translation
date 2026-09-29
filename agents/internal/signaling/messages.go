@@ -138,12 +138,21 @@ type offerMsg struct {
 type Member struct {
 	PeerID    uint64 `json:"peer_id"`
 	UserID    int64  `json:"user_id,string"`
+	Metadata  string `json:"metadata"`
 	Role      string `json:"role"`
 	IsMute    bool   `json:"is_mute"`
 	Ufrag     string `json:"ufrag"`
 	MidAudio  uint32 `json:"mid_audio"`
 	MidVideo  uint32 `json:"mid_video"`
 	MidScreen uint32 `json:"mid_screen"`
+}
+
+// ParseMemberMetadata splits the SFU metadata at the first semicolon using
+// the "username;avatar" format. Username is presentation data; use
+// Member.UserID for participant identity.
+func ParseMemberMetadata(metadata string) (displayName, avatarURL string) {
+	username, avatar, _ := strings.Cut(metadata, ";")
+	return strings.TrimSpace(username), avatar
 }
 
 type roomSnapshotMsg struct {
