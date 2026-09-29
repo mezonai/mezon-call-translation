@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from typing import Any
 
@@ -68,3 +69,27 @@ def extract_json_from_llm(raw_text: str) -> dict[str, Any]:  # type: ignore[expl
 
     logger.error("Cannot extract JSON from LLM output")
     raise ValueError("No valid JSON found in LLM response")
+
+
+def create_retry_logger(
+    target_logger: logging.Logger,
+    room_id: str | None = None,
+    max_attempts: int | None = None,
+    action: str = "LLM call",
+):
+    """
+    Creates a tenacity before_sleep callback that includes room_id,
+    attempt count, sleep duration, and clean exception information.
+    """
+    def _log_retry(retry_state) -> None:
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        sleep_sec = retry_state.next_action.sleep if retry_state.next_action else 0
+        attempt = retry_state.attempt_number
+        attempt_str = f"{attempt}/{max_attempts}" if max_attempts else f"{attempt}"
+        room_tag = f"[Room: {room_id}] " if room_id else ""
+        target_logger.error(
+            f"{room_tag}Retrying {action} (attempt {attempt_str}) in {sleep_sec:.1f}s "
+            f"due to {type(exc).__name__}: {exc}"
+        )
+
+    return _log_retry
