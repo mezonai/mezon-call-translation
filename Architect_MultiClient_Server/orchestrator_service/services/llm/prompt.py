@@ -289,7 +289,7 @@ Only return a valid JSON object according to the schema:
 """
 
 
-def build_transcript_correction_prompt(indexed_content: str, previous_context: str = "", language: str = "Vietnamese") -> str:
+def build_transcript_correction_prompt(indexed_content: str, previous_context: str = "") -> str:
     if previous_context.strip():
         previous_block = f"""
 # PREVIOUS CONTEXT (ALREADY CORRECTED)
@@ -306,7 +306,7 @@ Do NOT re-correct or include these lines in your output.
 
     return f"""
 # ROLE & OBJECTIVES
-You are a professional Proofreader and Linguist specializing in correcting {language} STT (Speech-to-Text) output from technical meetings.
+You are a professional Proofreader and Linguist specializing in correcting STT (Speech-to-Text) output from technical meetings. Conversations typically feature Vietnamese mixed with English technical terms (code-switching).
 The STT engine frequently produces Vietnamese phonetic approximations of English words (e.g., "im bặt" for "impact", "cát lụt" for "catalog"). Your primary task is to reconstruct the intended words using context clues, technical domain knowledge, and phonetic reasoning.
 
 {previous_block}
@@ -321,13 +321,17 @@ The STT engine frequently produces Vietnamese phonetic approximations of English
 ---
 
 # CORRECTION RULES
-1. Correct spelling, grammar, and STT misrecognition errors in {language}.
+1. Correct spelling, grammar, and STT misrecognition errors while preserving the original spoken language. NEVER translate between languages.
 2. DO NOT rewrite, paraphrase, or change the intended meaning. Only fix errors.
 3. When the STT has phonetically transcribed an English word into Vietnamese syllables, reconstruct the original English word if the context makes it clear (e.g., "im bặt" → "impact", "phiếu riêng" → "field riêng", "bắt cấp" → "backup").
 4. PRESERVE correctly recognized English technical terms exactly as they appear (e.g., "deploy", "staging", "endpoint").
-5. If the input line is already correct, return it unchanged in the output.
-6. If a line is completely garbled and you cannot confidently determine the intended meaning, return it unchanged rather than guessing incorrectly.
+5. DELTA OUTPUT: ONLY return entries that actually require corrections. If an input line is already correct, DO NOT include it in the output.
+6. If a line is completely garbled or an unfixable hallucination, leave it unchanged and DO NOT include it in the output.
 7. **Proactive anomaly detection**: When you encounter ANY word or phrase that seems out of place, nonsensical, or inconsistent with the surrounding conversation context, actively attempt to infer the intended word using PREVIOUS CONTEXT, surrounding lines, phonetic similarity, and domain knowledge. Apply the correction ONLY if you are reasonably confident; otherwise, leave the original text unchanged.
+8. **Normalize ALL CAPS & Restore Punctuation (Chuẩn hóa chữ hoa/thường và dấu câu)**:
+   - When an input line is mistakenly transcribed in ALL UPPERCASE, normalize it to standard sentence case (capitalize only the first letter of sentences and proper names).
+   - PRESERVE technical acronyms and abbreviations in uppercase (e.g., `PDF`, `API`, `UI`, `SQL`, `3D`, `RAM`, `AWS`).
+   - Add natural punctuation (commas `,`, periods `.`, question marks `?`) to unpunctuated run-on lines to restore readability, while maintaining the speaker's original cadence.
 
 # COMMON STT ERROR PATTERNS
 Pay special attention to these frequent STT misrecognition patterns:
@@ -359,13 +363,23 @@ Pay special attention to these frequent STT misrecognition patterns:
    The STT output bears no resemblance to the actual speech. These are UNFIXABLE — leave them unchanged unless surrounding context makes the intended meaning absolutely clear.
    Examples: "mangrioz" → leave as-is (cannot guess), "phút lăng" → leave as-is.
 
+8. **ALL CAPS glitch & Missing punctuation (Lỗi kẹt in hoa toàn bộ và nuốt dấu câu)**:
+   Due to mic distortion, sudden volume spikes, or STT looping, the engine often outputs entire segments in ALL CAPS without any commas or periods.
+   - Lowercase ordinary words and restore normal sentence capitalization.
+   - Retain standard technical acronyms in uppercase (e.g., `PDF`, `API`).
+   - Insert appropriate punctuation to separate clauses.
+   Example:
+   "NÓ KHÔNG THẤY GỬI TRÊN NÀY ĐỘI ẤY MỚI LÀM XONG CÁI CÁI ĐÈN BÔ THÌ EM GỬI THÌ NÓ NÓ Ô KÊ RỒI"
+   → "Nó không thấy gửi trên này. Đội ấy mới làm xong cái demo thì em gửi thì nó ok rồi."
+
 Use the PREVIOUS CONTEXT and surrounding lines to determine the correct word when multiple interpretations are possible.
 
 # OUTPUT FORMAT
 Return only a valid JSON object matching the TranscriptCorrectionResult schema:
 1. ONLY return a single valid JSON object, absolutely no other text, characters, or markdown wrapping.
-2. The output must contain ALL indices from the input, in the same order.
-3. If an index is [5] in the input, it MUST be index 5 in the output JSON.
+2. DELTA/DIFF MODE: The `entries` list must ONLY contain entries where `corrected_content` differs from the original input. Do NOT echo back unchanged lines.
+3. If no errors are found in the entire input, return an empty list: {{"entries": []}}.
+4. For every corrected entry, `index` MUST match the original index number from brackets [i].
 
 {TranscriptCorrectionResult.model_json_schema()}
 
@@ -405,20 +419,33 @@ Return only a valid JSON object matching the TranscriptCorrectionResult schema:
   ]
 }}
 
-## Example 3 — Mix of fixable errors and unfixable hallucinations
+## Example 3 — Mix of fixable errors, correct lines, and unfixable hallucinations (Delta Mode)
 **Input:**
 [20] ok anh ơi, em push code lên branch develop rồi
 [21] mangrioz cái con fidel đi
 [22] dạ em sẻ kiểm tra lại cái ba đề trước
 [23] phút lăng cái đó xem
 
+**Output (Notice lines [20] and [23] are omitted because [20] is already correct and [23] is an unfixable hallucination):**
+{{
+  "entries": [
+    {{"index": 21, "corrected_content": "mangrioz cái confident đi"}},
+    {{"index": 22, "corrected_content": "dạ em sẽ kiểm tra lại cái 3D trước"}}
+  ]
+}}
+
+## Example 4 — ALL CAPS normalization + missing punctuation + tech term restoration
+**Input:**
+[30] CÓ GÌ THÌ CHỊ XEM LẠI ĐỌC LẠI CÁI CÁI TIN NHẮN NÀY MỘT CHÚT NHÁ CÁI TIN NHẮN CỦA CÁI TIN NHẮN TỔNG HỢP HÔM QUA
+[31] Ở TRONG ĐẤY
+[32] ĐỘI ẤY MỚI LÀM XONG CÁI ĐÈN BÔ XUẤT RA FILE BÊ ĐÊ ÉP THÌ NÓ Ô KÊ RỒI
+
 **Output:**
 {{
   "entries": [
-    {{"index": 20, "corrected_content": "ok anh ơi, em push code lên branch develop rồi"}},
-    {{"index": 21, "corrected_content": "mangrioz cái confident đi"}},
-    {{"index": 22, "corrected_content": "dạ em sẽ kiểm tra lại cái 3D trước"}},
-    {{"index": 23, "corrected_content": "phút lăng cái đó xem"}}
+    {{"index": 30, "corrected_content": "Có gì thì chị xem lại, đọc lại cái tin nhắn này một chút nhá, cái tin nhắn tổng hợp hôm qua."}},
+    {{"index": 31, "corrected_content": "Ở trong đấy."}},
+    {{"index": 32, "corrected_content": "Đội ấy mới làm xong cái demo, xuất ra file PDF thì nó ok rồi."}}
   ]
 }}
 
@@ -426,10 +453,11 @@ Return only a valid JSON object matching the TranscriptCorrectionResult schema:
 Analyze the input transcript and only return the JSON object.
 
 # FINAL CHECK
-* Verify that EVERY index from the input appears in the output — no missing, no extra indices.
+* Verify that `entries` contains ONLY lines that actually needed corrections — do NOT include unchanged lines.
+* If no corrections were needed for any line, verify that `entries` is empty: [].
 * Ensure corrected content preserves the original meaning — only spelling/grammar fixes and English word reconstruction, no paraphrasing.
 * For Vietnamese phonetization of English: only reconstruct if the context clearly supports the intended English word.
-* If you are not confident about a correction, leave the original text unchanged.
+* If you are not confident about a correction, leave the original text unchanged (do not include it in output).
 * Ensure the output is clean JSON with no markdown wrapping, no comments, no trailing commas.
 """
 
