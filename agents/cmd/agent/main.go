@@ -529,7 +529,8 @@ func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
 	// case -- Bridge nil-checks the func itself before calling it.
 	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID, s.conn)
 	sttFactory := tracksink.NewSTTSinkFactory(s.cfg, s.orch)
-	var newRecordSink, newSTTSink func(info rtcagent.TrackInfo) audiopipeline.Sink
+	var newRecordSink func(info rtcagent.TrackInfo) audiopipeline.RecordSink
+	var newSTTSink func(info rtcagent.TrackInfo) audiopipeline.STTSink
 	if recordFactory != nil {
 		newRecordSink = recordFactory.NewSink
 	}

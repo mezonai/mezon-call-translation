@@ -25,13 +25,13 @@ type SessionMeta struct {
 // Forwarder is one forwarding session for one track. Not reused across
 // tracks.
 //
-// SendPCM and Close must only ever be called from a single goroutine (never
+// SendOgg and Close must only ever be called from a single goroutine (never
 // concurrently with each other) -- droppedSinceFlush/closed are plain
 // fields, not synchronized, by design: the intended caller
 // (internal/recording.Bridge) already guarantees this per track, see
 // rtcagent.PeerAgent's OnAudioPacket/OnTrackEnded doc. rejected is the one
 // exception -- it's written by the reader goroutine below and read from
-// SendPCM's goroutine, so it's an atomic.
+// SendOgg's goroutine, so it's an atomic.
 type Forwarder struct {
 	stream  recordpb.RecordingIngest_StreamAudioClient
 	trackID string
@@ -63,7 +63,7 @@ func NewForwarder(client *Client, meta SessionMeta, maxQueueSize int) (*Forwarde
 	}
 
 	// Enqueued before the writer goroutine starts, so it's always the first
-	// item on the wire regardless of how fast the caller starts sending PCM.
+	// item on the wire regardless of how fast the caller starts sending Ogg.
 	f.queue <- &recordpb.AudioChunk{Payload: &recordpb.AudioChunk_Start{Start: &recordpb.SessionStart{
 		RoomId:              meta.RoomID,
 		TrackId:             meta.TrackID,
@@ -79,12 +79,16 @@ func NewForwarder(client *Client, meta SessionMeta, maxQueueSize int) (*Forwarde
 	return f, nil
 }
 
-// SendPCM enqueues one PCM frame. Non-blocking: if the internal queue is
+// SendOgg enqueues Ogg bytes. Non-blocking: if the internal queue is
 // full (record-service, or the network to it, can't keep up), the frame is
 // dropped and counted rather than ever blocking the caller. The count is
 // reported to record-service on the next successful send, or folded into
 // the final Close() if it never recovers.
-func (f *Forwarder) SendPCM(pcm []byte) {
+func (f *Forwarder) SendOgg(ogg []byte) {
+	f.sendAudio(ogg)
+}
+
+func (f *Forwarder) sendAudio(audio []byte) {
 	if f.closed || f.rejected.Load() {
 		return
 	}
@@ -98,7 +102,7 @@ func (f *Forwarder) SendPCM(pcm []byte) {
 		}
 	}
 	select {
-	case f.queue <- &recordpb.AudioChunk{Payload: &recordpb.AudioChunk_Pcm{Pcm: pcm}}:
+	case f.queue <- &recordpb.AudioChunk{Payload: &recordpb.AudioChunk_Ogg{Ogg: audio}}:
 	default:
 		f.droppedSinceFlush++
 	}
@@ -142,13 +146,13 @@ func (f *Forwarder) readLoop() {
 // loops (one deadline, not two sequential ones): this guards against
 // record-service/network being slow or down, not against genuinely
 // necessary work -- if it's actually down, waiting longer doesn't help, and
-// whatever's still buffered locally is already best-effort (SendPCM already
+// whatever's still buffered locally is already best-effort (SendOgg already
 // drops under backpressure, see its doc).
 const closeGrace = 2 * time.Second
 
 // Close flushes any pending drop count, signals the write loop to stop, and
 // waits (briefly, see closeGrace) for both loops to finish. Must be called
-// from the same goroutine as SendPCM -- see the Forwarder doc.
+// from the same goroutine as SendOgg -- see the Forwarder doc.
 func (f *Forwarder) Close() {
 	if f.closed {
 		return

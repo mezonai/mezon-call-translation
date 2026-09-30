@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 
 from record_service.application.retry import with_retry
-from record_service.domain.models import QualityAnnotation, RecordingSession, RecordingStatus
+from record_service.domain.models import RecordingSession, RecordingStatus
 from record_service.domain.policies import RecordingPolicy
 from record_service.domain.ports import BlobStorage
 
@@ -35,24 +35,6 @@ async def complete_or_abort(
             ),
         )
         session.status = RecordingStatus.COMPLETED
-        if session.is_byte_rate_suspect(policy.byte_rate_tolerance):
-            # D11: upload succeeded, but content looks thin relative to
-            # elapsed time -- surface it, don't hide it as a clean `completed`.
-            # An annotation (not just a log line) so it survives into the
-            # reported event and is actually "quan sát được" downstream.
-            session.quality_annotations.append(
-                QualityAnnotation(
-                    start_offset_ms=0,
-                    end_offset_ms=int(((session.ended_at or 0) - session.started_at) * 1000),
-                    reason="low_byte_rate",
-                )
-            )
-            logger.warning(
-                "Session %s completed but byte rate looks low (%.0f bytes for %.1fs) -- flagged low_byte_rate",
-                session.session_id,
-                session.raw_bytes_received,
-                (session.ended_at or 0) - session.started_at,
-            )
     except Exception as exc:  # noqa: BLE001 - retry already exhausted upstream
         logger.error("Failed to complete multipart upload for %s: %s", session.session_id, exc)
         session.status = RecordingStatus.FAILED

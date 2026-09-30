@@ -73,21 +73,6 @@ class RecordingSession:
     def next_part_number(self) -> int:
         return len(self.parts) + 1
 
-    def bit_depth_bytes(self) -> int:
-        return 2  # PCM16
-
-    def expected_bytes(self, at: float | None = None) -> float:
-        """PLAN.md D11: sanity-check baseline, elapsed time x nominal byte rate."""
-        elapsed = (at or self.ended_at or time.time()) - self.started_at
-        bytes_per_second = self.sample_rate * self.channels * self.bit_depth_bytes()
-        return max(0.0, elapsed) * bytes_per_second
-
-    def is_byte_rate_suspect(self, tolerance: float) -> bool:
-        expected = self.expected_bytes()
-        if expected <= 0:
-            return False
-        return self.raw_bytes_received < expected * tolerance
-
     def drop_rate(self) -> float:
         """PLAN.md D12: cumulative drop ratio, used as the rolling-degradation signal."""
         total_seen = self.frames_received + self.dropped_frame_count

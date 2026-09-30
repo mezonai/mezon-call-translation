@@ -15,4 +15,4 @@ import secrets
 
 def build_object_key(room_id: str, identity: str, source: str) -> str:
     random_suffix = secrets.token_hex(3)
-    return f"{room_id}/{identity}-{source}-audio-{random_suffix}.pcm"
+    return f"{room_id}/{identity}-{source}-audio-{random_suffix}.ogg"

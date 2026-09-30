@@ -30,10 +30,6 @@ class RecordingPolicy:
     # after an abrupt (non-graceful) stream drop, before we finalize best-effort.
     grace_period_seconds: float = 45.0
 
-    # D11: raw_bytes_received below (expected_bytes * tolerance) at stop time
-    # gets flagged quality_warning instead of a clean `completed`.
-    byte_rate_tolerance: float = 0.5
-
     # D12: cumulative drop_rate() above this triggers a quality annotation.
     # This never causes record-service to discard data or start a new session --
     # it only annotates; the decision to trim is made downstream by

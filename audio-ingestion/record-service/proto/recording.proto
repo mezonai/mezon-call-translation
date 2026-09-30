@@ -13,7 +13,7 @@ service RecordingIngest {
 message AudioChunk {
   oneof payload {
     SessionStart start = 1;
-    bytes pcm = 2;
+    bytes ogg = 2;
     DroppedFrames dropped = 3;
   }
 }

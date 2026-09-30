@@ -72,13 +72,13 @@ class RecordingIngestServicer(recording_pb2_grpc.RecordingIngestServicer):
                     session_id = session.session_id
                     yield recording_pb2.RecordingAck(status="accepted", object_key=session.object_key)
 
-                elif which == "pcm":
+                elif which == "ogg":
                     if session_id is None:
                         yield recording_pb2.RecordingAck(
                             status="rejected", error="must send SessionStart first"
                         )
                         return
-                    ok = await self._append_audio.execute(session_id, chunk.pcm)
+                    ok = await self._append_audio.execute(session_id, chunk.ogg)
                     if not ok:
                         yield recording_pb2.RecordingAck(
                             status="rejected", error="unknown session (already finalized?)"

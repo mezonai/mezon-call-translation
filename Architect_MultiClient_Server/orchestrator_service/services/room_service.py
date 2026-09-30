@@ -139,13 +139,13 @@ class RoomService:
             # something the client can use either way, so there is nothing
             # correct to show until it exists (D19: client polls this API
             # again after room_record_done fires).
-            derivative_filename = audio_info.get("derivative_object_key")
-            if not derivative_filename:
+            filename = audio_info.get("filename")
+            if not filename:
                 continue
             file_results.append(
                 AudioTrackInfo(
                     participant_identity=str(track.participant_identity),
-                    filename=derivative_filename,
+                    filename=filename,
                     started_at_ns=audio_info.get("started_at_ns"),
                     ended_at_ns=audio_info.get("ended_at_ns"),
                 )

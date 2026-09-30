@@ -87,7 +87,7 @@ class TranscriptionService:
                         "source": source,
                     },
                     status="wait_process",
-                    derivative_status="pending",
+                    derivative_status="completed",
                 )
                 if not track_result:
                     logger.warning(f"Failed to save track metadata for recording_id={recording_id}")

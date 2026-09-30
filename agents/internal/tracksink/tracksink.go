@@ -67,7 +67,7 @@ func NewRecordSinkFactory(recClient *recordclient.Client, cfg config.Config, roo
 	return &RecordSinkFactory{client: recClient, cfg: cfg, roomID: roomID, conn: conn}
 }
 
-func (f *RecordSinkFactory) NewSink(info rtcagent.TrackInfo) audiopipeline.Sink {
+func (f *RecordSinkFactory) NewSink(info rtcagent.TrackInfo) audiopipeline.RecordSink {
 	fwd, err := recordclient.NewForwarder(f.client, recordclient.SessionMeta{
 		RoomID: f.roomID,
 		// mezon-sfu has no persistent track SID like LiveKit's
@@ -77,8 +77,8 @@ func (f *RecordSinkFactory) NewSink(info rtcagent.TrackInfo) audiopipeline.Sink 
 		TrackID:             RecordTrackID(info.PeerID, info.Kind, f.conn),
 		ParticipantIdentity: strconv.FormatInt(info.UserID, 10),
 		Source:              string(info.Kind), // always "mic": callers only ever see KindAudio tracks here, see rtcagent
-		SampleRate:          audiopipeline.PCMSampleRate,
-		Channels:            audiopipeline.PCMChannels,
+		SampleRate:          audiopipeline.OggSampleRate,
+		Channels:            audiopipeline.OggChannels,
 	}, f.cfg.RecordService.MaxQueueSize)
 	if err != nil {
 		// Best-effort per audio-ingestion/PLAN.md D5 -- no recording for
@@ -109,7 +109,7 @@ func NewSTTSinkFactory(cfg config.Config, orch *orchestratorclient.Client) *STTS
 	return &STTSinkFactory{cfg: cfg, orch: orch, roomName: strconv.FormatUint(cfg.RoomID, 10)}
 }
 
-func (f *STTSinkFactory) NewSink(info rtcagent.TrackInfo) audiopipeline.Sink {
+func (f *STTSinkFactory) NewSink(info rtcagent.TrackInfo) audiopipeline.STTSink {
 	clientID := fmt.Sprintf("peer%d-%s", info.PeerID, info.Kind)
 	participantIdentity := strconv.FormatInt(info.UserID, 10)
 	wsURL := fmt.Sprintf("ws://%s:%d/ws/transcription/?client_id=%s&session_id=%s",

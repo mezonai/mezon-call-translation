@@ -33,7 +33,7 @@ class AppendAudio:
         self._state_repo = state_repo
         self._policy = policy
 
-    async def execute(self, session_id: str, pcm: bytes | None, dropped_count: int = 0) -> bool:
+    async def execute(self, session_id: str, ogg: bytes | None, dropped_count: int = 0) -> bool:
         """Returns False if the session is unknown (adapter should stop sending)."""
         active = self._registry.get(session_id)
         if active is None:
@@ -46,12 +46,12 @@ class AppendAudio:
                 session.dropped_frame_count += dropped_count
                 self._maybe_annotate_quality(session)
 
-            if not pcm:
+            if not ogg:
                 return True
 
-            session.raw_bytes_received += len(pcm)
+            session.raw_bytes_received += len(ogg)
             session.frames_received += 1
-            active.buffer.extend(pcm)
+            active.buffer.extend(ogg)
 
             while len(active.buffer) >= self._policy.part_size_bytes:
                 payload = bytes(active.buffer[: self._policy.part_size_bytes])
