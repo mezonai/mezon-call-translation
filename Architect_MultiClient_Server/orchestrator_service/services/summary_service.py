@@ -491,15 +491,20 @@ class SummaryService:
                 saved_id=saved_id,
             )
 
-            try:
-                summary_prompt = build_prompt_summary(full_text, self.config.language)
-                summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult, room_id=str(room_id))
-            except Exception as e:
-                logger.warning(f"Summary task failed for room {room_id}: {e}")
+    async def _execute_normal_summary_flow(
+        self,
+        room_id: str,
+        room_doc: Room,
+        full_text: str,
+        username_to_id: dict[str, str],
+        draft_summary: dict[str, Any],  # type: ignore[explicit-any]
+        saved_id: str | None,
+    ) -> dict[str, Any]:  # type: ignore[explicit-any]
+        summary_data_result = None
 
         try:
             summary_prompt = build_prompt_summary(full_text, self.config.language)
-            summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult)
+            summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult, room_id=str(room_id))
         except Exception as e:
             logger.warning(f"Summary task failed for room {room_id}: {e}")
 
@@ -657,7 +662,6 @@ class SummaryService:
             logger.info(f"Retrying LLM with type '{retry_type.value}' for room {room_id} ({len(full_text)} chars)")
             return await self._retry_normal_summary(room_id, summary_doc, full_text, username_to_id)
 
-<<<<<<< HEAD
     async def _retry_normal_summary(
         self,
         room_id: str,
@@ -667,14 +671,7 @@ class SummaryService:
     ) -> dict[str, Any] | None:  # type: ignore[explicit-any]
         try:
             prompt = build_prompt_summary(full_text, self.config.language)
-            result = await self._call_llm_with_fallback(prompt, SummaryResult)
-=======
-            is_success = False
-            try:
-                if retry_type == RetryType.SUMMARY:
-                    prompt = build_prompt_summary(full_text, self.config.language)
-                    result = await self._call_llm_with_fallback(prompt, SummaryResult, room_id=str(room_id))
->>>>>>> e0d23c4 (optimize and update prompt for ALL CAPS word from Gipformer, fix error log not contain room_id in _call_llm func)
+            result = await self._call_llm_with_fallback(prompt, SummaryResult, room_id=str(room_id))
 
             summary_parts = [f"Context\n{result.context}"]
 
