@@ -33,6 +33,7 @@ TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
 MODELS_DIR="$PROJECT_ROOT/models"
 NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
 GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
+PARAKEET_MODEL_DIR="$MODELS_DIR/parakeet-model"
 WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 
@@ -252,6 +253,11 @@ if [ "$SKIP_MODELS" = false ]; then
     bash "$SCRIPT_DIR/download-gipformer-model.sh" \
         --output "$GIPFORMER_MODEL_DIR"
 
+    # Parakeet TDT FP16 ASR model for English and high-throughput transcription
+    print_info "Downloading Parakeet TDT FP16 model..."
+    bash "$SCRIPT_DIR/download-parakeet-model.sh" \
+        --output "$PARAKEET_MODEL_DIR"
+
     # Download Kokoro model
     print_info "Downloading Kokoro TTS model..."
     KOKORO_ARGS=("$SCRIPT_DIR/download-kokoro-model.sh" "--output" "models/kokoro_models")
@@ -321,6 +327,7 @@ if [ "$SKIP_ENV" = false ]; then
     # Get absolute paths for models
     NEMOTRON_MODEL_PATH="$NEMOTRON_MODEL_DIR/$NEMOTRON_MODEL"
     GIPFORMER_MODEL_PATH="$GIPFORMER_MODEL_DIR"
+    PARAKEET_MODEL_PATH="$PARAKEET_MODEL_DIR"
     KOKORO_MODEL_PATH="$KOKORO_MODEL_DIR"
     
     # Update STT Service .env
@@ -353,6 +360,14 @@ if [ "$SKIP_ENV" = false ]; then
             echo "WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH" >> "$NON_REALTIME_STT_DIR/.env"
         fi
         print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in Non-Realtime STT Service"
+
+        if grep -q "^PARAKEET_MODEL_PATH=" "$NON_REALTIME_STT_DIR/.env"; then
+            sed -i.tmp "s|^PARAKEET_MODEL_PATH=.*|PARAKEET_MODEL_PATH=$PARAKEET_MODEL_PATH|" "$NON_REALTIME_STT_DIR/.env"
+            rm -f "$NON_REALTIME_STT_DIR/.env.tmp"
+        else
+            echo "PARAKEET_MODEL_PATH=$PARAKEET_MODEL_PATH" >> "$NON_REALTIME_STT_DIR/.env"
+        fi
+        print_success "Updated PARAKEET_MODEL_PATH in Non-Realtime STT Service"
     fi
     
     # Update Agents .env
@@ -441,6 +456,7 @@ echo -e "  ${GREEN}✓${NC} Models downloaded to: $MODELS_DIR"
 echo -e "  ${GREEN}✓${NC} Nemotron model: $NEMOTRON_MODEL"
 echo -e "  ${GREEN}✓${NC} Non-realtime Whisper model: $WHISPER_MODEL"
 echo -e "  ${GREEN}✓${NC} Gipformer model: gipformer-model"
+echo -e "  ${GREEN}✓${NC} Parakeet model: parakeet-model"
 echo -e "  ${GREEN}✓${NC} Kokoro model: kokoro_models"
 echo ""
 echo -e "  ${GREEN}✓${NC} .env files created and configured"

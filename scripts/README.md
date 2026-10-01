@@ -297,7 +297,31 @@ both the downloaded model files in `models/gipformer-model` and the `sherpa-onnx
 
 ---
 
-### 7. `download-kokoro-model.sh` - Kokoro TTS Model Downloader
+### 7. `download-parakeet-model.sh` - Parakeet TDT FP16 ASR Model Downloader
+
+Downloads the high-throughput Parakeet TDT FP16 ASR model for English non-realtime transcription.
+By default, it downloads the model artifacts into `models/parakeet-model` and sets `PARAKEET_MODEL_PATH` in `non_realtime_stt_service/.env`.
+
+```bash
+# Download the required ONNX and token files into models/parakeet-model
+./scripts/download-parakeet-model.sh
+
+# Download to a custom output directory
+./scripts/download-parakeet-model.sh -o /custom/path/to/parakeet-model
+
+# Confirm repository and expected artifacts
+./scripts/download-parakeet-model.sh --list
+
+# Refresh downloaded artifacts
+./scripts/download-parakeet-model.sh --force
+```
+
+After creating the Non-Realtime STT virtual environment, `./scripts/health-check.sh` checks
+the downloaded model files in `models/parakeet-model` and the `onnx-asr` runtime dependency.
+
+---
+
+### 8. `download-kokoro-model.sh` - Kokoro TTS Model Downloader
 
 Downloads Kokoro-82M TTS models and voices.
 
@@ -440,6 +464,7 @@ scripts/
 ├── health-check.sh                    # System health check
 ├── download-nemotron-model.sh         # Nemotron model downloader
 ├── download-gipformer-model.sh        # Gipformer fallback model downloader
+├── download-parakeet-model.sh         # Parakeet TDT FP16 ASR model downloader
 ├── download-kokoro-model.sh           # Kokoro model downloader
 ├── edit_env.sh                        # Undocumented helper to set KEY=VALUE pairs in a service .env
 ```
