@@ -58,7 +58,17 @@ class RoomService:
             )
             total = await self.pg_transcript_repo.count_rooms_by_user(auth.user_id, status, search, from_utc, to_utc)
 
-        return [self._serialize_room(room) for room in rooms], total
+        room_ids = [room.id for room in rooms]
+        summary_by_room = await self.pg_summary_repo.get_summary_done_by_room_ids(room_ids)
+
+        items = [
+            {
+                **self._serialize_room(room),
+                "summary_done": summary_by_room.get(room.id, False),
+            }
+            for room in rooms
+        ]
+        return items, total
 
     # TODO: Use `Any` type because the return value has a tuple of complex types (call _serialize_room())
     async def get_room_by_id(self, room_id: str, auth: AuthContext) -> dict[str, Any]:  # type: ignore[explicit-any]
