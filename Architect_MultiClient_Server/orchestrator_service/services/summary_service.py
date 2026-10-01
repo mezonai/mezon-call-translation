@@ -3,14 +3,12 @@ Service for generating room summaries
 """
 
 import json
-import logging
 from datetime import datetime
 from typing import Any, TypeVar
 
 from fastapi import HTTPException
 from pydantic import BaseModel
 from tenacity import (
-    before_sleep_log,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -53,6 +51,10 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
 )
+from orchestrator_service.services.transcript_correction_service import (
+    TranscriptCorrectionService,
+    get_correction_service,
+)
 from orchestrator_service.utils.llm_utils import create_retry_logger
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
@@ -77,6 +79,7 @@ class SummaryService:
         outbox_repo: PgOutboxRepository,
         light_summary_service: LightSummaryService,
         llm_service: BaseLLMService,
+        correction_service: TranscriptCorrectionService,
         llm_service_fallback: BaseLLMService | None = None,
     ):
         self.pg_transcript_repo = pg_transcript_repo
@@ -86,6 +89,7 @@ class SummaryService:
         self.light_summary_service = light_summary_service
         self.llm_service = llm_service
         self.llm_service_fallback = llm_service_fallback
+        self.correction_service = correction_service
         logger.info(f"SummaryService initialized with LLM provider: {self.config.provider}")
 
     async def _call_llm(
@@ -375,6 +379,22 @@ class SummaryService:
         except Exception as e:
             logger.error(f"Failed to save summary to DB: {e}")
             return None
+
+        # 6. Correct transcript via LLM
+        try:
+            corrected_messages = await self.correction_service.correct_transcript_for_room(room_id)
+            if corrected_messages:
+                draft_summary["messages"] = corrected_messages
+                # Rebuild full_text from corrected messages
+                full_text = "\n".join(
+                    f"[{t['timestamp']}] {id_to_username.get(t['participant_id'], t['participant_id'])}: {t['content']}"
+                    for t in corrected_messages
+                )
+                logger.info(f"Transcript correction completed successfully for room {room_id}")
+        except Exception as e:
+            logger.warning(
+                f"Transcript correction failed for room {room_id}: {e}. Continuing with original transcript."
+            )
 
         total_duration = 0.0
         if room_doc.created_at and room_doc.finalized_at:
@@ -803,6 +823,7 @@ def get_summary_service() -> SummaryService:
             outbox_repo=get_pg_outbox_repository(),
             light_summary_service=light_summary_service,
             llm_service=primary_llm,
+            correction_service=get_correction_service(),
             llm_service_fallback=fallback_llm,
         )
     return _summary_service
