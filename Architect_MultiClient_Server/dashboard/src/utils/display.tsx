@@ -16,3 +16,13 @@ export const getStatusBadge = (status: string) => {
       </span>
     );
 };
+
+export const getSummaryBadge = (done: boolean | null | undefined) => {
+  if (done !== true) return null;
+
+  return (
+    <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+      Summary done
+    </span>
+  );
+};
