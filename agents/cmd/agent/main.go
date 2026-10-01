@@ -455,6 +455,7 @@ type session struct {
 	stop context.CancelFunc
 
 	peerAgent *rtcagent.PeerAgent
+	bridge    *audiopipeline.Bridge
 	player    *ttsplayer.Player
 
 	// emptyRoomTimer: see checkEmptyRoom's doc. nil whenever the room isn't
@@ -557,6 +558,7 @@ func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
 	}
 
 	s.peerAgent = pa
+	s.bridge = bridge
 	s.player = player
 	s.refs.set(bridge, player)
 }
@@ -575,7 +577,7 @@ func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, member
 		return
 	}
 	for _, m := range members {
-		s.peerAgent.UpsertRoster(m)
+		s.upsertPeer(m)
 	}
 
 	if s.orch == nil {
@@ -622,9 +624,7 @@ func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, member
 func (s *session) onPeerJoined(participantCount int, peer signaling.Member) {
 	logging.L.Info("signaling: peer_joined", "user_id", peer.UserID, "role", peer.Role, "participant_count", participantCount)
 	s.checkEmptyRoom(participantCount)
-	if s.peerAgent != nil {
-		s.peerAgent.UpsertRoster(peer)
-	}
+	s.upsertPeer(peer)
 	if s.orch == nil || peer.UserID <= 0 {
 		return
 	}
@@ -652,6 +652,9 @@ func (s *session) onPeerLeft(ev signaling.PeerLeftEvent) {
 	s.checkEmptyRoom(ev.ParticipantCount)
 	if s.peerAgent != nil {
 		s.peerAgent.RemovePeer(ev.UserID)
+	}
+	if s.bridge != nil {
+		s.bridge.RemovePeer(ev.PeerID)
 	}
 }
 
@@ -705,8 +708,15 @@ func (s *session) checkEmptyRoom(participantCount int) {
 
 func (s *session) onPeerUpdated(peer signaling.Member) {
 	logging.L.Info("signaling: peer_updated", "user_id", peer.UserID, "role", peer.Role, "is_mute", peer.IsMute)
+	s.upsertPeer(peer)
+}
+
+func (s *session) upsertPeer(peer signaling.Member) {
 	if s.peerAgent != nil {
 		s.peerAgent.UpsertRoster(peer)
+	}
+	if s.bridge != nil {
+		s.bridge.SetPeerMuted(peer.PeerID, peer.IsMute)
 	}
 }
 
