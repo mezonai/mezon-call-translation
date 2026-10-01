@@ -57,7 +57,6 @@ class RecordingPolicyConfig:
     max_upload_retries: int = 3
     upload_retry_base_delay_seconds: float = 0.2
     grace_period_seconds: float = 45.0
-    byte_rate_tolerance: float = 0.5
     drop_rate_warning_threshold: float = 0.1
 
     @classmethod
@@ -69,7 +68,6 @@ class RecordingPolicyConfig:
                 os.getenv("RECORD_UPLOAD_RETRY_BASE_DELAY_SECONDS", "0.2")
             ),
             grace_period_seconds=float(os.getenv("RECORD_GRACE_PERIOD_SECONDS", "45")),
-            byte_rate_tolerance=float(os.getenv("RECORD_BYTE_RATE_TOLERANCE", "0.5")),
             drop_rate_warning_threshold=float(
                 os.getenv("RECORD_DROP_RATE_WARNING_THRESHOLD", "0.1")
             ),

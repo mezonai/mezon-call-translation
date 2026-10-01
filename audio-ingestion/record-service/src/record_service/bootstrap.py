@@ -47,7 +47,6 @@ def build_application(config: Config | None = None) -> Application:
             base_delay_seconds=config.recording_policy.upload_retry_base_delay_seconds,
         ),
         grace_period_seconds=config.recording_policy.grace_period_seconds,
-        byte_rate_tolerance=config.recording_policy.byte_rate_tolerance,
         drop_rate_warning_threshold=config.recording_policy.drop_rate_warning_threshold,
         report_retry=RetryPolicy(
             max_attempts=config.orchestrator.max_report_retries,

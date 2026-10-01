@@ -17,7 +17,6 @@ from orchestrator_service.models.recording_event_models import (
     RecordingEventResponse,
     TtsTranscriptEventRequest,
 )
-from orchestrator_service.services.audio_derivative_service import get_audio_derivative_service
 from orchestrator_service.services.postgresql.models import Track
 from orchestrator_service.services.postgresql.pg_track_repository import PgTrackRepository
 from orchestrator_service.services.postgresql.pg_transcript_repository import PgTranscriptRepository
@@ -39,7 +38,6 @@ class RecordingEventService:
         self.pg_repo = PgTranscriptRepository()
         self.track_repo = PgTrackRepository()
         self.transcription_service = TranscriptionService()
-        self.audio_derivative_service = get_audio_derivative_service()
 
     async def _resolve_room_ref_id(self, raw_room_id: str) -> str | None:
         """record-service sends whatever the agent gave it as room_id
@@ -122,14 +120,13 @@ class RecordingEventService:
                 # tts.transcript/.completed instead (handle_tts_transcript_event below).
                 skip_stt=(payload.track_id == AGENT_TTS_TRACK_ID),
             )
-            await self.audio_derivative_service.enqueue(
-                track_id=payload.recording_id,
-                room_id=room_ref_id,
-                bucket=payload.bucket,
-                object_key=payload.object_key,
-                sample_rate=payload.sample_rate,
-                channels=payload.channels,
-            )
+            track = await self.pg_repo.get_track_by_id(payload.recording_id)
+            if track and await self.pg_repo.check_and_notify_room_recordings_ready(room_ref_id):
+                room = await self.pg_repo.get_room_by_id(room_ref_id)
+                if room:
+                    await metadata_channel.push_room_record_done(
+                        room_id=room_ref_id, room_name=room.room_name or ""
+                    )
             return RecordingEventResponse(received=True, action="recording_completed")
 
         if payload.event == "recording.failed":

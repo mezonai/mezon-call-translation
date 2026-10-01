@@ -8,12 +8,14 @@
 package audiopipeline
 
 import (
+	"bytes"
 	"encoding/binary"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pion/opus"
 	"github.com/pion/rtp"
+	"github.com/pion/webrtc/v4/pkg/media/oggwriter"
 
 	"github.com/mezonai/mezon-call-translation/agents/internal/logging"
 	"github.com/mezonai/mezon-call-translation/agents/internal/rtcagent"
@@ -29,6 +31,8 @@ const (
 	// resampling step required.
 	PCMSampleRate = 16000
 	PCMChannels   = 1
+	OggSampleRate = 48000
+	OggChannels   = 2
 	// maxSamplesPerPacket bounds the decode buffer: RFC 6716 caps a single
 	// Opus packet at 120ms; at 16kHz mono that's 1920 samples.
 	maxSamplesPerPacket = 1920
@@ -38,7 +42,12 @@ const (
 // the track ends (or, for the STT sink, when transcription is disabled
 // mid-track). recordclient.Forwarder and sttclient.Client both implement
 // this directly -- no adapter needed.
-type Sink interface {
+type RecordSink interface {
+	SendOgg(ogg []byte)
+	Close()
+}
+
+type STTSink interface {
 	SendPCM(pcm []byte)
 	Close()
 }
@@ -52,14 +61,17 @@ type Sink interface {
 // `transcript_control` SSE request), asynchronously, mid-track -- so it's
 // guarded by mu.
 type session struct {
-	info    rtcagent.TrackInfo
-	decoder opus.Decoder
-	pcmBuf  []int16
+	info      rtcagent.TrackInfo
+	decoder   opus.Decoder
+	pcmBuf    []int16
+	oggBuf    bytes.Buffer
+	oggWriter *oggwriter.Writer
+	oggTrack  *oggwriter.Track
 
-	recordSink Sink // nil if recording disabled/failed to start; immutable after creation
+	recordSink RecordSink // nil if recording disabled/failed to start; immutable after creation
 
 	mu      sync.Mutex
-	sttSink Sink // nil unless STT is currently enabled for this track
+	sttSink STTSink // nil unless STT is currently enabled for this track
 }
 
 // Bridge owns one session per audio track, keyed by mid.
@@ -70,8 +82,8 @@ type Bridge struct {
 	// Returning nil from either means "couldn't start this sink for this
 	// track" (already logged by the factory) -- session creation continues
 	// regardless, best-effort per PLAN.md D5.
-	newRecordSink func(info rtcagent.TrackInfo) Sink
-	newSTTSink    func(info rtcagent.TrackInfo) Sink
+	newRecordSink func(info rtcagent.TrackInfo) RecordSink
+	newSTTSink    func(info rtcagent.TrackInfo) STTSink
 
 	sttEnabled atomic.Bool // mirrors the old Python agent's AgentControlState.transcription_enabled -- starts false, see SetSTTEnabled
 
@@ -79,7 +91,10 @@ type Bridge struct {
 	sessions map[string]*session
 }
 
-func NewBridge(newRecordSink, newSTTSink func(info rtcagent.TrackInfo) Sink) *Bridge {
+func NewBridge(
+	newRecordSink func(info rtcagent.TrackInfo) RecordSink,
+	newSTTSink func(info rtcagent.TrackInfo) STTSink,
+) *Bridge {
 	return &Bridge{
 		newRecordSink: newRecordSink,
 		newSTTSink:    newSTTSink,
@@ -97,21 +112,26 @@ func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 		return
 	}
 
-	n, err := s.decoder.DecodeToInt16(pkt.Payload, s.pcmBuf)
-	if err != nil {
-		logging.L.Warn("audiopipeline: opus decode failed, dropping packet",
-			append(logging.ErrAttrs(err), "mid", info.Mid, "user_id", info.UserID)...)
-		return
-	}
-	pcm := int16ToLEBytes(s.pcmBuf[:n])
-
 	if s.recordSink != nil {
-		s.recordSink.SendPCM(pcm)
+		ogg, err := s.rtpToOgg(pkt)
+		if err != nil {
+			logging.L.Warn("audiopipeline: ogg mux failed, dropping recording packet",
+				append(logging.ErrAttrs(err), "mid", info.Mid, "user_id", info.UserID)...)
+		} else if len(ogg) > 0 {
+			s.recordSink.SendOgg(ogg)
+		}
 	}
 	s.mu.Lock()
 	stt := s.sttSink
 	s.mu.Unlock()
 	if stt != nil {
+		n, err := s.decoder.DecodeToInt16(pkt.Payload, s.pcmBuf)
+		if err != nil {
+			logging.L.Warn("audiopipeline: opus decode failed, dropping stt packet",
+				append(logging.ErrAttrs(err), "mid", info.Mid, "user_id", info.UserID)...)
+			return
+		}
+		pcm := int16ToLEBytes(s.pcmBuf[:n])
 		stt.SendPCM(pcm)
 	}
 }
@@ -127,6 +147,12 @@ func (b *Bridge) HandleTrackEnded(info rtcagent.TrackInfo) {
 	}
 
 	if s.recordSink != nil {
+		ogg, err := s.finalizeOgg()
+		if err != nil {
+			logging.L.Warn("audiopipeline: failed to finalize ogg", logging.ErrAttrs(err)...)
+		} else if len(ogg) > 0 {
+			s.recordSink.SendOgg(ogg)
+		}
 		s.recordSink.Close()
 	}
 	s.mu.Lock()
@@ -220,7 +246,18 @@ func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 	s := &session{info: info, decoder: dec, pcmBuf: make([]int16, maxSamplesPerPacket)}
 
 	if b.newRecordSink != nil {
-		s.recordSink = b.newRecordSink(info)
+		writer, writerErr := oggwriter.NewWriter(
+			&s.oggBuf,
+			oggwriter.WithSampleRate(OggSampleRate),
+			oggwriter.WithChannelCount(OggChannels),
+		)
+		if writerErr != nil {
+			logging.L.Error("audiopipeline: failed to create ogg writer",
+				append(logging.ErrAttrs(writerErr), "mid", info.Mid)...)
+		} else {
+			s.oggWriter = writer
+			s.recordSink = b.newRecordSink(info)
+		}
 	}
 	if b.sttEnabled.Load() && b.newSTTSink != nil {
 		s.sttSink = b.newSTTSink(info)
@@ -233,6 +270,31 @@ func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 	logging.L.Info("audiopipeline: started session", "mid", info.Mid, "user_id", info.UserID, "peer_id", info.PeerID,
 		"recording", s.recordSink != nil, "stt", s.sttSink != nil)
 	return s
+}
+
+func (s *session) rtpToOgg(pkt *rtp.Packet) ([]byte, error) {
+	if s.oggTrack == nil {
+		track, err := s.oggWriter.NewTrack(pkt.SSRC)
+		if err != nil {
+			return nil, err
+		}
+		s.oggTrack = track
+	}
+	if err := s.oggTrack.WriteRTP(pkt); err != nil {
+		return nil, err
+	}
+	return s.takeOggBytes(), nil
+}
+
+func (s *session) finalizeOgg() ([]byte, error) {
+	err := s.oggWriter.Close()
+	return s.takeOggBytes(), err
+}
+
+func (s *session) takeOggBytes() []byte {
+	ogg := bytes.Clone(s.oggBuf.Bytes())
+	s.oggBuf.Reset()
+	return ogg
 }
 
 func int16ToLEBytes(samples []int16) []byte {

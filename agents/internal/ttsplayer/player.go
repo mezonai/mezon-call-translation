@@ -72,10 +72,11 @@ type Player struct {
 
 	mu                sync.Mutex
 	forwarder         *recordclient.Forwarder // lazily created on first request, lives for the Player's whole life
-	sessionStartEpoch time.Time               // set alongside forwarder; report_tts_transcript's start/end are relative to this
-	recordLastSentAt  time.Time               // wall-clock point through which PCM (real audio or silence) has been represented
-	recordSpeaking    bool                    // prevents the silence ticker from inserting silence inside an utterance
-	recordTickerDone  chan struct{}           // non-nil once the silence ticker has started; closed when the ticker exits
+	recordOgg         *pcmOggEncoder
+	sessionStartEpoch time.Time     // set alongside forwarder; report_tts_transcript's start/end are relative to this
+	recordLastSentAt  time.Time     // wall-clock point through which PCM (real audio or silence) has been represented
+	recordSpeaking    bool          // prevents the silence ticker from inserting silence inside an utterance
+	recordTickerDone  chan struct{} // non-nil once the silence ticker has started; closed when the ticker exits
 
 	requests chan speakRequest
 	done     chan struct{}
@@ -292,6 +293,14 @@ func (p *Player) startRecordForwarding() {
 		return
 	}
 
+	recordOgg, err := newPCMOggEncoder(p.sampleRate)
+	if err != nil {
+		p.recClient = nil
+		p.mu.Unlock()
+		logging.L.Error("ttsplayer: failed to create ogg encoder", logging.ErrAttrs(err)...)
+		return
+	}
+
 	fwd, err := recordclient.NewForwarder(p.recClient, recordclient.SessionMeta{
 		RoomID:              p.roomID,
 		TrackID:             p.trackID,
@@ -309,6 +318,7 @@ func (p *Player) startRecordForwarding() {
 
 	now := time.Now()
 	p.forwarder = fwd
+	p.recordOgg = recordOgg
 	p.sessionStartEpoch = now
 	p.recordLastSentAt = now
 	p.recordTickerDone = make(chan struct{})
@@ -364,7 +374,15 @@ func (p *Player) sendRecordSilenceGapLocked(now time.Time) {
 
 	// Mono PCM16 uses two bytes per sample. make returns zero-filled bytes,
 	// which are digital silence.
-	p.forwarder.SendPCM(make([]byte, numSamples*2))
+	pcm := make([]byte, numSamples*2)
+	ogg, err := p.recordOgg.EncodePCM(pcm)
+	if err != nil {
+		logging.L.Warn("ttsplayer: failed to convert silence to ogg", logging.ErrAttrs(err)...)
+		return
+	}
+	if len(ogg) > 0 {
+		p.forwarder.SendOgg(ogg)
+	}
 }
 
 // beginRecordedUtterance prevents the background ticker from interleaving
@@ -397,7 +415,14 @@ func (p *Player) forwardToRecordService(pcm []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.forwarder != nil {
-		p.forwarder.SendPCM(pcm)
+		ogg, err := p.recordOgg.EncodePCM(pcm)
+		if err != nil {
+			logging.L.Warn("ttsplayer: failed to convert pcm to ogg", logging.ErrAttrs(err)...)
+			return
+		}
+		if len(ogg) > 0 {
+			p.forwarder.SendOgg(ogg)
+		}
 	}
 }
 
@@ -429,7 +454,17 @@ func (p *Player) Close() {
 	p.recordSpeaking = false
 	p.sendRecordSilenceGapLocked(time.Now())
 	fwd := p.forwarder
+	if fwd != nil && p.recordOgg != nil {
+		ogg, err := p.recordOgg.Close()
+		if err != nil {
+			logging.L.Warn("ttsplayer: failed to finalize ogg", logging.ErrAttrs(err)...)
+		}
+		if len(ogg) > 0 {
+			fwd.SendOgg(ogg)
+		}
+	}
 	p.forwarder = nil
+	p.recordOgg = nil
 	hadForwarder := fwd != nil
 	p.mu.Unlock()
 	if fwd != nil {

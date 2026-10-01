@@ -26,7 +26,7 @@ type AudioChunk struct {
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*AudioChunk_Start
-	//	*AudioChunk_Pcm
+	//	*AudioChunk_Ogg
 	//	*AudioChunk_Dropped
 	Payload       isAudioChunk_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
@@ -79,10 +79,10 @@ func (x *AudioChunk) GetStart() *SessionStart {
 	return nil
 }
 
-func (x *AudioChunk) GetPcm() []byte {
+func (x *AudioChunk) GetOgg() []byte {
 	if x != nil {
-		if x, ok := x.Payload.(*AudioChunk_Pcm); ok {
-			return x.Pcm
+		if x, ok := x.Payload.(*AudioChunk_Ogg); ok {
+			return x.Ogg
 		}
 	}
 	return nil
@@ -105,8 +105,8 @@ type AudioChunk_Start struct {
 	Start *SessionStart `protobuf:"bytes,1,opt,name=start,proto3,oneof"`
 }
 
-type AudioChunk_Pcm struct {
-	Pcm []byte `protobuf:"bytes,2,opt,name=pcm,proto3,oneof"`
+type AudioChunk_Ogg struct {
+	Ogg []byte `protobuf:"bytes,2,opt,name=ogg,proto3,oneof"`
 }
 
 type AudioChunk_Dropped struct {
@@ -115,7 +115,7 @@ type AudioChunk_Dropped struct {
 
 func (*AudioChunk_Start) isAudioChunk_Payload() {}
 
-func (*AudioChunk_Pcm) isAudioChunk_Payload() {}
+func (*AudioChunk_Ogg) isAudioChunk_Payload() {}
 
 func (*AudioChunk_Dropped) isAudioChunk_Payload() {}
 
@@ -321,7 +321,7 @@ const file_proto_recording_proto_rawDesc = "" +
 	"\n" +
 	"AudioChunk\x127\n" +
 	"\x05start\x18\x01 \x01(\v2\x1f.record_service.v1.SessionStartH\x00R\x05start\x12\x12\n" +
-	"\x03pcm\x18\x02 \x01(\fH\x00R\x03pcm\x12<\n" +
+	"\x03ogg\x18\x02 \x01(\fH\x00R\x03ogg\x12<\n" +
 	"\adropped\x18\x03 \x01(\v2 .record_service.v1.DroppedFramesH\x00R\adroppedB\t\n" +
 	"\apayload\"\xca\x01\n" +
 	"\fSessionStart\x12\x17\n" +
@@ -380,7 +380,7 @@ func file_proto_recording_proto_init() {
 	}
 	file_proto_recording_proto_msgTypes[0].OneofWrappers = []any{
 		(*AudioChunk_Start)(nil),
-		(*AudioChunk_Pcm)(nil),
+		(*AudioChunk_Ogg)(nil),
 		(*AudioChunk_Dropped)(nil),
 	}
 	type x struct{}

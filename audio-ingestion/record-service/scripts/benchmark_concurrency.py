@@ -123,7 +123,7 @@ class _Session:
 
     def send(self, pcm: bytes) -> None:
         try:
-            self._queue.put_nowait(recording_pb2.AudioChunk(pcm=pcm))
+            self._queue.put_nowait(recording_pb2.AudioChunk(ogg=pcm))
             self.frames_sent += 1
         except asyncio.QueueFull:
             self.frames_dropped += 1
