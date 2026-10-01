@@ -1,0 +1,26 @@
+# ============================================================================
+# STT Non-Realtime Service Requirements
+# Batch Speech-to-Text service with Whisper, VAD, and Gipformer fallback
+# ============================================================================
+
+# Web Framework (Health check & Prometheus metrics)
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Speech-to-Text Engines
+faster-whisper==1.2.1          # Marker VAD / Whisper ASR
+sherpa-onnx>=1.12.0            # CPU Gipformer fallback for unresolved VAD chunks
+huggingface-hub>=0.24.0        # Model download / cache
+
+# Storage & Queue
+minio>=7.2.0                   # MinIO S3 client for downloading audio recordings
+redis>=5.0.0                   # Redis Streams (redis.asyncio)
+
+# Monitoring
+prometheus_client>=0.19.0
+psutil>=5.9.0
+
+# Configuration & Utilities
+python-dotenv>=1.0.0
+numpy>=1.24.0
+pydantic>=2.0.0

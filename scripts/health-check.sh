@@ -19,6 +19,7 @@ ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 
 # Service directories
 STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+NON_REALTIME_STT_DIR="$PROJECT_ROOT/non_realtime_stt_service"
 ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
 
@@ -113,7 +114,7 @@ fi
 # faster-whisper resolves and downloads/caches the model on STT startup.
 print_info "Non-realtime Whisper model is managed by faster-whisper cache"
 
-if [ -f "$STT_SERVICE_DIR/assets/whisper_marker.wav" ]; then
+if [ -f "$NON_REALTIME_STT_DIR/non_realtime_stt_service/assets/whisper_marker.wav" ] || [ -f "$STT_SERVICE_DIR/assets/whisper_marker.wav" ]; then
     check_pass "Non-realtime Whisper marker asset found"
 else
     check_fail "Non-realtime Whisper marker asset is missing"
@@ -177,6 +178,7 @@ check_service_dir() {
 }
 
 check_service_dir "STT Service" "$STT_SERVICE_DIR"
+check_service_dir "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR"
 check_service_dir "Orchestrator Service" "$ORCHESTRATOR_DIR"
 check_service_dir "Agents Service" "$AGENTS_DIR"
 
@@ -202,13 +204,21 @@ check_venv() {
 }
 
 check_venv "STT Service" "$STT_SERVICE_DIR/venv"
+check_venv "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/venv"
 check_venv "Orchestrator Service" "$ORCHESTRATOR_DIR/venv"
 check_venv "Agents Service" "$AGENTS_DIR/venv"
 
-# Gipformer runs in the STT virtual environment. Keep this separate from the
+# Gipformer runs in the STT / Non-Realtime STT virtual environment. Keep this separate from the
 # cache check so a missing Python dependency is distinguishable from a missing
 # Hugging Face artifact.
-if [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
+if [ -x "$NON_REALTIME_STT_DIR/venv/bin/python" ]; then
+    if "$NON_REALTIME_STT_DIR/venv/bin/python" -c "import sherpa_onnx" >/dev/null 2>&1; then
+        check_pass "Non-Realtime STT venv has sherpa-onnx for Gipformer fallback"
+    else
+        check_fail "Non-Realtime STT venv is missing sherpa-onnx for Gipformer fallback"
+        print_info "  Install requirements: $NON_REALTIME_STT_DIR/venv/bin/pip install -r $NON_REALTIME_STT_DIR/requirements.txt"
+    fi
+elif [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
     if "$STT_SERVICE_DIR/venv/bin/python" -c "import sherpa_onnx" >/dev/null 2>&1; then
         check_pass "STT venv has sherpa-onnx for Gipformer fallback"
     else
@@ -242,6 +252,7 @@ check_env_file() {
 }
 
 check_env_file "STT Service" "$STT_SERVICE_DIR/.env" "$STT_SERVICE_DIR/.env.example"
+check_env_file "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/.env" "$NON_REALTIME_STT_DIR/.env.example"
 check_env_file "Orchestrator Service" "$ORCHESTRATOR_DIR/.env" "$ORCHESTRATOR_DIR/.env.example"
 check_env_file "Agents Service" "$AGENTS_DIR/.env" "$AGENTS_DIR/.env.example"
 
@@ -262,6 +273,7 @@ check_requirements() {
 }
 
 check_requirements "STT Service" "$STT_SERVICE_DIR/requirements-server.txt"
+check_requirements "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/requirements.txt"
 check_requirements "Orchestrator Service" "$ORCHESTRATOR_DIR/requirements-orchestrator.txt"
 check_requirements "Agents Service" "$AGENTS_DIR/requirements-agent.txt"
 
@@ -291,6 +303,7 @@ if command -v systemctl &> /dev/null; then
     }
     
     check_systemd_service "mezon-stt-service"
+    check_systemd_service "mezon-non-realtime-stt-service"
     check_systemd_service "mezon-orchestrator-service"
     check_systemd_service "mezon-agents-service"
 fi
@@ -322,8 +335,8 @@ check_port() {
 }
 
 check_port "8000" "STT Service"
-check_port "8001" "Orchestrator Service"
-check_port "8002" "Agents Service"
+check_port "8001" "Non-Realtime STT Service"
+check_port "8002" "Orchestrator Service"
 
 # ============================================================================
 # Summary

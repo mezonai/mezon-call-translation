@@ -14,11 +14,11 @@ from tenacity import (
 
 from orchestrator_service.config.application_config import get_config
 from orchestrator_service.constants.exceptions import RETRYABLE_EXCEPTIONS
-from orchestrator_service.exceptions import TopicCompletionNotFoundError
 from orchestrator_service.models.summary_models import LightSummaryResult
 from orchestrator_service.services.llm.base_llm_service import BaseLLMService
 from orchestrator_service.services.llm.prompt import build_light_summary_prompt
 from orchestrator_service.services.postgresql.pg_summary_repository import PgSummaryRepository
+from orchestrator_service.utils.llm_utils import create_retry_logger
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
     build_username_maps,
@@ -39,12 +39,17 @@ class LightSummaryService:
         self.llm_service = llm_service
         self.config = get_config().light_summary
 
-    async def _call_llm(self, prompt: str, response_model: type[T]) -> T:
+    async def _call_llm(
+        self,
+        prompt: str,
+        response_model: type[T],
+        room_id: str | None = None,
+    ) -> T:
         @retry(
             stop=stop_after_attempt(self.config.retry_count),
             wait=wait_exponential(multiplier=2, min=1, max=10),
             retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
-            before_sleep=before_sleep_log(logger, logging.ERROR),
+            before_sleep=create_retry_logger(logger, room_id=room_id, max_attempts=self.config.retry_count),
             reraise=True,
         )
         async def _inner() -> T:
@@ -141,7 +146,7 @@ class LightSummaryService:
                         language=language,
                         is_final_section=is_final
                     )
-                    summary_result = await self._call_llm(prompt, LightSummaryResult)
+                    summary_result = await self._call_llm(prompt, LightSummaryResult, room_id=room_id)
 
                     if summary_result.key_discussions:
                         summary_result.key_discussions = sanitize_and_decode_list(summary_result.key_discussions, {}, require_brackets=True)
@@ -175,8 +180,7 @@ class LightSummaryService:
             if not summary_result or (
                 summary_result.end_message_time is None and candidate_end_idx < len(working_messages)
             ):
-                logger.error(f"Cannot find completed topic from start_idx={start_idx}")
-                raise TopicCompletionNotFoundError(f"Cannot find completed topic from start_idx={start_idx}")
+                raise ValueError(f"Cannot find completed topic from start_idx={start_idx}")
 
             if candidate_end_idx == len(working_messages):
                 end_idx = len(working_messages) - 1

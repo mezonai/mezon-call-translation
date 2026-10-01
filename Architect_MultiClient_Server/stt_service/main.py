@@ -12,8 +12,7 @@ from stt_service.controller.ws_nemotron_control import router as stt_router
 from stt_service.service.migration_controller import pipeline_controller
 from stt_service.service.health_service import get_health_service
 from stt_service.service.redis.connection_pool import get_connection_manager
-from stt_service.service.redis.redis_transcription_queue_service import RedisTranscriptionQueueService
-from stt_service.service.whisper_transcription_processor import transcribe_task, WhisperTranscriptionProcessor
+# Whisper and Redis transcription queue consumer have been moved to non_realtime_stt_service
 from stt_service.config import get_config
 from .utils.logging_config import setup_logging
 from dotenv import load_dotenv
@@ -45,33 +44,15 @@ async def lifespan(app: FastAPI):
     redis_manager = get_connection_manager()
     await redis_manager.connect()
 
-    # Load both ASR engines before accepting Redis work. Starting the stream
-    # consumer first would let an existing task race the Whisper/Gipformer
-    # initialization during startup.
-    whisper_processor = WhisperTranscriptionProcessor()
-    await whisper_processor.initialize()
-    health_service = get_health_service()
-    health_service.register_health_check(
-        "gipformer_fallback",
-        whisper_processor.gipformer_health_status,
-    )
-
-    # Initialize Whisper transcription consumer only after its model assets
-    # are fully ready.
-    transcription_queue = RedisTranscriptionQueueService()
-    transcription_queue.set_processor(transcribe_task)  # Set Whisper processor
-    await transcription_queue.start()
+    # Note: Whisper transcription processor and Redis transcription consumer
+    # have been decoupled and moved to `non_realtime_stt_service`.
+    # STT Service now focuses solely on Realtime STT (Nemotron).
     
     system_metrics_task = asyncio.create_task(system_metrics_loop())
     
     yield
     
     # Shutdown
-    if transcription_queue is not None:
-        await transcription_queue.stop()
-    if whisper_processor is not None:
-        await whisper_processor.shutdown()
-    get_health_service().unregister_health_check("gipformer_fallback")
     try:
         # Disconnect Redis Connection Pool
         await redis_manager.disconnect()
