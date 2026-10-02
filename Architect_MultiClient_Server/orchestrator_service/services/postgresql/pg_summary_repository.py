@@ -58,6 +58,32 @@ class PgSummaryRepository:
             logger.error(f"Failed to update summary: {e}")
             return False
 
+    async def get_summary_done_by_room_ids(
+        self, room_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, bool]:
+        if not room_ids:
+            return {}
+
+        stmt = (
+            select(RoomSummary.room_id, RoomSummary.summary_data)
+            .where(RoomSummary.room_id.in_(room_ids))
+            .order_by(RoomSummary.created_at.desc())
+        )
+
+        try:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                rows = (await session.execute(stmt)).all()
+
+            result: dict[uuid.UUID, bool] = {}
+            for room_id, summary_data in rows:
+                if room_id is not None:
+                    result.setdefault(room_id, bool(summary_data))
+            return result
+        except Exception:
+            logger.exception("Failed to get summary status for rooms")
+            return {}
+
     async def update_room_messages(self, room_id: str, messages: list[dict[str, Any]]) -> bool:  # type: ignore[explicit-any]
         session_factory = get_session_factory()
         try:

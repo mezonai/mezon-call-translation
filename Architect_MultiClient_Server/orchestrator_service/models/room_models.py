@@ -109,12 +109,16 @@ class RoomData(BaseModel):  # type: ignore[explicit-any]
     error: str | None = None
 
 
+class RoomListItemData(RoomData):
+    summary_done: bool
+
+
 class RoomListResponse(BaseModel):  # type: ignore[explicit-any]
     status: Literal["ok"] = "ok"
     total: int
     limit: int
     skip: int
-    rooms: list[RoomData]
+    rooms: list[RoomListItemData]
 
 
 class RoomDetailResponse(BaseModel):  # type: ignore[explicit-any]

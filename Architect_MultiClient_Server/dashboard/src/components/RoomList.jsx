@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getRooms } from '../services/api';
-import { formatDate } from '../utils/datetime';
-import { getStatusBadge } from '../utils/display';
+import { formatDate, formatCallDuration } from '../utils/datetime';
+import { getStatusBadge, getSummaryBadge } from '../utils/display';
 import { ROOM_STATUS_FILTER_OPTIONS } from '../constants/roomStatus';
 import { TIME_RANGE_PRESET, TIME_RANGE_PRESET_OPTIONS, getTimeRangeForPreset } from '../constants/timeRange';
 
@@ -38,6 +38,9 @@ function TableSkeleton() {
           </td>
           <td className="px-6 py-4 whitespace-nowrap">
             <div className="h-4 bg-gray-200 rounded w-28" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="h-4 bg-gray-200 rounded w-20" />
           </td>
           <td className="px-6 py-4 whitespace-nowrap">
             <div className="h-4 bg-gray-200 rounded w-24" />
@@ -256,7 +259,10 @@ const RoomList = () => {
                   Created At
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                  Completed At
+                  Finalized At
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                  Call Duration
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Actions
@@ -269,7 +275,7 @@ const RoomList = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {rooms.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan="6" className="px-6 py-4 text-center text-gray-500">
                     No rooms found
                   </td>
                 </tr>
@@ -285,14 +291,20 @@ const RoomList = () => {
                         {room.room_name}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {getStatusBadge(room.status)}
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {getStatusBadge(room.status)}
+                        {getSummaryBadge(room.summary_done)}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {formatDate(room.created_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatDate(room.completed_at)}
+                      {formatDate(room.finalized_at)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatCallDuration(room.created_at, room.finalized_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <button
