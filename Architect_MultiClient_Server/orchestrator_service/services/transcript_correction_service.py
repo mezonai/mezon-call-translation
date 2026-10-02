@@ -25,6 +25,7 @@ from orchestrator_service.services.postgresql.pg_summary_repository import (
     PgSummaryRepository,
     get_pg_summary_repository,
 )
+from orchestrator_service.utils.llm_utils import create_retry_logger
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.summary_utils import parse_timestamp_to_seconds
 
@@ -57,12 +58,13 @@ class TranscriptCorrectionService:
         temperature: float,
         top_p: float,
         max_attempts: int,
+        room_id: str | None = None,
     ) -> T:
         @retry(
             stop=stop_after_attempt(max_attempts),
             wait=wait_exponential(multiplier=2, min=1, max=10),
             retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
-            before_sleep=before_sleep_log(logger, logging.ERROR),
+            before_sleep=create_retry_logger(logger, room_id=room_id, max_attempts=max_attempts),
             reraise=True,
         )
         async def _inner() -> T:
@@ -77,7 +79,12 @@ class TranscriptCorrectionService:
 
         return await _inner()
 
-    async def _call_llm_with_fallback(self, prompt: str, response_model: type[T]) -> T:
+    async def _call_llm_with_fallback(
+        self,
+        prompt: str,
+        response_model: type[T],
+        room_id: str | None = None,
+    ) -> T:
         try:
             return await self._call_llm(
                 llm_service=self.llm_service,
@@ -88,10 +95,12 @@ class TranscriptCorrectionService:
                 top_p=self.config.top_p,
                 timeout=self.config.timeout,
                 max_attempts=self.config.retry_count,
+                room_id=room_id,
             )
         except Exception as e:
             if self.config.fallback_enable and self.llm_service_fallback:
-                logger.warning(f"All primary attempts failed ({e}). Switching to fallback LLM.")
+                room_tag = f"[Room: {room_id}] " if room_id else ""
+                logger.warning(f"{room_tag}All primary attempts failed ({e}). Switching to fallback LLM.")
                 return await self._call_llm(
                     llm_service=self.llm_service_fallback,
                     prompt=prompt,
@@ -101,6 +110,7 @@ class TranscriptCorrectionService:
                     top_p=self.config.fallback_top_p,
                     timeout=self.config.fallback_timeout,
                     max_attempts=self.config.fallback_retry_count,
+                    room_id=room_id,
                 )
             raise
 
@@ -155,7 +165,7 @@ class TranscriptCorrectionService:
             raise ValueError(f"No messages found for room_id: {room_id}")
 
         # Ensure we have a clean copy to update
-        corrected_messages = list(messages)
+        corrected_messages = [dict(m) for m in messages]
         total_messages = len(corrected_messages)
 
         # ── Resume support ──────────────────────────────────────────────
@@ -211,7 +221,7 @@ class TranscriptCorrectionService:
 
             try:
                 prompt = build_transcript_correction_prompt(indexed_content, previous_context)
-                result = await self._call_llm_with_fallback(prompt, TranscriptCorrectionResult)
+                result = await self._call_llm_with_fallback(prompt, TranscriptCorrectionResult, room_id=room_id)
 
                 for entry in result.entries:
                     idx = entry.index
@@ -219,6 +229,11 @@ class TranscriptCorrectionService:
                         corrected_messages[idx]["content"] = entry.corrected_content
                     else:
                         logger.warning(f"LLM returned out-of-bounds index {idx} (expected {start_idx}-{end_idx - 1})")
+
+                logger.info(
+                    f"Chunk {start_idx}->{end_idx - 1} for room {room_id}: "
+                    f"corrected {len(result.entries)}/{end_idx - start_idx} messages"
+                )
 
             except Exception as e:
                 logger.error(f"Failed to correct chunk {start_idx}->{end_idx - 1} for room {room_id}: {e}")

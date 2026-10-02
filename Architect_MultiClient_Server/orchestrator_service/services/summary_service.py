@@ -3,14 +3,12 @@ Service for generating room summaries
 """
 
 import json
-import logging
 from datetime import datetime
 from typing import Any, TypeVar
 
 from fastapi import HTTPException
 from pydantic import BaseModel
 from tenacity import (
-    before_sleep_log,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -53,6 +51,11 @@ from orchestrator_service.services.postgresql.pg_transcript_repository import (
     PgTranscriptRepository,
     get_pg_transcript_repository,
 )
+from orchestrator_service.services.transcript_correction_service import (
+    TranscriptCorrectionService,
+    get_correction_service,
+)
+from orchestrator_service.utils.llm_utils import create_retry_logger
 from orchestrator_service.utils.logger import get_logger
 from orchestrator_service.utils.participant_identity import (
     build_username_maps,
@@ -76,6 +79,7 @@ class SummaryService:
         outbox_repo: PgOutboxRepository,
         light_summary_service: LightSummaryService,
         llm_service: BaseLLMService,
+        correction_service: TranscriptCorrectionService,
         llm_service_fallback: BaseLLMService | None = None,
     ):
         self.pg_transcript_repo = pg_transcript_repo
@@ -85,6 +89,7 @@ class SummaryService:
         self.light_summary_service = light_summary_service
         self.llm_service = llm_service
         self.llm_service_fallback = llm_service_fallback
+        self.correction_service = correction_service
         logger.info(f"SummaryService initialized with LLM provider: {self.config.provider}")
 
     async def _call_llm(
@@ -97,12 +102,13 @@ class SummaryService:
         temperature: float,
         top_p: float,
         max_attempts: int,
+        room_id: str | None = None,
     ) -> T:
         @retry(
             stop=stop_after_attempt(max_attempts),
             wait=wait_exponential(multiplier=2, min=1, max=10),
             retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
-            before_sleep=before_sleep_log(logger, logging.ERROR),
+            before_sleep=create_retry_logger(logger, room_id=room_id, max_attempts=max_attempts),
             reraise=True,
         )
         async def _inner() -> T:
@@ -112,7 +118,12 @@ class SummaryService:
 
         return await _inner()
 
-    async def _call_llm_with_fallback(self, prompt: str, response_model: type[T]) -> T:
+    async def _call_llm_with_fallback(
+        self,
+        prompt: str,
+        response_model: type[T],
+        room_id: str | None = None,
+    ) -> T:
         try:
             return await self._call_llm(
                 llm_service=self.llm_service,
@@ -123,10 +134,12 @@ class SummaryService:
                 top_p=self.config.top_p,
                 timeout=self.config.timeout,
                 max_attempts=self.config.retry_count,
+                room_id=room_id,
             )
         except Exception as e:
             if self.config.fallback_enable and self.llm_service_fallback:
-                logger.warning(f"All primary attempts failed ({e}). Switching to fallback LLM.")
+                room_tag = f"[Room: {room_id}] " if room_id else ""
+                logger.warning(f"{room_tag}All primary attempts failed ({e}). Switching to fallback LLM.")
                 return await self._call_llm(
                     llm_service=self.llm_service_fallback,
                     prompt=prompt,
@@ -136,6 +149,7 @@ class SummaryService:
                     top_p=self.config.fallback_top_p,
                     timeout=self.config.fallback_timeout,
                     max_attempts=self.config.fallback_retry_count,
+                    room_id=room_id,
                 )
             raise
 
@@ -194,7 +208,7 @@ class SummaryService:
         try:
             section_context_str = json.dumps(section_context, ensure_ascii=False, indent=2)
             prompt = build_overall_context_prompt(section_context_str, language)
-            result = await self._call_llm_with_fallback(prompt, OverallContextResult)
+            result = await self._call_llm_with_fallback(prompt, OverallContextResult, room_id=room_id)
 
             return self.merge_section_summaries(sections=sections, overall_context=result.context)
         except Exception as e:
@@ -366,6 +380,22 @@ class SummaryService:
             logger.error(f"Failed to save summary to DB: {e}")
             return None
 
+        # 6. Correct transcript via LLM
+        try:
+            corrected_messages = await self.correction_service.correct_transcript_for_room(room_id)
+            if corrected_messages:
+                draft_summary["messages"] = corrected_messages
+                # Rebuild full_text from corrected messages
+                full_text = "\n".join(
+                    f"[{t['timestamp']}] {id_to_username.get(t['participant_id'], t['participant_id'])}: {t['content']}"
+                    for t in corrected_messages
+                )
+                logger.info(f"Transcript correction completed successfully for room {room_id}")
+        except Exception as e:
+            logger.warning(
+                f"Transcript correction failed for room {room_id}: {e}. Continuing with original transcript."
+            )
+
         total_duration = 0.0
         if room_doc.created_at and room_doc.finalized_at:
             total_duration = (room_doc.finalized_at - room_doc.created_at).total_seconds()
@@ -474,7 +504,7 @@ class SummaryService:
 
         try:
             summary_prompt = build_prompt_summary(full_text, self.config.language)
-            summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult)
+            summary_data_result = await self._call_llm_with_fallback(summary_prompt, SummaryResult, room_id=str(room_id))
         except Exception as e:
             logger.warning(f"Summary task failed for room {room_id}: {e}")
 
@@ -641,7 +671,7 @@ class SummaryService:
     ) -> dict[str, Any] | None:  # type: ignore[explicit-any]
         try:
             prompt = build_prompt_summary(full_text, self.config.language)
-            result = await self._call_llm_with_fallback(prompt, SummaryResult)
+            result = await self._call_llm_with_fallback(prompt, SummaryResult, room_id=str(room_id))
 
             summary_parts = [f"Context\n{result.context}"]
 
@@ -790,6 +820,7 @@ def get_summary_service() -> SummaryService:
             outbox_repo=get_pg_outbox_repository(),
             light_summary_service=light_summary_service,
             llm_service=primary_llm,
+            correction_service=get_correction_service(),
             llm_service_fallback=fallback_llm,
         )
     return _summary_service
