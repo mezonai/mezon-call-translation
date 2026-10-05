@@ -101,7 +101,14 @@ export const AuthProvider = ({ children }) => {
   const refreshAccessToken = useCallback(async () => {
     if (!refreshPromise) {
       refreshPromise = (async () => {
-        const tokenToUse = refreshToken;
+        let storedAuth = null;
+        try {
+          const authData = localStorage.getItem('auth');
+          storedAuth = authData ? JSON.parse(authData) : null;
+        } catch (error) {
+          console.error('Failed to parse auth data:', error);
+        }
+        const tokenToUse = storedAuth?.refreshToken;
         if (!tokenToUse) {
           throw new Error('Missing refresh token');
         }
@@ -118,20 +125,12 @@ export const AuthProvider = ({ children }) => {
         setRefreshToken(newRefreshToken);
 
 
-        const authData = localStorage.getItem('auth');
-        let storedUser = null;
-        if (authData) {
-          try {
-            storedUser = JSON.parse(authData).user || null;
-          } catch (err) {
-            console.error('Failed to parse auth data:', err);
-          }
-        }
+        const storedUser = storedAuth?.user || null;
 
         localStorage.setItem('auth', JSON.stringify({
           accessToken: newAccessToken,
           refreshToken: newRefreshToken,
-          user: storedUser || user
+          user: storedUser
         }));
 
         console.log('Access token refreshed successfully');
@@ -153,7 +152,7 @@ export const AuthProvider = ({ children }) => {
         refreshPromise = null;
       }
     }
-  }, [refreshToken, user]);
+  }, []);
 
   useEffect(() => {
     setAuthRefreshHandler(refreshAccessToken);
