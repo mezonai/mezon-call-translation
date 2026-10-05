@@ -83,7 +83,7 @@ const Login = () => {
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
           {error && (
             <div className="mb-4">
-              <ErrorMessage message={error} />
+              <ErrorMessage error={error} />
             </div>
           )}
 

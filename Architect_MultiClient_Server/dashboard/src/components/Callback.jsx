@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import apiClient from '../services/api';
@@ -10,35 +10,40 @@ const Callback = () => {
   const [error, setError] = useState(null);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const processedCodeRef = useRef(null);
+  const code = searchParams.get('code');
+  const callbackState = searchParams.get('state');
 
   useEffect(() => {
     const handleCallback = async () => {
       try {
-        // Get authorization code and state from URL
-        const code = searchParams.get('code');
-        const state = searchParams.get('state');
-
-        if (!code || !state) {
+        if (!code || !callbackState) {
           setError('Invalid callback: missing authorization code or state parameter.');
+          return;
+        }
+
+        // A callback code must only be exchanged once, even if the effect re-runs.
+        if (processedCodeRef.current === code) {
           return;
         }
 
         // Verify state matches what we stored (CSRF protection)
         const storedState = sessionStorage.getItem('oauth_state');
 
-        if (!storedState || storedState !== state) {
+        if (!storedState || storedState !== callbackState) {
           setError('Invalid state parameter. Possible CSRF attack. Please try logging in again.');
           sessionStorage.removeItem('oauth_state');
           return;
         }
 
-        // Clear stored state
+        // Mark the code before starting the request so a re-run cannot exchange it again.
+        processedCodeRef.current = code;
         sessionStorage.removeItem('oauth_state');
 
         // Exchange authorization code for JWT tokens
         const response = await apiClient.post('/api/v2/auth/mezon/exchange', {
           code: code,
-          state: state
+          state: callbackState
         });
 
         const { access_token, refresh_token, user } = response.data;
@@ -70,7 +75,7 @@ const Callback = () => {
     };
 
     handleCallback();
-  }, [searchParams, login, navigate]);
+  }, [code, callbackState, login, navigate]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
@@ -78,7 +83,7 @@ const Callback = () => {
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
           {error ? (
             <div className="space-y-6">
-              <ErrorMessage message={error} />
+              <ErrorMessage error={error} />
 
               <div className="text-center">
                 <button
