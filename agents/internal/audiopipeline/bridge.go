@@ -33,8 +33,8 @@ const (
 	// maxSamplesPerPacket bounds the decode buffer: RFC 6716 caps a single
 	// Opus packet at 120ms; at 16kHz mono that's 1920 samples.
 	maxSamplesPerPacket = 1920
-	recordSilenceTick   = 2 * time.Second
-	rtpActivityGrace    = 200 * time.Millisecond
+	recordSilenceTick   = 100 * time.Millisecond
+	rtpActivityGrace    = 40 * time.Millisecond
 	maxSilenceChunk     = 2 * time.Second
 )
 
@@ -139,14 +139,22 @@ func (r *recordTimeline) setMuted(muted bool, now time.Time) {
 	}
 
 	if muted {
+		// If RTP inactivity was already being padded while the mic was on,
+		// commit the one-second holdback before switching to explicit-mute
+		// padding. Otherwise begin the muted interval at the signaling event.
+		if !r.paddingCursor.IsZero() && !r.lastRTPAt.IsZero() && now.Sub(r.lastRTPAt) >= rtpActivityGrace {
+			r.padUntilLocked(now)
+		} else {
+			r.paddingCursor = now
+		}
 		r.muted = true
-		r.paddingCursor = now
 		return
 	}
 
-	r.flushSilenceLocked(now)
+	r.padUntilLocked(now)
 	r.muted = false
-	r.paddingCursor = time.Time{}
+	r.paddingCursor = now
+	r.lastRTPAt = now
 }
 
 func (r *recordTimeline) sendRealPCM(pcm []byte, now time.Time) {
@@ -156,34 +164,54 @@ func (r *recordTimeline) sendRealPCM(pcm []byte, now time.Time) {
 		return
 	}
 
+	if !r.muted && !r.lastRTPAt.IsZero() && now.Sub(r.lastRTPAt) >= rtpActivityGrace {
+		// Keep one grace period uncommitted while no RTP is arriving, then fill
+		// the remainder when speech resumes. The packet's PCM belongs immediately
+		// before now, so stop padding at the beginning of that PCM rather than
+		// padding over it.
+		bytesPerSample := PCMChannels * 2
+		sampleCount := len(pcm) / bytesPerSample
+		packetDuration := time.Duration(int64(sampleCount) * int64(time.Second) / int64(PCMSampleRate))
+		r.padUntilLocked(now.Add(-packetDuration))
+	}
+
 	r.sink.SendPCM(pcm)
 	r.lastRTPAt = now
-	if r.muted {
-		// Real RTP always wins over synthetic silence. Moving the cursor keeps
-		// the ticker from padding over audio that has actually arrived while
-		// the signaling-side mute state is catching up.
-		r.paddingCursor = now
-	}
+	// Real RTP always wins over synthetic silence. Moving the cursor keeps
+	// the ticker from padding over audio that has actually arrived, including
+	// while the signaling-side mute state is catching up.
+	r.paddingCursor = now
 }
 
 func (r *recordTimeline) onTick(now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed || !r.muted || r.paddingCursor.IsZero() {
+	if r.closed || r.paddingCursor.IsZero() {
 		return
 	}
 	if !r.lastRTPAt.IsZero() && now.Sub(r.lastRTPAt) < rtpActivityGrace {
 		return
 	}
-	r.flushSilenceLocked(now)
-}
-
-func (r *recordTimeline) flushSilenceLocked(now time.Time) {
-	if !r.muted || r.paddingCursor.IsZero() || !now.After(r.paddingCursor) {
+	if r.muted {
+		r.padUntilLocked(now)
+		return
+	}
+	if r.lastRTPAt.IsZero() {
 		return
 	}
 
-	for gap := now.Sub(r.paddingCursor); gap > 0; gap = now.Sub(r.paddingCursor) {
+	// Keep the most recent grace period uncommitted. If a delayed RTP packet
+	// arrives inside that window it is forwarded normally without synthetic
+	// silence having already occupied the same part of the recording.
+	r.padUntilLocked(now.Add(-rtpActivityGrace))
+}
+
+func (r *recordTimeline) padUntilLocked(until time.Time) {
+	if r.paddingCursor.IsZero() || !until.After(r.paddingCursor) {
+		return
+	}
+
+	for gap := until.Sub(r.paddingCursor); gap > 0; gap = until.Sub(r.paddingCursor) {
 		chunkDuration := gap
 		if chunkDuration > maxSilenceChunk {
 			chunkDuration = maxSilenceChunk
@@ -209,7 +237,9 @@ func (r *recordTimeline) close(now time.Time) {
 		r.mu.Unlock()
 		return
 	}
-	r.flushSilenceLocked(now)
+	if r.muted || (!r.lastRTPAt.IsZero() && now.Sub(r.lastRTPAt) >= rtpActivityGrace) {
+		r.padUntilLocked(now)
+	}
 	r.closed = true
 	sink := r.sink
 	r.sink = nil
