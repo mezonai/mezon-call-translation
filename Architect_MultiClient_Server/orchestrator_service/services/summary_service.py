@@ -145,7 +145,9 @@ class SummaryService:
                 )
             raise
 
-    def merge_section_summaries(self, sections: list[RoomSectionSummary], overall_context: str) -> dict[str, Any]: # type: ignore[explicit-any]
+    def merge_section_summaries(
+        self, sections: list[RoomSectionSummary], overall_context: str, title: str
+    ) -> dict[str, Any]:  # type: ignore[explicit-any]
         raw_data: dict[str, Any] = {  # type: ignore[explicit-any]
             "key_discussions": [],
             "next_focus": {},
@@ -175,6 +177,7 @@ class SummaryService:
             summary_parts.append("Key Discussions\n" + "\n".join(raw_data["key_discussions"]))
 
         return {
+            "title": title,
             "summary": "\n\n".join(summary_parts) if summary_parts else "",
             "action_items": raw_data["next_focus"],
             "detail": raw_data["detail"],
@@ -202,7 +205,11 @@ class SummaryService:
             prompt = build_overall_context_prompt(section_context_str, language)
             result = await self._call_llm_with_fallback(prompt, OverallContextResult, room_id=room_id)
 
-            return self.merge_section_summaries(sections=sections, overall_context=result.context)
+            return self.merge_section_summaries(
+                sections=sections,
+                overall_context=result.context,
+                title=result.title,
+            )
         except Exception as e:
             logger.error(f"Failed to generate overall summary for room_id={room_id}: {e}")
             raise ValueError(f"Failed to generate overall summary for room_id={room_id}: {e}") from e
@@ -497,6 +504,7 @@ class SummaryService:
                     summary_data_result.detail = sanitize_and_decode_list(summary_data_result.detail, {}, require_brackets=False)
 
             summary_data = {
+                "title": summary_data_result.title,
                 "summary": "\n\n".join(summary_parts) if summary_parts else "",
                 "action_items": group_next_focus_by_user(summary_data_result.next_focus) if summary_data_result else {},
                 "detail": summary_data_result.detail if summary_data_result and summary_data_result.detail else []
@@ -636,6 +644,7 @@ class SummaryService:
                         result.detail = sanitize_and_decode_list(result.detail, {}, require_brackets=False)
 
                     summary_data = {
+                        "title": result.title,
                         "summary": "\n\n".join(summary_parts),
                         "action_items": group_next_focus_by_user(result.next_focus) if result else {},
                         "detail": result.detail if result and result.detail else []

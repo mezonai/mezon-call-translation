@@ -20,6 +20,11 @@ class SummaryResult(BaseModel):  # type: ignore[explicit-any]
     key_discussions: list[str] = Field(description="Main discussion details and viewpoints")
     next_focus: list[str] = Field(description="Expected next steps and priorities")
     detail: list[str] = Field(description="Detailed discussion points, decisions, and technical details")
+    title: str = Field(
+        min_length=1,
+        max_length=80,
+        description="Short, specific title that identifies the meeting's main topic or outcome",
+    )
 
 
 class LightSummaryResult(BaseModel):  # type: ignore[explicit-any]
@@ -34,6 +39,11 @@ class LightSummaryResult(BaseModel):  # type: ignore[explicit-any]
 
 class OverallContextResult(BaseModel):  # type: ignore[explicit-any]
     context: str = Field(description="Meeting purpose, context, and most important outcome")
+    title: str = Field(
+        min_length=1,
+        max_length=80,
+        description="Short, specific title that identifies the meeting's main topic or outcome",
+    )
 
 
 class RoomSummaryResponse(BaseModel):  # type: ignore[explicit-any]
