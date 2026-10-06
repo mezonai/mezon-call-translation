@@ -467,6 +467,31 @@ class TranscriptCorrectionConfig:
         )
 
 
+@dataclass
+class HallucinationFilterConfig:
+    """Whisper hallucination filter configuration"""
+
+    onnx_model_path: str = "models/bi-encoder-model/vietnamese_bi_encoder_int8_accurate.onnx"
+    tokenizer_path: str = "bkai-foundation-models/vietnamese-bi-encoder"
+    similarity_threshold: float = 0.78
+    fuzzy_threshold: float = 86.0
+    no_speech_threshold: float = 0.35
+    avg_logprob_threshold: float = -0.85
+    compression_ratio_threshold: float = 2.15
+
+    @classmethod
+    def from_env(cls) -> "HallucinationFilterConfig":
+        return cls(
+            onnx_model_path=os.getenv("HALLUCINATION_FILTER_MODEL_PATH", "models/bi-encoder-model/vietnamese_bi_encoder_int8_accurate.onnx"),
+            tokenizer_path=os.getenv("HALLUCINATION_FILTER_TOKENIZER_PATH", "bkai-foundation-models/vietnamese-bi-encoder"),
+            similarity_threshold=float(os.getenv("HALLUCINATION_SIMILARITY_THRESHOLD", "0.78")),
+            fuzzy_threshold=float(os.getenv("HALLUCINATION_FUZZY_THRESHOLD", "86")),
+            no_speech_threshold=float(os.getenv("HALLUCINATION_NO_SPEECH_THRESHOLD", "0.35")),
+            avg_logprob_threshold=float(os.getenv("HALLUCINATION_AVG_LOGPROB_THRESHOLD", "-0.85")),
+            compression_ratio_threshold=float(os.getenv("HALLUCINATION_COMPRESSION_RATIO_THRESHOLD", "2.15")),
+        )
+
+
 # ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
@@ -516,6 +541,7 @@ class Config:
         self.summary = SummaryConfig.from_env()
         self.light_summary = LightSummaryConfig.from_env()
         self.transcript_correction = TranscriptCorrectionConfig.from_env()
+        self.hallucination_filter = HallucinationFilterConfig.from_env()
 
         self._initialized = True
         self._validate_all()

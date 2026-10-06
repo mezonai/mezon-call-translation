@@ -16,6 +16,7 @@ from orchestrator_service.services.redis.redis_stream_service import (
     RedisStreamService,
     create_stream_service,
 )
+from orchestrator_service.services.hallucination_filter_service import get_hallucination_filter_service
 from orchestrator_service.services.summary_service import get_summary_service
 from orchestrator_service.utils.decorator import singleton
 from orchestrator_service.utils.logger import get_logger
@@ -64,6 +65,7 @@ class RedisSaveTranscriptionService:
         self._redis_service: RedisStreamService[SaveTranscriptionTask] = get_save_stream_service()
         self._pg_repo: PgTranscriptRepository = PgTranscriptRepository()
         self._pg_track_repo: PgTrackRepository = PgTrackRepository()
+        self._hallucination_filter = get_hallucination_filter_service()
         self._consumer_task: asyncio.Task[None] | None = None
         self._orphan_recovery_task: asyncio.Task[None] | None = None
         self._running = False
@@ -100,6 +102,10 @@ class RedisSaveTranscriptionService:
         await self.connect()
         self._running = True
         self._local_stats["started_at"] = time.time()
+
+        # Initialize hallucination filter in background thread
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._hallucination_filter.initialize)
 
         # Start Redis background tasks
         await self._redis_service.start_background_tasks()
@@ -272,16 +278,31 @@ class RedisSaveTranscriptionService:
 
             # Handle normal pending batch with segments
             if task.segments and len(task.segments) > 0:
-                # Save segments to PostgreSQL
-                await self._pg_repo.append_transcript_chunk(track_ref_id=task.track_ref_id, new_segments=task.segments)
+                clean_segments, filtered_segments = await self._hallucination_filter.filter_segments_async(task.segments)
+                if filtered_segments:
+                    logger.info(
+                        f"🚫 Filtered {len(filtered_segments)}/{len(task.segments)} hallucinated segments for track {task.track_ref_id}"
+                    )
+                    for f_seg in filtered_segments:
+                        logger.debug(
+                            f"   • Reason: {f_seg.get('filter_reason')} (score: {f_seg.get('filter_score')}) | Text: {f_seg.get('text')}"
+                        )
 
-                logger.info(
-                    f"💾 Saved {task.item_count} segments for track {task.track_ref_id} "
-                    f"(chunk {task.chunk_index}, time {task.start_time:.1f}-{task.end_time:.1f}s)"
-                )
+                if clean_segments:
+                    # Save clean segments to PostgreSQL
+                    await self._pg_repo.append_transcript_chunk(track_ref_id=task.track_ref_id, new_segments=clean_segments)
 
-                # Update local stats
-                self._local_stats["total_segments_saved"] += task.item_count
+                    logger.info(
+                        f"💾 Saved {len(clean_segments)} clean segments for track {task.track_ref_id} "
+                        f"(chunk {task.chunk_index}, time {task.start_time:.1f}-{task.end_time:.1f}s)"
+                    )
+
+                    # Update local stats
+                    self._local_stats["total_segments_saved"] += len(clean_segments)
+                else:
+                    logger.info(
+                        f"ℹ️ All {len(task.segments)} segments in chunk {task.chunk_index} for track {task.track_ref_id} were filtered as hallucinations"
+                    )
 
             # ACK the task
             await self._redis_service.acknowledge(task)

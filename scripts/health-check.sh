@@ -30,6 +30,7 @@ WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
 GIPFORMER_FILES=("encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt")
+BI_ENCODER_MODEL_DIR="$MODELS_DIR/bi-encoder-model"
 
 # Counters
 TOTAL_CHECKS=0
@@ -141,8 +142,8 @@ else
 fi
 
 # Check Kokoro model
-if [ -f "$KOKORO_MODEL_DIR/kokoro.onnx" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
-    check_pass "Kokoro model found: kokoro-v0_19.pth"
+if [ -f "$KOKORO_MODEL_DIR/kokoro-v1_0.pth" ] || [ -f "$KOKORO_MODEL_DIR/kokoro.onnx" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
+    check_pass "Kokoro model found"
 
     # Check voices
     if [ -d "$KOKORO_MODEL_DIR/voices" ]; then
@@ -157,8 +158,16 @@ if [ -f "$KOKORO_MODEL_DIR/kokoro.onnx" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_1
         check_warn "Kokoro voices directory not found"
     fi
 else
-    check_fail "Kokoro model not found: $KOKORO_MODEL_DIR/kokoro-v0_19.pth"
+    check_fail "Kokoro model not found in $KOKORO_MODEL_DIR"
     print_info "  Run: ./scripts/download-kokoro-model.sh"
+fi
+
+# Check Bi-Encoder model (used for hallucination filtering in Orchestrator)
+if [ -f "$BI_ENCODER_MODEL_DIR/vietnamese_bi_encoder_int8_accurate.onnx" ]; then
+    check_pass "Bi-Encoder hallucination filter model found: vietnamese_bi_encoder_int8_accurate.onnx"
+else
+    check_warn "Bi-Encoder hallucination filter model not found in $BI_ENCODER_MODEL_DIR"
+    print_info "  Run: ./scripts/download-bi-encoder-model.sh"
 fi
 
 # ============================================================================
@@ -227,6 +236,23 @@ elif [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
     fi
 else
     check_warn "Cannot verify sherpa-onnx because STT Linux venv is unavailable"
+fi
+
+# Check Orchestrator hallucination filter dependencies
+PY_ORCHES=""
+if [ -x "$ORCHESTRATOR_DIR/venv/bin/python" ]; then
+    PY_ORCHES="$ORCHESTRATOR_DIR/venv/bin/python"
+elif [ -f "$ORCHESTRATOR_DIR/venv/Scripts/python.exe" ]; then
+    PY_ORCHES="$ORCHESTRATOR_DIR/venv/Scripts/python.exe"
+fi
+
+if [ -n "$PY_ORCHES" ]; then
+    if "$PY_ORCHES" -c "import rapidfuzz, transformers" >/dev/null 2>&1; then
+        check_pass "Orchestrator venv has rapidfuzz & transformers for hallucination filtering"
+    else
+        check_warn "Orchestrator venv is missing rapidfuzz or transformers"
+        print_info "  Install requirements: $PY_ORCHES -m pip install -r $ORCHESTRATOR_DIR/requirements-orchestrator.txt"
+    fi
 fi
 
 # ============================================================================

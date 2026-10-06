@@ -35,6 +35,7 @@ NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
 GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
 WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
+BI_ENCODER_MODEL_DIR="$MODELS_DIR/bi-encoder-model"
 
 # Functions
 print_header() {
@@ -262,12 +263,17 @@ if [ "$SKIP_MODELS" = false ]; then
         KOKORO_ARGS+=("--voices" "$KOKORO_VOICES")
     fi
     
-    if [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
+    if [ -f "$KOKORO_MODEL_DIR/kokoro-v1_0.pth" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
         print_warning "Kokoro model already exists. Checking for new voices..."
         KOKORO_ARGS+=("--force")
     fi
     
     bash "${KOKORO_ARGS[@]}"
+
+    # Download Bi-Encoder hallucination filter model for Orchestrator
+    print_info "Downloading Bi-Encoder hallucination filter model..."
+    bash "$SCRIPT_DIR/download-bi-encoder-model.sh" \
+        --output "$BI_ENCODER_MODEL_DIR"
     
     print_success "Models downloaded successfully!"
 else
@@ -366,6 +372,18 @@ if [ "$SKIP_ENV" = false ]; then
         fi
         print_success "Updated TTS_MODEL_PATH in TTS Service"
     fi
+
+    # Update Orchestrator Service .env
+    if [ -f "$ORCHESTRATOR_DIR/.env" ]; then
+        BI_ENCODER_MODEL_PATH="$BI_ENCODER_MODEL_DIR/vietnamese_bi_encoder_int8_accurate.onnx"
+        if grep -q "^HALLUCINATION_FILTER_MODEL_PATH=" "$ORCHESTRATOR_DIR/.env"; then
+            sed -i.tmp "s|^HALLUCINATION_FILTER_MODEL_PATH=.*|HALLUCINATION_FILTER_MODEL_PATH=$BI_ENCODER_MODEL_PATH|" "$ORCHESTRATOR_DIR/.env"
+            rm -f "$ORCHESTRATOR_DIR/.env.tmp"
+        else
+            echo "HALLUCINATION_FILTER_MODEL_PATH=$BI_ENCODER_MODEL_PATH" >> "$ORCHESTRATOR_DIR/.env"
+        fi
+        print_success "Updated HALLUCINATION_FILTER_MODEL_PATH in Orchestrator Service"
+    fi
     
     print_success ".env files configured successfully!"
 else
@@ -442,6 +460,7 @@ echo -e "  ${GREEN}✓${NC} Nemotron model: $NEMOTRON_MODEL"
 echo -e "  ${GREEN}✓${NC} Non-realtime Whisper model: $WHISPER_MODEL"
 echo -e "  ${GREEN}✓${NC} Gipformer model: gipformer-model"
 echo -e "  ${GREEN}✓${NC} Kokoro model: kokoro_models"
+echo -e "  ${GREEN}✓${NC} Bi-Encoder model: bi-encoder-model"
 echo ""
 echo -e "  ${GREEN}✓${NC} .env files created and configured"
 echo -e "  ${GREEN}✓${NC} Virtual environments set up for all services"
