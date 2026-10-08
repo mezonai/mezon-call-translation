@@ -59,12 +59,13 @@ class RoomService:
             total = await self.pg_transcript_repo.count_rooms_by_user(auth.user_id, status, search, from_utc, to_utc)
 
         room_ids = [room.id for room in rooms]
-        summary_by_room = await self.pg_summary_repo.get_summary_done_by_room_ids(room_ids)
+        summary_by_room = await self.pg_summary_repo.get_summary_status_and_title_by_room_ids(room_ids)
 
         items = [
             {
                 **self._serialize_room(room),
-                "summary_done": summary_by_room.get(room.id, False),
+                "summary_done": summary_by_room.get(room.id, (False, None))[0],
+                "title": summary_by_room.get(room.id, (False, None))[1],
             }
             for room in rooms
         ]
