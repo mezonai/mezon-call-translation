@@ -28,6 +28,9 @@ function TableSkeleton() {
       {Array.from({ length: SKELETON_ROWS }).map((_, i) => (
         <tr key={i} className="animate-pulse">
           <td className="px-6 py-4 whitespace-nowrap">
+            <div className="h-4 bg-gray-200 rounded w-10" />
+          </td>
+          <td className="px-6 py-4 whitespace-nowrap">
             <div className="h-4 bg-gray-200 rounded w-48 max-w-full" />
           </td>
           <td className="px-6 py-4 whitespace-nowrap">
@@ -138,6 +141,14 @@ const RoomList = () => {
 
   const totalPages = Math.ceil(totalRooms / ITEMS_PER_PAGE);
 
+  const goToPreviousPage = () => {
+    setCurrentPage((page) => Math.max(0, page - 1));
+  }
+
+  const goToNextPage = () => {
+    setCurrentPage((page) => Math.min(totalPages - 1, page + 1));
+  }
+
   const goToRoom = (roomId) => {
     const params = new URLSearchParams();
     if (currentPage > 0) params.set('from_page', String(currentPage));
@@ -151,6 +162,62 @@ const RoomList = () => {
     }
     const query = params.toString();
     navigate(`/room/${roomId}${query ? `?${query}` : ''}`);
+  };
+
+  const renderPagination = (position) => {
+    if (loading || totalPages <= 1) return null
+    return (
+      <div className={`bg-white px-4 py-3 flex items-center justify-between ${position === 'top' ? 'border-b' : 'border-t'} border-gray-200 sm:px-6`}>
+            <div className="flex-1 flex justify-between sm:hidden">
+              <button
+                onClick={goToPreviousPage}
+                disabled={currentPage === 0}
+                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <button
+                onClick={goToNextPage}
+                disabled={currentPage >= totalPages - 1}
+                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm text-gray-700">
+                  Showing <span className="font-medium">{currentPage * ITEMS_PER_PAGE + 1}</span> to{' '}
+                  <span className="font-medium">
+                    {Math.min((currentPage + 1) * ITEMS_PER_PAGE, totalRooms)}
+                  </span>{' '}
+                  of <span className="font-medium">{totalRooms}</span> results
+                </p>
+              </div>
+              <div>
+                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                  <button
+                    onClick={goToPreviousPage}
+                    disabled={currentPage === 0}
+                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                    Page {currentPage + 1} of {totalPages}
+                  </span>
+                  <button
+                    onClick={goToNextPage}
+                    disabled={currentPage >= totalPages - 1}
+                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </nav>
+              </div>
+            </div>
+          </div>
+    );
   };
 
   if (error) {
@@ -245,10 +312,14 @@ const RoomList = () => {
       </div>
 
       <div className="bg-white shadow-md rounded-lg overflow-hidden">
+        {renderPagination('top')}
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                  Index
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                   Room
                 </th>
@@ -275,17 +346,20 @@ const RoomList = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {rooms.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="px-6 py-4 text-center text-gray-500">
+                  <td colSpan="7" className="px-6 py-4 text-center text-gray-500">
                     No rooms found
                   </td>
                 </tr>
               ) : (
-                rooms.map((room) => (
+                rooms.map((room,index) => (
                   <tr
                     key={room.id}
                     className="hover:bg-gray-50 cursor-pointer transition"
                     onClick={() => goToRoom(room.id)}
                   >
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {index + 1}
+                    </td>
                     <td className="px-6 py-4 max-w-xs">
                       {room.title ? (
                         <div className="max-w-xs">
@@ -301,6 +375,7 @@ const RoomList = () => {
                           {room.room_name}
                         </div>
                       )}
+
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -337,58 +412,7 @@ const RoomList = () => {
         </div>
 
         {/* Pagination */}
-        {!loading && totalPages > 1 && (
-          <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
-            <div className="flex-1 flex justify-between sm:hidden">
-              <button
-                onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
-                disabled={currentPage === 0}
-                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <button
-                onClick={() => setCurrentPage(Math.min(totalPages - 1, currentPage + 1))}
-                disabled={currentPage >= totalPages - 1}
-                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-              >
-                Next
-              </button>
-            </div>
-            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm text-gray-700">
-                  Showing <span className="font-medium">{currentPage * ITEMS_PER_PAGE + 1}</span> to{' '}
-                  <span className="font-medium">
-                    {Math.min((currentPage + 1) * ITEMS_PER_PAGE, totalRooms)}
-                  </span>{' '}
-                  of <span className="font-medium">{totalRooms}</span> results
-                </p>
-              </div>
-              <div>
-                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-                  <button
-                    onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
-                    disabled={currentPage === 0}
-                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
-                    Page {currentPage + 1} of {totalPages}
-                  </span>
-                  <button
-                    onClick={() => setCurrentPage(Math.min(totalPages - 1, currentPage + 1))}
-                    disabled={currentPage >= totalPages - 1}
-                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </nav>
-              </div>
-            </div>
-          </div>
-        )}
+        {renderPagination('bottom')}
       </div>
     </div>
   );

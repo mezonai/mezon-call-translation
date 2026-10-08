@@ -33,8 +33,8 @@ const (
 	// maxSamplesPerPacket bounds the decode buffer: RFC 6716 caps a single
 	// Opus packet at 120ms; at 16kHz mono that's 1920 samples.
 	maxSamplesPerPacket = 1920
-	recordSilenceTick   = 2 * time.Second
-	rtpActivityGrace    = 200 * time.Millisecond
+	recordSilenceTick   = 100 * time.Millisecond
+	rtpActivityGrace    = 70 * time.Millisecond
 	maxSilenceChunk     = 2 * time.Second
 )
 
@@ -51,9 +51,9 @@ type Sink interface {
 // loop for one track calls HandlePacket/HandleTrackEnded back-to-back,
 // never concurrently with itself (see rtcagent.PeerAgent's
 // OnAudioPacket/OnTrackEnded doc). decoder/pcmBuf need no lock for that
-// reason. recordTimeline and sttSink are the exceptions because mute and
-// transcript-control events arrive from different goroutines; each guards
-// its own cross-goroutine state.
+// reason. recordTimeline and sttSink are the exceptions because their
+// background padding/transcript-control work runs on different goroutines;
+// each guards its own cross-goroutine state.
 type session struct {
 	info    rtcagent.TrackInfo
 	decoder opus.Decoder
@@ -78,9 +78,8 @@ type Bridge struct {
 
 	sttEnabled atomic.Bool // mirrors the old Python agent's AgentControlState.transcription_enabled -- starts false, see SetSTTEnabled
 
-	mu          sync.Mutex
-	sessions    map[string]*session
-	mutedByPeer map[uint64]bool
+	mu       sync.Mutex
+	sessions map[string]*session
 }
 
 func NewBridge(newRecordSink, newSTTSink func(info rtcagent.TrackInfo) Sink) *Bridge {
@@ -88,7 +87,6 @@ func NewBridge(newRecordSink, newSTTSink func(info rtcagent.TrackInfo) Sink) *Br
 		newRecordSink: newRecordSink,
 		newSTTSink:    newSTTSink,
 		sessions:      make(map[string]*session),
-		mutedByPeer:   make(map[uint64]bool),
 	}
 }
 
@@ -96,7 +94,6 @@ type recordTimeline struct {
 	mu sync.Mutex
 
 	sink          Sink
-	muted         bool
 	closed        bool
 	paddingCursor time.Time
 	lastRTPAt     time.Time
@@ -131,59 +128,53 @@ func (r *recordTimeline) run() {
 	}
 }
 
-func (r *recordTimeline) setMuted(muted bool, now time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed || r.muted == muted {
-		return
-	}
-
-	if muted {
-		r.muted = true
-		r.paddingCursor = now
-		return
-	}
-
-	r.flushSilenceLocked(now)
-	r.muted = false
-	r.paddingCursor = time.Time{}
-}
-
-func (r *recordTimeline) sendRealPCM(pcm []byte, now time.Time) {
+func (r *recordTimeline) sendAllPcm(pcm []byte, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
 		return
 	}
 
+	if !r.lastRTPAt.IsZero() && now.Sub(r.lastRTPAt) >= rtpActivityGrace {
+		// Keep one grace period uncommitted while no RTP is arriving, then fill
+		// the remainder when speech resumes. The packet's PCM belongs immediately
+		// before now, so stop padding at the beginning of that PCM rather than
+		// padding over it.
+		bytesPerSample := PCMChannels * 2
+		sampleCount := len(pcm) / bytesPerSample
+		packetDuration := time.Duration(int64(sampleCount) * int64(time.Second) / int64(PCMSampleRate))
+		r.padUntilLocked(now.Add(-packetDuration))
+	}
+
 	r.sink.SendPCM(pcm)
 	r.lastRTPAt = now
-	if r.muted {
-		// Real RTP always wins over synthetic silence. Moving the cursor keeps
-		// the ticker from padding over audio that has actually arrived while
-		// the signaling-side mute state is catching up.
-		r.paddingCursor = now
-	}
+	// Real RTP always wins over synthetic silence. Moving the cursor keeps
+	// the ticker from padding over audio that has actually arrived.
+	r.paddingCursor = now
 }
 
 func (r *recordTimeline) onTick(now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed || !r.muted || r.paddingCursor.IsZero() {
+	if r.closed || r.paddingCursor.IsZero() || r.lastRTPAt.IsZero() {
 		return
 	}
-	if !r.lastRTPAt.IsZero() && now.Sub(r.lastRTPAt) < rtpActivityGrace {
+	if now.Sub(r.lastRTPAt) < rtpActivityGrace {
 		return
 	}
-	r.flushSilenceLocked(now)
+
+	// Keep the most recent grace period uncommitted. If a delayed RTP packet
+	// arrives inside that window it is forwarded normally without synthetic
+	// silence having already occupied the same part of the recording.
+	r.padUntilLocked(now.Add(-rtpActivityGrace))
 }
 
-func (r *recordTimeline) flushSilenceLocked(now time.Time) {
-	if !r.muted || r.paddingCursor.IsZero() || !now.After(r.paddingCursor) {
+func (r *recordTimeline) padUntilLocked(until time.Time) {
+	if r.paddingCursor.IsZero() || !until.After(r.paddingCursor) {
 		return
 	}
 
-	for gap := now.Sub(r.paddingCursor); gap > 0; gap = now.Sub(r.paddingCursor) {
+	for gap := until.Sub(r.paddingCursor); gap > 0; gap = until.Sub(r.paddingCursor) {
 		chunkDuration := gap
 		if chunkDuration > maxSilenceChunk {
 			chunkDuration = maxSilenceChunk
@@ -209,42 +200,15 @@ func (r *recordTimeline) close(now time.Time) {
 		r.mu.Unlock()
 		return
 	}
-	r.flushSilenceLocked(now)
+	if !r.lastRTPAt.IsZero() && now.Sub(r.lastRTPAt) >= rtpActivityGrace {
+		r.padUntilLocked(now)
+	}
 	r.closed = true
 	sink := r.sink
 	r.sink = nil
 	r.mu.Unlock()
 
 	sink.Close()
-}
-
-// SetPeerMuted applies the latest SFU roster state to every active audio track
-// for the peer and caches it for a track that has not emitted its first packet.
-func (b *Bridge) SetPeerMuted(peerID uint64, muted bool) {
-	b.mu.Lock()
-	b.mutedByPeer[peerID] = muted
-	sessions := make([]*session, 0, 1)
-	for _, s := range b.sessions {
-		if s.info.PeerID == peerID {
-			sessions = append(sessions, s)
-		}
-	}
-	b.mu.Unlock()
-
-	now := time.Now()
-	for _, s := range sessions {
-		if s.record != nil {
-			s.record.setMuted(muted, now)
-		}
-	}
-}
-
-// RemovePeer drops signaling state only. The track read loop remains the sole
-// owner of closing its sinks through HandleTrackEnded.
-func (b *Bridge) RemovePeer(peerID uint64) {
-	b.mu.Lock()
-	delete(b.mutedByPeer, peerID)
-	b.mu.Unlock()
 }
 
 // HandlePacket decodes one Opus RTP packet and fans the PCM out to whatever
@@ -266,7 +230,7 @@ func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 	pcm := int16ToLEBytes(s.pcmBuf[:n])
 
 	if s.record != nil {
-		s.record.sendRealPCM(pcm, time.Now())
+		s.record.sendAllPcm(pcm, time.Now())
 	}
 	s.mu.Lock()
 	stt := s.sttSink
@@ -390,14 +354,10 @@ func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 
 	b.mu.Lock()
 	b.sessions[info.Mid] = s
-	muted := b.mutedByPeer[info.PeerID]
-	if s.record != nil {
-		s.record.setMuted(muted, time.Now())
-	}
 	b.mu.Unlock()
 
 	logging.L.Info("audiopipeline: started session", "mid", info.Mid, "user_id", info.UserID, "peer_id", info.PeerID,
-		"recording", s.record != nil, "stt", s.sttSink != nil, "muted", muted)
+		"recording", s.record != nil, "stt", s.sttSink != nil)
 	return s
 }
 

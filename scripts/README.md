@@ -329,6 +329,28 @@ Downloads Kokoro-82M TTS models and voices.
 
 ---
 
+### 8. `download-bi-encoder-model.sh` - Vietnamese Bi-Encoder ONNX Downloader
+
+Downloads the quantized ONNX bi-encoder model and tokenizer from `HgTuyen25/vietnamese-bi-encoder-onnx` used by Orchestrator for Whisper hallucination filtering.
+
+#### Usage
+
+```bash
+# Default download (saves to models/bi-encoder-model/)
+./scripts/download-bi-encoder-model.sh
+
+# Custom destination directory
+./scripts/download-bi-encoder-model.sh -o /custom/path/to/models/bi-encoder-model
+
+# Force fresh re-download
+./scripts/download-bi-encoder-model.sh --force
+
+# List required files
+./scripts/download-bi-encoder-model.sh --list
+```
+
+---
+
 ## 🚀 Quick Start Guide
 
 ### First Time Setup
@@ -441,6 +463,7 @@ scripts/
 ├── download-nemotron-model.sh         # Nemotron model downloader
 ├── download-gipformer-model.sh        # Gipformer fallback model downloader
 ├── download-kokoro-model.sh           # Kokoro model downloader
+├── download-bi-encoder-model.sh       # Bi-Encoder ONNX hallucination model downloader
 ├── edit_env.sh                        # Undocumented helper to set KEY=VALUE pairs in a service .env
 ```
 

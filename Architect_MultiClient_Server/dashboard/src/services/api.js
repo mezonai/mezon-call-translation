@@ -2,6 +2,8 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 const AUDIO_BASE_URL = import.meta.env.VITE_AUDIO_BASE_URL;
+const AUTH_EXCHANGE_PATH = '/api/v2/auth/mezon/exchange';
+const AUTH_REFRESH_PATH = '/api/v2/auth/refresh';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -84,8 +86,8 @@ apiClient.interceptors.response.use(
     // Handle 401 Unauthorized
     if (error.response?.status === 401 && !originalRequest._retry) {
       // Don't try to refresh on login/refresh endpoints
-      if (originalRequest.url?.includes('/auth/mezon/exchange') ||
-        originalRequest.url?.includes('/auth/mezon/refresh')) {
+      const requestPath = originalRequest.url?.split('?')[0];
+      if (requestPath === AUTH_EXCHANGE_PATH || requestPath === AUTH_REFRESH_PATH) {
         return Promise.reject(error);
       }
 
