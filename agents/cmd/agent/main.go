@@ -653,9 +653,6 @@ func (s *session) onPeerLeft(ev signaling.PeerLeftEvent) {
 	if s.peerAgent != nil {
 		s.peerAgent.RemovePeer(ev.UserID)
 	}
-	if s.bridge != nil {
-		s.bridge.RemovePeer(ev.PeerID)
-	}
 }
 
 // checkEmptyRoom implements EmptyRoomGrace (config.Config's doc has the
@@ -707,16 +704,13 @@ func (s *session) checkEmptyRoom(participantCount int) {
 }
 
 func (s *session) onPeerUpdated(peer signaling.Member) {
-	logging.L.Info("signaling: peer_updated", "user_id", peer.UserID, "role", peer.Role, "is_mute", peer.IsMute)
+	logging.L.Info("signaling: peer_updated", "user_id", peer.UserID, "role", peer.Role)
 	s.upsertPeer(peer)
 }
 
 func (s *session) upsertPeer(peer signaling.Member) {
 	if s.peerAgent != nil {
 		s.peerAgent.UpsertRoster(peer)
-	}
-	if s.bridge != nil {
-		s.bridge.SetPeerMuted(peer.PeerID, peer.IsMute)
 	}
 }
 
