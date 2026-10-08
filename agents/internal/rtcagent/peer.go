@@ -10,7 +10,7 @@
 //   - `a=msid:u<user_id>-p<peer_id>` on every section: pion surfaces this as
 //     TrackRemote.StreamID(), so user_id/peer_id are read directly off the
 //     track -- no need to cross-reference room_snapshot/peer_joined for that
-//     (we still keep a roster map for role/is_mute).
+//     (we still keep a roster map for role).
 //   - mid position (offset 0/1/2 from the peer's 3-wide slot) tells us
 //     mic vs camera vs screen without any heuristic.
 package rtcagent
@@ -77,7 +77,7 @@ type PeerAgent struct {
 
 	mu       sync.Mutex
 	midTable map[string]TrackInfo       // mid -> track info, from OnTrack
-	roster   map[int64]signaling.Member // user_id -> latest roster entry (role/is_mute)
+	roster   map[int64]signaling.Member // user_id -> latest roster entry (role)
 
 	// trackWG tracks every readLoop goroutine still running. Close() waits
 	// on it (see trackCloseGrace's doc) -- without this, readLoop's
@@ -318,7 +318,7 @@ func (a *PeerAgent) HandleOffer(sdp string) (string, error) {
 	return local.SDP, nil
 }
 
-// UpsertRoster records/updates a roster entry (role/is_mute) for a user_id.
+// UpsertRoster records/updates a roster entry (role) for a user_id.
 // Wired to signaling.Callbacks.OnRoomSnapshot / OnPeerJoined / OnPeerUpdated.
 func (a *PeerAgent) UpsertRoster(m signaling.Member) {
 	a.mu.Lock()
