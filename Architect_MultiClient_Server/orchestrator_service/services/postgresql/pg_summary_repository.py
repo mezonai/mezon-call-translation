@@ -82,7 +82,7 @@ class PgSummaryRepository:
             return result
         except Exception:
             logger.exception("Failed to get summary status for rooms")
-            raise
+            return {}
 
     async def update_room_messages(self, room_id: str, messages: list[dict[str, Any]]) -> bool:  # type: ignore[explicit-any]
         session_factory = get_session_factory()
