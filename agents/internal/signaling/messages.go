@@ -140,7 +140,6 @@ type Member struct {
 	UserID    int64  `json:"user_id,string"`
 	Metadata  string `json:"metadata"`
 	Role      string `json:"role"`
-	IsMute    bool   `json:"is_mute"`
 	Ufrag     string `json:"ufrag"`
 	MidAudio  uint32 `json:"mid_audio"`
 	MidVideo  uint32 `json:"mid_video"`
