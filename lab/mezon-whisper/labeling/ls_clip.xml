@@ -1,0 +1,19 @@
+<!-- Label Studio labeling config: train clips (one VAD span each). See labeling/guideline.md. -->
+<View>
+  <Header value="$clip_id   ·   $route"/>
+  <Audio name="audio" value="$audio"/>
+  <TextArea name="transcription" toName="audio" rows="3" editable="true" maxSubmissions="1"
+            placeholder="Ghi đúng những gì người nói chính nói. Để trống nếu không có tiếng nói."/>
+  <Choices name="category" toName="audio" choice="single" showInline="true" required="true">
+    <Choice value="vi"/>
+    <Choice value="mixed"/>
+    <Choice value="en"/>
+    <Choice value="nonspeech"/>
+  </Choices>
+  <Choices name="flags" toName="audio" choice="multiple" showInline="true">
+    <Choice value="bad_audio"/>
+  </Choices>
+  <Header size="5" value="Gợi ý từ máy (chỉ để tham khảo)"/>
+  <Text name="hint_a" value="$hint_a"/>
+  <Text name="hint_b" value="$hint_b"/>
+</View>

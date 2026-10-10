@@ -1,0 +1,11 @@
+# Known Whisper hallucinations on silence / noise (plan 4.4). One phrase per line.
+# Matching ignores case, accents and punctuation; longer phrases are matched first.
+# Seeded from HALLUCINATION_BLACKLIST in stt_service/service/whisper_marker_transcriber.py
+# plus phrases seen on the 5090 smoke tests (2026-09-30).
+Hãy subscribe cho kênh Ghiền Mì Gõ để không bỏ lỡ những video hấp dẫn
+Hãy subscribe cho kênh La La School để không bỏ lỡ những video hấp dẫn
+Để không bỏ lỡ những video hấp dẫn
+Cảm ơn các bạn đã theo dõi và hẹn gặp lại
+Hãy subscribe cho kênh La La School
+Hãy subscribe cho kênh
+Các bạn hãy đăng ký kênh để ủng hộ kênh của mình nhé

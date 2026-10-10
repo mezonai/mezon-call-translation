@@ -1,0 +1,12 @@
+# Audio, manifests and model weights never go into git (plan 14).
+data/*
+!data/manifests/
+data/manifests/*
+!data/manifests/split_rooms.json
+models/
+.venv/
+__pycache__/
+*.log
+reports/gpu_*.csv
+.env
+labelstudio/

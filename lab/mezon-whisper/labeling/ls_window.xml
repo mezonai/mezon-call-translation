@@ -1,0 +1,24 @@
+<!-- Label Studio labeling config: test/dev windows (60-120s, one region per utterance). -->
+<View>
+  <Header value="$window_id"/>
+  <Labels name="label" toName="audio">
+    <Label value="speech" background="#2f7ed8"/>
+  </Labels>
+  <Audio name="audio" value="$audio"/>
+  <View visibleWhen="region-selected">
+    <Header size="5" value="Nội dung của vùng đang chọn"/>
+    <TextArea name="transcription" toName="audio" perRegion="true" rows="2" editable="true" maxSubmissions="1"
+              placeholder="Để trống nếu vùng này không phải tiếng người nói chính."/>
+    <Choices name="category" toName="audio" perRegion="true" choice="single" showInline="true">
+      <Choice value="vi"/>
+      <Choice value="mixed"/>
+      <Choice value="en"/>
+      <Choice value="nonspeech"/>
+    </Choices>
+  </View>
+  <Header size="5" value="Trạng thái cả cửa sổ"/>
+  <Choices name="status" toName="audio" choice="multiple" showInline="true">
+    <Choice value="reviewed"/>
+    <Choice value="bad_audio"/>
+  </Choices>
+</View>
