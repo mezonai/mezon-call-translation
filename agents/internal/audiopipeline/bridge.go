@@ -250,6 +250,15 @@ func (b *Bridge) HandleTrackEnded(info rtcagent.TrackInfo) {
 		return
 	}
 
+	b.finalizeSession(s)
+	logging.L.Info("audiopipeline: stopped forwarding", "mid", info.Mid, "user_id", info.UserID)
+}
+
+// finalizeSession closes every sink s owns. Shared by HandleTrackEnded (the
+// track itself ended) and sessionFor's slot-reassignment path (the mid is
+// still alive -- mezon-sfu just handed it to a different peer, see
+// rtcagent.PeerAgent.ApplySlotAssigned's doc).
+func (b *Bridge) finalizeSession(s *session) {
 	if s.record != nil {
 		s.record.close(time.Now())
 	}
@@ -260,7 +269,6 @@ func (b *Bridge) HandleTrackEnded(info rtcagent.TrackInfo) {
 	if stt != nil {
 		stt.Close()
 	}
-	logging.L.Info("audiopipeline: stopped forwarding", "mid", info.Mid, "user_id", info.UserID)
 }
 
 // SetSTTEnabled turns STT on/off for every currently-active track (and, via
@@ -330,10 +338,30 @@ func (b *Bridge) applySTTEnabled(s *session, enabled bool) {
 func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 	b.mu.Lock()
 	if s, ok := b.sessions[info.Mid]; ok {
+		if s.info.PeerID == info.PeerID {
+			b.mu.Unlock()
+			return s
+		}
+		// mezon-sfu reassigned this mid's fixed-pool slot to a different
+		// peer without renegotiating the SDP (mezon-sfu PR #475, server
+		// config max_active_speakers > 0 -- see
+		// rtcagent.PeerAgent.ApplySlotAssigned's doc). Same mid, same
+		// transceiver/SSRC throughout, so this PeerID mismatch on an
+		// already-live session is the only point that ever learns the
+		// occupant changed. Finalize the outgoing peer's session before
+		// starting a fresh one -- otherwise their audio and the new
+		// occupant's would land in the same record-service track, the same
+		// room_id:track_id collision class of bug PR #278/#291 fixed for
+		// reconnects, now via slot reuse instead.
+		delete(b.sessions, info.Mid)
 		b.mu.Unlock()
-		return s
+		logging.L.Info("audiopipeline: mid reassigned to a different peer, starting a new session",
+			"mid", info.Mid, "old_user_id", s.info.UserID, "old_peer_id", s.info.PeerID,
+			"new_user_id", info.UserID, "new_peer_id", info.PeerID)
+		b.finalizeSession(s)
+	} else {
+		b.mu.Unlock()
 	}
-	b.mu.Unlock()
 
 	dec, err := opus.NewDecoderWithOutput(PCMSampleRate, PCMChannels)
 	if err != nil {

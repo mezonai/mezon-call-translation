@@ -491,7 +491,6 @@ class HallucinationFilterConfig:
             compression_ratio_threshold=float(os.getenv("HALLUCINATION_COMPRESSION_RATIO_THRESHOLD", "2.15")),
         )
 
-
 # ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
