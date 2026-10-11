@@ -80,6 +80,30 @@ func TestDecodeRoomSnapshot(t *testing.T) {
 	}
 }
 
+// TestDecodeRoomSnapshotWithSlotInfo covers the fixed-pool fields
+// (mezon-sfu PR #475): slot/assignment_generation are bare numbers, siblings
+// of mid_audio/video/screen, present on room_snapshot's members even though
+// TestDecodeRoomSnapshot's payload (the non-fixed-pool shape, where
+// mezon-sfu still sends assignment_generation:0 per membership_recipient_valid's
+// sentinel) predates PR #475 and deliberately omits them to check the zero
+// default still decodes safely.
+func TestDecodeRoomSnapshotWithSlotInfo(t *testing.T) {
+	raw := []byte(`{"type":"room_snapshot","room":"1","self_peer_id":2,"participant_count":1,` +
+		`"members":[{"peer_id":3,"user_id":"999001","metadata":"","role":"speaker",` +
+		`"ufrag":"abc","mid_audio":9,"mid_video":10,"mid_screen":11,"slot":2,"assignment_generation":7}]}`)
+	var m roomSnapshotMsg
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode room_snapshot: %v", err)
+	}
+	if len(m.Members) != 1 {
+		t.Fatalf("Members = %+v", m.Members)
+	}
+	got := m.Members[0]
+	if got.Slot != 2 || got.AssignmentGeneration != 7 {
+		t.Errorf("Members[0] slot/assignment_generation = %d/%d, want 2/7", got.Slot, got.AssignmentGeneration)
+	}
+}
+
 func TestDecodePeerJoined(t *testing.T) {
 	raw := []byte(`{"type":"peer_joined","participant_count":2,"peer":{"peer_id":3,"user_id":"999001",` +
 		`"metadata":"  Linh Trần  ","role":"speaker","ufrag":"abc","mid_audio":3,"mid_video":4,"mid_screen":5}}`)
@@ -93,6 +117,37 @@ func TestDecodePeerJoined(t *testing.T) {
 	name, avatar := ParseMemberMetadata(m.Peer.Metadata)
 	if name != "Linh Trần" || avatar != "" {
 		t.Errorf("parsed metadata = (%q, %q)", name, avatar)
+	}
+}
+
+// Payload copied verbatim from mezon-sfu's flush_slot_events snprintf
+// format (src/protocol/signaling/signaling.c), same rationale as this
+// file's other decode tests: peer_id/mid_audio/mid_video/mid_screen are
+// bare numbers, user_id is quoted.
+func TestDecodeSlotAssigned(t *testing.T) {
+	raw := []byte(`{"type":"slot_assigned","slot":2,"generation":7,"peer_id":10,"user_id":"999001",` +
+		`"mid_audio":9,"mid_video":10,"mid_screen":11,"audio_active":true,"video_active":false,"screen_active":false}`)
+	var m slotAssignedMsg
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode slot_assigned: %v", err)
+	}
+	want := slotAssignedMsg{
+		Type: "slot_assigned", Slot: 2, Generation: 7, PeerID: 10, UserID: 999001,
+		MidAudio: 9, MidVideo: 10, MidScreen: 11, AudioActive: true,
+	}
+	if m != want {
+		t.Errorf("m = %+v, want %+v", m, want)
+	}
+}
+
+func TestDecodeSlotReleased(t *testing.T) {
+	raw := []byte(`{"type":"slot_released","slot":2,"generation":7}`)
+	var m slotReleasedMsg
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode slot_released: %v", err)
+	}
+	if m.Slot != 2 || m.Generation != 7 {
+		t.Errorf("m = %+v", m)
 	}
 }
 
