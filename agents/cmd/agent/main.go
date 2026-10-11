@@ -448,6 +448,7 @@ type session struct {
 	// is part of every record-service track_id so reconnects sharing the same
 	// roomID never collide on the (room_id, track_id) key.
 	conn int
+
 	// stop is the root ctx's cancel func (signal.NotifyContext in main) --
 	// checkEmptyRoom calls this directly, same as config.Config.MaxLifetime's
 	// timer, to end run()'s reconnect loop entirely rather than just this
@@ -476,6 +477,8 @@ func (s *session) callbacks() signaling.Callbacks {
 		OnPeerLeft:     s.onPeerLeft,
 		OnPeerUpdated:  s.onPeerUpdated,
 		OnRoomMessage:  s.onRoomMessage,
+		OnSlotAssigned: s.onSlotAssigned,
+		OnSlotReleased: s.onSlotReleased,
 	}
 }
 
@@ -709,8 +712,35 @@ func (s *session) onPeerUpdated(peer signaling.Member) {
 }
 
 func (s *session) upsertPeer(peer signaling.Member) {
+	if s.peerAgent == nil {
+		return
+	}
+	s.peerAgent.UpsertRoster(peer)
+	// Defensive bootstrap for a fixed-pool slot this agent didn't witness
+	// get assigned (e.g. already occupied before this agent joined/
+	// reconnected) -- see ApplyMemberSlot's doc. A no-op for non-fixed-pool
+	// rooms and for peer_updated (neither ever carries a nonzero
+	// AssignmentGeneration).
+	s.peerAgent.ApplyMemberSlot(peer)
+}
+
+// onSlotAssigned/onSlotReleased: only sent by mezon-sfu when this session is
+// in "fixed pool" mode (PR #475, server config max_active_speakers > 0) --
+// see signaling.SlotAssignedEvent's doc and rtcagent.PeerAgent.ApplySlotAssigned's
+// doc for why these, not room_snapshot/peer_joined/peer_updated, are the
+// only signal that a mid's content now belongs to a different peer.
+func (s *session) onSlotAssigned(ev signaling.SlotAssignedEvent) {
+	logging.L.Info("signaling: slot_assigned", "slot", ev.Slot, "generation", ev.Generation,
+		"user_id", ev.UserID, "peer_id", ev.PeerID, "mid_audio", ev.MidAudio)
 	if s.peerAgent != nil {
-		s.peerAgent.UpsertRoster(peer)
+		s.peerAgent.ApplySlotAssigned(ev)
+	}
+}
+
+func (s *session) onSlotReleased(ev signaling.SlotReleasedEvent) {
+	logging.L.Info("signaling: slot_released", "slot", ev.Slot, "generation", ev.Generation)
+	if s.peerAgent != nil {
+		s.peerAgent.ApplySlotReleased(ev)
 	}
 }
 

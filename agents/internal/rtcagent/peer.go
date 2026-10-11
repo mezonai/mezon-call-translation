@@ -9,8 +9,15 @@
 //     mid 6/7/8 = slot #2, etc.
 //   - `a=msid:u<user_id>-p<peer_id>` on every section: pion surfaces this as
 //     TrackRemote.StreamID(), so user_id/peer_id are read directly off the
-//     track -- no need to cross-reference room_snapshot/peer_joined for that
-//     (we still keep a roster map for role).
+//     track when a mid is first seen -- no need to cross-reference
+//     room_snapshot/peer_joined for that (we still keep a roster map for
+//     role). This is only a one-time *initial* reading, though: in
+//     mezon-sfu's "fixed pool" mode (PR #475, server config
+//     max_active_speakers > 0) a slot's mid/SSRC can be handed to a
+//     different peer later without any SDP renegotiation at all, so the
+//     msid alone can go stale for the lifetime of a long-running track --
+//     see ApplySlotAssigned's doc for the mid -> identity table this keeps
+//     live instead.
 //   - mid position (offset 0/1/2 from the peer's 3-wide slot) tells us
 //     mic vs camera vs screen without any heuristic.
 package rtcagent
@@ -70,14 +77,25 @@ type TrackInfo struct {
 
 var msidRe = regexp.MustCompile(`^u(-?\d+)-p(\d+)$`)
 
+// slotOwner is what ApplySlotReleased needs to find the mids a retiring
+// slot's generation last owned (slot_released carries only slot+generation,
+// not peer identity or mids -- see signaling.SlotReleasedEvent's doc).
+type slotOwner struct {
+	generation uint64
+	midAudio   uint32
+	midVideo   uint32
+	midScreen  uint32
+}
+
 // PeerAgent owns one pion PeerConnection for the lifetime of one mezon-sfu
 // session (one WS connection worth of ICE/DTLS/SRTP state).
 type PeerAgent struct {
 	pc *webrtc.PeerConnection
 
 	mu       sync.Mutex
-	midTable map[string]TrackInfo       // mid -> track info, from OnTrack
+	midTable map[string]TrackInfo       // mid -> track info. Live: both handleTrack (OnTrack) and ApplySlotAssigned write it, readLoop reads it fresh per packet -- see ApplySlotAssigned's doc for why a one-time OnTrack snapshot isn't enough.
 	roster   map[int64]signaling.Member // user_id -> latest roster entry (role)
+	slots    map[uint32]slotOwner       // fixed-pool slot number -> current occupant, keyed to resolve slot_released (which carries only the slot number)
 
 	// trackWG tracks every readLoop goroutine still running. Close() waits
 	// on it (see trackCloseGrace's doc) -- without this, readLoop's
@@ -206,6 +224,7 @@ func New(iceServers []signaling.ICEServer, publishTrack webrtc.TrackLocal) (*Pee
 		pc:       pc,
 		midTable: make(map[string]TrackInfo),
 		roster:   make(map[int64]signaling.Member),
+		slots:    make(map[uint32]slotOwner),
 	}
 
 	// isNilTrack, not a plain `publishTrack != nil`: publishTrack is an
@@ -339,6 +358,164 @@ func (a *PeerAgent) RemovePeer(userID int64) {
 	}
 }
 
+// ApplySlotAssigned updates the live mid -> identity mapping when mezon-sfu
+// hands a "fixed pool" speaker slot to a (possibly different) peer.
+//
+// Background (mezon-sfu PR #475, server config max_active_speakers > 0): in
+// that mode the SFU pre-allocates a bounded, fixed set of remote slots up
+// front -- each with its own permanent SSRC for the whole room's lifetime --
+// instead of growing mids per peer as before. Reassigning a slot from one
+// peer to another does NOT renegotiate the SDP (mezon-sfu room_media_graph.c:
+// `renegotiate = !sfu_session_has_fixed_pool(...)`): the same mid keeps
+// streaming RTP on the same SSRC throughout, pion's OnTrack fires exactly
+// once for it ever, and parseMsid's one-time reading of the SDP-time msid
+// (handleTrack) is only ever correct for whoever happened to occupy the slot
+// at that moment. This event is the *only* signal that the occupant changed,
+// so it must override parseMsid's value for every packet from here on --
+// see readLoop/currentInfoLocked, which re-resolve this per packet rather
+// than trusting handleTrack's one-time snapshot.
+//
+// Wire to signaling.Callbacks.OnSlotAssigned.
+func (a *PeerAgent) ApplySlotAssigned(ev signaling.SlotAssignedEvent) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.slots[ev.Slot] = slotOwner{
+		generation: ev.Generation,
+		midAudio:   ev.MidAudio,
+		midVideo:   ev.MidVideo,
+		midScreen:  ev.MidScreen,
+	}
+
+	a.setMidOwnerLocked(ev.MidAudio, ev.UserID, ev.PeerID, KindAudio)
+	a.setMidOwnerLocked(ev.MidVideo, ev.UserID, ev.PeerID, KindCamera)
+	a.setMidOwnerLocked(ev.MidScreen, ev.UserID, ev.PeerID, KindScreen)
+}
+
+// ApplySlotReleased clears the live mid -> identity mapping for a
+// fixed-pool slot that no longer has an occupant. Ignored if generation
+// doesn't match the assignment currently on record for that slot -- a
+// stale/superseded event, since mezon-sfu coalesces a release immediately
+// followed by a reassignment of the same slot into a single slot_assigned
+// before it's ever sent (flush_slot_events' coalescing), so an out-of-date
+// release reaching us would otherwise clear a mapping a newer slot_assigned
+// already corrected.
+//
+// Also finalizes the outgoing peer's audio track immediately via
+// OnTrackEnded, rather than waiting for a packet that may never arrive:
+// readLoop only re-resolves the mid -> identity mapping (and so only ever
+// notices a change) when a new RTP packet shows up for that mid (see
+// currentInfo's doc). A slot that sits released with no new occupant for a
+// while (room has fewer active speakers than pool slots, or the departing
+// peer's connection is already gone) would otherwise leave
+// audiopipeline.Bridge's session for this mid running forever -- its
+// record-service forwarder and background silence-padding goroutine never
+// told to stop, continuing to pad synthetic silence under the departed
+// peer's identity indefinitely.
+//
+// OnTrackEnded is invoked in its own goroutine, not inline: it's wired to
+// audiopipeline.Bridge.HandleTrackEnded, which closes the record-service
+// forwarder -- recordclient.Forwarder.Close can block up to closeGrace (2s)
+// waiting on record-service. ApplySlotReleased itself runs on
+// signaling.Client's single read-loop goroutine (Client.Run), which also
+// owns replying to the server's keepalive ping (10s interval, 20s idle
+// timeout -- see Client.dispatch's "ping" case) and dispatching every other
+// signaling message (offers, other slot events); blocking it for up to 2s
+// per release, or worse on a burst of several releases while record-service
+// is slow, risks tripping that idle timeout and getting the whole session
+// disconnected over a transient storage hiccup that has nothing to do with
+// the signaling channel itself. This call is also wired to a consumer
+// (audiopipeline.Bridge) that already tolerates being invoked from any
+// goroutine -- see HandleTrackEnded's doc -- so moving it off this
+// goroutine changes no correctness property, only which goroutine can be
+// blocked by it. This is the same deliberate, audited exception to the
+// "OnAudioPacket/OnTrackEnded only ever called from one track's own read
+// loop" invariant as before -- running it on its own goroutine instead of
+// the signaling one doesn't change that, only avoids compounding it with a
+// second, unrelated goroutine (the signaling read loop) also being blocked.
+//
+// Wire to signaling.Callbacks.OnSlotReleased.
+func (a *PeerAgent) ApplySlotReleased(ev signaling.SlotReleasedEvent) {
+	a.mu.Lock()
+	owner, ok := a.slots[ev.Slot]
+	if !ok || owner.generation != ev.Generation {
+		a.mu.Unlock()
+		return
+	}
+	delete(a.slots, ev.Slot)
+
+	audioInfo, hadAudio := a.clearMidOwnerLocked(owner.midAudio)
+	a.clearMidOwnerLocked(owner.midVideo)
+	a.clearMidOwnerLocked(owner.midScreen)
+	a.mu.Unlock()
+
+	if hadAudio && a.OnTrackEnded != nil {
+		go a.OnTrackEnded(audioInfo)
+	}
+}
+
+// ApplyMemberSlot is the defensive counterpart to ApplySlotAssigned: it
+// bootstraps the mid -> identity mapping for a fixed-pool slot that was
+// already occupied *before* this agent joined (or reconnected), from a
+// roster message's own mid_audio/video/screen + slot/assignment_generation
+// fields, rather than relying solely on the live slot_assigned/slot_released
+// stream (which only reports *future* changes, not a joiner's view of
+// current state) or on parseMsid's one-time SDP reading (which this
+// package's doc already flags as potentially stale in fixed-pool mode, and
+// whose correctness for an *already-occupied* slot at this agent's own join
+// time isn't something this package controls or has verified against
+// mezon-sfu's offer-building code -- see the package doc). Cheap insurance
+// either way: if parseMsid's reading does turn out to already be correct at
+// join time, this is a harmless no-op re-write of the same values.
+//
+// Gated on AssignmentGeneration != 0, mezon-sfu's own sentinel for "this
+// recipient has no real fixed-pool assignment" (signaling.c's
+// membership_recipient_valid, see Member's doc) -- not on Slot itself, which
+// has no such sentinel value and would otherwise be indistinguishable from a
+// legitimate "slot 0". This also means the gate is a safe no-op outside
+// fixed-pool mode (AssignmentGeneration is always 0 there) and for
+// peer_updated's Member (which never carries these fields on the wire at
+// all, so they always decode as zero) -- so this is safe to call
+// unconditionally for every roster message, not just ones known to be
+// fixed-pool-relevant.
+//
+// Wire alongside UpsertRoster, for every OnRoomSnapshot/OnPeerJoined/
+// OnPeerUpdated member.
+func (a *PeerAgent) ApplyMemberSlot(m signaling.Member) {
+	if m.AssignmentGeneration == 0 {
+		return
+	}
+	a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+		Slot:       m.Slot,
+		Generation: m.AssignmentGeneration,
+		PeerID:     m.PeerID,
+		UserID:     m.UserID,
+		MidAudio:   m.MidAudio,
+		MidVideo:   m.MidVideo,
+		MidScreen:  m.MidScreen,
+	})
+}
+
+func (a *PeerAgent) setMidOwnerLocked(mid uint32, userID int64, peerID uint64, kind TrackKind) {
+	if mid == 0 {
+		return
+	}
+	key := strconv.FormatUint(uint64(mid), 10)
+	a.midTable[key] = TrackInfo{Mid: key, UserID: userID, PeerID: peerID, Kind: kind}
+}
+
+// clearMidOwnerLocked removes mid's entry, returning what was there (if
+// anything) so ApplySlotReleased can finalize the outgoing peer's track.
+func (a *PeerAgent) clearMidOwnerLocked(mid uint32) (TrackInfo, bool) {
+	if mid == 0 {
+		return TrackInfo{}, false
+	}
+	key := strconv.FormatUint(uint64(mid), 10)
+	info, ok := a.midTable[key]
+	delete(a.midTable, key)
+	return info, ok
+}
+
 // Close tears down the PeerConnection. Closing the parent WS connection is
 // what actually ends the mezon-sfu session server-side; this just releases
 // local resources. Bounded by closeTimeout rather than trusting pion to
@@ -411,16 +588,40 @@ func (a *PeerAgent) handleTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPR
 	}
 
 	kind := kindForMid(midInt)
-	info := TrackInfo{Mid: mid, UserID: userID, PeerID: peerID, Kind: kind}
 
 	a.mu.Lock()
-	a.midTable[mid] = info
+	// A fixed-pool slot_assigned can arrive before this track's one-time
+	// OnTrack does (the slot is pre-allocated and the assignment is a plain
+	// signaling message, typically faster than the first RTP packet
+	// actually reaching us) -- see ApplySlotAssigned's doc. If that already
+	// happened, it's the live, authoritative mapping; parseMsid's SDP-time
+	// value is only ever a same-or-stale guess by comparison, so don't
+	// clobber it. Otherwise this is the first thing to ever say who owns
+	// this mid, so seed the table from it same as before mezon-sfu PR #475.
+	info, known := a.midTable[mid]
+	if !known {
+		info = TrackInfo{Mid: mid, UserID: userID, PeerID: peerID, Kind: kind}
+		a.midTable[mid] = info
+	}
 	a.mu.Unlock()
 
-	logging.L.Info("rtcagent: track received", "mid", mid, "user_id", userID, "peer_id", peerID, "kind", kind)
+	logging.L.Info("rtcagent: track received", "mid", mid, "user_id", info.UserID, "peer_id", info.PeerID, "kind", kind,
+		"from_slot_assigned", known)
 
 	a.trackWG.Add(1)
-	go a.readLoop(track, info)
+	go a.readLoop(track, mid, kind)
+}
+
+// currentInfo returns the live mid -> identity mapping (see
+// ApplySlotAssigned's doc for why this can change after handleTrack first
+// populated it). ok is false only if mid was somehow never seeded at all,
+// which shouldn't happen in practice since handleTrack always sets it before
+// starting readLoop.
+func (a *PeerAgent) currentInfo(mid string) (TrackInfo, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	info, ok := a.midTable[mid]
+	return info, ok
 }
 
 // midFor finds the transceiver mid associated with an RTPReceiver. pion
@@ -464,24 +665,50 @@ func parseMsid(streamID string) (userID int64, peerID uint64, ok bool) {
 // readLoop drains RTP packets for one track so pion's internal buffers don't
 // back up, and forwards mic-slot packets to OnAudioPacket if set. See the
 // OnAudioPacket/OnTrackEnded doc for why both are called only from here.
-func (a *PeerAgent) readLoop(track *webrtc.TrackRemote, info TrackInfo) {
+//
+// info is deliberately NOT a parameter captured once at track start: for a
+// fixed-pool slot (see ApplySlotAssigned's doc) the mid can outlive several
+// different owners without this read loop or its underlying track ever
+// restarting, so every packet re-resolves the current owner via
+// currentInfo. For a mid that's never touched by a slot event (the common,
+// non-fixed-pool case) that's always the same value handleTrack seeded --
+// this costs one mutex lock per packet for no behavior change there.
+func (a *PeerAgent) readLoop(track *webrtc.TrackRemote, mid string, kind TrackKind) {
 	defer a.trackWG.Done()
 	var packetCount uint64
 	for {
 		pkt, _, err := track.ReadRTP()
 		if err != nil {
+			info, _ := a.currentInfo(mid)
 			logging.L.Info("rtcagent: track ended", append(logging.ErrAttrs(err),
-				"mid", info.Mid, "user_id", info.UserID, "kind", info.Kind, "packets_received", packetCount)...)
+				"mid", mid, "user_id", info.UserID, "kind", kind, "packets_received", packetCount)...)
 			break
 		}
 		packetCount++
 
-		if info.Kind == KindAudio && a.OnAudioPacket != nil {
-			a.OnAudioPacket(info, pkt)
+		if kind == KindAudio && a.OnAudioPacket != nil {
+			if info, ok := a.currentInfo(mid); ok {
+				a.OnAudioPacket(info, pkt)
+			}
 		}
 	}
 
-	if info.Kind == KindAudio && a.OnTrackEnded != nil {
-		a.OnTrackEnded(info)
+	if kind == KindAudio && a.OnTrackEnded != nil {
+		a.OnTrackEnded(a.finalInfo(mid, kind))
 	}
+}
+
+// finalInfo is currentInfo with a fallback for readLoop's end-of-track call:
+// if the mid has no current owner anymore (e.g. the track's underlying
+// transceiver closed right after this mid's slot was released and never
+// reassigned -- ApplySlotReleased already cleared it), still return a
+// TrackInfo carrying the real mid rather than the zero value.
+// audiopipeline.Bridge keys its sessions purely by Mid, so passing an empty
+// Mid to OnTrackEnded would make HandleTrackEnded silently miss the
+// session, leaving its record-service stream never closed.
+func (a *PeerAgent) finalInfo(mid string, kind TrackKind) TrackInfo {
+	if info, ok := a.currentInfo(mid); ok {
+		return info
+	}
+	return TrackInfo{Mid: mid, Kind: kind}
 }
