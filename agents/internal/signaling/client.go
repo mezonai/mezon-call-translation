@@ -23,6 +23,27 @@ type PeerLeftEvent struct {
 	MidScreen        uint32
 }
 
+// SlotAssignedEvent mirrors slotAssignedMsg minus the `type` field. See that
+// struct's doc for the mezon-sfu PR #475 "fixed pool" background.
+type SlotAssignedEvent struct {
+	Slot         uint32
+	Generation   uint64
+	PeerID       uint64
+	UserID       int64
+	MidAudio     uint32
+	MidVideo     uint32
+	MidScreen    uint32
+	AudioActive  bool
+	VideoActive  bool
+	ScreenActive bool
+}
+
+// SlotReleasedEvent mirrors slotReleasedMsg minus the `type` field.
+type SlotReleasedEvent struct {
+	Slot       uint32
+	Generation uint64
+}
+
 // Callbacks lets the caller (rtcagent) react to server messages without this
 // package depending on pion. Every callback is invoked from the single read
 // loop goroutine (see Client.Run) -- never concurrently.
@@ -38,6 +59,12 @@ type Callbacks struct {
 	OnPeerLeft     func(ev PeerLeftEvent)
 	OnPeerUpdated  func(peer Member)
 	OnRoomMessage  func(message RoomMessage, userID string)
+	// OnSlotAssigned/OnSlotReleased: only sent when this session is in
+	// mezon-sfu's "fixed pool" mode (PR #475) -- see SlotAssignedEvent's doc.
+	// Never fire at all otherwise, so leaving these nil is safe for a
+	// session that doesn't care (e.g. a test double).
+	OnSlotAssigned func(ev SlotAssignedEvent)
+	OnSlotReleased func(ev SlotReleasedEvent)
 }
 
 // Client is a single-use WS signaling session. mezon-sfu treats a WS
@@ -188,6 +215,35 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 		}
 		if c.cb.OnPeerUpdated != nil {
 			c.cb.OnPeerUpdated(m.Peer)
+		}
+
+	case "slot_assigned":
+		var m slotAssignedMsg
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return fmt.Errorf("decode slot_assigned: %w", err)
+		}
+		if c.cb.OnSlotAssigned != nil {
+			c.cb.OnSlotAssigned(SlotAssignedEvent{
+				Slot:         m.Slot,
+				Generation:   m.Generation,
+				PeerID:       m.PeerID,
+				UserID:       m.UserID,
+				MidAudio:     m.MidAudio,
+				MidVideo:     m.MidVideo,
+				MidScreen:    m.MidScreen,
+				AudioActive:  m.AudioActive,
+				VideoActive:  m.VideoActive,
+				ScreenActive: m.ScreenActive,
+			})
+		}
+
+	case "slot_released":
+		var m slotReleasedMsg
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return fmt.Errorf("decode slot_released: %w", err)
+		}
+		if c.cb.OnSlotReleased != nil {
+			c.cb.OnSlotReleased(SlotReleasedEvent{Slot: m.Slot, Generation: m.Generation})
 		}
 
 	case "ping":

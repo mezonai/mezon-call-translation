@@ -135,15 +135,28 @@ type offerMsg struct {
 // UserID needs `,string` while PeerID/MidAudio/MidVideo/MidScreen don't --
 // verified per field against signaling.c (member-array construction around
 // line 1643, peer_updated around line 1163), not assumed.
+//
+// Slot/AssignmentGeneration are only ever meaningful on room_snapshot/
+// peer_joined/peer_left (signaling.c's flush_membership_events, ~line 3570/
+// 3596/3619) -- peer_updated's wire format (send_peer_updated/
+// broadcast_peer_updated, ~line 2047/2086) never includes them at all, so
+// they always decode as zero there. AssignmentGeneration==0 is mezon-sfu's
+// own sentinel for "not a fixed-pool assignment" (membership_recipient_valid,
+// signaling.c:3530: `if (recipient->assignment_generation == 0) return true`
+// -- real assignments start counting from 1), so it's safe to gate on
+// unconditionally rather than needing a separate "field present" signal --
+// see rtcagent.PeerAgent.ApplyMemberSlot.
 type Member struct {
-	PeerID    uint64 `json:"peer_id"`
-	UserID    int64  `json:"user_id,string"`
-	Metadata  string `json:"metadata"`
-	Role      string `json:"role"`
-	Ufrag     string `json:"ufrag"`
-	MidAudio  uint32 `json:"mid_audio"`
-	MidVideo  uint32 `json:"mid_video"`
-	MidScreen uint32 `json:"mid_screen"`
+	PeerID               uint64 `json:"peer_id"`
+	UserID               int64  `json:"user_id,string"`
+	Metadata             string `json:"metadata"`
+	Role                 string `json:"role"`
+	Ufrag                string `json:"ufrag"`
+	MidAudio             uint32 `json:"mid_audio"`
+	MidVideo             uint32 `json:"mid_video"`
+	MidScreen            uint32 `json:"mid_screen"`
+	Slot                 uint32 `json:"slot"`
+	AssignmentGeneration uint64 `json:"assignment_generation"`
 }
 
 // ParseMemberMetadata splits the SFU metadata at the first semicolon using
@@ -181,6 +194,37 @@ type peerLeftMsg struct {
 type peerUpdatedMsg struct {
 	Type string `json:"type"`
 	Peer Member `json:"peer"`
+}
+
+// slotAssignedMsg/slotReleasedMsg: mezon-sfu PR #475 ("fixed pool" /
+// max_active_speakers server config). A session's remote speaker slots are
+// then pre-allocated once (mid_audio/video/screen fixed per slot, same SSRC
+// for the slot's whole lifetime) instead of growing per peer -- reassigning
+// a slot to a different peer does NOT renegotiate the SDP, so this is the
+// *only* signal that a mid's content now belongs to someone else. See
+// rtcagent.PeerAgent.ApplySlotAssigned's doc for why pion's OnTrack can't be
+// relied on here.
+type slotAssignedMsg struct {
+	Type         string `json:"type"`
+	Slot         uint32 `json:"slot"`
+	Generation   uint64 `json:"generation"`
+	PeerID       uint64 `json:"peer_id"`
+	UserID       int64  `json:"user_id,string"`
+	MidAudio     uint32 `json:"mid_audio"`
+	MidVideo     uint32 `json:"mid_video"`
+	MidScreen    uint32 `json:"mid_screen"`
+	AudioActive  bool   `json:"audio_active"`
+	VideoActive  bool   `json:"video_active"`
+	ScreenActive bool   `json:"screen_active"`
+}
+
+// slotReleasedMsg carries no peer identity -- just which slot/generation is
+// now empty. The recipient must already know (from an earlier slot_assigned)
+// which peer/mids that generation belonged to.
+type slotReleasedMsg struct {
+	Type       string `json:"type"`
+	Slot       uint32 `json:"slot"`
+	Generation uint64 `json:"generation"`
 }
 
 type errorMsg struct {
