@@ -19,6 +19,7 @@ ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 
 # Service directories
 STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+NON_REALTIME_STT_DIR="$PROJECT_ROOT/non_realtime_stt_service"
 ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
 
@@ -29,6 +30,7 @@ WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
 GIPFORMER_FILES=("encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt")
+BI_ENCODER_MODEL_DIR="$MODELS_DIR/bi-encoder-model"
 
 # Counters
 TOTAL_CHECKS=0
@@ -113,7 +115,7 @@ fi
 # faster-whisper resolves and downloads/caches the model on STT startup.
 print_info "Non-realtime Whisper model is managed by faster-whisper cache"
 
-if [ -f "$STT_SERVICE_DIR/assets/whisper_marker.wav" ]; then
+if [ -f "$NON_REALTIME_STT_DIR/non_realtime_stt_service/assets/whisper_marker.wav" ] || [ -f "$STT_SERVICE_DIR/assets/whisper_marker.wav" ]; then
     check_pass "Non-realtime Whisper marker asset found"
 else
     check_fail "Non-realtime Whisper marker asset is missing"
@@ -140,8 +142,8 @@ else
 fi
 
 # Check Kokoro model
-if [ -f "$KOKORO_MODEL_DIR/kokoro.onnx" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
-    check_pass "Kokoro model found: kokoro-v0_19.pth"
+if [ -f "$KOKORO_MODEL_DIR/kokoro-v1_0.pth" ] || [ -f "$KOKORO_MODEL_DIR/kokoro.onnx" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
+    check_pass "Kokoro model found"
 
     # Check voices
     if [ -d "$KOKORO_MODEL_DIR/voices" ]; then
@@ -156,8 +158,16 @@ if [ -f "$KOKORO_MODEL_DIR/kokoro.onnx" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_1
         check_warn "Kokoro voices directory not found"
     fi
 else
-    check_fail "Kokoro model not found: $KOKORO_MODEL_DIR/kokoro-v0_19.pth"
+    check_fail "Kokoro model not found in $KOKORO_MODEL_DIR"
     print_info "  Run: ./scripts/download-kokoro-model.sh"
+fi
+
+# Check Bi-Encoder model (used for hallucination filtering in Orchestrator)
+if [ -f "$BI_ENCODER_MODEL_DIR/vietnamese_bi_encoder_int8_accurate.onnx" ]; then
+    check_pass "Bi-Encoder hallucination filter model found: vietnamese_bi_encoder_int8_accurate.onnx"
+else
+    check_warn "Bi-Encoder hallucination filter model not found in $BI_ENCODER_MODEL_DIR"
+    print_info "  Run: ./scripts/download-bi-encoder-model.sh"
 fi
 
 # ============================================================================
@@ -177,6 +187,7 @@ check_service_dir() {
 }
 
 check_service_dir "STT Service" "$STT_SERVICE_DIR"
+check_service_dir "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR"
 check_service_dir "Orchestrator Service" "$ORCHESTRATOR_DIR"
 check_service_dir "Agents Service" "$AGENTS_DIR"
 
@@ -202,13 +213,21 @@ check_venv() {
 }
 
 check_venv "STT Service" "$STT_SERVICE_DIR/venv"
+check_venv "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/venv"
 check_venv "Orchestrator Service" "$ORCHESTRATOR_DIR/venv"
 check_venv "Agents Service" "$AGENTS_DIR/venv"
 
-# Gipformer runs in the STT virtual environment. Keep this separate from the
+# Gipformer runs in the STT / Non-Realtime STT virtual environment. Keep this separate from the
 # cache check so a missing Python dependency is distinguishable from a missing
 # Hugging Face artifact.
-if [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
+if [ -x "$NON_REALTIME_STT_DIR/venv/bin/python" ]; then
+    if "$NON_REALTIME_STT_DIR/venv/bin/python" -c "import sherpa_onnx" >/dev/null 2>&1; then
+        check_pass "Non-Realtime STT venv has sherpa-onnx for Gipformer fallback"
+    else
+        check_fail "Non-Realtime STT venv is missing sherpa-onnx for Gipformer fallback"
+        print_info "  Install requirements: $NON_REALTIME_STT_DIR/venv/bin/pip install -r $NON_REALTIME_STT_DIR/requirements.txt"
+    fi
+elif [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
     if "$STT_SERVICE_DIR/venv/bin/python" -c "import sherpa_onnx" >/dev/null 2>&1; then
         check_pass "STT venv has sherpa-onnx for Gipformer fallback"
     else
@@ -217,6 +236,23 @@ if [ -x "$STT_SERVICE_DIR/venv/bin/python" ]; then
     fi
 else
     check_warn "Cannot verify sherpa-onnx because STT Linux venv is unavailable"
+fi
+
+# Check Orchestrator hallucination filter dependencies
+PY_ORCHES=""
+if [ -x "$ORCHESTRATOR_DIR/venv/bin/python" ]; then
+    PY_ORCHES="$ORCHESTRATOR_DIR/venv/bin/python"
+elif [ -f "$ORCHESTRATOR_DIR/venv/Scripts/python.exe" ]; then
+    PY_ORCHES="$ORCHESTRATOR_DIR/venv/Scripts/python.exe"
+fi
+
+if [ -n "$PY_ORCHES" ]; then
+    if "$PY_ORCHES" -c "import rapidfuzz, transformers" >/dev/null 2>&1; then
+        check_pass "Orchestrator venv has rapidfuzz & transformers for hallucination filtering"
+    else
+        check_warn "Orchestrator venv is missing rapidfuzz or transformers"
+        print_info "  Install requirements: $PY_ORCHES -m pip install -r $ORCHESTRATOR_DIR/requirements-orchestrator.txt"
+    fi
 fi
 
 # ============================================================================
@@ -242,6 +278,7 @@ check_env_file() {
 }
 
 check_env_file "STT Service" "$STT_SERVICE_DIR/.env" "$STT_SERVICE_DIR/.env.example"
+check_env_file "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/.env" "$NON_REALTIME_STT_DIR/.env.example"
 check_env_file "Orchestrator Service" "$ORCHESTRATOR_DIR/.env" "$ORCHESTRATOR_DIR/.env.example"
 check_env_file "Agents Service" "$AGENTS_DIR/.env" "$AGENTS_DIR/.env.example"
 
@@ -262,6 +299,7 @@ check_requirements() {
 }
 
 check_requirements "STT Service" "$STT_SERVICE_DIR/requirements-server.txt"
+check_requirements "Non-Realtime STT Service" "$NON_REALTIME_STT_DIR/requirements.txt"
 check_requirements "Orchestrator Service" "$ORCHESTRATOR_DIR/requirements-orchestrator.txt"
 check_requirements "Agents Service" "$AGENTS_DIR/requirements-agent.txt"
 
@@ -291,6 +329,7 @@ if command -v systemctl &> /dev/null; then
     }
     
     check_systemd_service "mezon-stt-service"
+    check_systemd_service "mezon-non-realtime-stt-service"
     check_systemd_service "mezon-orchestrator-service"
     check_systemd_service "mezon-agents-service"
 fi
@@ -322,8 +361,8 @@ check_port() {
 }
 
 check_port "8000" "STT Service"
-check_port "8001" "Orchestrator Service"
-check_port "8002" "Agents Service"
+check_port "8001" "Non-Realtime STT Service"
+check_port "8002" "Orchestrator Service"
 
 # ============================================================================
 # Summary

@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+NON_REALTIME_STT_DIR="$PROJECT_ROOT/non_realtime_stt_service"
 ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
 TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
@@ -81,7 +82,7 @@ validate_setup() {
     print_section "Validating Setup"
     
     # Check directories and virtual environments
-    for dir in "$STT_SERVICE_DIR" "$ORCHESTRATOR_DIR" "$AGENTS_DIR" "$TTS_SERVICE_DIR"; do
+    for dir in "$STT_SERVICE_DIR" "$NON_REALTIME_STT_DIR" "$ORCHESTRATOR_DIR" "$AGENTS_DIR" "$TTS_SERVICE_DIR"; do
         [ ! -d "$dir" ] && print_error "Directory not found: $dir" && ((errors++)) && continue
         print_success "Found: $(basename "$dir")"
         
@@ -160,6 +161,50 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=mezon-stt-service
+
+# Security settings
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=$PROJECT_ROOT
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
+"
+    
+    if [ "$DRY_RUN" = true ]; then
+        echo -e "${YELLOW}[DRY RUN] Would create: $service_file${NC}\n$content\n"
+    else
+        echo "$content" > "$service_file" && chmod 644 "$service_file"
+        print_success "Created: $service_file"
+    fi
+}
+
+create_non_realtime_stt_service() {
+    local service_file="$SYSTEMD_DIR/mezon-non-realtime-stt-service.service"
+    print_info "Creating service file: mezon-non-realtime-stt-service.service"
+    
+    local content="[Unit]
+Description=Mezon Call Translation - Non-Realtime STT Service
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_GROUP
+WorkingDirectory=$NON_REALTIME_STT_DIR
+Environment=\"PATH=$NON_REALTIME_STT_DIR/venv/bin:/usr/local/bin:/usr/bin:/bin\"
+Environment=\"PYTHONUNBUFFERED=1\"
+ExecStart=$NON_REALTIME_STT_DIR/venv/bin/python -m uvicorn non_realtime_stt_service.main:app --host 0.0.0.0 --port 8001
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mezon-non-realtime-stt-service
 
 # Security settings
 ProtectSystem=strict
@@ -272,7 +317,7 @@ WantedBy=multi-user.target
 
 manage_services() {
     local action=$1
-    local services=("mezon-stt-service" "mezon-orchestrator-service" "mezon-agents-service")
+    local services=("mezon-stt-service" "mezon-non-realtime-stt-service" "mezon-orchestrator-service" "mezon-agents-service")
     
     for service in "${services[@]}"; do
         print_info "${action^}ing $service..."
@@ -301,6 +346,7 @@ show_summary() {
     echo -e "${GREEN}${BOLD}Systemd services created successfully!${NC}\n"
     echo -e "${CYAN}${BOLD}Created Services:${NC}"
     echo -e "  ${GREEN}✓${NC} mezon-stt-service (Port 8000)"
+    echo -e "  ${GREEN}✓${NC} mezon-non-realtime-stt-service (Port 8001)"
     echo -e "  ${GREEN}✓${NC} mezon-orchestrator-service (Port 8002)"
     echo -e "  ${GREEN}✓${NC} mezon-agents-service\n"
     
@@ -312,19 +358,19 @@ show_summary() {
 ${CYAN}${BOLD}Useful Commands:${NC}
 
   # Service management
-  ${CYAN}sudo systemctl status mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
-  ${CYAN}sudo systemctl start mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
-  ${CYAN}sudo systemctl stop mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
-  ${CYAN}sudo systemctl restart mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl status mezon-stt-service mezon-non-realtime-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl start mezon-stt-service mezon-non-realtime-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl stop mezon-stt-service mezon-non-realtime-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl restart mezon-stt-service mezon-non-realtime-stt-service mezon-orchestrator-service mezon-agents-service${NC}
 
   # Auto-start management
-  ${CYAN}sudo systemctl enable mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
-  ${CYAN}sudo systemctl disable mezon-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl enable mezon-stt-service mezon-non-realtime-stt-service mezon-orchestrator-service mezon-agents-service${NC}
+  ${CYAN}sudo systemctl disable mezon-stt-service mezon-non-realtime-stt-service mezon-orchestrator-service mezon-agents-service${NC}
 
   # View logs
-  ${CYAN}sudo journalctl -u mezon-stt-service -u mezon-agents-service -f${NC}
+  ${CYAN}sudo journalctl -u mezon-stt-service -u mezon-non-realtime-stt-service -f${NC}
+  ${CYAN}sudo journalctl -u mezon-non-realtime-stt-service -n 50${NC}
   ${CYAN}sudo journalctl -u mezon-stt-service -n 50${NC}
-  ${CYAN}sudo journalctl -u mezon-agents-service -b${NC}
 
 EOF
     print_success "Done! 🎉"
@@ -361,6 +407,7 @@ echo
     
 print_section "Creating Systemd Service Files"
 create_stt_service
+create_non_realtime_stt_service
 create_orchestrator_service
 create_agents_service
 
@@ -374,7 +421,7 @@ if [ "$DRY_RUN" = false ]; then
     [ "$START_SERVICES" = true ] && { print_section "Starting Services"; manage_services "start"; }
     [ "$START_SERVICES" = true ] && { 
         echo && print_section "Service Status"
-        systemctl status mezon-stt-service mezon-orchestrator-service mezon-agents-service --no-pager -l || true
+        systemctl status mezon-stt-service mezon-non-realtime-stt-service mezon-orchestrator-service mezon-agents-service --no-pager -l || true
     }
 fi
 
