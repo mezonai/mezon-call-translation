@@ -350,3 +350,63 @@ func TestHandleTrackPrefersExistingSlotAssignment(t *testing.T) {
 		t.Errorf("handleTrack's seeding logic used %+v, want the slot_assigned identity (peer_id=10 user_id=111)", info)
 	}
 }
+
+// TestParseMsidRejectsFixedPoolSlotFormat pins down the production bug
+// (2026-10-16): mezon-sfu's fixed-pool SDP (PR #475, append_fixed_slot_audio/
+// video in sdp.c) sets every remote slot's msid to "slot-<n>", never
+// "u<user_id>-p<peer_id>" -- so parseMsid must (and does) fail on it. This is
+// not a hypothetical edge case: it's every single remote track, every time,
+// whenever mezon-sfu runs with max_active_speakers > 0 -- which is exactly
+// why handleTrack must never let a parseMsid failure short-circuit before
+// checking the slot_assigned-seeded midTable (see TestHandleTrackPrefers
+// ExistingSlotAssignment and the fallback test below).
+func TestParseMsidRejectsFixedPoolSlotFormat(t *testing.T) {
+	if _, _, ok := parseMsid("slot-2"); ok {
+		t.Error("parseMsid(\"slot-2\") = ok, want a parse failure (fixed-pool msid carries no user/peer id)")
+	}
+}
+
+// TestHandleTrackSeedsPlaceholderWhenNeitherSlotAssignedNorParseableMsid
+// covers the fallback branch for the rare race where OnTrack's first RTP
+// packet beats the slot_assigned signaling message: handleTrack must not
+// drop the track outright (OnTrack only ever fires once, so that would lose
+// this mid's audio for the track's entire lifetime) -- it seeds a bare
+// Mid/Kind placeholder and lets ApplySlotAssigned correct it once it
+// arrives, same as finalInfo's fallback (TestFinalInfoFallsBackToMidWhenUnowned).
+func TestHandleTrackSeedsPlaceholderWhenNeitherSlotAssignedNorParseableMsid(t *testing.T) {
+	a := newTestPeerAgent(t)
+	const mid = "9"
+
+	// Simulate handleTrack's fallback logic directly, same rationale as
+	// TestHandleTrackPrefersExistingSlotAssignment: a live pion OnTrack
+	// needs a real connection, so the inline seeding logic is exercised
+	// here instead.
+	a.mu.Lock()
+	info, known := a.midTable[mid]
+	if !known {
+		if _, _, ok := parseMsid("slot-2"); ok {
+			t.Fatal("parseMsid unexpectedly succeeded on a fixed-pool msid")
+		}
+		info = TrackInfo{Mid: mid, Kind: KindAudio}
+		a.midTable[mid] = info
+	}
+	a.mu.Unlock()
+
+	if known {
+		t.Fatal("expected no slot_assigned seed yet")
+	}
+	if info != (TrackInfo{Mid: mid, Kind: KindAudio}) {
+		t.Errorf("placeholder info = %+v, want {Mid:%q Kind:%v}", info, mid, KindAudio)
+	}
+
+	// Once slot_assigned arrives, currentInfo must reflect the real
+	// identity -- this is what lets bridge.sessionFor notice the PeerID
+	// mismatch against the placeholder session and finalize/recreate it.
+	a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+		Slot: 2, Generation: 7, PeerID: 10, UserID: 111, MidAudio: 9, MidVideo: 10, MidScreen: 11,
+	})
+	got, ok := a.currentInfo(mid)
+	if !ok || got.PeerID != 10 || got.UserID != 111 {
+		t.Errorf("currentInfo after late slot_assigned = (%+v, %v), want peer_id=10 user_id=111", got, ok)
+	}
+}
