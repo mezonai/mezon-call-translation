@@ -305,3 +305,23 @@ func TestBridge_SessionForReassignsOnPeerIDChange(t *testing.T) {
 		t.Error("sessionFor(newPeer) a second time created yet another session")
 	}
 }
+
+func TestBridge_StaleTrackEndedDoesNotCloseNewBindingRevision(t *testing.T) {
+	b := NewBridge(nil, nil)
+	oldInfo := rtcagent.TrackInfo{Mid: "3", UserID: 111, PeerID: 10, Kind: rtcagent.KindAudio, BindingRevision: 1}
+	newInfo := rtcagent.TrackInfo{Mid: "3", UserID: 111, PeerID: 10, Kind: rtcagent.KindAudio, BindingRevision: 2}
+
+	oldSession := b.sessionFor(oldInfo)
+	newSession := b.sessionFor(newInfo)
+	if oldSession == newSession {
+		t.Fatal("new binding revision reused the old audio session")
+	}
+	b.HandleTrackEnded(oldInfo)
+
+	b.mu.Lock()
+	got := b.sessions["3"]
+	b.mu.Unlock()
+	if got != newSession {
+		t.Fatal("stale end notification removed the new binding's session")
+	}
+}
