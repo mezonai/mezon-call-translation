@@ -581,12 +581,6 @@ func (a *PeerAgent) handleTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPR
 		return
 	}
 
-	userID, peerID, ok := parseMsid(track.StreamID())
-	if !ok {
-		logging.L.Warn("rtcagent: unparseable msid, dropping track", "stream_id", track.StreamID(), "mid", mid)
-		return
-	}
-
 	kind := kindForMid(midInt)
 
 	a.mu.Lock()
@@ -594,13 +588,30 @@ func (a *PeerAgent) handleTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPR
 	// OnTrack does (the slot is pre-allocated and the assignment is a plain
 	// signaling message, typically faster than the first RTP packet
 	// actually reaching us) -- see ApplySlotAssigned's doc. If that already
-	// happened, it's the live, authoritative mapping; parseMsid's SDP-time
-	// value is only ever a same-or-stale guess by comparison, so don't
-	// clobber it. Otherwise this is the first thing to ever say who owns
-	// this mid, so seed the table from it same as before mezon-sfu PR #475.
+	// happened, it's the live, authoritative mapping and MUST be checked
+	// before even attempting parseMsid: mezon-sfu's fixed-pool SDP (PR #475,
+	// append_fixed_slot_audio/video in sdp.c) sets every slot's msid to the
+	// pool-slot id ("a=msid:slot-<n> ..."), never a user/peer id, so
+	// parseMsid is guaranteed to fail there -- checking it first (as this
+	// code used to) made handleTrack drop every single fixed-pool track
+	// unconditionally, regardless of slot_assigned having already arrived.
 	info, known := a.midTable[mid]
 	if !known {
-		info = TrackInfo{Mid: mid, UserID: userID, PeerID: peerID, Kind: kind}
+		if userID, peerID, ok := parseMsid(track.StreamID()); ok {
+			info = TrackInfo{Mid: mid, UserID: userID, PeerID: peerID, Kind: kind}
+		} else {
+			// Neither a slot_assigned seed nor a parseable msid yet -- either
+			// a genuinely malformed msid, or the rare race where OnTrack beat
+			// slot_assigned's signaling message. Seed a bare placeholder
+			// instead of dropping the track outright: readLoop/currentInfo
+			// re-read the table on every packet, so once ApplySlotAssigned
+			// lands this self-heals, and bridge.sessionFor already finalizes
+			// and recreates the session on the resulting PeerID mismatch.
+			// Dropping here would silently lose this mid's audio for the
+			// track's entire lifetime, since OnTrack only ever fires once.
+			logging.L.Warn("rtcagent: unparseable msid and no slot_assigned seed yet, starting track with placeholder identity", "stream_id", track.StreamID(), "mid", mid)
+			info = TrackInfo{Mid: mid, Kind: kind}
+		}
 		a.midTable[mid] = info
 	}
 	a.mu.Unlock()
