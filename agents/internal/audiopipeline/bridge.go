@@ -244,6 +244,11 @@ func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 func (b *Bridge) HandleTrackEnded(info rtcagent.TrackInfo) {
 	b.mu.Lock()
 	s, ok := b.sessions[info.Mid]
+	if ok && ((info.PeerID != 0 && s.info.PeerID != info.PeerID) ||
+		(info.BindingRevision != 0 && s.info.BindingRevision != info.BindingRevision)) {
+		b.mu.Unlock()
+		return
+	}
 	delete(b.sessions, info.Mid)
 	b.mu.Unlock()
 	if !ok {
@@ -338,12 +343,13 @@ func (b *Bridge) applySTTEnabled(s *session, enabled bool) {
 func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 	b.mu.Lock()
 	if s, ok := b.sessions[info.Mid]; ok {
-		if s.info.PeerID == info.PeerID {
+		if s.info.PeerID == info.PeerID && s.info.BindingRevision == info.BindingRevision {
 			b.mu.Unlock()
 			return s
 		}
-		// mezon-sfu reassigned this mid's fixed-pool slot to a different
-		// peer without renegotiating the SDP (mezon-sfu PR #475, server
+		// mezon-sfu reassigned this mid's slot to a different peer or a new
+		// decoupled binding revision without renegotiating the SDP (fixed-pool
+		// PR #475 and the decoupled media-pool protocol). The
 		// config max_active_speakers > 0 -- see
 		// rtcagent.PeerAgent.ApplySlotAssigned's doc). Same mid, same
 		// transceiver/SSRC throughout, so this PeerID mismatch on an
@@ -355,9 +361,10 @@ func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 		// reconnects, now via slot reuse instead.
 		delete(b.sessions, info.Mid)
 		b.mu.Unlock()
-		logging.L.Info("audiopipeline: mid reassigned to a different peer, starting a new session",
+		logging.L.Info("audiopipeline: mid binding changed, starting a new session",
 			"mid", info.Mid, "old_user_id", s.info.UserID, "old_peer_id", s.info.PeerID,
-			"new_user_id", info.UserID, "new_peer_id", info.PeerID)
+			"old_binding_revision", s.info.BindingRevision, "new_user_id", info.UserID,
+			"new_peer_id", info.PeerID, "new_binding_revision", info.BindingRevision)
 		b.finalizeSession(s)
 	} else {
 		b.mu.Unlock()
