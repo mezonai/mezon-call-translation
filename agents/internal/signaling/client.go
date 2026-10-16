@@ -21,6 +21,13 @@ type PeerLeftEvent struct {
 	MidAudio         uint32
 	MidVideo         uint32
 	MidScreen        uint32
+	MediaSlots       MediaSlots
+}
+
+type JoinedEvent struct {
+	Room       uint64
+	ICEServers []ICEServer
+	MediaPool  MediaPoolConfig
 }
 
 // SlotAssignedEvent mirrors slotAssignedMsg minus the `type` field. See that
@@ -36,12 +43,16 @@ type SlotAssignedEvent struct {
 	AudioActive  bool
 	VideoActive  bool
 	ScreenActive bool
+	Kind         MediaKind
+	Mid          uint32
+	Active       bool
 }
 
 // SlotReleasedEvent mirrors slotReleasedMsg minus the `type` field.
 type SlotReleasedEvent struct {
 	Slot       uint32
 	Generation uint64
+	Kind       MediaKind
 }
 
 // Callbacks lets the caller (rtcagent) react to server messages without this
@@ -49,7 +60,7 @@ type SlotReleasedEvent struct {
 // loop goroutine (see Client.Run) -- never concurrently.
 type Callbacks struct {
 	// OnJoined fires once, right after `joined`, before any offer.
-	OnJoined func(room uint64, iceServers []ICEServer)
+	OnJoined func(ev JoinedEvent)
 	// OnOffer must set the remote description, build+set the local answer,
 	// and return the answer SDP to send back. Called for the initial offer
 	// and every renegotiate.
@@ -59,10 +70,8 @@ type Callbacks struct {
 	OnPeerLeft     func(ev PeerLeftEvent)
 	OnPeerUpdated  func(peer Member)
 	OnRoomMessage  func(message RoomMessage, userID string)
-	// OnSlotAssigned/OnSlotReleased: only sent when this session is in
-	// mezon-sfu's "fixed pool" mode (PR #475) -- see SlotAssignedEvent's doc.
-	// Never fire at all otherwise, so leaving these nil is safe for a
-	// session that doesn't care (e.g. a test double).
+	// OnSlotAssigned/OnSlotReleased carry both legacy fixed-pool messages
+	// (Kind empty) and decoupled messages (Kind set).
 	OnSlotAssigned func(ev SlotAssignedEvent)
 	OnSlotReleased func(ev SlotReleasedEvent)
 }
@@ -108,7 +117,7 @@ func Dial(ctx context.Context, wsURL, token string, role string, cb Callbacks) (
 
 	c := &Client{conn: conn, cb: cb}
 
-	join := joinMsg{Type: "join", Token: token, Role: role}
+	join := joinMsg{Type: "join", Token: token, Role: role, MediaPoolVersion: 1}
 	if err := c.send(join); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("signaling: send join: %w", err)
@@ -154,7 +163,17 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 			return fmt.Errorf("decode joined: %w", err)
 		}
 		if c.cb.OnJoined != nil {
-			c.cb.OnJoined(m.Room, m.ICEServers)
+			c.cb.OnJoined(JoinedEvent{
+				Room:       m.Room,
+				ICEServers: m.ICEServers,
+				MediaPool: MediaPoolConfig{
+					Version:        m.MediaPoolVersion,
+					Mode:           m.MediaPoolMode,
+					MaxAudioSlots:  m.MaxAudioSlots,
+					MaxCameraSlots: m.MaxCameraSlots,
+					MaxScreenSlots: m.MaxScreenSlots,
+				},
+			})
 		}
 
 	case "offer":
@@ -205,6 +224,7 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 				MidAudio:         m.MidAudio,
 				MidVideo:         m.MidVideo,
 				MidScreen:        m.MidScreen,
+				MediaSlots:       m.MediaSlots,
 			})
 		}
 
@@ -234,6 +254,9 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 				AudioActive:  m.AudioActive,
 				VideoActive:  m.VideoActive,
 				ScreenActive: m.ScreenActive,
+				Kind:         m.Kind,
+				Mid:          m.Mid,
+				Active:       m.Active,
 			})
 		}
 
@@ -243,7 +266,7 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 			return fmt.Errorf("decode slot_released: %w", err)
 		}
 		if c.cb.OnSlotReleased != nil {
-			c.cb.OnSlotReleased(SlotReleasedEvent{Slot: m.Slot, Generation: m.Generation})
+			c.cb.OnSlotReleased(SlotReleasedEvent{Slot: m.Slot, Generation: m.Generation, Kind: m.Kind})
 		}
 
 	case "ping":
