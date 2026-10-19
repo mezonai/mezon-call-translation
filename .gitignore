@@ -8,6 +8,7 @@ venv/
 *.mp3
 *.wav
 !Architect_MultiClient_Server/stt_service/assets/whisper_marker.wav
+!non_realtime_stt_service/non_realtime_stt_service/assets/whisper_marker.wav
 Architect_MultiClient_Server/demo_test/
 Architect_MultiClient_Server/test/
 Architect_MultiClient_Server/agents/demo/

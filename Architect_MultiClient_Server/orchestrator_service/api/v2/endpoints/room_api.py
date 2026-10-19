@@ -4,9 +4,9 @@ Room API endpoints for querying room data from PostgreSQL
 - Get room details by name
 - Get room statistics
 """
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
 from orchestrator_service.constants.permissions import ROOMS_VIEW_ALL, ROOMS_VIEW_OWN
@@ -19,6 +19,7 @@ from orchestrator_service.models.room_models import (
     RoomStatisticResponse,
 )
 from orchestrator_service.services.room_service import RoomService, get_room_service
+from orchestrator_service.services.transcription_service import TranscriptionService
 from orchestrator_service.utils.logger import get_logger
 
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
@@ -120,3 +121,29 @@ async def get_audio_info(
         status="ok",
         file_results=file_results,
     )
+
+
+@router.post("/id/{room_id}/retry-transcription", response_description="Retry transcription for all tracks of a room")
+async def retry_room_transcription_endpoint(
+    room_id: RoomIdPath,
+) -> dict[str, Any]:
+    """
+    Test API: Trigger full transcription flow for a room by room_id.
+    Flow:
+    1. Resets previous chunks & summaries in DB to avoid duplicate data.
+    2. Enqueues TranscriptionTask for each track into Redis 'transcription:stream'.
+    3. stt-non-realtime worker downloads audio from MinIO and performs Whisper ASR.
+    4. Segments are streamed back to Orchestrator and saved to DB.
+    5. Meeting summary is automatically triggered upon completion of all tracks.
+    """
+    try:
+        service = TranscriptionService()
+        result = await service.retry_room_transcription(room_id=str(room_id))
+        return {"status": "ok", **result}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Failed to retry room transcription: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e!s}") from e
+
+

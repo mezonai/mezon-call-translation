@@ -34,6 +34,9 @@ alembic>=1.13.0                # Database migration tool
 google-genai>=0.3.0            # Google Gemini API SDK
 openai>=1.30.0                 # OpenAI Python SDK
 tenacity>=8.0.0                # Retry library with exponential backoff
+rapidfuzz>=3.0.0               # Fast fuzzy matching for hallucination filtering
+transformers>=4.30.0           # Tokenizer for Vietnamese Bi-Encoder ONNX
+onnxruntime>=1.16.0            # ONNX CPU inference
 
 # ========================================
 # Redis Queue

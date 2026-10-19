@@ -36,6 +36,9 @@ const (
 	recordSilenceTick   = 100 * time.Millisecond
 	rtpActivityGrace    = 70 * time.Millisecond
 	maxSilenceChunk     = 2 * time.Second
+	// WebRTC Opus RTP timestamps always use a 48kHz media clock, even though
+	// this pipeline decodes packets to 16kHz PCM before forwarding them.
+	opusRTPClockRate = 48000
 )
 
 // Sink receives decoded PCM for one track and is closed exactly once, when
@@ -65,8 +68,11 @@ type session struct {
 	sttSink Sink // nil unless STT is currently enabled for this track
 }
 
-// Bridge owns one session per audio track, keyed by mid.
+// Bridge owns legacy MID sessions or decoupled participant sessions.
 type Bridge struct {
+	// Decoupled rooms keep participant sinks across slot release/reassignment.
+	// The legacy path below retains its existing track-based lifecycle.
+	participants *participantBridge
 	// newRecordSink/newSTTSink build a fresh Sink for a newly-seen track;
 	// either may be nil to disable that consumer entirely (e.g.
 	// newRecordSink is nil if dialing record-service failed at startup).
@@ -93,10 +99,20 @@ func NewBridge(newRecordSink, newSTTSink func(info rtcagent.TrackInfo) Sink) *Br
 type recordTimeline struct {
 	mu sync.Mutex
 
-	sink          Sink
-	closed        bool
-	paddingCursor time.Time
-	lastRTPAt     time.Time
+	sink        Sink
+	closed      bool
+	initialized bool
+	// lastRTPTimestamp is the media timestamp of the first sample in the
+	// previous packet. lastPacketRTPTicks is that packet's duration on the
+	// mandatory 48kHz Opus RTP clock.
+	lastRTPTimestamp   uint32
+	lastPacketRTPTicks uint32
+	// paddedSamplesSinceLastRTP counts 16kHz silence samples already sent by
+	// onTick after the latest real packet. When another packet arrives its
+	// RTP timestamp gives the exact gap, so sendAllPcm only fills the part
+	// not already committed by the ticker.
+	paddedSamplesSinceLastRTP int64
+	lastRTPAt                 time.Time
 
 	stop     chan struct{}
 	done     chan struct{}
@@ -128,64 +144,119 @@ func (r *recordTimeline) run() {
 	}
 }
 
-func (r *recordTimeline) sendAllPcm(pcm []byte, now time.Time) {
+func (r *recordTimeline) sendAllPcm(pcm []byte, rtpTimestamp uint32, now time.Time) {
+	r.sendPCM(pcm, rtpTimestamp, now, false)
+}
+
+// A new binding can have an unrelated RTP clock. Use elapsed arrival time
+// only across that boundary; preserve RTP timing within a binding.
+func (r *recordTimeline) sendPCM(pcm []byte, rtpTimestamp uint32, now time.Time, newBinding bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
 		return
 	}
 
-	if !r.lastRTPAt.IsZero() && now.Sub(r.lastRTPAt) >= rtpActivityGrace {
-		// Keep one grace period uncommitted while no RTP is arriving, then fill
-		// the remainder when speech resumes. The packet's PCM belongs immediately
-		// before now, so stop padding at the beginning of that PCM rather than
-		// padding over it.
-		bytesPerSample := PCMChannels * 2
-		sampleCount := len(pcm) / bytesPerSample
-		packetDuration := time.Duration(int64(sampleCount) * int64(time.Second) / int64(PCMSampleRate))
-		r.padUntilLocked(now.Add(-packetDuration))
+	bytesPerSample := PCMChannels * 2
+	sampleCount := int64(len(pcm) / bytesPerSample)
+	if sampleCount <= 0 {
+		return
+	}
+	packetRTPTicks := uint32(uint64(sampleCount) * opusRTPClockRate / PCMSampleRate)
+
+	if r.initialized && newBinding {
+		previousSamples := int64(r.lastPacketRTPTicks) * PCMSampleRate / opusRTPClockRate
+		gap := durationToPCMSamples(now.Sub(r.lastRTPAt)) - previousSamples
+		if remaining := gap - r.paddedSamplesSinceLastRTP; remaining > 0 {
+			r.sendSilenceSamplesLocked(remaining)
+		}
+	} else if r.initialized {
+		endOfLastPacket := r.lastRTPTimestamp + r.lastPacketRTPTicks
+		// Converting the modular uint32 subtraction to int32 gives the usual
+		// RTP serial-number ordering for differences below half the timestamp
+		// space and naturally handles the uint32 wraparound.
+		gapTicks := int32(rtpTimestamp - endOfLastPacket)
+		if gapTicks >= 0 {
+			requiredSilenceSamples := int64(gapTicks) * PCMSampleRate / opusRTPClockRate
+			remainingSilenceSamples := requiredSilenceSamples - r.paddedSamplesSinceLastRTP
+			if remainingSilenceSamples > 0 {
+				r.sendSilenceSamplesLocked(remainingSilenceSamples)
+			} else if remainingSilenceSamples < 0 {
+				// The ticker committed farther than the subsequently observed RTP
+				// media gap. An append-only PCM stream cannot retract those bytes;
+				// retain real audio and make the grace-window violation visible.
+				logging.L.Warn("audiopipeline: To much silence padding",
+					"rtp_timestamp", rtpTimestamp,
+					"end_of_last_packet", endOfLastPacket,
+					"required_silence_samples", requiredSilenceSamples,
+					"already_padded_samples", r.paddedSamplesSinceLastRTP,
+					"overlap_samples", -remainingSilenceSamples)
+			}
+		} else {
+			// Do not turn a late/duplicate timestamp into a huge unsigned gap.
+			// Recording it would also move the media cursor backward and make
+			// the following in-order packet look like a new gap, so omit it from
+			// the recording. HandlePacket still forwards the decoded PCM to STT.
+			logging.L.Warn("audiopipeline: late or overlapping RTP timestamp",
+				"rtp_timestamp", rtpTimestamp,
+				"end_of_last_packet", endOfLastPacket,
+				"overlap_rtp_ticks", -int64(gapTicks))
+			return
+		}
 	}
 
 	r.sink.SendPCM(pcm)
+	r.initialized = true
+	r.lastRTPTimestamp = rtpTimestamp
+	r.lastPacketRTPTicks = packetRTPTicks
 	r.lastRTPAt = now
-	// Real RTP always wins over synthetic silence. Moving the cursor keeps
-	// the ticker from padding over audio that has actually arrived.
-	r.paddingCursor = now
+	r.paddedSamplesSinceLastRTP = 0
 }
 
 func (r *recordTimeline) onTick(now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed || r.paddingCursor.IsZero() || r.lastRTPAt.IsZero() {
+	if r.closed || !r.initialized || r.lastRTPAt.IsZero() {
 		return
 	}
-	if now.Sub(r.lastRTPAt) < rtpActivityGrace {
+	elapsed := now.Sub(r.lastRTPAt)
+	if elapsed < rtpActivityGrace {
 		return
 	}
 
 	// Keep the most recent grace period uncommitted. If a delayed RTP packet
-	// arrives inside that window it is forwarded normally without synthetic
-	// silence having already occupied the same part of the recording.
-	r.padUntilLocked(now.Add(-rtpActivityGrace))
+	// arrives inside that window it is forwarded normally. Count committed
+	// silence in samples so sendAllPcm can reconcile it with the exact gap
+	// revealed by the next RTP media timestamp.
+	targetSamples := durationToPCMSamples(elapsed - rtpActivityGrace)
+	samplesToSend := targetSamples - r.paddedSamplesSinceLastRTP
+	if samplesToSend <= 0 {
+		return
+	}
+	r.sendSilenceSamplesLocked(samplesToSend)
+	r.paddedSamplesSinceLastRTP += samplesToSend
 }
 
-func (r *recordTimeline) padUntilLocked(until time.Time) {
-	if r.paddingCursor.IsZero() || !until.After(r.paddingCursor) {
+func durationToPCMSamples(duration time.Duration) int64 {
+	if duration <= 0 {
+		return 0
+	}
+	return duration.Nanoseconds() * int64(PCMSampleRate) / int64(time.Second)
+}
+
+func (r *recordTimeline) sendSilenceSamplesLocked(sampleCount int64) {
+	if sampleCount <= 0 {
 		return
 	}
 
-	for gap := until.Sub(r.paddingCursor); gap > 0; gap = until.Sub(r.paddingCursor) {
-		chunkDuration := gap
-		if chunkDuration > maxSilenceChunk {
-			chunkDuration = maxSilenceChunk
+	maxChunkSamples := durationToPCMSamples(maxSilenceChunk)
+	for sampleCount > 0 {
+		chunkSamples := sampleCount
+		if chunkSamples > maxChunkSamples {
+			chunkSamples = maxChunkSamples
 		}
-		sampleCount := int(chunkDuration.Nanoseconds() * int64(PCMSampleRate) / int64(time.Second))
-		if sampleCount <= 0 {
-			return
-		}
-		r.sink.SendPCM(make([]byte, sampleCount*PCMChannels*2))
-		represented := time.Duration(int64(sampleCount) * int64(time.Second) / int64(PCMSampleRate))
-		r.paddingCursor = r.paddingCursor.Add(represented)
+		r.sink.SendPCM(make([]byte, int(chunkSamples)*PCMChannels*2))
+		sampleCount -= chunkSamples
 	}
 }
 
@@ -200,8 +271,12 @@ func (r *recordTimeline) close(now time.Time) {
 		r.mu.Unlock()
 		return
 	}
-	if !r.lastRTPAt.IsZero() && now.Sub(r.lastRTPAt) >= rtpActivityGrace {
-		r.padUntilLocked(now)
+	if r.initialized && !r.lastRTPAt.IsZero() {
+		requiredTailSamples := durationToPCMSamples(now.Sub(r.lastRTPAt))
+		remainingTailSamples := requiredTailSamples - r.paddedSamplesSinceLastRTP
+		if remainingTailSamples > 0 {
+			r.sendSilenceSamplesLocked(remainingTailSamples)
+		}
 	}
 	r.closed = true
 	sink := r.sink
@@ -214,8 +289,12 @@ func (r *recordTimeline) close(now time.Time) {
 // HandlePacket decodes one Opus RTP packet and fans the PCM out to whatever
 // sinks this track has. Starts a new session (decoder + record-service
 // sink, and an STT sink if currently enabled) on the first packet for a
-// given mid.
+// given mid in legacy mode, or participant in decoupled mode.
 func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
+	if b.participants != nil {
+		b.participants.handlePacket(info, pkt)
+		return
+	}
 	s := b.sessionFor(info)
 	if s == nil {
 		return
@@ -230,7 +309,7 @@ func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 	pcm := int16ToLEBytes(s.pcmBuf[:n])
 
 	if s.record != nil {
-		s.record.sendAllPcm(pcm, time.Now())
+		s.record.sendAllPcm(pcm, pkt.Timestamp, time.Now())
 	}
 	s.mu.Lock()
 	stt := s.sttSink
@@ -240,10 +319,20 @@ func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 	}
 }
 
-// HandleTrackEnded closes every sink for a track and forgets its session.
+// HandleTrackEnded closes a legacy track session. In decoupled rooms it
+// only retires the decoder binding; sinks survive until peer/session end.
 func (b *Bridge) HandleTrackEnded(info rtcagent.TrackInfo) {
+	if b.participants != nil {
+		b.participants.endBinding(info)
+		return
+	}
 	b.mu.Lock()
 	s, ok := b.sessions[info.Mid]
+	if ok && ((info.PeerID != 0 && s.info.PeerID != info.PeerID) ||
+		(info.BindingRevision != 0 && s.info.BindingRevision != info.BindingRevision)) {
+		b.mu.Unlock()
+		return
+	}
 	delete(b.sessions, info.Mid)
 	b.mu.Unlock()
 	if !ok {
@@ -278,6 +367,10 @@ func (b *Bridge) finalizeSession(s *session) {
 // start/stop_transcription_for_all: disabled by default, and toggling
 // affects tracks already flowing, not just future ones.
 func (b *Bridge) SetSTTEnabled(enabled bool) {
+	if b.participants != nil {
+		b.participants.setSTTEnabled(enabled)
+		return
+	}
 	b.sttEnabled.Store(enabled)
 
 	b.mu.Lock()
@@ -338,14 +431,13 @@ func (b *Bridge) applySTTEnabled(s *session, enabled bool) {
 func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 	b.mu.Lock()
 	if s, ok := b.sessions[info.Mid]; ok {
-		if s.info.PeerID == info.PeerID {
+		if s.info.PeerID == info.PeerID && s.info.BindingRevision == info.BindingRevision {
 			b.mu.Unlock()
 			return s
 		}
-		// mezon-sfu reassigned this mid's fixed-pool slot to a different
-		// peer without renegotiating the SDP (mezon-sfu PR #475, server
-		// config max_active_speakers > 0 -- see
-		// rtcagent.PeerAgent.ApplySlotAssigned's doc). Same mid, same
+		// The legacy fixed pool reassigned this MID without renegotiating
+		// SDP (PR #475, max_active_speakers > 0). See
+		// rtcagent.PeerAgent.ApplySlotAssigned. Same mid, same
 		// transceiver/SSRC throughout, so this PeerID mismatch on an
 		// already-live session is the only point that ever learns the
 		// occupant changed. Finalize the outgoing peer's session before
@@ -355,9 +447,10 @@ func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 		// reconnects, now via slot reuse instead.
 		delete(b.sessions, info.Mid)
 		b.mu.Unlock()
-		logging.L.Info("audiopipeline: mid reassigned to a different peer, starting a new session",
+		logging.L.Info("audiopipeline: mid binding changed, starting a new session",
 			"mid", info.Mid, "old_user_id", s.info.UserID, "old_peer_id", s.info.PeerID,
-			"new_user_id", info.UserID, "new_peer_id", info.PeerID)
+			"old_binding_revision", s.info.BindingRevision, "new_user_id", info.UserID,
+			"new_peer_id", info.PeerID, "new_binding_revision", info.BindingRevision)
 		b.finalizeSession(s)
 	} else {
 		b.mu.Unlock()

@@ -24,6 +24,7 @@ ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
 
 # Service directories
 STT_SERVICE_DIR="$ARCH_DIR/stt_service"
+NON_REALTIME_STT_DIR="$PROJECT_ROOT/non_realtime_stt_service"
 ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
 AGENTS_DIR="$ARCH_DIR/agents"
 TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
@@ -34,6 +35,7 @@ NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
 GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
 WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
+BI_ENCODER_MODEL_DIR="$MODELS_DIR/bi-encoder-model"
 
 # Functions
 print_header() {
@@ -261,12 +263,17 @@ if [ "$SKIP_MODELS" = false ]; then
         KOKORO_ARGS+=("--voices" "$KOKORO_VOICES")
     fi
     
-    if [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
+    if [ -f "$KOKORO_MODEL_DIR/kokoro-v1_0.pth" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
         print_warning "Kokoro model already exists. Checking for new voices..."
         KOKORO_ARGS+=("--force")
     fi
     
     bash "${KOKORO_ARGS[@]}"
+
+    # Download Bi-Encoder hallucination filter model for Orchestrator
+    print_info "Downloading Bi-Encoder hallucination filter model..."
+    bash "$SCRIPT_DIR/download-bi-encoder-model.sh" \
+        --output "$BI_ENCODER_MODEL_DIR"
     
     print_success "Models downloaded successfully!"
 else
@@ -309,6 +316,7 @@ if [ "$SKIP_ENV" = false ]; then
     
     # Setup .env for each service
     setup_env_file "$STT_SERVICE_DIR" "STT Service"
+    setup_env_file "$NON_REALTIME_STT_DIR" "Non-Realtime STT Service"
     setup_env_file "$ORCHESTRATOR_DIR" "Orchestrator Service"
     setup_env_file "$AGENTS_DIR" "Agents Service"
     setup_env_file "$TTS_SERVICE_DIR" "TTS Service"
@@ -341,6 +349,17 @@ if [ "$SKIP_ENV" = false ]; then
         fi
         print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in STT Service"
     fi
+
+    # Update Non-Realtime STT Service .env
+    if [ -f "$NON_REALTIME_STT_DIR/.env" ]; then
+        if grep -q "^WHISPER_GIPFORMER_MODEL_PATH=" "$NON_REALTIME_STT_DIR/.env"; then
+            sed -i.tmp "s|^WHISPER_GIPFORMER_MODEL_PATH=.*|WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH|" "$NON_REALTIME_STT_DIR/.env"
+            rm -f "$NON_REALTIME_STT_DIR/.env.tmp"
+        else
+            echo "WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH" >> "$NON_REALTIME_STT_DIR/.env"
+        fi
+        print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in Non-Realtime STT Service"
+    fi
     
     # Update Agents .env
     if [ -f "$TTS_SERVICE_DIR/.env" ]; then
@@ -352,6 +371,18 @@ if [ "$SKIP_ENV" = false ]; then
             echo "TTS_MODEL_PATH=$KOKORO_MODEL_PATH" >> "$TTS_SERVICE_DIR/.env"
         fi
         print_success "Updated TTS_MODEL_PATH in TTS Service"
+    fi
+
+    # Update Orchestrator Service .env
+    if [ -f "$ORCHESTRATOR_DIR/.env" ]; then
+        BI_ENCODER_MODEL_PATH="$BI_ENCODER_MODEL_DIR/vietnamese_bi_encoder_int8_accurate.onnx"
+        if grep -q "^HALLUCINATION_FILTER_MODEL_PATH=" "$ORCHESTRATOR_DIR/.env"; then
+            sed -i.tmp "s|^HALLUCINATION_FILTER_MODEL_PATH=.*|HALLUCINATION_FILTER_MODEL_PATH=$BI_ENCODER_MODEL_PATH|" "$ORCHESTRATOR_DIR/.env"
+            rm -f "$ORCHESTRATOR_DIR/.env.tmp"
+        else
+            echo "HALLUCINATION_FILTER_MODEL_PATH=$BI_ENCODER_MODEL_PATH" >> "$ORCHESTRATOR_DIR/.env"
+        fi
+        print_success "Updated HALLUCINATION_FILTER_MODEL_PATH in Orchestrator Service"
     fi
     
     print_success ".env files configured successfully!"
@@ -406,6 +437,7 @@ if [ "$SKIP_VENV" = false ]; then
     
     # Setup venv for each service
     setup_venv "$STT_SERVICE_DIR" "STT Service" "requirements-server.txt"
+    setup_venv "$NON_REALTIME_STT_DIR" "Non-Realtime STT Service" "requirements.txt"
     setup_venv "$ORCHESTRATOR_DIR" "Orchestrator Service" "requirements-orchestrator.txt"
     setup_venv "$AGENTS_DIR" "Agents Service" "requirements-agent.txt"
     setup_venv "$TTS_SERVICE_DIR" "TTS Service" "requirements-tts.txt"
@@ -428,6 +460,7 @@ echo -e "  ${GREEN}✓${NC} Nemotron model: $NEMOTRON_MODEL"
 echo -e "  ${GREEN}✓${NC} Non-realtime Whisper model: $WHISPER_MODEL"
 echo -e "  ${GREEN}✓${NC} Gipformer model: gipformer-model"
 echo -e "  ${GREEN}✓${NC} Kokoro model: kokoro_models"
+echo -e "  ${GREEN}✓${NC} Bi-Encoder model: bi-encoder-model"
 echo ""
 echo -e "  ${GREEN}✓${NC} .env files created and configured"
 echo -e "  ${GREEN}✓${NC} Virtual environments set up for all services"
@@ -436,6 +469,7 @@ echo -e "${CYAN}${BOLD}Next Steps:${NC}"
 echo ""
 echo -e "  1. Review and update .env files with your specific configuration:"
 echo -e "     - $STT_SERVICE_DIR/.env"
+echo -e "     - $NON_REALTIME_STT_DIR/.env"
 echo -e "     - $ORCHESTRATOR_DIR/.env"
 echo -e "     - $AGENTS_DIR/.env"
 echo ""
@@ -444,7 +478,8 @@ echo -e "     ${CYAN}sudo ./scripts/create-systemd-services.sh${NC}"
 echo ""
 echo -e "  3. Start the services manually:"
 echo -e "     ${CYAN}cd $STT_SERVICE_DIR && ./venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000${NC}"
-echo -e "     ${CYAN}cd $ORCHESTRATOR_DIR && ./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8001${NC}"
+echo -e "     ${CYAN}cd $NON_REALTIME_STT_DIR && ./venv/bin/python -m uvicorn non_realtime_stt_service.main:app --host 0.0.0.0 --port 8001${NC}"
+echo -e "     ${CYAN}cd $ORCHESTRATOR_DIR && ./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8002${NC}"
 echo -e "     ${CYAN}cd $AGENTS_DIR && ./venv/bin/python src/main.py${NC}"
 echo ""
 print_success "Setup completed successfully! 🎉"

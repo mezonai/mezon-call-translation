@@ -2,7 +2,7 @@
 // mezon-sfu, and maintains the runtime `mid -> {user_id, is_screen}` table
 // used to label incoming audio for the record-forwarding path.
 //
-// Recipe (mezon-sfu-migration-checklist.md D2, 2026-08-16 layout):
+// Legacy recipe (mezon-sfu-migration-checklist.md D2, 2026-08-16 layout):
 //   - Each peer has 3 fixed uplink slots: mid 0/1/2 = audio/camera/screen of
 //     THIS agent; remote peers start at mid 3, 3-wide per peer
 //     (SFU_REMOTE_MID_BASE=3): mid 3/4/5 = slot #1 audio/camera/screen,
@@ -20,6 +20,10 @@
 //     live instead.
 //   - mid position (offset 0/1/2 from the peer's 3-wide slot) tells us
 //     mic vs camera vs screen without any heuristic.
+//
+// In decoupled mode, joined's max_*_slots values instead define contiguous
+// audio, camera and screen blocks. Ownership is then maintained independently
+// by (kind, slot), while the MID/transceiver remains stable across owners.
 package rtcagent
 
 import (
@@ -69,10 +73,11 @@ const (
 // TrackInfo is what internal/audiopipeline needs to label a decoded audio
 // frame with the user/track it came from.
 type TrackInfo struct {
-	Mid    string
-	UserID int64
-	PeerID uint64
-	Kind   TrackKind
+	Mid             string
+	UserID          int64
+	PeerID          uint64
+	Kind            TrackKind
+	BindingRevision uint64
 }
 
 var msidRe = regexp.MustCompile(`^u(-?\d+)-p(\d+)$`)
@@ -87,15 +92,36 @@ type slotOwner struct {
 	midScreen  uint32
 }
 
+type poolKey struct {
+	kind signaling.MediaKind
+	slot uint32
+}
+
+// poolBinding is retained after release (assigned=false) so a delayed
+// assignment from the same/older generation cannot resurrect stale ownership.
+type poolBinding struct {
+	generation uint64
+	peerID     uint64
+	userID     int64
+	mid        uint32
+	active     bool
+	assigned   bool
+	revision   uint64
+}
+
 // PeerAgent owns one pion PeerConnection for the lifetime of one mezon-sfu
 // session (one WS connection worth of ICE/DTLS/SRTP state).
 type PeerAgent struct {
 	pc *webrtc.PeerConnection
 
-	mu       sync.Mutex
-	midTable map[string]TrackInfo       // mid -> track info. Live: both handleTrack (OnTrack) and ApplySlotAssigned write it, readLoop reads it fresh per packet -- see ApplySlotAssigned's doc for why a one-time OnTrack snapshot isn't enough.
-	roster   map[int64]signaling.Member // user_id -> latest roster entry (role)
-	slots    map[uint32]slotOwner       // fixed-pool slot number -> current occupant, keyed to resolve slot_released (which carries only the slot number)
+	mu                  sync.Mutex
+	midTable            map[string]TrackInfo       // mid -> track info. Live: both handleTrack (OnTrack) and ApplySlotAssigned write it, readLoop reads it fresh per packet -- see ApplySlotAssigned's doc for why a one-time OnTrack snapshot isn't enough.
+	roster              map[int64]signaling.Member // user_id -> latest roster entry (role)
+	slots               map[uint32]slotOwner       // fixed-pool slot number -> current occupant, keyed to resolve slot_released (which carries only the slot number)
+	mediaPool           signaling.MediaPoolConfig
+	pool                map[poolKey]poolBinding
+	activeMids          map[string]bool
+	nextBindingRevision uint64
 
 	// trackWG tracks every readLoop goroutine still running. Close() waits
 	// on it (see trackCloseGrace's doc) -- without this, readLoop's
@@ -131,18 +157,12 @@ type PeerAgent struct {
 	// shouldn't share a lock with anything else handleTrack does.
 	closing atomic.Bool
 
-	// OnAudioPacket and OnTrackEnded, if set, are both invoked from the same
-	// single goroutine: one track's own read loop (see readLoop). That's
-	// deliberate -- it's what lets a consumer (internal/recording.Bridge)
-	// keep a per-track decoder/forwarder pair without any locking of its
-	// own: create-on-first-packet and close-on-end always happen on that
-	// one goroutine, back-to-back, never concurrently with each other for
-	// the same track. Different tracks run on different goroutines, so a
-	// consumer touching shared state across tracks (e.g. a map keyed by
-	// mid) still needs its own lock for that map -- just not per-entry.
+	// OnAudioPacket runs on each track's read loop. Different MIDs may run
+	// concurrently, including during a participant's slot move.
 	OnAudioPacket func(info TrackInfo, pkt *rtp.Packet)
-	// OnTrackEnded fires once, when a track's RTP read loop exits (pion
-	// signals the track ended, or the PeerConnection closed).
+	// OnTrackEnded retires a binding on slot release/reassignment (async),
+	// or when the RTP read loop exits. Consumers must tolerate duplicate and
+	// delayed notifications. In decoupled rooms it does NOT mean peer_left.
 	OnTrackEnded func(info TrackInfo)
 }
 
@@ -207,7 +227,7 @@ const stunGatherTimeout = 500 * time.Millisecond
 // m-line in its offer, and pion matches an already-added local track to the
 // first compatible unassigned m-line when building the answer -- adding the
 // track any later would miss that negotiation window.
-func New(iceServers []signaling.ICEServer, publishTrack webrtc.TrackLocal) (*PeerAgent, error) {
+func New(iceServers []signaling.ICEServer, publishTrack webrtc.TrackLocal, mediaPool signaling.MediaPoolConfig) (*PeerAgent, error) {
 	cfg := webrtc.Configuration{ICEServers: convertICEServers(iceServers)}
 
 	se := webrtc.SettingEngine{}
@@ -221,10 +241,13 @@ func New(iceServers []signaling.ICEServer, publishTrack webrtc.TrackLocal) (*Pee
 	}
 
 	a := &PeerAgent{
-		pc:       pc,
-		midTable: make(map[string]TrackInfo),
-		roster:   make(map[int64]signaling.Member),
-		slots:    make(map[uint32]slotOwner),
+		pc:         pc,
+		midTable:   make(map[string]TrackInfo),
+		roster:     make(map[int64]signaling.Member),
+		slots:      make(map[uint32]slotOwner),
+		mediaPool:  mediaPool,
+		pool:       make(map[poolKey]poolBinding),
+		activeMids: make(map[string]bool),
 	}
 
 	// isNilTrack, not a plain `publishTrack != nil`: publishTrack is an
@@ -345,15 +368,18 @@ func (a *PeerAgent) UpsertRoster(m signaling.Member) {
 	a.roster[m.UserID] = m
 }
 
-// RemovePeer drops the roster entry and any midTable entries for a user_id
-// that left. Wired to signaling.Callbacks.OnPeerLeft.
-func (a *PeerAgent) RemovePeer(userID int64) {
+// RemovePeer removes only the departed connection. A newer peer may already
+// occupy the same user's roster entry when the old peer_left arrives.
+func (a *PeerAgent) RemovePeer(peerID uint64, userID int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	delete(a.roster, userID)
+	if member, ok := a.roster[userID]; ok && member.PeerID == peerID {
+		delete(a.roster, userID)
+	}
 	for mid, info := range a.midTable {
-		if info.UserID == userID {
+		if info.PeerID == peerID {
 			delete(a.midTable, mid)
+			delete(a.activeMids, mid)
 		}
 	}
 }
@@ -377,6 +403,11 @@ func (a *PeerAgent) RemovePeer(userID int64) {
 //
 // Wire to signaling.Callbacks.OnSlotAssigned.
 func (a *PeerAgent) ApplySlotAssigned(ev signaling.SlotAssignedEvent) {
+	if ev.Kind != "" {
+		a.applyDecoupledAssignment(ev, false)
+		return
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -436,6 +467,11 @@ func (a *PeerAgent) ApplySlotAssigned(ev signaling.SlotAssignedEvent) {
 //
 // Wire to signaling.Callbacks.OnSlotReleased.
 func (a *PeerAgent) ApplySlotReleased(ev signaling.SlotReleasedEvent) {
+	if ev.Kind != "" {
+		a.applyDecoupledRelease(ev)
+		return
+	}
+
 	a.mu.Lock()
 	owner, ok := a.slots[ev.Slot]
 	if !ok || owner.generation != ev.Generation {
@@ -479,9 +515,13 @@ func (a *PeerAgent) ApplySlotReleased(ev signaling.SlotReleasedEvent) {
 // unconditionally for every roster message, not just ones known to be
 // fixed-pool-relevant.
 //
-// Wire alongside UpsertRoster, for every OnRoomSnapshot/OnPeerJoined/
-// OnPeerUpdated member.
+// Wire alongside UpsertRoster for room_snapshot and peer_joined members.
+// peer_updated carries display state only and must not change slot ownership.
 func (a *PeerAgent) ApplyMemberSlot(m signaling.Member) {
+	if a.mediaPool.IsDecoupled() {
+		a.applyMemberMediaSlots(m)
+		return
+	}
 	if m.AssignmentGeneration == 0 {
 		return
 	}
@@ -494,6 +534,186 @@ func (a *PeerAgent) ApplyMemberSlot(m signaling.Member) {
 		MidVideo:   m.MidVideo,
 		MidScreen:  m.MidScreen,
 	})
+}
+
+func (a *PeerAgent) applyMemberMediaSlots(m signaling.Member) {
+	for _, entry := range []struct {
+		kind signaling.MediaKind
+		slot *signaling.MediaSlot
+	}{
+		{signaling.MediaKindAudio, m.MediaSlots.Audio},
+		{signaling.MediaKindCamera, m.MediaSlots.Camera},
+		{signaling.MediaKindScreen, m.MediaSlots.Screen},
+	} {
+		if entry.slot == nil {
+			continue
+		}
+		a.applyDecoupledAssignment(signaling.SlotAssignedEvent{
+			Kind:       entry.kind,
+			Slot:       entry.slot.Slot,
+			Generation: entry.slot.Generation,
+			Mid:        entry.slot.Mid,
+			PeerID:     m.PeerID,
+			UserID:     m.UserID,
+			Active:     true,
+		}, true)
+	}
+}
+
+// ApplyPeerLeft releases the decoupled bindings explicitly listed by SFU and
+// then defensively releases any remaining binding owned by peerID.
+func (a *PeerAgent) ApplyPeerLeft(peerID uint64, slots signaling.MediaSlots) {
+	if !a.mediaPool.IsDecoupled() {
+		return
+	}
+	for _, entry := range []struct {
+		kind signaling.MediaKind
+		slot *signaling.MediaSlot
+	}{
+		{signaling.MediaKindAudio, slots.Audio},
+		{signaling.MediaKindCamera, slots.Camera},
+		{signaling.MediaKindScreen, slots.Screen},
+	} {
+		if entry.slot != nil {
+			a.applyDecoupledRelease(signaling.SlotReleasedEvent{
+				Kind: entry.kind, Slot: entry.slot.Slot, Generation: entry.slot.Generation,
+			})
+		}
+	}
+
+	a.mu.Lock()
+	remaining := make([]signaling.SlotReleasedEvent, 0)
+	for key, binding := range a.pool {
+		if binding.assigned && binding.peerID == peerID {
+			remaining = append(remaining, signaling.SlotReleasedEvent{
+				Kind: key.kind, Slot: key.slot, Generation: binding.generation,
+			})
+		}
+	}
+	a.mu.Unlock()
+	for _, ev := range remaining {
+		a.applyDecoupledRelease(ev)
+	}
+}
+
+func (a *PeerAgent) applyDecoupledAssignment(ev signaling.SlotAssignedEvent, fromMembership bool) {
+	expectedMid, ok := a.midOf(ev.Kind, ev.Slot)
+	if !ok || expectedMid != ev.Mid {
+		logging.L.Warn("rtcagent: ignoring invalid decoupled slot assignment",
+			"kind", ev.Kind, "slot", ev.Slot, "mid", ev.Mid, "expected_mid", expectedMid)
+		return
+	}
+
+	key := poolKey{kind: ev.Kind, slot: ev.Slot}
+	var ended TrackInfo
+	var shouldEnd bool
+	a.mu.Lock()
+	prev, exists := a.pool[key]
+	if exists && prev.generation > ev.Generation {
+		a.mu.Unlock()
+		return
+	}
+	if exists && prev.generation == ev.Generation &&
+		(fromMembership || !prev.assigned || prev.peerID != ev.PeerID) {
+		a.mu.Unlock()
+		return
+	}
+
+	midKey := strconv.FormatUint(uint64(ev.Mid), 10)
+	if ev.Kind == signaling.MediaKindAudio && prev.assigned && prev.peerID != ev.PeerID {
+		ended, shouldEnd = a.midTable[midKey]
+	}
+
+	revision := prev.revision
+	if !exists || !prev.assigned || prev.generation != ev.Generation ||
+		prev.peerID != ev.PeerID {
+		a.nextBindingRevision++
+		revision = a.nextBindingRevision
+	}
+	a.pool[key] = poolBinding{
+		generation: ev.Generation,
+		peerID:     ev.PeerID,
+		userID:     ev.UserID,
+		mid:        ev.Mid,
+		active:     ev.Active,
+		assigned:   true,
+		revision:   revision,
+	}
+	a.midTable[midKey] = TrackInfo{
+		Mid: midKey, UserID: ev.UserID, PeerID: ev.PeerID, Kind: trackKind(ev.Kind), BindingRevision: revision,
+	}
+	if ev.Kind == signaling.MediaKindAudio {
+		a.activeMids[midKey] = ev.Active
+	}
+	a.mu.Unlock()
+
+	if shouldEnd && a.OnTrackEnded != nil {
+		go a.OnTrackEnded(ended)
+	}
+}
+
+func (a *PeerAgent) applyDecoupledRelease(ev signaling.SlotReleasedEvent) {
+	if _, ok := a.midOf(ev.Kind, ev.Slot); !ok {
+		logging.L.Warn("rtcagent: ignoring invalid decoupled slot release", "kind", ev.Kind, "slot", ev.Slot)
+		return
+	}
+
+	key := poolKey{kind: ev.Kind, slot: ev.Slot}
+	var ended TrackInfo
+	var shouldEnd bool
+	a.mu.Lock()
+	prev, exists := a.pool[key]
+	if exists && prev.generation > ev.Generation {
+		a.mu.Unlock()
+		return
+	}
+	if exists && prev.assigned {
+		midKey := strconv.FormatUint(uint64(prev.mid), 10)
+		ended, shouldEnd = a.midTable[midKey]
+		delete(a.midTable, midKey)
+		delete(a.activeMids, midKey)
+	}
+	a.pool[key] = poolBinding{generation: ev.Generation, active: false, assigned: false}
+	a.mu.Unlock()
+
+	if ev.Kind == signaling.MediaKindAudio && shouldEnd && a.OnTrackEnded != nil {
+		go a.OnTrackEnded(ended)
+	}
+}
+
+func (a *PeerAgent) midOf(kind signaling.MediaKind, slot uint32) (uint32, bool) {
+	if !a.mediaPool.IsDecoupled() || !kind.Valid() {
+		return 0, false
+	}
+	start := uint32(remoteMidBase)
+	for _, block := range []struct {
+		kind  signaling.MediaKind
+		count uint32
+	}{
+		{signaling.MediaKindAudio, a.mediaPool.MaxAudioSlots},
+		{signaling.MediaKindCamera, a.mediaPool.MaxCameraSlots},
+		{signaling.MediaKindScreen, a.mediaPool.MaxScreenSlots},
+	} {
+		if block.kind == kind {
+			if slot >= block.count {
+				return 0, false
+			}
+			return start + slot, true
+		}
+		start += block.count
+	}
+	return 0, false
+}
+
+func trackKind(kind signaling.MediaKind) TrackKind {
+	switch kind {
+	case signaling.MediaKindAudio:
+		return KindAudio
+	case signaling.MediaKindCamera:
+		return KindCamera
+	default:
+		return KindScreen
+	}
 }
 
 func (a *PeerAgent) setMidOwnerLocked(mid uint32, userID int64, peerID uint64, kind TrackKind) {
@@ -581,7 +801,11 @@ func (a *PeerAgent) handleTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPR
 		return
 	}
 
-	kind := kindForMid(midInt)
+	kind, validMid := a.trackKindForMid(midInt)
+	if !validMid {
+		logging.L.Warn("rtcagent: mid outside negotiated media-pool layout, dropping track", "mid", mid)
+		return
+	}
 
 	a.mu.Lock()
 	// A fixed-pool slot_assigned can arrive before this track's one-time
@@ -597,7 +821,7 @@ func (a *PeerAgent) handleTrack(track *webrtc.TrackRemote, receiver *webrtc.RTPR
 	// unconditionally, regardless of slot_assigned having already arrived.
 	info, known := a.midTable[mid]
 	if !known {
-		if userID, peerID, ok := parseMsid(track.StreamID()); ok {
+		if userID, peerID, ok := parseMsid(track.StreamID()); ok && !a.mediaPool.IsDecoupled() {
 			info = TrackInfo{Mid: mid, UserID: userID, PeerID: peerID, Kind: kind}
 		} else {
 			// Neither a slot_assigned seed nor a parseable msid yet -- either
@@ -635,6 +859,19 @@ func (a *PeerAgent) currentInfo(mid string) (TrackInfo, bool) {
 	return info, ok
 }
 
+func (a *PeerAgent) currentAudioInfo(mid string) (TrackInfo, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	info, ok := a.midTable[mid]
+	if !ok {
+		return TrackInfo{}, false
+	}
+	if a.mediaPool.IsDecoupled() && (info.PeerID == 0 || !a.activeMids[mid]) {
+		return TrackInfo{}, false
+	}
+	return info, true
+}
+
 // midFor finds the transceiver mid associated with an RTPReceiver. pion
 // doesn't expose this directly on the receiver, so we scan transceivers.
 func (a *PeerAgent) midFor(receiver *webrtc.RTPReceiver) string {
@@ -655,6 +892,30 @@ func kindForMid(mid int) TrackKind {
 	default:
 		return KindScreen
 	}
+}
+
+func (a *PeerAgent) trackKindForMid(mid int) (TrackKind, bool) {
+	if !a.mediaPool.IsDecoupled() {
+		return kindForMid(mid), true
+	}
+	rest := mid - remoteMidBase
+	if rest < 0 {
+		return "", false
+	}
+	for _, block := range []struct {
+		kind  TrackKind
+		count uint32
+	}{
+		{KindAudio, a.mediaPool.MaxAudioSlots},
+		{KindCamera, a.mediaPool.MaxCameraSlots},
+		{KindScreen, a.mediaPool.MaxScreenSlots},
+	} {
+		if rest < int(block.count) {
+			return block.kind, true
+		}
+		rest -= int(block.count)
+	}
+	return "", false
 }
 
 func parseMsid(streamID string) (userID int64, peerID uint64, ok bool) {
@@ -698,7 +959,7 @@ func (a *PeerAgent) readLoop(track *webrtc.TrackRemote, mid string, kind TrackKi
 		packetCount++
 
 		if kind == KindAudio && a.OnAudioPacket != nil {
-			if info, ok := a.currentInfo(mid); ok {
+			if info, ok := a.currentAudioInfo(mid); ok {
 				a.OnAudioPacket(info, pkt)
 			}
 		}

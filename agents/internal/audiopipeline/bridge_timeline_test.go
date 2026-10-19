@@ -41,13 +41,17 @@ func silenceBytes(d time.Duration) int {
 	return samples * PCMChannels * 2
 }
 
+func rtpTimestampAfter(start uint32, d time.Duration) uint32 {
+	return start + uint32(d.Nanoseconds()*int64(opusRTPClockRate)/int64(time.Second))
+}
+
 func TestRecordTimeline_PadsSilenceDuringRTPInactivity(t *testing.T) {
 	sink := &fakeSink{}
 	r := newRecordTimeline(sink)
 
 	t0 := time.Now()
 	realPCM := make([]byte, 320) // 10ms of 16kHz mono PCM16
-	r.sendAllPcm(realPCM, t0)
+	r.sendAllPcm(realPCM, 100000, t0)
 
 	r.onTick(t0.Add(2 * time.Second))
 	r.onTick(t0.Add(4 * time.Second))
@@ -67,11 +71,12 @@ func TestRecordTimeline_ResumeFillsGapOnlyToPacketStart(t *testing.T) {
 
 	t0 := time.Now()
 	initialPCM := make([]byte, 320) // 10ms
-	r.sendAllPcm(initialPCM, t0)
+	const firstTimestamp = uint32(100000)
+	r.sendAllPcm(initialPCM, firstTimestamp, t0)
 	r.onTick(t0.Add(2 * time.Second))
 
 	resumedPCM := make([]byte, 320) // represents the 10ms immediately before arrival
-	r.sendAllPcm(resumedPCM, t0.Add(2100*time.Millisecond))
+	r.sendAllPcm(resumedPCM, rtpTimestampAfter(firstTimestamp, 2100*time.Millisecond), t0.Add(2100*time.Millisecond))
 
 	// This tick is only 50ms after the resumed packet, inside the 70ms grace.
 	r.onTick(t0.Add(2150 * time.Millisecond))
@@ -92,8 +97,9 @@ func TestRecordTimeline_ResumeBeforeTickerBackfillsShortGap(t *testing.T) {
 	t0 := time.Now()
 	initialPCM := make([]byte, 320) // 10ms
 	resumedPCM := make([]byte, 320) // 10ms
-	r.sendAllPcm(initialPCM, t0)
-	r.sendAllPcm(resumedPCM, t0.Add(100*time.Millisecond))
+	const firstTimestamp = uint32(200000)
+	r.sendAllPcm(initialPCM, firstTimestamp, t0)
+	r.sendAllPcm(resumedPCM, rtpTimestampAfter(firstTimestamp, 100*time.Millisecond), t0.Add(100*time.Millisecond))
 
 	got, _ := sink.snapshot()
 	want := len(initialPCM) + silenceBytes(90*time.Millisecond) + len(resumedPCM)
@@ -110,7 +116,7 @@ func TestRecordTimeline_DoesNotPadInsideGrace(t *testing.T) {
 
 	t0 := time.Now()
 	realPCM := make([]byte, 320)
-	r.sendAllPcm(realPCM, t0)
+	r.sendAllPcm(realPCM, 300000, t0)
 	r.onTick(t0.Add(rtpActivityGrace - time.Millisecond))
 
 	got, _ := sink.snapshot()
@@ -127,7 +133,7 @@ func TestRecordTimeline_FlushesInactivityRemainderOnClose(t *testing.T) {
 
 	t0 := time.Now()
 	realPCM := make([]byte, 320)
-	r.sendAllPcm(realPCM, t0)
+	r.sendAllPcm(realPCM, 400000, t0)
 	r.close(t0.Add(750 * time.Millisecond))
 
 	got, closed := sink.snapshot()
@@ -138,6 +144,97 @@ func TestRecordTimeline_FlushesInactivityRemainderOnClose(t *testing.T) {
 	if got != want {
 		t.Errorf("forwarded bytes on close = %d, want %d", got, want)
 	}
+}
+
+func TestRecordTimeline_RTPGapIgnoresArrivalDelay(t *testing.T) {
+	sink := &fakeSink{}
+	r := newRecordTimeline(sink)
+
+	t0 := time.Now()
+	packet := make([]byte, 640) // 20ms
+	const firstTimestamp = uint32(500000)
+	r.sendAllPcm(packet, firstTimestamp, t0)
+
+	// The receiver sees a two-second arrival delay, but the RTP media clock
+	// says the second packet starts only 500ms after the first packet began.
+	r.sendAllPcm(packet, rtpTimestampAfter(firstTimestamp, 500*time.Millisecond), t0.Add(2*time.Second))
+
+	got, _ := sink.snapshot()
+	want := len(packet) + silenceBytes(480*time.Millisecond) + len(packet)
+	if got != want {
+		t.Errorf("forwarded bytes = %d, want %d (padding must follow RTP timestamps, not arrival delay)", got, want)
+	}
+
+	r.close(t0)
+}
+
+func TestRecordTimeline_BurstArrivalDoesNotPadBetweenConsecutiveRTPPackets(t *testing.T) {
+	sink := &fakeSink{}
+	r := newRecordTimeline(sink)
+
+	t0 := time.Now()
+	packet := make([]byte, 640) // 20ms
+	const firstTimestamp = uint32(600000)
+	for i := 0; i < 5; i++ {
+		r.sendAllPcm(
+			packet,
+			firstTimestamp+uint32(i*960),
+			t0.Add(time.Duration(i)*time.Millisecond),
+		)
+	}
+
+	got, _ := sink.snapshot()
+	want := 5 * len(packet)
+	if got != want {
+		t.Errorf("forwarded bytes = %d, want %d (consecutive RTP packets need no silence even when arrivals are bursty)", got, want)
+	}
+
+	r.close(t0)
+}
+
+func TestRecordTimeline_RTPGapHandlesTimestampWraparound(t *testing.T) {
+	sink := &fakeSink{}
+	r := newRecordTimeline(sink)
+
+	t0 := time.Now()
+	packet := make([]byte, 640) // 20ms / 960 RTP ticks
+	firstTimestamp := ^uint32(0) - 479
+	r.sendAllPcm(packet, firstTimestamp, t0)
+
+	// The next consecutive timestamp wraps from the end of uint32 to 480.
+	r.sendAllPcm(packet, firstTimestamp+960, t0.Add(20*time.Millisecond))
+
+	got, _ := sink.snapshot()
+	want := 2 * len(packet)
+	if got != want {
+		t.Errorf("forwarded bytes = %d, want %d (timestamp wrap must not create silence)", got, want)
+	}
+
+	r.close(t0)
+}
+
+func TestRecordTimeline_LateRTPPacketDoesNotMoveTimelineBackward(t *testing.T) {
+	sink := &fakeSink{}
+	r := newRecordTimeline(sink)
+
+	t0 := time.Now()
+	packet := make([]byte, 640) // 20ms / 960 RTP ticks
+	const firstTimestamp = uint32(700000)
+	r.sendAllPcm(packet, firstTimestamp, t0)
+	r.sendAllPcm(packet, firstTimestamp+960, t0.Add(20*time.Millisecond))
+
+	// This duplicate/late packet starts before the already-recorded media
+	// end and must neither be appended nor move the RTP cursor backward.
+	r.sendAllPcm(packet, firstTimestamp, t0.Add(21*time.Millisecond))
+	r.sendAllPcm(packet, firstTimestamp+1920, t0.Add(40*time.Millisecond))
+
+	got, _ := sink.snapshot()
+	want := 3 * len(packet)
+	if got != want {
+		t.Errorf("forwarded bytes = %d, want %d (late RTP must not extend or rewind the timeline)", got, want)
+	}
+
+	r.close(t0)
 }
 
 func TestBridge_HandleTrackEndedClosesRecordSink(t *testing.T) {
@@ -206,5 +303,25 @@ func TestBridge_SessionForReassignsOnPeerIDChange(t *testing.T) {
 	// must keep reusing it, not reassign again.
 	if again := b.sessionFor(newPeer); again != s2 {
 		t.Error("sessionFor(newPeer) a second time created yet another session")
+	}
+}
+
+func TestBridge_StaleTrackEndedDoesNotCloseNewBindingRevision(t *testing.T) {
+	b := NewBridge(nil, nil)
+	oldInfo := rtcagent.TrackInfo{Mid: "3", UserID: 111, PeerID: 10, Kind: rtcagent.KindAudio, BindingRevision: 1}
+	newInfo := rtcagent.TrackInfo{Mid: "3", UserID: 111, PeerID: 10, Kind: rtcagent.KindAudio, BindingRevision: 2}
+
+	oldSession := b.sessionFor(oldInfo)
+	newSession := b.sessionFor(newInfo)
+	if oldSession == newSession {
+		t.Fatal("new binding revision reused the old audio session")
+	}
+	b.HandleTrackEnded(oldInfo)
+
+	b.mu.Lock()
+	got := b.sessions["3"]
+	b.mu.Unlock()
+	if got != newSession {
+		t.Fatal("stale end notification removed the new binding's session")
 	}
 }
