@@ -455,9 +455,10 @@ type session struct {
 	// session (retrying into an empty room makes no sense).
 	stop context.CancelFunc
 
-	peerAgent *rtcagent.PeerAgent
-	bridge    *audiopipeline.Bridge
-	player    *ttsplayer.Player
+	peerAgent  *rtcagent.PeerAgent
+	bridge     *audiopipeline.Bridge
+	mediaEpoch int // advances on each joined, including an in-place rejoin
+	player     *ttsplayer.Player
 
 	// emptyRoomTimer: see checkEmptyRoom's doc. nil whenever the room isn't
 	// currently down to just this agent.
@@ -482,8 +483,28 @@ func (s *session) callbacks() signaling.Callbacks {
 	}
 }
 
-func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
-	logging.L.Info("signaling: joined", "room", room, "ice_servers", len(iceServers))
+func (s *session) onJoined(ev signaling.JoinedEvent) {
+	s.mediaEpoch++
+	logging.L.Info("signaling: joined", "room", ev.Room, "ice_servers", len(ev.ICEServers),
+		"media_pool_version", ev.MediaPool.Version, "media_pool_mode", ev.MediaPool.Mode, "max_audio_slots", ev.MediaPool.MaxAudioSlots,
+		"max_camera_slots", ev.MediaPool.MaxCameraSlots, "max_screen_slots", ev.MediaPool.MaxScreenSlots)
+
+	// A fresh joined message defines a fresh receiver-local pool. Normally it
+	// occurs once per WebSocket, but reset an existing media session explicitly
+	// so no old bindings or packet loops survive if SFU ever rejoins in place.
+	if s.peerAgent != nil {
+		_ = s.peerAgent.Close()
+		s.peerAgent = nil
+	}
+	if s.bridge != nil {
+		s.bridge.Close()
+	}
+	if s.player != nil {
+		s.player.Close()
+		s.player = nil
+	}
+	s.bridge = nil
+	s.refs.set(nil, nil)
 
 	var publishTrack *webrtc.TrackLocalStaticSample
 	if s.cfg.Role == config.RoleSpeaker {
@@ -521,7 +542,7 @@ func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
 	if publishTrack != nil {
 		rtcPublishTrack = publishTrack
 	}
-	pa, err := rtcagent.New(iceServers, rtcPublishTrack)
+	pa, err := rtcagent.New(ev.ICEServers, rtcPublishTrack, ev.MediaPool)
 	if err != nil {
 		logging.L.Error("rtcagent: failed to create peer connection", logging.ErrAttrs(err)...)
 		return
@@ -531,7 +552,7 @@ func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
 	// this run (see tracksink's constructors); newRecordSink/newSTTSink must
 	// stay nil funcs (not a method value bound to a nil receiver) in that
 	// case -- Bridge nil-checks the func itself before calling it.
-	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID, s.conn)
+	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID, s.conn, s.mediaEpoch)
 	sttFactory := tracksink.NewSTTSinkFactory(s.cfg, s.orch)
 	var newRecordSink, newSTTSink func(info rtcagent.TrackInfo) audiopipeline.Sink
 	if recordFactory != nil {
@@ -542,6 +563,9 @@ func (s *session) onJoined(room uint64, iceServers []signaling.ICEServer) {
 	}
 
 	bridge := audiopipeline.NewBridge(newRecordSink, newSTTSink)
+	if ev.MediaPool.IsDecoupled() {
+		bridge = audiopipeline.NewDecoupledBridge(newRecordSink, newSTTSink)
+	}
 	pa.OnAudioPacket = bridge.HandlePacket
 	pa.OnTrackEnded = bridge.HandleTrackEnded
 
@@ -580,7 +604,10 @@ func (s *session) onRoomSnapshot(selfPeerID uint64, participantCount int, member
 		return
 	}
 	for _, m := range members {
-		s.upsertPeer(m)
+		s.peerAgent.UpsertRoster(m)
+		if m.PeerID != selfPeerID {
+			s.peerAgent.ApplyMemberSlot(m)
+		}
 	}
 
 	if s.orch == nil {
@@ -654,7 +681,11 @@ func (s *session) onPeerLeft(ev signaling.PeerLeftEvent) {
 	logging.L.Info("signaling: peer_left", "user_id", ev.UserID, "participant_count", ev.ParticipantCount)
 	s.checkEmptyRoom(ev.ParticipantCount)
 	if s.peerAgent != nil {
-		s.peerAgent.RemovePeer(ev.UserID)
+		s.peerAgent.ApplyPeerLeft(ev.PeerID, ev.MediaSlots)
+		s.peerAgent.RemovePeer(ev.PeerID, ev.UserID)
+	}
+	if s.bridge != nil {
+		s.bridge.HandlePeerEnded(ev.PeerID)
 	}
 }
 
@@ -708,7 +739,9 @@ func (s *session) checkEmptyRoom(participantCount int) {
 
 func (s *session) onPeerUpdated(peer signaling.Member) {
 	logging.L.Info("signaling: peer_updated", "user_id", peer.UserID, "role", peer.Role)
-	s.upsertPeer(peer)
+	if s.peerAgent != nil {
+		s.peerAgent.UpsertRoster(peer)
+	}
 }
 
 func (s *session) upsertPeer(peer signaling.Member) {
@@ -716,29 +749,23 @@ func (s *session) upsertPeer(peer signaling.Member) {
 		return
 	}
 	s.peerAgent.UpsertRoster(peer)
-	// Defensive bootstrap for a fixed-pool slot this agent didn't witness
-	// get assigned (e.g. already occupied before this agent joined/
-	// reconnected) -- see ApplyMemberSlot's doc. A no-op for non-fixed-pool
-	// rooms and for peer_updated (neither ever carries a nonzero
-	// AssignmentGeneration).
+	// Bootstrap legacy or decoupled slots already owned by this member.
+	// peer_updated uses UpsertRoster directly and does not change ownership.
 	s.peerAgent.ApplyMemberSlot(peer)
 }
 
-// onSlotAssigned/onSlotReleased: only sent by mezon-sfu when this session is
-// in "fixed pool" mode (PR #475, server config max_active_speakers > 0) --
-// see signaling.SlotAssignedEvent's doc and rtcagent.PeerAgent.ApplySlotAssigned's
-// doc for why these, not room_snapshot/peer_joined/peer_updated, are the
-// only signal that a mid's content now belongs to a different peer.
+// Slot events update ownership without recreating the WebRTC track. Legacy
+// messages contain three MIDs; decoupled messages identify a media kind.
 func (s *session) onSlotAssigned(ev signaling.SlotAssignedEvent) {
-	logging.L.Info("signaling: slot_assigned", "slot", ev.Slot, "generation", ev.Generation,
-		"user_id", ev.UserID, "peer_id", ev.PeerID, "mid_audio", ev.MidAudio)
+	logging.L.Info("signaling: slot_assigned", "kind", ev.Kind, "slot", ev.Slot, "generation", ev.Generation,
+		"user_id", ev.UserID, "peer_id", ev.PeerID, "mid", ev.Mid, "mid_audio", ev.MidAudio, "active", ev.Active)
 	if s.peerAgent != nil {
 		s.peerAgent.ApplySlotAssigned(ev)
 	}
 }
 
 func (s *session) onSlotReleased(ev signaling.SlotReleasedEvent) {
-	logging.L.Info("signaling: slot_released", "slot", ev.Slot, "generation", ev.Generation)
+	logging.L.Info("signaling: slot_released", "kind", ev.Kind, "slot", ev.Slot, "generation", ev.Generation)
 	if s.peerAgent != nil {
 		s.peerAgent.ApplySlotReleased(ev)
 	}
@@ -803,6 +830,9 @@ func (s *session) close() {
 	s.refs.setSignalingClient(nil)
 	if s.peerAgent != nil {
 		_ = s.peerAgent.Close()
+	}
+	if s.bridge != nil {
+		s.bridge.Close()
 	}
 	if s.player != nil {
 		s.player.Close()

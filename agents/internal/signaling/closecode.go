@@ -6,6 +6,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// ServerError retains the protocol reason even if the SFU closes the socket
+// afterward. Capacity/update errors describe an action, not a lost session.
+type ServerError struct{ Message string }
+
+func (e *ServerError) Error() string   { return "server error: " + e.Message }
+func (e *ServerError) Permanent() bool { return e.Message == "unsupported_media_pool_version" }
+
 // mezon-sfu WebSocket close codes this agent treats specially
 // (sfu_disconnect_reason_t, agents/../mezon-sfu source of truth).
 const (
@@ -38,10 +45,14 @@ var terminalCloseCodes = map[int]struct{}{
 
 // ShouldReconnect reports whether a session that ended with err should be
 // retried. Defaults to true, matching the frontend switch's own `default:`
-// case -- only one of the four terminal codes above can veto a retry. That
+// case -- the terminal codes above or a permanent protocol error veto a retry. That
 // includes every code not (yet) in sfu_disconnect_reason_t: an unknown
 // close code is exactly the case the frontend's default arm exists for.
 func ShouldReconnect(err error) bool {
+	var serverErr *ServerError
+	if errors.As(err, &serverErr) && serverErr.Permanent() {
+		return false
+	}
 	var ce *websocket.CloseError
 	if !errors.As(err, &ce) {
 		return true
@@ -54,8 +65,7 @@ func ShouldReconnect(err error) bool {
 // graceful way for the agent's run to end (kicked, left alone too long,
 // superseded by a new session, or a plain normal closure) -- as opposed to
 // a crash or the reconnect budget running out. Same set as
-// terminalCloseCodes: every terminal code here is a graceful end state,
-// there is no separate "configuration error" bucket anymore.
+// terminalCloseCodes. A permanent protocol/configuration error is not graceful.
 func IsExpectedClose(err error) bool {
 	var ce *websocket.CloseError
 	if !errors.As(err, &ce) {

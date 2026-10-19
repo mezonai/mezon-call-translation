@@ -15,7 +15,20 @@ import (
 // anything (NewPeerConnection is local-only until SetRemoteDescription).
 func newTestPeerAgent(t *testing.T) *PeerAgent {
 	t.Helper()
-	a, err := New(nil, nil)
+	a, err := New(nil, nil, signaling.MediaPoolConfig{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	return a
+}
+
+func newDecoupledTestPeerAgent(t *testing.T) *PeerAgent {
+	t.Helper()
+	a, err := New(nil, nil, signaling.MediaPoolConfig{
+		Version: 1, Mode: signaling.MediaPoolModeDecoupled,
+		MaxAudioSlots: 6, MaxCameraSlots: 6, MaxScreenSlots: 6,
+	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -408,5 +421,215 @@ func TestHandleTrackSeedsPlaceholderWhenNeitherSlotAssignedNorParseableMsid(t *t
 	got, ok := a.currentInfo(mid)
 	if !ok || got.PeerID != 10 || got.UserID != 111 {
 		t.Errorf("currentInfo after late slot_assigned = (%+v, %v), want peer_id=10 user_id=111", got, ok)
+	}
+}
+
+func TestDecoupledMIDLayout(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	tests := []struct {
+		mid  int
+		kind TrackKind
+		ok   bool
+	}{
+		{3, KindAudio, true}, {8, KindAudio, true},
+		{9, KindCamera, true}, {14, KindCamera, true},
+		{15, KindScreen, true}, {20, KindScreen, true},
+		{2, "", false}, {21, "", false},
+	}
+	for _, tt := range tests {
+		kind, ok := a.trackKindForMid(tt.mid)
+		if kind != tt.kind || ok != tt.ok {
+			t.Errorf("trackKindForMid(%d) = (%q,%v), want (%q,%v)", tt.mid, kind, ok, tt.kind, tt.ok)
+		}
+	}
+}
+
+func TestDecoupledSameSlotNumberIsIndependentByKind(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+		Kind: signaling.MediaKindAudio, Slot: 0, Generation: 1, Mid: 3,
+		PeerID: 10, UserID: 111, Active: true,
+	})
+	a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+		Kind: signaling.MediaKindScreen, Slot: 0, Generation: 4, Mid: 15,
+		PeerID: 20, UserID: 222, Active: false,
+	})
+
+	if info, ok := a.currentAudioInfo("3"); !ok || info.PeerID != 10 {
+		t.Fatalf("audio slot owner = (%+v,%v), want peer 10", info, ok)
+	}
+	if info, ok := a.currentInfo("15"); !ok || info.PeerID != 20 || info.Kind != KindScreen {
+		t.Fatalf("screen slot owner = (%+v,%v), want peer 20", info, ok)
+	}
+
+	a.ApplySlotReleased(signaling.SlotReleasedEvent{
+		Kind: signaling.MediaKindAudio, Slot: 0, Generation: 1,
+	})
+	if _, ok := a.currentInfo("3"); ok {
+		t.Error("audio MID still owned after audio release")
+	}
+	if info, ok := a.currentInfo("15"); !ok || info.PeerID != 20 {
+		t.Errorf("audio release disturbed screen owner: (%+v,%v)", info, ok)
+	}
+}
+
+func TestDecoupledGenerationRulesAndReleaseTombstone(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	assign := func(generation uint64, peerID uint64, userID int64, active bool) {
+		a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+			Kind: signaling.MediaKindAudio, Slot: 1, Generation: generation, Mid: 4,
+			PeerID: peerID, UserID: userID, Active: active,
+		})
+	}
+
+	assign(12, 10, 111, true)
+	a.ApplySlotReleased(signaling.SlotReleasedEvent{
+		Kind: signaling.MediaKindAudio, Slot: 1, Generation: 12,
+	})
+	assign(12, 10, 111, true) // same-generation assignment after release
+	assign(11, 20, 222, true) // older assignment
+	if _, ok := a.currentInfo("4"); ok {
+		t.Fatal("released generation was resurrected by stale assignment")
+	}
+
+	assign(13, 20, 222, false)
+	if info, ok := a.currentInfo("4"); !ok || info.PeerID != 20 {
+		t.Fatalf("new generation owner = (%+v,%v), want peer 20", info, ok)
+	}
+	if _, ok := a.currentAudioInfo("4"); ok {
+		t.Fatal("inactive audio assignment was treated as playable")
+	}
+	a.ApplyMemberSlot(signaling.Member{
+		PeerID: 20, UserID: 222,
+		MediaSlots: signaling.MediaSlots{Audio: &signaling.MediaSlot{Slot: 1, Generation: 13, Mid: 4}},
+	})
+	if _, ok := a.currentAudioInfo("4"); ok {
+		t.Fatal("same-generation membership replay overwrote live inactive state")
+	}
+
+	assign(13, 20, 222, true) // same peer/generation may update active
+	if info, ok := a.currentAudioInfo("4"); !ok || info.PeerID != 20 {
+		t.Fatalf("same-generation active update = (%+v,%v), want active peer 20", info, ok)
+	}
+	assign(13, 30, 333, true) // same generation, different peer is invalid
+	if info, _ := a.currentInfo("4"); info.PeerID != 20 {
+		t.Fatalf("same-generation different peer replaced owner: %+v", info)
+	}
+}
+
+func TestDecoupledMembershipAndPeerLeft(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	a.ApplyMemberSlot(signaling.Member{
+		PeerID: 25, UserID: 111,
+		MediaSlots: signaling.MediaSlots{
+			Audio:  &signaling.MediaSlot{Slot: 1, Generation: 8, Mid: 4},
+			Screen: &signaling.MediaSlot{Slot: 0, Generation: 3, Mid: 15},
+		},
+	})
+	if info, ok := a.currentAudioInfo("4"); !ok || info.PeerID != 25 {
+		t.Fatalf("membership audio = (%+v,%v), want peer 25", info, ok)
+	}
+
+	a.ApplyPeerLeft(25, signaling.MediaSlots{}) // defensive release-by-peer path
+	if _, ok := a.currentInfo("4"); ok {
+		t.Error("peer_left left audio MID owned")
+	}
+	if _, ok := a.currentInfo("15"); ok {
+		t.Error("peer_left left screen MID owned")
+	}
+}
+
+func TestDecoupledRejectsMIDThatDoesNotMatchLayout(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+		Kind: signaling.MediaKindAudio, Slot: 0, Generation: 1, Mid: 15,
+		PeerID: 10, UserID: 111, Active: true,
+	})
+	if _, ok := a.currentInfo("15"); ok {
+		t.Error("accepted audio slot whose MID belongs to the screen block")
+	}
+}
+
+// A reconnecting user can get its new peer_joined before the old peer_left.
+// Removing the old connection must leave the new peer's MID and roster intact.
+func TestRemovePeerKeepsSameUsersNewerConnection(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+		Kind: signaling.MediaKindAudio, Slot: 0, Generation: 1, Mid: 3,
+		PeerID: 10, UserID: 111, Active: true,
+	})
+	a.UpsertRoster(signaling.Member{PeerID: 20, UserID: 111, Role: "speaker"})
+	a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+		Kind: signaling.MediaKindAudio, Slot: 1, Generation: 2, Mid: 4,
+		PeerID: 20, UserID: 111, Active: true,
+	})
+
+	a.ApplyPeerLeft(10, signaling.MediaSlots{})
+	a.RemovePeer(10, 111)
+
+	if _, ok := a.currentInfo("3"); ok {
+		t.Error("old connection's MID still owned after peer_left")
+	}
+	if info, ok := a.currentAudioInfo("4"); !ok || info.PeerID != 20 {
+		t.Fatalf("new connection's audio = (%+v,%v), want playable peer 20", info, ok)
+	}
+	a.mu.Lock()
+	member, ok := a.roster[111]
+	a.mu.Unlock()
+	if !ok || member.PeerID != 20 {
+		t.Fatalf("roster[111] = (%+v,%v), want the newer peer 20", member, ok)
+	}
+
+	a.RemovePeer(20, 111)
+	a.mu.Lock()
+	_, ok = a.roster[111]
+	a.mu.Unlock()
+	if ok {
+		t.Error("roster entry survived its own peer_left")
+	}
+	if _, ok := a.currentInfo("4"); ok {
+		t.Error("MID still owned after its own peer_left")
+	}
+}
+
+// An active-only resend (same peer and generation) must keep the binding:
+// no new revision and no OnTrackEnded, so the participant recording continues.
+func TestDecoupledActiveToggleKeepsBinding(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	var mu sync.Mutex
+	var ended []TrackInfo
+	a.OnTrackEnded = func(info TrackInfo) {
+		mu.Lock()
+		defer mu.Unlock()
+		ended = append(ended, info)
+	}
+	assign := func(active bool) {
+		a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+			Kind: signaling.MediaKindAudio, Slot: 0, Generation: 5, Mid: 3,
+			PeerID: 10, UserID: 111, Active: active,
+		})
+	}
+
+	assign(true)
+	first, ok := a.currentAudioInfo("3")
+	if !ok {
+		t.Fatal("active assignment not playable")
+	}
+	assign(false)
+	if _, ok := a.currentAudioInfo("3"); ok {
+		t.Fatal("inactive resend still playable")
+	}
+	assign(true)
+	again, ok := a.currentAudioInfo("3")
+	if !ok || again.BindingRevision != first.BindingRevision {
+		t.Fatalf("revision after active toggle = %d (ok=%v), want unchanged %d",
+			again.BindingRevision, ok, first.BindingRevision)
+	}
+
+	time.Sleep(20 * time.Millisecond) // let any (incorrect) async OnTrackEnded run
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ended) != 0 {
+		t.Errorf("OnTrackEnded fired %d times for an active-only toggle: %+v", len(ended), ended)
 	}
 }
