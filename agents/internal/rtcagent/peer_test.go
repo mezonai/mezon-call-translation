@@ -549,3 +549,87 @@ func TestDecoupledRejectsMIDThatDoesNotMatchLayout(t *testing.T) {
 		t.Error("accepted audio slot whose MID belongs to the screen block")
 	}
 }
+
+// A reconnecting user can get its new peer_joined before the old peer_left.
+// Removing the old connection must leave the new peer's MID and roster intact.
+func TestRemovePeerKeepsSameUsersNewerConnection(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+		Kind: signaling.MediaKindAudio, Slot: 0, Generation: 1, Mid: 3,
+		PeerID: 10, UserID: 111, Active: true,
+	})
+	a.UpsertRoster(signaling.Member{PeerID: 20, UserID: 111, Role: "speaker"})
+	a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+		Kind: signaling.MediaKindAudio, Slot: 1, Generation: 2, Mid: 4,
+		PeerID: 20, UserID: 111, Active: true,
+	})
+
+	a.ApplyPeerLeft(10, signaling.MediaSlots{})
+	a.RemovePeer(10, 111)
+
+	if _, ok := a.currentInfo("3"); ok {
+		t.Error("old connection's MID still owned after peer_left")
+	}
+	if info, ok := a.currentAudioInfo("4"); !ok || info.PeerID != 20 {
+		t.Fatalf("new connection's audio = (%+v,%v), want playable peer 20", info, ok)
+	}
+	a.mu.Lock()
+	member, ok := a.roster[111]
+	a.mu.Unlock()
+	if !ok || member.PeerID != 20 {
+		t.Fatalf("roster[111] = (%+v,%v), want the newer peer 20", member, ok)
+	}
+
+	a.RemovePeer(20, 111)
+	a.mu.Lock()
+	_, ok = a.roster[111]
+	a.mu.Unlock()
+	if ok {
+		t.Error("roster entry survived its own peer_left")
+	}
+	if _, ok := a.currentInfo("4"); ok {
+		t.Error("MID still owned after its own peer_left")
+	}
+}
+
+// An active-only resend (same peer and generation) must keep the binding:
+// no new revision and no OnTrackEnded, so the participant recording continues.
+func TestDecoupledActiveToggleKeepsBinding(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	var mu sync.Mutex
+	var ended []TrackInfo
+	a.OnTrackEnded = func(info TrackInfo) {
+		mu.Lock()
+		defer mu.Unlock()
+		ended = append(ended, info)
+	}
+	assign := func(active bool) {
+		a.ApplySlotAssigned(signaling.SlotAssignedEvent{
+			Kind: signaling.MediaKindAudio, Slot: 0, Generation: 5, Mid: 3,
+			PeerID: 10, UserID: 111, Active: active,
+		})
+	}
+
+	assign(true)
+	first, ok := a.currentAudioInfo("3")
+	if !ok {
+		t.Fatal("active assignment not playable")
+	}
+	assign(false)
+	if _, ok := a.currentAudioInfo("3"); ok {
+		t.Fatal("inactive resend still playable")
+	}
+	assign(true)
+	again, ok := a.currentAudioInfo("3")
+	if !ok || again.BindingRevision != first.BindingRevision {
+		t.Fatalf("revision after active toggle = %d (ok=%v), want unchanged %d",
+			again.BindingRevision, ok, first.BindingRevision)
+	}
+
+	time.Sleep(20 * time.Millisecond) // let any (incorrect) async OnTrackEnded run
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ended) != 0 {
+		t.Errorf("OnTrackEnded fired %d times for an active-only toggle: %+v", len(ended), ended)
+	}
+}

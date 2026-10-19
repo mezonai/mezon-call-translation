@@ -67,3 +67,44 @@ func TestIsExpectedClose(t *testing.T) {
 		t.Error("non-close error should not be an expected close")
 	}
 }
+
+func TestServerErrorReconnectPolicy(t *testing.T) {
+	tests := []struct {
+		message   string
+		permanent bool
+	}{
+		{"unsupported_media_pool_version", true},
+		// Action-level errors (sfu guide section 11) must not end the session.
+		{"camera_capacity_full", false},
+		{"screen_share_capacity_full", false},
+		{"invalid_camera_active", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.message, func(t *testing.T) {
+			err := fmt.Errorf("signaling: dispatch: %w", &ServerError{Message: tt.message})
+			var serverErr *ServerError
+			if !errors.As(err, &serverErr) || serverErr.Permanent() != tt.permanent {
+				t.Fatalf("Permanent(%q) = %v, want %v", tt.message, serverErr != nil && serverErr.Permanent(), tt.permanent)
+			}
+			if got := ShouldReconnect(err); got == tt.permanent {
+				t.Errorf("ShouldReconnect(%q) = %v, want %v", tt.message, got, !tt.permanent)
+			}
+			if IsExpectedClose(err) {
+				t.Errorf("server error %q must not count as a graceful close", tt.message)
+			}
+		})
+	}
+}
+
+func TestDispatchErrorMessageReturnsServerError(t *testing.T) {
+	c := &Client{}
+	err := c.dispatch("error", []byte(`{"type":"error","message":"unsupported_media_pool_version"}`))
+	var serverErr *ServerError
+	if !errors.As(err, &serverErr) {
+		t.Fatalf("dispatch(error) = %v, want *ServerError", err)
+	}
+	if serverErr.Message != "unsupported_media_pool_version" || !serverErr.Permanent() {
+		t.Fatalf("server error = %+v", serverErr)
+	}
+}
