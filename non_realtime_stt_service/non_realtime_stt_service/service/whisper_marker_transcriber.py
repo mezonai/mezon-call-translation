@@ -36,9 +36,13 @@ VAD_MIN_SILENCE_DURATION_MS = 1000
 VAD_SPEECH_PAD_MS = 250
 
 MARKER_TEXT = "dau moc hong ngoc"
-MARKER_GAIN_DB = -5.0
-MARKER_GUARD_S = 0.1
+MARKER_GAIN_DB = 0.0
+MARKER_GUARD_S = 0.25
 MARKER_MAX_TOKEN_EDIT_DISTANCE = 1
+MARKER_PREFIX_VARIANTS = {
+    "dau", "moc", "muc", "giong", "bon", "buc", "giu", "mau",
+    "doc", "thoc", "loc", "bac", "mo", "boc", "nhoc", "coc", "ngoc", "ok", "ru",
+}
 HALLUCINATION_BLACKLIST = (
     "hay subscribe cho kenh ghien mi go de khong bo lo nhung video hap dan",
     "de khong bo lo nhung video hap dan",
@@ -128,7 +132,7 @@ def trim_marker(marker: np.ndarray) -> np.ndarray:
     active = np.flatnonzero(rms >= 10 ** (-45 / 20))
     if not len(active):
         raise ValueError("Marker has no detectable speech")
-    padding = round(0.01 * WHISPER_SAMPLE_RATE)
+    padding = round(0.08 * WHISPER_SAMPLE_RATE)
     start = max(0, active[0] * frame_samples - padding)
     end = min(len(marker), (active[-1] + 1) * frame_samples + padding)
     gain = 10 ** (MARKER_GAIN_DB / 20)
@@ -244,25 +248,62 @@ def aligned_marker_indexes(candidate: list[str], expected: list[str]) -> list[in
 def marker_matches(tokens: list[dict]) -> list[dict]:
     expected = normalize_tokens(MARKER_TEXT)
     normalized = [normalize_tokens(token["text"]) for token in tokens]
+    words = [item[0] if item else "" for item in normalized]
     matches = []
+
+    # 1. Edit Distance Matching (chuẩn hóa trên cửa sổ expected +/- 1)
     for index in range(len(tokens)):
         for width in range(len(expected) - 1, len(expected) + 2):
             if index + width > len(tokens):
                 continue
-            candidate = [
-                item[0] if len(item) == 1 else ""
-                for item in normalized[index : index + width]
-            ]
+            candidate = words[index : index + width]
             distance = token_edit_distance(candidate, expected)
             if distance <= MARKER_MAX_TOKEN_EDIT_DISTANCE:
                 aligned = aligned_marker_indexes(candidate, expected)
-                matches.append(
-                    {
-                        "start": index + aligned[0],
-                        "end": index + aligned[-1] + 1,
-                        "exact": distance == 0,
-                    }
-                )
+                if aligned:
+                    matches.append(
+                        {
+                            "start": index + aligned[0],
+                            "end": index + aligned[-1] + 1,
+                            "exact": distance == 0,
+                        }
+                    )
+
+    # 2. Anchor Keyword Matching (Nhận diện cặp từ neo cốt lõi 'hong', 'ngoc')
+    # Bắt triệt để các biến thể model nghe sai tiền tố: "múc hồng ngọc", "giữ mức hồng ngọc", "hồng ngọc", v.v.
+    for k in range(len(words) - 1):
+        if words[k] == "hong" and words[k + 1] == "ngoc":
+            start_index = k
+            if (
+                k >= 2
+                and words[k - 1] in MARKER_PREFIX_VARIANTS
+                and words[k - 2] in MARKER_PREFIX_VARIANTS
+            ):
+                start_index = k - 2
+            elif k >= 1 and words[k - 1] in MARKER_PREFIX_VARIANTS:
+                start_index = k - 1
+            candidate_span = words[start_index : k + 2]
+            matches.append(
+                {
+                    "start": start_index,
+                    "end": k + 2,
+                    "exact": candidate_span == expected,
+                }
+            )
+
+    # 3. Prefix-Only Matching (Nhận diện cụm tiền tố 'dau moc' / 'dau muc' khi bị nuốt mất đuôi)
+    for k in range(len(words) - 1):
+        if words[k] == "dau" and words[k + 1] in {"moc", "muc"}:
+            if k + 2 < len(words) and words[k + 2] == "hong":
+                continue  # Đã được Anchor Matching ở trên xử lý
+            matches.append(
+                {
+                    "start": k,
+                    "end": k + 2,
+                    "exact": False,
+                }
+            )
+
     return matches
 
 
@@ -378,8 +419,24 @@ def partition_tokens(
     tokens: list[dict],
     children: list[dict],
     decoder_boundaries: list[int],
-) -> list[list[dict]]:
+) -> list[list[dict]] | None:
     matches = select_marker_matches(tokens)
+    expected_markers = len(children) - 1
+
+    # SAFE-GUARD (P0):
+    # If the chunk has multiple children, exactly (len(children) - 1) markers were
+    # injected into the audio stream. If fewer markers are detected, at least one
+    # marker audio was not recognized and will not be removed, leaking into clean_tokens.
+    # Return None so iter_segments can fall back safely to clean per-child transcription.
+    if expected_markers > 0 and len(matches) < expected_markers:
+        logger.warning(
+            "Marker alignment rejected: expected %d markers, but detected %d. "
+            "Rejecting chunk partition to avoid leaking marker text into transcript.",
+            expected_markers,
+            len(matches),
+        )
+        return None
+
     removed_indexes = {
         index for match in matches for index in range(match["start"], match["end"])
     }
@@ -424,6 +481,8 @@ def resolved_slots(
     if not tokens:
         return None
     slots = partition_tokens(tokens, children, decoder_boundaries or [])
+    if slots is None:
+        return None
     return slots if any(slots) else None
 
 
@@ -509,10 +568,10 @@ class MarkerWhisperTranscriber:
             temperature=self._temperature,
             condition_on_previous_text=False,
             compression_ratio_threshold=2.4,
-            repetition_penalty=1.2,
+            repetition_penalty=1.0,
             log_prob_threshold=-1.0,
             no_speech_threshold=0.6,
-            without_timestamps=True,
+            without_timestamps=False,
             word_timestamps=False,
             vad_filter=False,
         )
@@ -576,26 +635,19 @@ class MarkerWhisperTranscriber:
             logger.debug("Chunk %d - Whisper raw result: %r", chunk_idx, whisper_text)
                 
             slots = resolved_slots(whisper_tokens, chunk["children"], decoder_boundaries)
-            
+
             if slots is None:
-                logger.warning("Chunk %d - Whisper marker alignment failed! Falling back to Gipformer (Chunk-level)", chunk_idx)
-                    
-                gipformer_tokens = self._transcribe_with_gipformer(chunk["audio"])
-                gipformer_text = " ".join(t["text"] for t in gipformer_tokens)
-                logger.info("Chunk %d - Gipformer chunk result: %r", chunk_idx, gipformer_text)
-                    
-                slots = resolved_slots(gipformer_tokens, chunk["children"])
-                
-            if slots is None:
-                logger.warning("Chunk %d - Gipformer chunk marker alignment failed! Falling back to Gipformer (Per-child)", chunk_idx)
-                    
+                logger.warning(
+                    "Chunk %d - Whisper marker alignment failed! Falling back directly to clean audio (Per-child)",
+                    chunk_idx,
+                )
                 slots = self._transcribe_children_with_gipformer(
                     prepared.audio,
                     chunk["children"],
                 )
                 child_texts = [" ".join(t["text"] for t in slot) for slot in slots]
                 logger.info("Chunk %d - Gipformer per-child result: %r", chunk_idx, child_texts)
-                    
+
             for child, slot in zip(chunk["children"], slots):
                 text = " ".join(token["text"] for token in slot).strip()
                 if text:
