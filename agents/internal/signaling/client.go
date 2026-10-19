@@ -3,6 +3,7 @@ package signaling
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -96,10 +97,8 @@ type Client struct {
 	writeMu sync.Mutex
 }
 
-// Dial connects and completes the join handshake up through the first
-// `room_snapshot` (i.e. steps 3-6 of mezon-sfu-migration-checklist.md C.2).
-// cb must be fully populated before calling Dial since OnOffer/OnJoined can
-// fire before Dial returns.
+// Dial connects and sends join. Run processes the handshake and callbacks;
+// a successful Dial alone does not mean the SFU accepted the join.
 func Dial(ctx context.Context, wsURL, token string, role string, cb Callbacks) (*Client, error) {
 	// 5s: guards against mezon-sfu/network being slow, not genuinely
 	// necessary work -- a local WS handshake normally completes in well
@@ -117,7 +116,7 @@ func Dial(ctx context.Context, wsURL, token string, role string, cb Callbacks) (
 
 	c := &Client{conn: conn, cb: cb}
 
-	join := joinMsg{Type: "join", Token: token, Role: role, MediaPoolVersion: 1}
+	join := newJoinMsg(token, role)
 	if err := c.send(join); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("signaling: send join: %w", err)
@@ -129,9 +128,14 @@ func Dial(ctx context.Context, wsURL, token string, role string, cb Callbacks) (
 // Run blocks reading and dispatching server messages until the connection
 // closes or ctx is cancelled. It returns the terminal error, if any.
 func (c *Client) Run(ctx context.Context) error {
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		<-ctx.Done()
-		_ = c.conn.Close()
+		select {
+		case <-ctx.Done():
+			_ = c.conn.Close()
+		case <-done:
+		}
 	}()
 
 	for {
@@ -150,6 +154,10 @@ func (c *Client) Run(ctx context.Context) error {
 		}
 
 		if err := c.dispatch(msgType, raw); err != nil {
+			var serverErr *ServerError
+			if errors.As(err, &serverErr) && serverErr.Permanent() {
+				return err
+			}
 			logging.L.Error("signaling: handler error", append(logging.ErrAttrs(err), "type", msgType)...)
 		}
 	}
@@ -284,7 +292,7 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return fmt.Errorf("decode error message: %w", err)
 		}
-		return fmt.Errorf("server error: %s", m.Message)
+		return &ServerError{Message: m.Message}
 
 	case "role_changed", "visibility_changed", "mute_changed", "screen_share_changed":
 		// Acks for our own state-changing messages; not used by the

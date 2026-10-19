@@ -22,6 +22,10 @@ type joinMsg struct {
 	MediaPoolVersion int    `json:"media_pool_version"`
 }
 
+func newJoinMsg(token, role string) joinMsg {
+	return joinMsg{Type: "join", Token: token, Role: role, MediaPoolVersion: 1}
+}
+
 // answerMsg.OfferGeneration must echo back exactly the value the
 // corresponding offerMsg carried (2026-08-22, mezon-sfu commit 2e01885) --
 // not part of the SDP itself, a sibling JSON field. A mismatch or omission

@@ -157,18 +157,12 @@ type PeerAgent struct {
 	// shouldn't share a lock with anything else handleTrack does.
 	closing atomic.Bool
 
-	// OnAudioPacket and OnTrackEnded, if set, are both invoked from the same
-	// single goroutine: one track's own read loop (see readLoop). That's
-	// deliberate -- it's what lets a consumer (internal/recording.Bridge)
-	// keep a per-track decoder/forwarder pair without any locking of its
-	// own: create-on-first-packet and close-on-end always happen on that
-	// one goroutine, back-to-back, never concurrently with each other for
-	// the same track. Different tracks run on different goroutines, so a
-	// consumer touching shared state across tracks (e.g. a map keyed by
-	// mid) still needs its own lock for that map -- just not per-entry.
+	// OnAudioPacket runs on each track's read loop. Different MIDs may run
+	// concurrently, including during a participant's slot move.
 	OnAudioPacket func(info TrackInfo, pkt *rtp.Packet)
-	// OnTrackEnded fires once, when a track's RTP read loop exits (pion
-	// signals the track ended, or the PeerConnection closed).
+	// OnTrackEnded retires a binding on slot release/reassignment (async),
+	// or when the RTP read loop exits. Consumers must tolerate duplicate and
+	// delayed notifications. In decoupled rooms it does NOT mean peer_left.
 	OnTrackEnded func(info TrackInfo)
 }
 
@@ -374,14 +368,16 @@ func (a *PeerAgent) UpsertRoster(m signaling.Member) {
 	a.roster[m.UserID] = m
 }
 
-// RemovePeer drops the roster entry and any midTable entries for a user_id
-// that left. Wired to signaling.Callbacks.OnPeerLeft.
-func (a *PeerAgent) RemovePeer(userID int64) {
+// RemovePeer removes only the departed connection. A newer peer may already
+// occupy the same user's roster entry when the old peer_left arrives.
+func (a *PeerAgent) RemovePeer(peerID uint64, userID int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	delete(a.roster, userID)
+	if member, ok := a.roster[userID]; ok && member.PeerID == peerID {
+		delete(a.roster, userID)
+	}
 	for mid, info := range a.midTable {
-		if info.UserID == userID {
+		if info.PeerID == peerID {
 			delete(a.midTable, mid)
 			delete(a.activeMids, mid)
 		}
@@ -624,14 +620,13 @@ func (a *PeerAgent) applyDecoupledAssignment(ev signaling.SlotAssignedEvent, fro
 	}
 
 	midKey := strconv.FormatUint(uint64(ev.Mid), 10)
-	if ev.Kind == signaling.MediaKindAudio && prev.assigned &&
-		(prev.peerID != ev.PeerID || (prev.active && !ev.Active)) {
+	if ev.Kind == signaling.MediaKindAudio && prev.assigned && prev.peerID != ev.PeerID {
 		ended, shouldEnd = a.midTable[midKey]
 	}
 
 	revision := prev.revision
 	if !exists || !prev.assigned || prev.generation != ev.Generation ||
-		prev.peerID != ev.PeerID || prev.active != ev.Active {
+		prev.peerID != ev.PeerID {
 		a.nextBindingRevision++
 		revision = a.nextBindingRevision
 	}
