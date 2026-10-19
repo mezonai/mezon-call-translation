@@ -5,17 +5,24 @@ import (
 	"testing"
 )
 
+// Dial sends newJoinMsg for every role; decoupled rooms reject a join
+// without media_pool_version 1.
 func TestJoinAlwaysAdvertisesMediaPoolVersion(t *testing.T) {
-	raw, err := json.Marshal(joinMsg{Type: "join", Token: "token", Role: "audience", MediaPoolVersion: 1})
-	if err != nil {
-		t.Fatalf("marshal join: %v", err)
-	}
-	var got map[string]any
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("decode join: %v", err)
-	}
-	if got["media_pool_version"] != float64(1) {
-		t.Fatalf("media_pool_version = %v, want 1", got["media_pool_version"])
+	for _, role := range []string{"speaker", "audience", ""} {
+		raw, err := json.Marshal(newJoinMsg("token", role))
+		if err != nil {
+			t.Fatalf("marshal join: %v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("decode join: %v", err)
+		}
+		if got["type"] != "join" || got["token"] != "token" {
+			t.Fatalf("role %q: join = %v", role, got)
+		}
+		if got["media_pool_version"] != float64(1) {
+			t.Fatalf("role %q: media_pool_version = %v, want 1", role, got["media_pool_version"])
+		}
 	}
 }
 
