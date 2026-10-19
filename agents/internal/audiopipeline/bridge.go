@@ -68,8 +68,11 @@ type session struct {
 	sttSink Sink // nil unless STT is currently enabled for this track
 }
 
-// Bridge owns one session per audio track, keyed by mid.
+// Bridge owns legacy MID sessions or decoupled participant sessions.
 type Bridge struct {
+	// Decoupled rooms keep participant sinks across slot release/reassignment.
+	// The legacy path below retains its existing track-based lifecycle.
+	participants *participantBridge
 	// newRecordSink/newSTTSink build a fresh Sink for a newly-seen track;
 	// either may be nil to disable that consumer entirely (e.g.
 	// newRecordSink is nil if dialing record-service failed at startup).
@@ -142,6 +145,12 @@ func (r *recordTimeline) run() {
 }
 
 func (r *recordTimeline) sendAllPcm(pcm []byte, rtpTimestamp uint32, now time.Time) {
+	r.sendPCM(pcm, rtpTimestamp, now, false)
+}
+
+// A new binding can have an unrelated RTP clock. Use elapsed arrival time
+// only across that boundary; preserve RTP timing within a binding.
+func (r *recordTimeline) sendPCM(pcm []byte, rtpTimestamp uint32, now time.Time, newBinding bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -155,7 +164,13 @@ func (r *recordTimeline) sendAllPcm(pcm []byte, rtpTimestamp uint32, now time.Ti
 	}
 	packetRTPTicks := uint32(uint64(sampleCount) * opusRTPClockRate / PCMSampleRate)
 
-	if r.initialized {
+	if r.initialized && newBinding {
+		previousSamples := int64(r.lastPacketRTPTicks) * PCMSampleRate / opusRTPClockRate
+		gap := durationToPCMSamples(now.Sub(r.lastRTPAt)) - previousSamples
+		if remaining := gap - r.paddedSamplesSinceLastRTP; remaining > 0 {
+			r.sendSilenceSamplesLocked(remaining)
+		}
+	} else if r.initialized {
 		endOfLastPacket := r.lastRTPTimestamp + r.lastPacketRTPTicks
 		// Converting the modular uint32 subtraction to int32 gives the usual
 		// RTP serial-number ordering for differences below half the timestamp
@@ -274,8 +289,12 @@ func (r *recordTimeline) close(now time.Time) {
 // HandlePacket decodes one Opus RTP packet and fans the PCM out to whatever
 // sinks this track has. Starts a new session (decoder + record-service
 // sink, and an STT sink if currently enabled) on the first packet for a
-// given mid.
+// given mid in legacy mode, or participant in decoupled mode.
 func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
+	if b.participants != nil {
+		b.participants.handlePacket(info, pkt)
+		return
+	}
 	s := b.sessionFor(info)
 	if s == nil {
 		return
@@ -300,8 +319,13 @@ func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 	}
 }
 
-// HandleTrackEnded closes every sink for a track and forgets its session.
+// HandleTrackEnded closes a legacy track session. In decoupled rooms it
+// only retires the decoder binding; sinks survive until peer/session end.
 func (b *Bridge) HandleTrackEnded(info rtcagent.TrackInfo) {
+	if b.participants != nil {
+		b.participants.endBinding(info)
+		return
+	}
 	b.mu.Lock()
 	s, ok := b.sessions[info.Mid]
 	if ok && ((info.PeerID != 0 && s.info.PeerID != info.PeerID) ||
@@ -343,6 +367,10 @@ func (b *Bridge) finalizeSession(s *session) {
 // start/stop_transcription_for_all: disabled by default, and toggling
 // affects tracks already flowing, not just future ones.
 func (b *Bridge) SetSTTEnabled(enabled bool) {
+	if b.participants != nil {
+		b.participants.setSTTEnabled(enabled)
+		return
+	}
 	b.sttEnabled.Store(enabled)
 
 	b.mu.Lock()
@@ -407,11 +435,9 @@ func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 			b.mu.Unlock()
 			return s
 		}
-		// mezon-sfu reassigned this mid's slot to a different peer or a new
-		// decoupled binding revision without renegotiating the SDP (fixed-pool
-		// PR #475 and the decoupled media-pool protocol). The
-		// config max_active_speakers > 0 -- see
-		// rtcagent.PeerAgent.ApplySlotAssigned's doc). Same mid, same
+		// The legacy fixed pool reassigned this MID without renegotiating
+		// SDP (PR #475, max_active_speakers > 0). See
+		// rtcagent.PeerAgent.ApplySlotAssigned. Same mid, same
 		// transceiver/SSRC throughout, so this PeerID mismatch on an
 		// already-live session is the only point that ever learns the
 		// occupant changed. Finalize the outgoing peer's session before

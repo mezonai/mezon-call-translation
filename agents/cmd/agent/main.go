@@ -455,9 +455,10 @@ type session struct {
 	// session (retrying into an empty room makes no sense).
 	stop context.CancelFunc
 
-	peerAgent *rtcagent.PeerAgent
-	bridge    *audiopipeline.Bridge
-	player    *ttsplayer.Player
+	peerAgent  *rtcagent.PeerAgent
+	bridge     *audiopipeline.Bridge
+	mediaEpoch int // advances on each joined, including an in-place rejoin
+	player     *ttsplayer.Player
 
 	// emptyRoomTimer: see checkEmptyRoom's doc. nil whenever the room isn't
 	// currently down to just this agent.
@@ -483,6 +484,7 @@ func (s *session) callbacks() signaling.Callbacks {
 }
 
 func (s *session) onJoined(ev signaling.JoinedEvent) {
+	s.mediaEpoch++
 	logging.L.Info("signaling: joined", "room", ev.Room, "ice_servers", len(ev.ICEServers),
 		"media_pool_version", ev.MediaPool.Version, "media_pool_mode", ev.MediaPool.Mode, "max_audio_slots", ev.MediaPool.MaxAudioSlots,
 		"max_camera_slots", ev.MediaPool.MaxCameraSlots, "max_screen_slots", ev.MediaPool.MaxScreenSlots)
@@ -493,6 +495,9 @@ func (s *session) onJoined(ev signaling.JoinedEvent) {
 	if s.peerAgent != nil {
 		_ = s.peerAgent.Close()
 		s.peerAgent = nil
+	}
+	if s.bridge != nil {
+		s.bridge.Close()
 	}
 	if s.player != nil {
 		s.player.Close()
@@ -547,7 +552,7 @@ func (s *session) onJoined(ev signaling.JoinedEvent) {
 	// this run (see tracksink's constructors); newRecordSink/newSTTSink must
 	// stay nil funcs (not a method value bound to a nil receiver) in that
 	// case -- Bridge nil-checks the func itself before calling it.
-	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID, s.conn)
+	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID, s.conn, s.mediaEpoch)
 	sttFactory := tracksink.NewSTTSinkFactory(s.cfg, s.orch)
 	var newRecordSink, newSTTSink func(info rtcagent.TrackInfo) audiopipeline.Sink
 	if recordFactory != nil {
@@ -558,6 +563,9 @@ func (s *session) onJoined(ev signaling.JoinedEvent) {
 	}
 
 	bridge := audiopipeline.NewBridge(newRecordSink, newSTTSink)
+	if ev.MediaPool.IsDecoupled() {
+		bridge = audiopipeline.NewDecoupledBridge(newRecordSink, newSTTSink)
+	}
 	pa.OnAudioPacket = bridge.HandlePacket
 	pa.OnTrackEnded = bridge.HandleTrackEnded
 
@@ -674,7 +682,10 @@ func (s *session) onPeerLeft(ev signaling.PeerLeftEvent) {
 	s.checkEmptyRoom(ev.ParticipantCount)
 	if s.peerAgent != nil {
 		s.peerAgent.ApplyPeerLeft(ev.PeerID, ev.MediaSlots)
-		s.peerAgent.RemovePeer(ev.UserID)
+		s.peerAgent.RemovePeer(ev.PeerID, ev.UserID)
+	}
+	if s.bridge != nil {
+		s.bridge.HandlePeerEnded(ev.PeerID)
 	}
 }
 
@@ -738,19 +749,13 @@ func (s *session) upsertPeer(peer signaling.Member) {
 		return
 	}
 	s.peerAgent.UpsertRoster(peer)
-	// Defensive bootstrap for a fixed-pool slot this agent didn't witness
-	// get assigned (e.g. already occupied before this agent joined/
-	// reconnected) -- see ApplyMemberSlot's doc. A no-op for non-fixed-pool
-	// rooms and for peer_updated (neither ever carries a nonzero
-	// AssignmentGeneration).
+	// Bootstrap legacy or decoupled slots already owned by this member.
+	// peer_updated uses UpsertRoster directly and does not change ownership.
 	s.peerAgent.ApplyMemberSlot(peer)
 }
 
-// onSlotAssigned/onSlotReleased: only sent by mezon-sfu when this session is
-// in "fixed pool" mode (PR #475, server config max_active_speakers > 0) --
-// see signaling.SlotAssignedEvent's doc and rtcagent.PeerAgent.ApplySlotAssigned's
-// doc for why these, not room_snapshot/peer_joined/peer_updated, are the
-// only signal that a mid's content now belongs to a different peer.
+// Slot events update ownership without recreating the WebRTC track. Legacy
+// messages contain three MIDs; decoupled messages identify a media kind.
 func (s *session) onSlotAssigned(ev signaling.SlotAssignedEvent) {
 	logging.L.Info("signaling: slot_assigned", "kind", ev.Kind, "slot", ev.Slot, "generation", ev.Generation,
 		"user_id", ev.UserID, "peer_id", ev.PeerID, "mid", ev.Mid, "mid_audio", ev.MidAudio, "active", ev.Active)
@@ -825,6 +830,9 @@ func (s *session) close() {
 	s.refs.setSignalingClient(nil)
 	if s.peerAgent != nil {
 		_ = s.peerAgent.Close()
+	}
+	if s.bridge != nil {
+		s.bridge.Close()
 	}
 	if s.player != nil {
 		s.player.Close()
