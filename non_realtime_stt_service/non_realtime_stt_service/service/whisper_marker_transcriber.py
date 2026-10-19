@@ -251,7 +251,7 @@ def marker_matches(tokens: list[dict]) -> list[dict]:
     words = [item[0] if item else "" for item in normalized]
     matches = []
 
-    # 1. Edit Distance Matching (chuẩn hóa trên cửa sổ expected +/- 1)
+    # 1. Edit distance matching (normalized over sliding window of expected length +/- 1)
     for index in range(len(tokens)):
         for width in range(len(expected) - 1, len(expected) + 2):
             if index + width > len(tokens):
@@ -269,8 +269,8 @@ def marker_matches(tokens: list[dict]) -> list[dict]:
                         }
                     )
 
-    # 2. Anchor Keyword Matching (Nhận diện cặp từ neo cốt lõi 'hong', 'ngoc')
-    # Bắt triệt để các biến thể model nghe sai tiền tố: "múc hồng ngọc", "giữ mức hồng ngọc", "hồng ngọc", v.v.
+    # 2. Anchor keyword matching (detect core anchor bigram 'hong', 'ngoc')
+    # Catches acoustic misrecognitions of prefix variants: "muc hong ngoc", "giu muc hong ngoc", "hong ngoc", etc.
     for k in range(len(words) - 1):
         if words[k] == "hong" and words[k + 1] == "ngoc":
             start_index = k
@@ -291,11 +291,11 @@ def marker_matches(tokens: list[dict]) -> list[dict]:
                 }
             )
 
-    # 3. Prefix-Only Matching (Nhận diện cụm tiền tố 'dau moc' / 'dau muc' khi bị nuốt mất đuôi)
+    # 3. Prefix-only matching (detect prefix phrase 'dau moc' / 'dau muc' when tail is swallowed)
     for k in range(len(words) - 1):
         if words[k] == "dau" and words[k + 1] in {"moc", "muc"}:
             if k + 2 < len(words) and words[k + 2] == "hong":
-                continue  # Đã được Anchor Matching ở trên xử lý
+                continue  # Already handled by anchor keyword matching above
             matches.append(
                 {
                     "start": k,
