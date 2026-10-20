@@ -16,3 +16,15 @@ func TestRecordTrackIDDiffersAcrossConnections(t *testing.T) {
 		t.Errorf("first = %q, want peer3-mic-c1", first)
 	}
 }
+
+func TestRecordTrackIDDiffersAcrossJoinedEpochs(t *testing.T) {
+	first := RecordTrackID(3, rtcagent.KindAudio, 1, 1)
+	second := RecordTrackID(3, rtcagent.KindAudio, 1, 2)
+	third := RecordTrackID(3, rtcagent.KindAudio, 1, 3)
+	if first != RecordTrackID(3, rtcagent.KindAudio, 1) {
+		t.Fatal("first joined must retain the existing recording ID format")
+	}
+	if first == second || second == third || first == third {
+		t.Fatal("a new joined on the same connection must not reuse recording IDs")
+	}
+}

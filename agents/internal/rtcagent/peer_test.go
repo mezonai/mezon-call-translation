@@ -549,3 +549,76 @@ func TestDecoupledRejectsMIDThatDoesNotMatchLayout(t *testing.T) {
 		t.Error("accepted audio slot whose MID belongs to the screen block")
 	}
 }
+
+func TestDecoupledActiveUpdatesPreserveBindingRevision(t *testing.T) {
+	a := newDecoupledTestPeerAgent(t)
+	ended := make(chan TrackInfo, 10)
+	a.OnTrackEnded = func(info TrackInfo) { ended <- info }
+	ev := signaling.SlotAssignedEvent{
+		Kind: signaling.MediaKindAudio, Slot: 0, Generation: 12, Mid: 3,
+		PeerID: 10, UserID: 111, Active: true,
+	}
+	a.ApplySlotAssigned(ev)
+	first, _ := a.currentInfo("3")
+	for _, active := range []bool{false, true, false, true} {
+		ev.Active = active
+		a.ApplySlotAssigned(ev)
+		got, ok := a.currentInfo("3")
+		if !ok || got.BindingRevision != first.BindingRevision {
+			t.Fatalf("active=%v changed binding: before=%+v after=%+v", active, first, got)
+		}
+		if _, playable := a.currentAudioInfo("3"); playable != active {
+			t.Fatalf("playable=%v, want active=%v", playable, active)
+		}
+	}
+	select {
+	case info := <-ended:
+		t.Fatalf("active-only update retired binding: %+v", info)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestPeerLeftPreservesReconnectedPeerWithSameUser(t *testing.T) {
+	for _, decoupled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "legacy", true: "decoupled"}[decoupled], func(t *testing.T) {
+			var a *PeerAgent
+			if decoupled {
+				a = newDecoupledTestPeerAgent(t)
+			} else {
+				a = newTestPeerAgent(t)
+			}
+			old := signaling.Member{PeerID: 10, UserID: 111, Slot: 0, AssignmentGeneration: 1,
+				MidAudio: 3, MidVideo: 4, MidScreen: 5,
+				MediaSlots: signaling.MediaSlots{Audio: &signaling.MediaSlot{Slot: 0, Generation: 1, Mid: 3}}}
+			newPeer := old
+			newPeer.PeerID, newPeer.AssignmentGeneration = 20, 2
+			newPeer.MediaSlots = signaling.MediaSlots{Audio: &signaling.MediaSlot{Slot: 0, Generation: 2, Mid: 3}}
+			for _, peer := range []signaling.Member{old, newPeer} {
+				a.UpsertRoster(peer)
+				a.ApplyMemberSlot(peer)
+			}
+			// Exactly the main callback sequence: old peer_left follows new peer_joined.
+			a.ApplyPeerLeft(old.PeerID, old.MediaSlots)
+			a.RemovePeer(old.PeerID, old.UserID)
+			if got, ok := a.currentInfo("3"); !ok || got.PeerID != newPeer.PeerID {
+				t.Fatalf("old peer_left erased new owner: %+v, ok=%v", got, ok)
+			}
+			if got := a.roster[newPeer.UserID]; got.PeerID != newPeer.PeerID {
+				t.Fatalf("old peer_left erased new roster: %+v", got)
+			}
+			if decoupled {
+				if _, ok := a.currentAudioInfo("3"); !ok {
+					t.Fatal("new peer lost active audio mapping")
+				}
+			}
+			a.ApplyPeerLeft(newPeer.PeerID, newPeer.MediaSlots)
+			a.RemovePeer(newPeer.PeerID, newPeer.UserID)
+			if _, ok := a.currentInfo("3"); ok {
+				t.Fatal("actual departing peer still owns MID")
+			}
+			if _, ok := a.roster[newPeer.UserID]; ok {
+				t.Fatal("actual departing peer still in roster")
+			}
+		})
+	}
+}

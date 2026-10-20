@@ -6,7 +6,7 @@ import (
 )
 
 func TestJoinAlwaysAdvertisesMediaPoolVersion(t *testing.T) {
-	raw, err := json.Marshal(joinMsg{Type: "join", Token: "token", Role: "audience", MediaPoolVersion: 1})
+	raw, err := json.Marshal(newJoinMsg("token", "audience"))
 	if err != nil {
 		t.Fatalf("marshal join: %v", err)
 	}
