@@ -34,7 +34,7 @@ const (
 	// Opus packet at 120ms; at 16kHz mono that's 1920 samples.
 	maxSamplesPerPacket = 1920
 	recordSilenceTick   = 100 * time.Millisecond
-	rtpActivityGrace    = 70 * time.Millisecond
+	rtpActivityGrace    = 200 * time.Millisecond
 	maxSilenceChunk     = 2 * time.Second
 	// WebRTC Opus RTP timestamps always use a 48kHz media clock, even though
 	// this pipeline decodes packets to 16kHz PCM before forwarding them.
@@ -185,7 +185,7 @@ func (r *recordTimeline) sendPCM(pcm []byte, rtpTimestamp uint32, now time.Time,
 				// The ticker committed farther than the subsequently observed RTP
 				// media gap. An append-only PCM stream cannot retract those bytes;
 				// retain real audio and make the grace-window violation visible.
-				logging.L.Warn("audiopipeline: To much silence padding",
+				logging.L.Warn("audiopipeline: Too much silence padding",
 					"rtp_timestamp", rtpTimestamp,
 					"end_of_last_packet", endOfLastPacket,
 					"required_silence_samples", requiredSilenceSamples,
