@@ -23,10 +23,16 @@ class AudioConfig:
 @dataclass
 class STTConfig:
     """Speech-to-Text configuration."""
+    model: str = "NEMOTRON"
     nemotron_model_path: str = "nemotron-3.5-asr-streaming-0.6b-onnx-int4"
     nemotron_language_id: int = 0
     nemotron_vad_threshold: float = 0.3
     nemotron_vad_silence_duration_ms: int = 1200
+    vosk_model_path: str = "vosk-model-small-en-us-0.15"
+    vosk_min_chunks: int = 2
+    vosk_max_chunks: int = 4
+    vosk_min_time_threshold: float = 0.1
+    vosk_max_time_threshold: float = 0.2
     min_chunks: int = 2  # Process after just 1 chunk
     max_chunks: int = 4  # Reduced from 8 to be more responsive
     min_time_threshold: float = 0.1  # 50ms - very responsive
@@ -122,11 +128,25 @@ class ConfigManager:
         config.audio.channels = int(os.getenv("CHANNELS", config.audio.channels))
         
         # STT configuration
+        config.stt.model = os.getenv("MODEL", config.stt.model).strip().upper()
+        if config.stt.model not in {"NEMOTRON", "VOSK"}:
+            raise ValueError(
+                f"Unsupported MODEL={config.stt.model!r}. Expected 'NEMOTRON' or 'VOSK'."
+            )
         config.stt.nemotron_model_path = os.getenv("NEMOTRON_MODEL_PATH", config.stt.nemotron_model_path)
         config.stt.nemotron_language_id = int(os.getenv("NEMOTRON_LANGUAGE_ID", config.stt.nemotron_language_id))
         config.stt.nemotron_vad_threshold = float(os.getenv("NEMOTRON_VAD_THRESHOLD", config.stt.nemotron_vad_threshold))
         config.stt.nemotron_vad_silence_duration_ms = int(
             os.getenv("NEMOTRON_VAD_SILENCE_DURATION_MS", config.stt.nemotron_vad_silence_duration_ms)
+        )
+        config.stt.vosk_model_path = os.getenv("VOSK_MODEL_PATH", config.stt.vosk_model_path)
+        config.stt.vosk_min_chunks = int(os.getenv("VOSK_MIN_CHUNKS", config.stt.vosk_min_chunks))
+        config.stt.vosk_max_chunks = int(os.getenv("VOSK_MAX_CHUNKS", config.stt.vosk_max_chunks))
+        config.stt.vosk_min_time_threshold = float(
+            os.getenv("VOSK_MIN_TIME_THRESHOLD", config.stt.vosk_min_time_threshold)
+        )
+        config.stt.vosk_max_time_threshold = float(
+            os.getenv("VOSK_MAX_TIME_THRESHOLD", config.stt.vosk_max_time_threshold)
         )
         config.stt.min_chunks = int(os.getenv("NEMOTRON_MIN_CHUNKS", config.stt.min_chunks))
         config.stt.max_chunks = int(os.getenv("NEMOTRON_MAX_CHUNKS", config.stt.max_chunks))
@@ -199,10 +219,16 @@ class ConfigManager:
                 "channels": config.audio.channels
             },
             "stt": {
+                "model": config.stt.model,
                 "nemotron_model_path": config.stt.nemotron_model_path,
                 "nemotron_language_id": config.stt.nemotron_language_id,
                 "nemotron_vad_threshold": config.stt.nemotron_vad_threshold,
                 "nemotron_vad_silence_duration_ms": config.stt.nemotron_vad_silence_duration_ms,
+                "vosk_model_path": config.stt.vosk_model_path,
+                "vosk_min_chunks": config.stt.vosk_min_chunks,
+                "vosk_max_chunks": config.stt.vosk_max_chunks,
+                "vosk_min_time_threshold": config.stt.vosk_min_time_threshold,
+                "vosk_max_time_threshold": config.stt.vosk_max_time_threshold,
                 "min_chunks": config.stt.min_chunks,
                 "max_chunks": config.stt.max_chunks,
                 "min_time_threshold": config.stt.min_time_threshold,

@@ -12,6 +12,7 @@ import numpy as np
 from ..utils.circuit_breaker import get_stt_circuit_breaker
 from ..config import get_config
 from .nemotron_stream import NemotronModel
+from .vosk_stream import VOSK_STOP_WORDS, VoskModel
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,11 @@ class ClientInferencePipeline:
     Each client gets:
     - Dedicated thread for continuous processing
     - Separate audio buffer/queue
-    - Own Nemotron streaming state
+    - Own model-specific streaming state
     - Independent processing state
     """
     
-    def __init__(self, client_id: str, session_id: str, model: NemotronModel,
+    def __init__(self, client_id: str, session_id: str, model: Any,
                  result_callback: Callable[[str, Dict], None], pipeline_manager=None,
                  result_dispatcher=None):  # NEW parameter
         self.client_id = client_id
@@ -67,28 +68,40 @@ class ClientInferencePipeline:
         
         # Get configuration
         self.config = get_config()
-        
-        # Initialize cache-aware Nemotron state (DEDICATED per client).
-        self.nemotron_stream = self.model.create_stream(
-            language_id=self.config.stt.nemotron_language_id,
-            vad_threshold=self.config.stt.nemotron_vad_threshold,
-            vad_silence_duration_ms=self.config.stt.nemotron_vad_silence_duration_ms,
-        )
-        self.model_chunk_samples = self.model.chunk_samples
-        self.model_chunk_bytes = self.model_chunk_samples * 2  # PCM16
+        self.model_type = self.config.stt.model
+        self.nemotron_stream = None
+        self.vosk_stream = None
         self.model_audio_buffer = bytearray()
-        # contains audio already moved from accumulated_chunks, but not yet processed 
+        self.model_chunk_samples = 0
+        self.model_chunk_bytes = 0
 
-        if self.model.sample_rate != self.config.audio.sample_rate:
-            raise ValueError(
-                f"Nemotron sample rate {self.model.sample_rate} does not match "
-                f"configured audio sample rate {self.config.audio.sample_rate}"
+        if self.model_type == "VOSK":
+            if not isinstance(self.model, VoskModel):
+                raise TypeError("MODEL=VOSK requires a VoskModel")
+            self.vosk_stream = self.model.create_stream(self.config.audio.sample_rate)
+            logger.info(f"Created dedicated Vosk recognizer for client {client_id}")
+        else:
+            if not isinstance(self.model, NemotronModel):
+                raise TypeError("MODEL=NEMOTRON requires a NemotronModel")
+            # Initialize cache-aware Nemotron state (DEDICATED per client).
+            self.nemotron_stream = self.model.create_stream(
+                language_id=self.config.stt.nemotron_language_id,
+                vad_threshold=self.config.stt.nemotron_vad_threshold,
+                vad_silence_duration_ms=self.config.stt.nemotron_vad_silence_duration_ms,
             )
+            self.model_chunk_samples = self.model.chunk_samples
+            self.model_chunk_bytes = self.model_chunk_samples * 2  # PCM16
 
-        logger.info(
-            f"Created dedicated Nemotron stream for client {client_id} "
-            f"({self.model_chunk_samples} samples per model block)"
-        )
+            if self.model.sample_rate != self.config.audio.sample_rate:
+                raise ValueError(
+                    f"Nemotron sample rate {self.model.sample_rate} does not match "
+                    f"configured audio sample rate {self.config.audio.sample_rate}"
+                )
+
+            logger.info(
+                f"Created dedicated Nemotron stream for client {client_id} "
+                f"({self.model_chunk_samples} samples per model block)"
+            )
         
         # Pipeline state
         self.state = PipelineState.INITIALIZING
@@ -136,6 +149,8 @@ class ClientInferencePipeline:
         """Get adaptive chunk size based on concurrent clients"""
         if not self.pipeline_manager:
             # Fallback to config default if no pipeline manager
+            if self.model_type == "VOSK":
+                return self.config.stt.vosk_max_chunks
             return self.config.stt.max_chunks
         
         # Get current active client count
@@ -191,7 +206,7 @@ class ClientInferencePipeline:
                     f"   Circuit State: {circuit_state.get('state')}\n"
                     f"   Failure Count: {failure_count}/{self._circuit_breaker.config.failure_threshold}\n"
                     f"   Time Since Last Failure: {time_since_failure:.1f}s\n"
-                    f"   Pipeline Issues: Check Nemotron processing errors, audio format issues, or model problems\n"
+                    f"   Pipeline Issues: Check {self.model_type} processing errors, audio format issues, or model problems\n"
                     f"   ⚠️  This client's audio processing is suspended until circuit recovers"
                 )
                 return False
@@ -308,27 +323,31 @@ class ClientInferencePipeline:
                 logger.error(
                     f"🚫 PIPELINE CIRCUIT BREAKER FAILURE for client {self.client_id}\n"
                     f"   Exception during chunk processing: {type(e).__name__}: {e}\n"
-                    f"   Possible causes: Nemotron processing error, audio format issue, memory error\n"
+                    f"   Possible causes: {self.model_type} processing error, audio format issue, memory error\n"
                     f"   Current failures: {self._circuit_breaker.failure_count + 1}/{self._circuit_breaker.config.failure_threshold}"
                 )
                 self._circuit_breaker.record_failure()
                 raise
     
     def _process_accumulated_chunks(self, pad_to_model_chunk: bool = False):
-        """Process all accumulated chunks; pad_to_model_chunk controls what happens to the final incomplete audio when the client disconnects."""
-        if not self.accumulated_chunks and not (pad_to_model_chunk and self.model_audio_buffer):
+        """Process all accumulated chunks with the selected realtime STT model."""
+        has_nemotron_tail = self.model_type == "NEMOTRON" and bool(self.model_audio_buffer)
+        if not self.accumulated_chunks and not (pad_to_model_chunk and has_nemotron_tail):
             logger.warning(f"Client {self.client_id}: No accumulated chunks to process")
             return
         
         try:
             # Merge all accumulated chunks
             merged_chunk = b''.join(self.accumulated_chunks)
-            chunk_count = len(self.accumulated_chunks)
-            
+
             # Clear accumulator
             self.accumulated_chunks.clear()
             self.accumulated_size = 0
-            
+
+            if self.model_type == "VOSK":
+                self._process_vosk_audio(merged_chunk)
+                return
+
             # The Agent can keep sending short chunks. The model receives only
             # exact 8,960-sample / 560 ms blocks from this second-stage buffer.
             self.model_audio_buffer.extend(merged_chunk)
@@ -356,44 +375,70 @@ class ClientInferencePipeline:
                 start_time = time.time()
                 text, is_final = self.nemotron_stream.process(samples)
                 processing_ms = (time.time() - start_time) * 1000
-
-                chunk_size = len(model_block)
-                duration_ms = (chunk_size * 1000) / (self.config.audio.sample_rate * 2)
-                logger.debug(
-                    f"Client {self.client_id} | Chunk Size: {chunk_size} bytes | "
-                    f"Duration: {duration_ms:.2f} ms | Processing: {processing_ms:.2f} ms | buffer audio: {self.audio_queue.qsize()}"
-                )
-                if processing_ms > duration_ms:
-                    logger.warning(
-                        f"Client {self.client_id}: Audio processing time exceeded chunk duration! "
-                        f"{processing_ms:.2f} ms > {duration_ms:.2f} ms"
-                    )
-
-                text = text.strip()
-                if not text:
-                    continue
-
-                result_payload = {
-                    "text": text,
-                    "is_final": is_final,
-                    "client_id": self.client_id,
-                    "session_id": self.session_id,
-                    "timestamp": time.time()
-                }
-                if self.last_chunk_id is not None:
-                    result_payload["chunk_id"] = self.last_chunk_id
-
-                self._emit_result("transcript", result_payload)
-                if is_final:
-                    logger.info(f"Emitting final result for client {self.client_id}: {text[:50]}...")
-                    self.stats.final_results += 1
-                else:
-                    logger.info(f"Emitting partial result for client {self.client_id}: {text[:50]}...")
-                    self.stats.partial_results += 1
+                self._log_model_processing(len(model_block), processing_ms)
+                self._emit_transcript(text, is_final)
         
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error processing accumulated chunks: {e}", exc_info=True)
             raise
+
+    def _process_vosk_audio(self, pcm16_audio: bytes):
+        """Run the old Vosk AcceptWaveform/Result/PartialResult flow."""
+        if not pcm16_audio:
+            return
+
+        start_time = time.time()
+        text, is_final = self.vosk_stream.process(pcm16_audio)
+        processing_ms = (time.time() - start_time) * 1000
+        self._log_model_processing(len(pcm16_audio), processing_ms)
+
+        # Preserve the old Vosk filler-word filtering behavior. The old flow
+        # also emitted empty partial payloads, so allow_empty remains True here.
+        if text in VOSK_STOP_WORDS:
+            return
+        self._emit_transcript(text, is_final, allow_empty=True)
+
+    def _log_model_processing(self, chunk_size: int, processing_ms: float):
+        """Log the same audio-duration and inference timing used by the old flow."""
+        duration_ms = (chunk_size * 1000) / (self.config.audio.sample_rate * 2)
+        logger.debug(
+            f"Client {self.client_id} | Model: {self.model_type} | Chunk Size: {chunk_size} bytes | "
+            f"Duration: {duration_ms:.2f} ms | Processing: {processing_ms:.2f} ms | "
+            f"buffer audio: {self.audio_queue.qsize()}"
+        )
+        if processing_ms > duration_ms:
+            logger.warning(
+                f"Client {self.client_id}: Audio processing time exceeded chunk duration! "
+                f"{processing_ms:.2f} ms > {duration_ms:.2f} ms"
+            )
+
+    def _emit_transcript(self, text: str, is_final: bool, allow_empty: bool = False):
+        """Emit the shared client payload for either recognition model."""
+        text = text.strip()
+        if not text and not allow_empty:
+            return
+
+        result_payload = {
+            "text": text,
+            "is_final": is_final,
+            "client_id": self.client_id,
+            "session_id": self.session_id,
+            "timestamp": time.time(),
+        }
+        if self.last_chunk_id is not None:
+            result_payload["chunk_id"] = self.last_chunk_id
+
+        self._emit_result("transcript", result_payload)
+        if is_final:
+            logger.info(
+                f"Emitting {self.model_type} final result for client {self.client_id}: {text[:50]}..."
+            )
+            self.stats.final_results += 1
+        else:
+            logger.info(
+                f"Emitting {self.model_type} partial result for client {self.client_id}: {text[:50]}..."
+            )
+            self.stats.partial_results += 1
     
     def _emit_result(self, result_type: str, payload: Dict):
         """Emit processing result using optimized dispatcher (thread-safe)"""
@@ -464,25 +509,21 @@ class ClientInferencePipeline:
         try:
             if self.accumulated_chunks:
                 self._process_accumulated_chunks()
-            if self.model_audio_buffer:
-                # But when a speaker disconnects, the remaining audio might be shorter: eg 300 ms remaining,
-                # Without padding, that audio cannot form a complete 560 ms Nemotron block and would never be transcribed.
-                self._process_accumulated_chunks(pad_to_model_chunk=True)
-            # The padded tail is shorter than the VAD silence window, so the
-            # last utterance would otherwise stay a partial forever.
-            final_text = self.nemotron_stream.flush()
-            if final_text:
-                result_payload = {
-                    "text": final_text,
-                    "is_final": True,
-                    "client_id": self.client_id,
-                    "session_id": self.session_id,
-                    "timestamp": time.time()
-                }
-                if self.last_chunk_id is not None:
-                    result_payload["chunk_id"] = self.last_chunk_id
-                self._emit_result("transcript", result_payload)
-                self.stats.final_results += 1
+            if self.model_type == "NEMOTRON":
+                if self.model_audio_buffer:
+                    # A disconnected client can leave less than one complete
+                    # 560 ms model block, so pad only that final model block.
+                    self._process_accumulated_chunks(pad_to_model_chunk=True)
+                final_text = self.nemotron_stream.flush()
+            else:
+                # Vosk FinalResult flushes decoder state without waiting for
+                # another silence-bearing packet.
+                final_text = self.vosk_stream.flush()
+
+            if final_text and (
+                self.model_type != "VOSK" or final_text not in VOSK_STOP_WORDS
+            ):
+                self._emit_transcript(final_text, True)
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error processing final chunks: {e}")
         
@@ -503,6 +544,7 @@ class ClientInferencePipeline:
         return {
             "client_id": self.client_id,
             "session_id": self.session_id,
+            "model": self.model_type,
             "state": self.state.value,
             "created_at": self.created_at,
             "last_activity": self.last_activity,

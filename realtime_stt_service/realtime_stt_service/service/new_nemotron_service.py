@@ -1,7 +1,4 @@
-"""
-New Per-Client Nemotron STT Service
-Replaces the shared worker pool with dedicated inference pipelines per client.
-"""
+"""Per-client realtime STT service with a selectable recognition model."""
 
 import time
 import asyncio
@@ -17,24 +14,33 @@ from ..config import get_config
 logger = logging.getLogger(__name__)
 
 
-class NewSTTNemotronService:
-    """Nemotron STT service with per-client inference pipelines."""
+class NewRealtimeSTTService:
+    """Realtime STT service with per-client inference pipelines."""
     
     def __init__(self, model_path: Optional[str] = None):
-        logger.info("Initializing Nemotron STT Service with per-client pipelines...")
-        
         # Get configuration
         self.config = get_config()
-        
-        # A relative configuration value is resolved under the project model folder.
-        configured_path = model_path or self.config.stt.nemotron_model_path
+        self.model_type = self.config.stt.model
+        logger.info(
+            "Initializing realtime STT Service with MODEL=%s and per-client pipelines...",
+            self.model_type,
+        )
+
+        # Relative model paths are resolved under the selected model's project folder.
+        if self.model_type == "VOSK":
+            configured_path = model_path or self.config.stt.vosk_model_path
+            model_directory = "vosk-model"
+        else:
+            configured_path = model_path or self.config.stt.nemotron_model_path
+            model_directory = "nemotron-model"
+
         resolved_path = Path(configured_path)
         if not resolved_path.is_absolute():
             project_root = Path(__file__).resolve().parents[3]
-            resolved_path = project_root / "models" / "nemotron-model" / resolved_path
+            resolved_path = project_root / "models" / model_directory / resolved_path
 
         if not resolved_path.exists():
-            raise FileNotFoundError(f"Nemotron model not found at {resolved_path}")
+            raise FileNotFoundError(f"{self.model_type} model not found at {resolved_path}")
         
         # Result handling
         self.result_dispatcher = None  # NEW: For optimized dispatch
@@ -53,7 +59,7 @@ class NewSTTNemotronService:
         # Service state
         self._started = False
         
-        logger.info("Nemotron STT Service initialized successfully")
+        logger.info("%s STT Service initialized successfully", self.model_type)
     
     async def start(self):
         """Start the service"""
@@ -66,7 +72,7 @@ class NewSTTNemotronService:
         # Register health checks
         register_stt_health_checks(self)
         
-        logger.info("Nemotron STT Service started")
+        logger.info("%s STT Service started", self.model_type)
     
     def set_result_dispatcher(self, dispatcher):
         """Set the optimized result dispatcher"""
@@ -216,6 +222,7 @@ class NewSTTNemotronService:
                 active_by_state[state] = active_by_state.get(state, 0) + 1
             
             return {
+                "model": self.model_type,
                 "total_active_pipelines": total_active,
                 "max_concurrent_clients": self.config.server.max_concurrent_clients,
                 "pipelines_by_state": active_by_state,
@@ -290,16 +297,20 @@ class NewSTTNemotronService:
     
     async def shutdown(self):
         """Shutdown the service gracefully"""
-        logger.info("Shutting down Nemotron STT Service...")
+        logger.info("Shutting down %s STT Service...", self.model_type)
         
         try:
             await self.pipeline_manager.shutdown(timeout=10.0)
             self._started = False
-            logger.info("Nemotron STT Service shutdown complete")
+            logger.info("%s STT Service shutdown complete", self.model_type)
         except Exception as e:
             logger.error(f"Error during service shutdown: {e}")
             raise
 
 
-# Create service instance
-stt_service_new = NewSTTNemotronService()
+# Backward-compatible class name for code importing the previous service class.
+NewSTTNemotronService = NewRealtimeSTTService
+
+
+# Create service instance. MODEL is read once at process startup.
+stt_service_new = NewRealtimeSTTService()
