@@ -16,9 +16,14 @@ type envelope struct {
 // --- client -> server ---
 
 type joinMsg struct {
-	Type  string `json:"type"`
-	Token string `json:"token"`
-	Role  string `json:"role,omitempty"`
+	Type             string `json:"type"`
+	Token            string `json:"token"`
+	Role             string `json:"role,omitempty"`
+	MediaPoolVersion int    `json:"media_pool_version"`
+}
+
+func newJoinMsg(token, role string) joinMsg {
+	return joinMsg{Type: "join", Token: token, Role: role, MediaPoolVersion: 1}
 }
 
 // answerMsg.OfferGeneration must echo back exactly the value the
@@ -117,8 +122,53 @@ type joinedMsg struct {
 	// are sent as bare numbers -- verified against signaling.c directly,
 	// not assumed, since a wrong guess here fails to decode the *entire*
 	// message, not just this field.
-	Room       uint64      `json:"room,string"`
-	ICEServers []ICEServer `json:"iceServers"`
+	Room             uint64      `json:"room,string"`
+	ICEServers       []ICEServer `json:"iceServers"`
+	MediaPoolVersion int         `json:"media_pool_version"`
+	MediaPoolMode    string      `json:"media_pool_mode"`
+	MaxAudioSlots    uint32      `json:"max_audio_slots"`
+	MaxCameraSlots   uint32      `json:"max_camera_slots"`
+	MaxScreenSlots   uint32      `json:"max_screen_slots"`
+}
+
+const MediaPoolModeDecoupled = "decoupled"
+
+// MediaPoolConfig is announced in `joined`. An absent/non-decoupled Mode is
+// deliberately treated as legacy so one client binary works with old SFUs.
+type MediaPoolConfig struct {
+	Version        int
+	Mode           string
+	MaxAudioSlots  uint32
+	MaxCameraSlots uint32
+	MaxScreenSlots uint32
+}
+
+func (c MediaPoolConfig) IsDecoupled() bool { return c.Mode == MediaPoolModeDecoupled }
+
+type MediaKind string
+
+const (
+	MediaKindAudio  MediaKind = "audio"
+	MediaKindCamera MediaKind = "camera"
+	MediaKindScreen MediaKind = "screen"
+)
+
+func (k MediaKind) Valid() bool {
+	return k == MediaKindAudio || k == MediaKindCamera || k == MediaKindScreen
+}
+
+// MediaSlot is one decoupled receiving-pool binding carried in membership
+// messages. Pointer fields in MediaSlots preserve JSON null/missing as nil.
+type MediaSlot struct {
+	Slot       uint32 `json:"slot"`
+	Generation uint64 `json:"generation"`
+	Mid        uint32 `json:"mid"`
+}
+
+type MediaSlots struct {
+	Audio  *MediaSlot `json:"audio"`
+	Camera *MediaSlot `json:"camera"`
+	Screen *MediaSlot `json:"screen"`
 }
 
 type offerMsg struct {
@@ -147,16 +197,22 @@ type offerMsg struct {
 // unconditionally rather than needing a separate "field present" signal --
 // see rtcagent.PeerAgent.ApplyMemberSlot.
 type Member struct {
-	PeerID               uint64 `json:"peer_id"`
-	UserID               int64  `json:"user_id,string"`
-	Metadata             string `json:"metadata"`
-	Role                 string `json:"role"`
-	Ufrag                string `json:"ufrag"`
-	MidAudio             uint32 `json:"mid_audio"`
-	MidVideo             uint32 `json:"mid_video"`
-	MidScreen            uint32 `json:"mid_screen"`
-	Slot                 uint32 `json:"slot"`
-	AssignmentGeneration uint64 `json:"assignment_generation"`
+	PeerID               uint64     `json:"peer_id"`
+	UserID               int64      `json:"user_id,string"`
+	Metadata             string     `json:"metadata"`
+	Role                 string     `json:"role"`
+	Ufrag                string     `json:"ufrag"`
+	MidAudio             uint32     `json:"mid_audio"`
+	MidVideo             uint32     `json:"mid_video"`
+	MidScreen            uint32     `json:"mid_screen"`
+	Slot                 uint32     `json:"slot"`
+	AssignmentGeneration uint64     `json:"assignment_generation"`
+	IsMute               bool       `json:"is_mute"`
+	CameraRequested      bool       `json:"camera_requested"`
+	CameraActive         bool       `json:"camera_active"`
+	ScreenRequested      bool       `json:"screen_requested"`
+	ScreenActive         bool       `json:"screen_active"`
+	MediaSlots           MediaSlots `json:"media_slots"`
 }
 
 // ParseMemberMetadata splits the SFU metadata at the first semicolon using
@@ -181,14 +237,15 @@ type peerJoinedMsg struct {
 }
 
 type peerLeftMsg struct {
-	Type             string `json:"type"`
-	ParticipantCount int    `json:"participant_count"`
-	Ufrag            string `json:"ufrag"`
-	UserID           int64  `json:"user_id,string"`
-	PeerID           uint64 `json:"peer_id"`
-	MidAudio         uint32 `json:"mid_audio"`
-	MidVideo         uint32 `json:"mid_video"`
-	MidScreen        uint32 `json:"mid_screen"`
+	Type             string     `json:"type"`
+	ParticipantCount int        `json:"participant_count"`
+	Ufrag            string     `json:"ufrag"`
+	UserID           int64      `json:"user_id,string"`
+	PeerID           uint64     `json:"peer_id"`
+	MidAudio         uint32     `json:"mid_audio"`
+	MidVideo         uint32     `json:"mid_video"`
+	MidScreen        uint32     `json:"mid_screen"`
+	MediaSlots       MediaSlots `json:"media_slots"`
 }
 
 type peerUpdatedMsg struct {
@@ -205,26 +262,30 @@ type peerUpdatedMsg struct {
 // rtcagent.PeerAgent.ApplySlotAssigned's doc for why pion's OnTrack can't be
 // relied on here.
 type slotAssignedMsg struct {
-	Type         string `json:"type"`
-	Slot         uint32 `json:"slot"`
-	Generation   uint64 `json:"generation"`
-	PeerID       uint64 `json:"peer_id"`
-	UserID       int64  `json:"user_id,string"`
-	MidAudio     uint32 `json:"mid_audio"`
-	MidVideo     uint32 `json:"mid_video"`
-	MidScreen    uint32 `json:"mid_screen"`
-	AudioActive  bool   `json:"audio_active"`
-	VideoActive  bool   `json:"video_active"`
-	ScreenActive bool   `json:"screen_active"`
+	Type         string    `json:"type"`
+	Slot         uint32    `json:"slot"`
+	Generation   uint64    `json:"generation"`
+	PeerID       uint64    `json:"peer_id"`
+	UserID       int64     `json:"user_id,string"`
+	MidAudio     uint32    `json:"mid_audio"`
+	MidVideo     uint32    `json:"mid_video"`
+	MidScreen    uint32    `json:"mid_screen"`
+	AudioActive  bool      `json:"audio_active"`
+	VideoActive  bool      `json:"video_active"`
+	ScreenActive bool      `json:"screen_active"`
+	Kind         MediaKind `json:"kind"`
+	Mid          uint32    `json:"mid"`
+	Active       bool      `json:"active"`
 }
 
 // slotReleasedMsg carries no peer identity -- just which slot/generation is
 // now empty. The recipient must already know (from an earlier slot_assigned)
 // which peer/mids that generation belonged to.
 type slotReleasedMsg struct {
-	Type       string `json:"type"`
-	Slot       uint32 `json:"slot"`
-	Generation uint64 `json:"generation"`
+	Type       string    `json:"type"`
+	Slot       uint32    `json:"slot"`
+	Generation uint64    `json:"generation"`
+	Kind       MediaKind `json:"kind"`
 }
 
 type errorMsg struct {

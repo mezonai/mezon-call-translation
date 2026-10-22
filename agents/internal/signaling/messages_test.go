@@ -5,6 +5,27 @@ import (
 	"testing"
 )
 
+// Dial sends newJoinMsg for every role; decoupled rooms reject a join
+// without media_pool_version 1.
+func TestJoinAlwaysAdvertisesMediaPoolVersion(t *testing.T) {
+	for _, role := range []string{"speaker", "audience", ""} {
+		raw, err := json.Marshal(newJoinMsg("token", role))
+		if err != nil {
+			t.Fatalf("marshal join: %v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("decode join: %v", err)
+		}
+		if got["type"] != "join" || got["token"] != "token" {
+			t.Fatalf("role %q: join = %v", role, got)
+		}
+		if got["media_pool_version"] != float64(1) {
+			t.Fatalf("role %q: media_pool_version = %v, want 1", role, got["media_pool_version"])
+		}
+	}
+}
+
 // These payloads are copied verbatim from mezon-sfu's actual snprintf format
 // strings (src/protocol/signaling/signaling.c), not hand-guessed -- this is
 // what caught the 2026-08-19 bug where `room`/`user_id` are sent quoted
@@ -23,6 +44,19 @@ func TestDecodeJoined(t *testing.T) {
 	}
 	if len(m.ICEServers) != 1 || m.ICEServers[0].URLs != "stun:127.0.0.1:3478" {
 		t.Errorf("ICEServers = %+v", m.ICEServers)
+	}
+}
+
+func TestDecodeJoinedDecoupled(t *testing.T) {
+	raw := []byte(`{"type":"joined","room":"1","iceServers":[],"media_pool_version":1,` +
+		`"media_pool_mode":"decoupled","max_audio_slots":6,"max_camera_slots":4,"max_screen_slots":2}`)
+	var m joinedMsg
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode joined: %v", err)
+	}
+	if m.MediaPoolVersion != 1 || m.MediaPoolMode != MediaPoolModeDecoupled ||
+		m.MaxAudioSlots != 6 || m.MaxCameraSlots != 4 || m.MaxScreenSlots != 2 {
+		t.Fatalf("decoupled joined fields = %+v", m)
 	}
 }
 
@@ -151,6 +185,28 @@ func TestDecodeSlotReleased(t *testing.T) {
 	}
 }
 
+func TestDecodeDecoupledSlotMessages(t *testing.T) {
+	assignedRaw := []byte(`{"type":"slot_assigned","kind":"audio","slot":0,"generation":12,"mid":3,` +
+		`"peer_id":26,"user_id":"1789645245634318336","active":true}`)
+	var assigned slotAssignedMsg
+	if err := json.Unmarshal(assignedRaw, &assigned); err != nil {
+		t.Fatalf("decode slot_assigned: %v", err)
+	}
+	if assigned.Kind != MediaKindAudio || assigned.Mid != 3 || !assigned.Active ||
+		assigned.PeerID != 26 || assigned.UserID != 1789645245634318336 {
+		t.Fatalf("assigned = %+v", assigned)
+	}
+
+	releasedRaw := []byte(`{"type":"slot_released","kind":"audio","slot":0,"generation":12}`)
+	var released slotReleasedMsg
+	if err := json.Unmarshal(releasedRaw, &released); err != nil {
+		t.Fatalf("decode slot_released: %v", err)
+	}
+	if released.Kind != MediaKindAudio || released.Slot != 0 || released.Generation != 12 {
+		t.Fatalf("released = %+v", released)
+	}
+}
+
 func TestDecodePeerLeft(t *testing.T) {
 	raw := []byte(`{"type":"peer_left","participant_count":1,"ufrag":"abc","user_id":"999001",` +
 		`"peer_id":3,"mid_audio":3,"mid_video":4,"mid_screen":5}`)
@@ -160,6 +216,31 @@ func TestDecodePeerLeft(t *testing.T) {
 	}
 	if m.UserID != 999001 || m.PeerID != 3 || m.MidAudio != 3 {
 		t.Errorf("m = %+v", m)
+	}
+}
+
+func TestDecodeDecoupledMemberAndPeerLeft(t *testing.T) {
+	raw := []byte(`{"type":"room_snapshot","self_peer_id":2,"participant_count":2,"members":[{` +
+		`"peer_id":25,"user_id":"1782991817428439040","metadata":"A","role":"speaker","is_mute":true,` +
+		`"camera_requested":false,"camera_active":false,"screen_requested":true,"screen_active":true,` +
+		`"ufrag":"1ojr","media_slots":{"audio":null,"camera":null,"screen":{"slot":0,"generation":3,"mid":15}}}]}`)
+	var snapshot roomSnapshotMsg
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		t.Fatalf("decode room_snapshot: %v", err)
+	}
+	m := snapshot.Members[0]
+	if !m.IsMute || !m.ScreenRequested || !m.ScreenActive || m.MediaSlots.Screen == nil || m.MediaSlots.Screen.Mid != 15 {
+		t.Fatalf("member = %+v", m)
+	}
+
+	leftRaw := []byte(`{"type":"peer_left","participant_count":1,"peer_id":25,"user_id":"1782991817428439040",` +
+		`"media_slots":{"audio":{"slot":1,"generation":8,"mid":4},"camera":null,"screen":null}}`)
+	var left peerLeftMsg
+	if err := json.Unmarshal(leftRaw, &left); err != nil {
+		t.Fatalf("decode peer_left: %v", err)
+	}
+	if left.MediaSlots.Audio == nil || left.MediaSlots.Audio.Generation != 8 {
+		t.Fatalf("peer_left = %+v", left)
 	}
 }
 
