@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any, Callable
 from collections import defaultdict
 from .client_pipeline import ClientInferencePipeline, PipelineState
 from .nemotron_stream import NemotronModel
+from .vosk_stream import VoskModel
 from ..config import get_config
 from ..service.result_dispatcher import get_result_dispatcher
 
@@ -33,15 +34,20 @@ class PipelineManager:
     def __init__(self, model_path: str, result_callback: Callable[[str, Dict], None]):
         self.config = get_config()
         self.result_callback = result_callback
+        self.model_type = self.config.stt.model
         
         # Load the heavyweight model once; every client gets independent stream state.
-        logger.info(f"Loading Nemotron model from {model_path}")
-        self.model = NemotronModel(model_path)
-        logger.info(
-            "Nemotron model loaded successfully: sample_rate=%s, chunk_samples=%s",
-            self.model.sample_rate,
-            self.model.chunk_samples,
-        )
+        logger.info("Loading %s model from %s", self.model_type, model_path)
+        if self.model_type == "VOSK":
+            self.model = VoskModel(model_path)
+            logger.info("Vosk model loaded successfully")
+        else:
+            self.model = NemotronModel(model_path)
+            logger.info(
+                "Nemotron model loaded successfully: sample_rate=%s, chunk_samples=%s",
+                self.model.sample_rate,
+                self.model.chunk_samples,
+            )
         
         # Pipeline storage
         self.pipelines: Dict[str, ClientInferencePipeline] = {}  # client_key -> pipeline
@@ -348,6 +354,7 @@ class PipelineManager:
         
         return {
             "manager_stats": stats_copy,
+            "model": self.model_type,
             "active_pipelines": len(self.pipelines),
             "max_clients": self.max_clients,
             "idle_timeout": self.idle_timeout,
@@ -395,6 +402,7 @@ class PipelineManager:
         
         return {
             "status": health_status,
+            "model": self.model_type,
             "active_pipelines": active_count,
             "max_clients": self.max_clients,
             "utilization_percent": round(utilization, 1),

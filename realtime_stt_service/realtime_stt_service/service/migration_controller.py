@@ -95,8 +95,9 @@ class PipelineServiceController:
         return {
             "service_type": "per_client_pipelines",
             "architecture": "dedicated_pipeline_per_client",
+            "model": self.pipeline_service.model_type,
             "features": [
-                "Individual Nemotron stream per client",
+                f"Individual {self.pipeline_service.model_type} stream per client",
                 "Dedicated audio buffer per client", 
                 "Independent processing task per client",
                 "Complete client isolation",
