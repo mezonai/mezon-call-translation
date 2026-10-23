@@ -111,6 +111,7 @@ class RoomData(BaseModel):  # type: ignore[explicit-any]
 
 class RoomListItemData(RoomData):
     summary_done: bool
+    title: str | None = None
 
 
 class RoomListResponse(BaseModel):  # type: ignore[explicit-any]
