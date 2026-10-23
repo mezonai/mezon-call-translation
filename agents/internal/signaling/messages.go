@@ -46,6 +46,11 @@ type pongMsg struct {
 	Type string `json:"type"`
 }
 
+type muteMsg struct {
+	Type   string `json:"type"`
+	IsMute bool   `json:"is_mute"`
+}
+
 // wireTypeSendMessage is the mezon-sfu WS wire type for posting a room chat
 // message as this peer (mezon-sfu commit c41e59b "add send message"). The
 // SFU echoes an ack (`message_sent`) to the sender and broadcasts
