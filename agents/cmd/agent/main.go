@@ -588,6 +588,18 @@ func (s *session) onJoined(ev signaling.JoinedEvent) {
 	s.bridge = bridge
 	s.player = player
 	s.refs.set(bridge, player)
+
+	// mezon-sfu creates every session muted. In decoupled rooms, publishing
+	// RTP on MID 0 is not enough by itself: only unmuted active speakers are
+	// assigned into each listener's audio pool. The SFU accepts this intent
+	// before the answer and applies it when negotiation completes.
+	if publishTrack != nil {
+		if sig := s.refs.signalingClient(); sig != nil {
+			if err := sig.SetMute(false); err != nil {
+				logging.L.Warn("signaling: unmute failed, TTS will be inaudible in decoupled rooms", logging.ErrAttrs(err)...)
+			}
+		}
+	}
 }
 
 func (s *session) onOffer(sdp string) (string, error) {

@@ -330,6 +330,18 @@ func (c *Client) send(v any) error {
 	return c.conn.WriteJSON(v)
 }
 
+// SetMute sends the speaker's microphone state. mezon-sfu starts every
+// session muted; decoupled rooms forward audio only from unmuted active
+// speakers. Deliberately omit mute_revision: once a client starts sending
+// revisions, every later mute message must carry a monotonically increasing
+// value or the SFU rejects it as stale.
+func (c *Client) SetMute(isMute bool) error {
+	if err := c.send(muteMsg{Type: "mute", IsMute: isMute}); err != nil {
+		return fmt.Errorf("signaling: set mute: %w", err)
+	}
+	return nil
+}
+
 // SendRoomMessage posts a chat message into the room as this peer (mezon-sfu
 // wireTypeSendMessage). msg is JSON-encoded into the frame's `message`
 // string -- the SFU treats that as an opaque blob and just relays it, and
