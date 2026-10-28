@@ -25,6 +25,7 @@ You are a professional Project Manager & Technical Writer. Your task is to conve
 4. Do not invent actions, assignees, or decisions.
 5. The `next_focus` field must be the most important part that contains CLEAR and SPECIFIC action items.
 6. The `detail` field must be the most comprehensive part, capturing all important information.
+7. The `title` field must identify the meeting's main topic or confirmed outcome in a short, specific phrase.
 
 # INPUT FORMAT
 * The input transcript covers the ENTIRE meeting room conversation.
@@ -50,6 +51,11 @@ You are a professional Project Manager & Technical Writer. Your task is to conve
 * Preferred structure: Topic Title: Who + Content + Decision + Technical details + Timestamp.
 * Example format: "Xác nhận thông số kỹ thuật ticket 81: Hoàng và team đã thảo luận... (00:02:28)."
 * Each bullet point can be 1-4 lines long.
+5. **title**:
+* Write a single-line title in {language}, approximately 5-10 words and no more than 80 characters.
+* Use the main topic, project, feature, task, or confirmed outcome that best distinguishes this meeting.
+* Avoid generic titles such as "Team Meeting", "Work Discussion", or "Status Update".
+* Do not include timestamps, participant names, or information not supported by the transcript.
 
 # OUTPUT FORMAT
 Return only a valid JSON object matching the SummaryResult schema:
@@ -74,7 +80,8 @@ Return only a valid JSON object matching the SummaryResult schema:
     "Sửa lỗi Task 3103 trên Cloud: Nam đang xử lý task 3103 do gặp lỗi search trên cloud dù chạy local bình thường (09:18:51).",
     "Chỉ đạo quy trình Release Cuốn Chiếu: Bách chỉ đạo dev test kỹ trên Staging và chủ động pin release cuốn chiếu các task nhỏ, ít impact (09:20:56).",
     "Thiết kế UI cho Guest User Invitation: Hoàng đã đọc spec Guest User Invitation và sẽ vẽ storyboard UI flow để trực quan hóa cho team review (09:31:20)."
-  ]
+  ],
+  "title": "Rà soát release và Guest User"
 }}
 
 ## Example 2 - Status Update Meeting Without Action Items (Empty next_focus)
@@ -87,7 +94,8 @@ Return only a valid JSON object matching the SummaryResult schema:
   "detail": [
     "Cập nhật tỷ lệ khóa tài khoản hệ thống: Phương báo cáo tỷ lệ tài khoản bị ban đã giảm rõ rệt sau khi tạm dừng tính năng Massadei từ ngày hôm qua (09:49:51).",
     "Kết quả kiểm thử tính năng Notification: Lan xác nhận hệ thống Notification trên Staging chạy ổn định và không phát sinh lỗi mới (09:50:38)."
-  ]
+  ],
+  "title": "Cập nhật vận hành và Notification"
 }}
 
 ## Example 3 - Architecture Discussion with Team Tasks, Unknown Assignee & Deadlines
@@ -106,7 +114,8 @@ Return only a valid JSON object matching the SummaryResult schema:
     "Automated Security Scan Proposal: Alex proposed automated security scans on every code commit to detect outdated packages (09:32:10).",
     "GCP Infrastructure Audit Requirements: David noted the need to audit open ports and excessive IAM permissions on GCP (09:34:31).",
     "Vector Store Architecture Review Consensus: The team agreed that all members must review the new Vector Store architecture document on Notion prior to next week's sync (09:40:15)."
-  ]
+  ],
+  "title": "Qdrant Migration and CI/CD Security"
 }}
 
 # EXECUTION
@@ -117,6 +126,7 @@ Analyze the input transcript and only return the JSON object.
 * Re-verify participant names:
   - `next_focus`: MUST use raw `[participant_id]` (e.g., `[hoang.dohuy]`, `[alex.chen]`).
   - Narrative fields (`context`, `key_discussions`, `detail`): MUST use the firstname derived strictly from BEFORE the dot of `participant_id` (e.g., "Hoàng"/"Hoang", "Alex"). NEVER use names from spoken dialogue that differ from the firstname before the dot.
+* Verify that `title` is a specific single-line phrase of no more than 80 characters.
 """
 
 
@@ -268,7 +278,7 @@ def build_overall_context_prompt(section_context_str: str, language: str = "Viet
 You are a professional Project Manager and Technical Writer.
 
 # YOUR TASK
-Create an overall context summary for the entire transcript based on section contexts.
+Create an overall context summary and a short title for the entire transcript based on section contexts.
 
 # INPUT SECTION CONTEXTS
 ---
@@ -280,6 +290,8 @@ Create an overall context summary for the entire transcript based on section con
 2. Summarize the whole transcript in 3-5 sentences.
 3. Do not invent new decisions, actions, or details.
 4. ONLY return a single valid JSON object, absolutely no other text, characters, or markdown wrapping.
+5. Create `title` as a single-line phrase of approximately 5-10 words and no more than 80 characters.
+6. Make `title` specific to the main topic, project, feature, task, or confirmed outcome; avoid generic meeting titles.
 
 # OUTPUT FORMAT
 Only return a valid JSON object according to the schema:
