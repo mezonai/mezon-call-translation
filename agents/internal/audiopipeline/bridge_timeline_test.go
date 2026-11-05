@@ -240,7 +240,7 @@ func TestRecordTimeline_LateRTPPacketDoesNotMoveTimelineBackward(t *testing.T) {
 func TestBridge_HandleTrackEndedClosesRecordSink(t *testing.T) {
 	sink := &fakeSink{}
 	info := rtcagent.TrackInfo{Mid: "0", UserID: 1, PeerID: 42, Kind: rtcagent.KindAudio}
-	b := NewBridge(func(rtcagent.TrackInfo) Sink { return sink }, nil)
+	b := NewBridge(func(rtcagent.TrackInfo) Sink { return sink })
 	b.sessionFor(info)
 	b.HandleTrackEnded(info)
 
@@ -268,7 +268,7 @@ func TestBridge_SessionForReassignsOnPeerIDChange(t *testing.T) {
 		sinksByPeer[info.PeerID] = s
 		mu.Unlock()
 		return s
-	}, nil)
+	})
 
 	oldPeer := rtcagent.TrackInfo{Mid: "9", UserID: 111, PeerID: 10, Kind: rtcagent.KindAudio}
 	newPeer := rtcagent.TrackInfo{Mid: "9", UserID: 222, PeerID: 20, Kind: rtcagent.KindAudio}
@@ -307,7 +307,7 @@ func TestBridge_SessionForReassignsOnPeerIDChange(t *testing.T) {
 }
 
 func TestBridge_StaleTrackEndedDoesNotCloseNewBindingRevision(t *testing.T) {
-	b := NewBridge(nil, nil)
+	b := NewBridge(nil)
 	oldInfo := rtcagent.TrackInfo{Mid: "3", UserID: 111, PeerID: 10, Kind: rtcagent.KindAudio, BindingRevision: 1}
 	newInfo := rtcagent.TrackInfo{Mid: "3", UserID: 111, PeerID: 10, Kind: rtcagent.KindAudio, BindingRevision: 2}
 

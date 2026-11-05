@@ -1,485 +1,126 @@
-#!/bin/bash
-# Setup script for Mezon Call Translation Services
-# This script:
-# - Downloads Nemotron, non-realtime Whisper, and Kokoro models
-# - Backs up existing .env files
-# - Creates .env files from .env.example
-# - Sets up virtual environments for each service
-# - Updates model paths in .env files
+#!/usr/bin/env bash
+# Set up the batch STT, orchestrator, and TTS Python services.
 
-set -e
+set -euo pipefail
 
-# Colors
-CYAN='\033[96m'
-GREEN='\033[92m'
-YELLOW='\033[93m'
-RED='\033[91m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
-
-# Get script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-ARCH_DIR="$PROJECT_ROOT/Architect_MultiClient_Server"
-
-# Service directories
-STT_SERVICE_DIR="$ARCH_DIR/stt_service"
-NON_REALTIME_STT_DIR="$PROJECT_ROOT/non_realtime_stt_service"
-ORCHESTRATOR_DIR="$ARCH_DIR/orchestrator_service"
-AGENTS_DIR="$ARCH_DIR/agents"
-TTS_SERVICE_DIR="$ARCH_DIR/tts_service"
-
-# Model directories
+STT_SERVICE_DIR="$PROJECT_ROOT/stt_service"
+ORCHESTRATOR_DIR="$PROJECT_ROOT/Architect_MultiClient_Server/orchestrator_service"
+TTS_SERVICE_DIR="$PROJECT_ROOT/Architect_MultiClient_Server/tts_service"
 MODELS_DIR="$PROJECT_ROOT/models"
-NEMOTRON_MODEL_DIR="$MODELS_DIR/nemotron-model"
 GIPFORMER_MODEL_DIR="$MODELS_DIR/gipformer-model"
-WHISPER_MODEL_DIR="$MODELS_DIR/whisper"
 KOKORO_MODEL_DIR="$MODELS_DIR/kokoro_models"
 BI_ENCODER_MODEL_DIR="$MODELS_DIR/bi-encoder-model"
 
-# Functions
-print_header() {
-    echo ""
-    echo -e "${CYAN}${BOLD}============================================================${NC}"
-    echo -e "${CYAN}${BOLD}    Mezon Call Translation - Setup Script${NC}"
-    echo -e "${CYAN}${BOLD}============================================================${NC}"
-    echo ""
-}
-
-print_section() {
-    echo ""
-    echo -e "${CYAN}${BOLD}------------------------------------------------------------${NC}"
-    echo -e "${CYAN}${BOLD}  $1${NC}"
-    echo -e "${CYAN}${BOLD}------------------------------------------------------------${NC}"
-    echo ""
-}
-
-print_info() {
-    echo -e "${CYAN}ℹ️  $1${NC}"
-}
-
-print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
-}
-
-print_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}❌ $1${NC}"
-}
-
-show_help() {
-    cat <<EOF
-Mezon Call Translation - Setup Script
-
-USAGE:
-    ./scripts/setup.sh [options]
-
-OPTIONS:
-    --skip-models           Skip model downloads
-    --skip-venv             Skip virtual environment setup
-    --skip-env              Skip .env file creation
-    --nemotron-model <name> Nemotron model name
-    --kokoro-voices <list>  Comma-separated Kokoro voice names
-    --all-kokoro-voices     Download all Kokoro voices
-    --install-deps          Force installation of system dependencies (Python, FFmpeg, etc.)
-    -h, --help              Show this help message
-
-EXAMPLES:
-    # Full setup with defaults
-    ./scripts/setup.sh
-
-    # Install system dependencies first
-    ./scripts/setup.sh --install-deps
-
-    # Skip model downloads (if already downloaded)
-    ./scripts/setup.sh --skip-models
-
-    # Use a different Nemotron repository/model directory name
-    ./scripts/setup.sh --nemotron-model nemotron-3.5-asr-streaming-0.6b-onnx-int4
-
-    # Download all Kokoro voices
-    ./scripts/setup.sh --all-kokoro-voices
-
-EOF
-}
-
-# Default options
 SKIP_MODELS=false
 SKIP_VENV=false
 SKIP_ENV=false
-INSTALL_DEPS=false
-NEMOTRON_MODEL="nemotron-3.5-asr-streaming-0.6b-onnx-int4"
-WHISPER_MODEL="large-v3-turbo"
 KOKORO_VOICES=""
 ALL_KOKORO_VOICES=false
 
-# Parse arguments
+usage() {
+    cat <<'EOF'
+Usage: ./scripts/setup.sh [options]
+
+  --skip-models          Skip model downloads
+  --skip-venv            Skip Python virtual environments
+  --skip-env             Skip .env creation
+  --kokoro-voices LIST   Comma-separated Kokoro voices
+  --all-kokoro-voices    Download all Kokoro voices
+  -h, --help             Show this help
+EOF
+}
+
 while [[ $# -gt 0 ]]; do
-    case $1 in
-        --skip-models)
-            SKIP_MODELS=true
-            shift
-            ;;
-        --skip-venv)
-            SKIP_VENV=true
-            shift
-            ;;
-        --skip-env)
-            SKIP_ENV=true
-            shift
-            ;;
-        --install-deps)
-            INSTALL_DEPS=true
-            shift
-            ;;
-        --nemotron-model)
-            NEMOTRON_MODEL="$2"
-            shift 2
-            ;;
-        --kokoro-voices)
-            KOKORO_VOICES="$2"
-            shift 2
-            ;;
-        --all-kokoro-voices)
-            ALL_KOKORO_VOICES=true
-            shift
-            ;;
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            echo ""
-            show_help
-            exit 1
-            ;;
+    case "$1" in
+        --skip-models) SKIP_MODELS=true; shift ;;
+        --skip-venv) SKIP_VENV=true; shift ;;
+        --skip-env) SKIP_ENV=true; shift ;;
+        --kokoro-voices) KOKORO_VOICES="$2"; shift 2 ;;
+        --all-kokoro-voices) ALL_KOKORO_VOICES=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
     esac
 done
 
-# Print header
-print_header
+PYTHON_CMD="${PYTHON_CMD:-python3.12}"
+if ! command -v "$PYTHON_CMD" >/dev/null 2>&1; then
+    PYTHON_CMD=python3
+fi
+command -v "$PYTHON_CMD" >/dev/null 2>&1 || {
+    echo "Python 3 is required" >&2
+    exit 1
+}
 
-# Check Python
-print_info "Checking system dependencies..."
+setup_env() {
+    local service_dir="$1"
+    if [[ ! -f "$service_dir/.env.example" ]]; then
+        echo "Skipping $service_dir: no .env.example"
+        return
+    fi
+    if [[ -f "$service_dir/.env" ]]; then
+        cp "$service_dir/.env" "$service_dir/.env.backup.$(date +%Y%m%d_%H%M%S)"
+    fi
+    cp "$service_dir/.env.example" "$service_dir/.env"
+}
 
-install_dependencies() {
-    if [ -f /etc/debian_version ]; then
-        # Check for sudo
-        if ! command -v sudo &> /dev/null && [ "$EUID" -ne 0 ]; then
-            print_error "Sudo not found and not running as root. Cannot install dependencies."
-            exit 1
-        fi
-
-        SUDO=""
-        if [ "$EUID" -ne 0 ]; then
-            SUDO="sudo"
-        fi
-
-        print_info "Detected Debian/Ubuntu system. Updating package lists..."
-        $SUDO apt-get update
-
-        print_info "Installing software-properties-common..."
-        $SUDO apt-get install -y software-properties-common
-
-        print_info "Adding deadsnakes PPA for Python 3.12..."
-        $SUDO add-apt-repository -y ppa:deadsnakes/ppa
-        $SUDO apt-get update
-
-        print_info "Installing system dependencies (Python 3.12, PortAudio, FFmpeg)..."
-        $SUDO apt-get install -y \
-            python3.12 \
-            python3.12-venv \
-            python3.12-dev \
-            python3-pip \
-            portaudio19-dev \
-            python3-pyaudio \
-            ffmpeg \
-            gcc \
-            curl \
-            wget \
-            git
-
-        print_success "System dependencies installed!"
+set_env_value() {
+    local env_file="$1" key="$2" value="$3"
+    if grep -q "^${key}=" "$env_file"; then
+        sed -i.tmp "s|^${key}=.*|${key}=${value}|" "$env_file"
+        rm -f "$env_file.tmp"
     else
-        print_warning "Automatic dependency installation is only supported on Debian/Ubuntu."
-        print_warning "Please ensure you have Python 3.12, PortAudio, and FFmpeg installed manually."
+        printf '%s=%s\n' "$key" "$value" >> "$env_file"
     fi
 }
 
-# Install dependencies if Python 3.12 is missing or requested
-if [ "$INSTALL_DEPS" = true ]; then
-    print_info "Forcing dependency installation..."
-    install_dependencies
-elif ! command -v python3.12 &> /dev/null; then
-    print_warning "Python 3.12 not found. Attempting to install system dependencies..."
-    install_dependencies
-else
-    print_info "Python 3.12 found. Skipping full system install (run with --install-deps to force)."
-fi
-
-PYTHON_CMD="python3.12"
-
-PYTHON_VERSION=$($PYTHON_CMD --version 2>&1)
-print_success "Using Python: $PYTHON_VERSION"
-
-# ============================================================================
-# Step 1: Download Models
-# ============================================================================
-if [ "$SKIP_MODELS" = false ]; then
-    print_section "Step 1: Downloading Models"
-    
-    # Download Nemotron model
-    print_info "Downloading Nemotron STT model: $NEMOTRON_MODEL"
-    if [ -f "$NEMOTRON_MODEL_DIR/$NEMOTRON_MODEL/genai_config.json" ]; then
-        print_warning "Nemotron model already exists. Skipping download."
-    else
-        if ! "$PYTHON_CMD" -c "import huggingface_hub" >/dev/null 2>&1; then
-            "$PYTHON_CMD" -m pip install huggingface-hub
-        fi
-        bash "$SCRIPT_DIR/download-nemotron-model.sh" \
-            --model "$NEMOTRON_MODEL" \
-            --output "$NEMOTRON_MODEL_DIR"
-    fi
-    
-    # Gipformer is the CPU fallback for unresolved marker/VAD chunks.
-    print_info "Downloading Gipformer fallback model..."
-    if ! "$PYTHON_CMD" -c "import huggingface_hub" >/dev/null 2>&1; then
-        "$PYTHON_CMD" -m pip install huggingface-hub
-    fi
-    bash "$SCRIPT_DIR/download-gipformer-model.sh" \
-        --output "$GIPFORMER_MODEL_DIR"
-
-    # Download Kokoro model
-    print_info "Downloading Kokoro TTS model..."
-    KOKORO_ARGS=("$SCRIPT_DIR/download-kokoro-model.sh" "--output" "models/kokoro_models")
-    
-    if [ "$ALL_KOKORO_VOICES" = true ]; then
-        KOKORO_ARGS+=("--all-voices")
-    elif [ -n "$KOKORO_VOICES" ]; then
-        KOKORO_ARGS+=("--voices" "$KOKORO_VOICES")
-    fi
-    
-    if [ -f "$KOKORO_MODEL_DIR/kokoro-v1_0.pth" ] || [ -f "$KOKORO_MODEL_DIR/kokoro-v0_19.pth" ]; then
-        print_warning "Kokoro model already exists. Checking for new voices..."
-        KOKORO_ARGS+=("--force")
-    fi
-    
-    bash "${KOKORO_ARGS[@]}"
-
-    # Download Bi-Encoder hallucination filter model for Orchestrator
-    print_info "Downloading Bi-Encoder hallucination filter model..."
-    bash "$SCRIPT_DIR/download-bi-encoder-model.sh" \
-        --output "$BI_ENCODER_MODEL_DIR"
-    
-    print_success "Models downloaded successfully!"
-else
-    print_section "Step 1: Skipping Model Downloads"
-    print_warning "Model downloads skipped. Make sure models are already present."
-fi
-
-# ============================================================================
-# Step 2: Backup and Create .env Files
-# ============================================================================
-if [ "$SKIP_ENV" = false ]; then
-    print_section "Step 2: Setting up .env Files"
-    
-    # Function to backup and create .env
-    setup_env_file() {
-        local service_dir=$1
-        local service_name=$2
-        local env_file="$service_dir/.env"
-        local env_example="$service_dir/.env.example"
-        
-        print_info "Setting up .env for $service_name..."
-        
-        # Check if .env.example exists
-        if [ ! -f "$env_example" ]; then
-            print_warning ".env.example not found for $service_name. Skipping."
-            return
-        fi
-        
-        # Backup existing .env
-        if [ -f "$env_file" ]; then
-            backup_file="$env_file.backup.$(date +%Y%m%d_%H%M%S)"
-            cp "$env_file" "$backup_file"
-            print_success "Backed up existing .env to: $(basename "$backup_file")"
-        fi
-        
-        # Copy .env.example to .env
-        cp "$env_example" "$env_file"
-        print_success "Created .env from .env.example for $service_name"
+setup_venv() {
+    local service_dir="$1" requirements="$2"
+    [[ -f "$service_dir/$requirements" ]] || {
+        echo "Skipping $service_dir: $requirements not found"
+        return
     }
-    
-    # Setup .env for each service
-    setup_env_file "$STT_SERVICE_DIR" "STT Service"
-    setup_env_file "$NON_REALTIME_STT_DIR" "Non-Realtime STT Service"
-    setup_env_file "$ORCHESTRATOR_DIR" "Orchestrator Service"
-    setup_env_file "$AGENTS_DIR" "Agents Service"
-    setup_env_file "$TTS_SERVICE_DIR" "TTS Service"
-    
-    # Update model paths in .env files
-    print_info "Updating model paths in .env files..."
-    
-    # Get absolute paths for models
-    NEMOTRON_MODEL_PATH="$NEMOTRON_MODEL_DIR/$NEMOTRON_MODEL"
-    GIPFORMER_MODEL_PATH="$GIPFORMER_MODEL_DIR"
-    KOKORO_MODEL_PATH="$KOKORO_MODEL_DIR"
-    
-    # Update STT Service .env
-    if [ -f "$STT_SERVICE_DIR/.env" ]; then
-        # Update NEMOTRON_MODEL_PATH
-        if grep -q "^NEMOTRON_MODEL_PATH=" "$STT_SERVICE_DIR/.env"; then
-            sed -i.tmp "s|^NEMOTRON_MODEL_PATH=.*|NEMOTRON_MODEL_PATH=$NEMOTRON_MODEL_PATH|" "$STT_SERVICE_DIR/.env"
-            rm -f "$STT_SERVICE_DIR/.env.tmp"
-        else
-            echo "NEMOTRON_MODEL_PATH=$NEMOTRON_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
-        fi
-        print_success "Updated NEMOTRON_MODEL_PATH in STT Service"
+    "$PYTHON_CMD" -m venv "$service_dir/venv"
+    "$service_dir/venv/bin/python" -m pip install --upgrade pip
+    "$service_dir/venv/bin/python" -m pip install -r "$service_dir/$requirements"
+}
 
-        # Update WHISPER_GIPFORMER_MODEL_PATH
-        if grep -q "^WHISPER_GIPFORMER_MODEL_PATH=" "$STT_SERVICE_DIR/.env"; then
-            sed -i.tmp "s|^WHISPER_GIPFORMER_MODEL_PATH=.*|WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH|" "$STT_SERVICE_DIR/.env"
-            rm -f "$STT_SERVICE_DIR/.env.tmp"
-        else
-            echo "WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH" >> "$STT_SERVICE_DIR/.env"
-        fi
-        print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in STT Service"
-    fi
+mkdir -p "$MODELS_DIR"
 
-    # Update Non-Realtime STT Service .env
-    if [ -f "$NON_REALTIME_STT_DIR/.env" ]; then
-        if grep -q "^WHISPER_GIPFORMER_MODEL_PATH=" "$NON_REALTIME_STT_DIR/.env"; then
-            sed -i.tmp "s|^WHISPER_GIPFORMER_MODEL_PATH=.*|WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH|" "$NON_REALTIME_STT_DIR/.env"
-            rm -f "$NON_REALTIME_STT_DIR/.env.tmp"
-        else
-            echo "WHISPER_GIPFORMER_MODEL_PATH=$GIPFORMER_MODEL_PATH" >> "$NON_REALTIME_STT_DIR/.env"
-        fi
-        print_success "Updated WHISPER_GIPFORMER_MODEL_PATH in Non-Realtime STT Service"
-    fi
-    
-    # Update Agents .env
-    if [ -f "$TTS_SERVICE_DIR/.env" ]; then
-        # Update TTS_MODEL_PATH
-        if grep -q "^TTS_MODEL_PATH=" "$TTS_SERVICE_DIR/.env"; then
-            sed -i.tmp "s|^TTS_MODEL_PATH=.*|TTS_MODEL_PATH=$KOKORO_MODEL_PATH|" "$TTS_SERVICE_DIR/.env"
-            rm -f "$TTS_SERVICE_DIR/.env.tmp"
-        else
-            echo "TTS_MODEL_PATH=$KOKORO_MODEL_PATH" >> "$TTS_SERVICE_DIR/.env"
-        fi
-        print_success "Updated TTS_MODEL_PATH in TTS Service"
-    fi
+if [[ "$SKIP_MODELS" == false ]]; then
+    bash "$SCRIPT_DIR/download-gipformer-model.sh" --output "$GIPFORMER_MODEL_DIR"
 
-    # Update Orchestrator Service .env
-    if [ -f "$ORCHESTRATOR_DIR/.env" ]; then
-        BI_ENCODER_MODEL_PATH="$BI_ENCODER_MODEL_DIR/vietnamese_bi_encoder_int8_accurate.onnx"
-        if grep -q "^HALLUCINATION_FILTER_MODEL_PATH=" "$ORCHESTRATOR_DIR/.env"; then
-            sed -i.tmp "s|^HALLUCINATION_FILTER_MODEL_PATH=.*|HALLUCINATION_FILTER_MODEL_PATH=$BI_ENCODER_MODEL_PATH|" "$ORCHESTRATOR_DIR/.env"
-            rm -f "$ORCHESTRATOR_DIR/.env.tmp"
-        else
-            echo "HALLUCINATION_FILTER_MODEL_PATH=$BI_ENCODER_MODEL_PATH" >> "$ORCHESTRATOR_DIR/.env"
-        fi
-        print_success "Updated HALLUCINATION_FILTER_MODEL_PATH in Orchestrator Service"
+    kokoro_args=("$SCRIPT_DIR/download-kokoro-model.sh" --output models/kokoro_models)
+    if [[ "$ALL_KOKORO_VOICES" == true ]]; then
+        kokoro_args+=(--all-voices)
+    elif [[ -n "$KOKORO_VOICES" ]]; then
+        kokoro_args+=(--voices "$KOKORO_VOICES")
     fi
-    
-    print_success ".env files configured successfully!"
-else
-    print_section "Step 2: Skipping .env Setup"
-    print_warning ".env setup skipped."
+    bash "${kokoro_args[@]}"
+
+    bash "$SCRIPT_DIR/download-bi-encoder-model.sh" --output "$BI_ENCODER_MODEL_DIR"
 fi
 
-# ============================================================================
-# Step 3: Setup Virtual Environments
-# ============================================================================
-if [ "$SKIP_VENV" = false ]; then
-    print_section "Step 3: Setting up Virtual Environments"
-    
-    # Function to create venv and install dependencies
-    setup_venv() {
-        local service_dir=$1
-        local service_name=$2
-        local req_filename=${3:-requirements.txt}
-        local venv_dir="$service_dir/venv"
-        local requirements_file="$service_dir/$req_filename"
-        
-        print_info "Setting up virtual environment for $service_name..."
-        
-        # Check if requirements file exists
-        if [ ! -f "$requirements_file" ]; then
-            print_warning "$req_filename not found for $service_name. Skipping."
-            return
-        fi
-        
-        # Create virtual environment
-        if [ -d "$venv_dir" ]; then
-            print_warning "Virtual environment already exists for $service_name. Skipping creation."
-        else
-            $PYTHON_CMD -m venv "$venv_dir"
-            print_success "Created virtual environment for $service_name"
-        fi
-        
-        # Activate and install dependencies
-        print_info "Installing dependencies for $service_name..."
-        source "$venv_dir/bin/activate"
-        
-        # Upgrade pip
-        pip install --upgrade pip > /dev/null 2>&1
-        
-        # Install requirements
-        pip install -r "$requirements_file"
-        
-        deactivate
-        print_success "Dependencies installed for $service_name"
-    }
-    
-    # Setup venv for each service
-    setup_venv "$STT_SERVICE_DIR" "STT Service" "requirements-server.txt"
-    setup_venv "$NON_REALTIME_STT_DIR" "Non-Realtime STT Service" "requirements.txt"
-    setup_venv "$ORCHESTRATOR_DIR" "Orchestrator Service" "requirements-orchestrator.txt"
-    setup_venv "$AGENTS_DIR" "Agents Service" "requirements-agent.txt"
-    setup_venv "$TTS_SERVICE_DIR" "TTS Service" "requirements-tts.txt"
-    
-    print_success "Virtual environments configured successfully!"
-else
-    print_section "Step 3: Skipping Virtual Environment Setup"
-    print_warning "Virtual environment setup skipped."
+if [[ "$SKIP_ENV" == false ]]; then
+    setup_env "$STT_SERVICE_DIR"
+    setup_env "$ORCHESTRATOR_DIR"
+    setup_env "$TTS_SERVICE_DIR"
+
+    [[ -f "$STT_SERVICE_DIR/.env" ]] && \
+        set_env_value "$STT_SERVICE_DIR/.env" WHISPER_GIPFORMER_MODEL_PATH "$GIPFORMER_MODEL_DIR"
+    [[ -f "$TTS_SERVICE_DIR/.env" ]] && \
+        set_env_value "$TTS_SERVICE_DIR/.env" TTS_MODEL_PATH "$KOKORO_MODEL_DIR"
+    [[ -f "$ORCHESTRATOR_DIR/.env" ]] && \
+        set_env_value "$ORCHESTRATOR_DIR/.env" HALLUCINATION_FILTER_MODEL_PATH \
+            "$BI_ENCODER_MODEL_DIR/vietnamese_bi_encoder_int8_accurate.onnx"
 fi
 
-# ============================================================================
-# Summary
-# ============================================================================
-print_section "Setup Complete!"
+if [[ "$SKIP_VENV" == false ]]; then
+    setup_venv "$STT_SERVICE_DIR" requirements.txt
+    setup_venv "$ORCHESTRATOR_DIR" requirements-orchestrator.txt
+    setup_venv "$TTS_SERVICE_DIR" requirements-tts.txt
+fi
 
-echo -e "${GREEN}${BOLD}Summary:${NC}"
-echo ""
-echo -e "  ${GREEN}✓${NC} Models downloaded to: $MODELS_DIR"
-echo -e "  ${GREEN}✓${NC} Nemotron model: $NEMOTRON_MODEL"
-echo -e "  ${GREEN}✓${NC} Non-realtime Whisper model: $WHISPER_MODEL"
-echo -e "  ${GREEN}✓${NC} Gipformer model: gipformer-model"
-echo -e "  ${GREEN}✓${NC} Kokoro model: kokoro_models"
-echo -e "  ${GREEN}✓${NC} Bi-Encoder model: bi-encoder-model"
-echo ""
-echo -e "  ${GREEN}✓${NC} .env files created and configured"
-echo -e "  ${GREEN}✓${NC} Virtual environments set up for all services"
-echo ""
-echo -e "${CYAN}${BOLD}Next Steps:${NC}"
-echo ""
-echo -e "  1. Review and update .env files with your specific configuration:"
-echo -e "     - $STT_SERVICE_DIR/.env"
-echo -e "     - $NON_REALTIME_STT_DIR/.env"
-echo -e "     - $ORCHESTRATOR_DIR/.env"
-echo -e "     - $AGENTS_DIR/.env"
-echo ""
-echo -e "  2. Create systemd services (optional):"
-echo -e "     ${CYAN}sudo ./scripts/create-systemd-services.sh${NC}"
-echo ""
-echo -e "  3. Start the services manually:"
-echo -e "     ${CYAN}cd $STT_SERVICE_DIR && ./venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8000${NC}"
-echo -e "     ${CYAN}cd $NON_REALTIME_STT_DIR && ./venv/bin/python -m uvicorn non_realtime_stt_service.main:app --host 0.0.0.0 --port 8001${NC}"
-echo -e "     ${CYAN}cd $ORCHESTRATOR_DIR && ./venv/bin/python -m uvicorn orchestrator_service.main:app --host 0.0.0.0 --port 8002${NC}"
-echo -e "     ${CYAN}cd $AGENTS_DIR && ./venv/bin/python src/main.py${NC}"
-echo ""
-print_success "Setup completed successfully! 🎉"
+echo "Setup complete. Start STT with:"
+echo "  cd $STT_SERVICE_DIR && ./venv/bin/python -m uvicorn stt_service.main:app --host 0.0.0.0 --port 8001"

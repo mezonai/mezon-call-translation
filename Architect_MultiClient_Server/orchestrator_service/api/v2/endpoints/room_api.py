@@ -132,7 +132,7 @@ async def retry_room_transcription_endpoint(
     Flow:
     1. Resets previous chunks & summaries in DB to avoid duplicate data.
     2. Enqueues TranscriptionTask for each track into Redis 'transcription:stream'.
-    3. stt-non-realtime worker downloads audio from MinIO and performs Whisper ASR.
+    3. stt_service downloads audio from MinIO and performs Whisper ASR.
     4. Segments are streamed back to Orchestrator and saved to DB.
     5. Meeting summary is automatically triggered upon completion of all tracks.
     """

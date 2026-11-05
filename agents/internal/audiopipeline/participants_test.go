@@ -125,7 +125,7 @@ func TestRecordTimeline_NewBindingSubtractsTickerPadding(t *testing.T) {
 
 func TestDecoupledBridge_SlotMoveKeepsOneRecording(t *testing.T) {
 	rec := &sinkRecorder{}
-	b := NewDecoupledBridge(rec.newSink, nil)
+	b := NewDecoupledBridge(rec.newSink)
 	defer b.Close()
 	p := newOpusPackets(t)
 
@@ -154,7 +154,7 @@ func TestDecoupledBridge_SlotMoveKeepsOneRecording(t *testing.T) {
 
 func TestDecoupledBridge_SeparateRecordingPerPeer(t *testing.T) {
 	rec := &sinkRecorder{}
-	b := NewDecoupledBridge(rec.newSink, nil)
+	b := NewDecoupledBridge(rec.newSink)
 	defer b.Close()
 	p := newOpusPackets(t)
 
@@ -172,7 +172,7 @@ func TestDecoupledBridge_SeparateRecordingPerPeer(t *testing.T) {
 
 func TestDecoupledBridge_DropsOlderBindingPackets(t *testing.T) {
 	rec := &sinkRecorder{}
-	b := NewDecoupledBridge(rec.newSink, nil)
+	b := NewDecoupledBridge(rec.newSink)
 	defer b.Close()
 	p := newOpusPackets(t)
 
@@ -192,7 +192,7 @@ func TestDecoupledBridge_DropsOlderBindingPackets(t *testing.T) {
 
 func TestDecoupledBridge_RetiredBindingCannotRecreateSession(t *testing.T) {
 	rec := &sinkRecorder{}
-	b := NewDecoupledBridge(rec.newSink, nil)
+	b := NewDecoupledBridge(rec.newSink)
 	defer b.Close()
 	p := newOpusPackets(t)
 
@@ -212,7 +212,7 @@ func TestDecoupledBridge_RetiredBindingCannotRecreateSession(t *testing.T) {
 
 func TestDecoupledBridge_IgnoresPlaceholderIdentity(t *testing.T) {
 	rec := &sinkRecorder{}
-	b := NewDecoupledBridge(rec.newSink, nil)
+	b := NewDecoupledBridge(rec.newSink)
 	defer b.Close()
 	p := newOpusPackets(t)
 
@@ -233,10 +233,8 @@ func TestDecoupledBridge_IgnoresPlaceholderIdentity(t *testing.T) {
 
 func TestDecoupledBridge_PeerEndedClosesAndBlocksLatePackets(t *testing.T) {
 	rec := &sinkRecorder{}
-	stt := &sinkRecorder{}
-	b := NewDecoupledBridge(rec.newSink, stt.newSink)
+	b := NewDecoupledBridge(rec.newSink)
 	defer b.Close()
-	b.SetSTTEnabled(true)
 	p := newOpusPackets(t)
 
 	info := audioBinding("3", 10, 1)
@@ -246,9 +244,6 @@ func TestDecoupledBridge_PeerEndedClosesAndBlocksLatePackets(t *testing.T) {
 
 	if _, closed := rec.sink(t, 0).snapshot(); !closed {
 		t.Fatal("peer_left did not close the record sink")
-	}
-	if _, closed := stt.sink(t, 0).snapshot(); !closed {
-		t.Fatal("peer_left did not close the STT sink")
 	}
 	if _, closed := rec.sink(t, 1).snapshot(); closed {
 		t.Fatal("peer_left closed another peer's recording")
@@ -260,43 +255,9 @@ func TestDecoupledBridge_PeerEndedClosesAndBlocksLatePackets(t *testing.T) {
 	}
 }
 
-func TestDecoupledBridge_STTToggleKeepsRecording(t *testing.T) {
-	rec := &sinkRecorder{}
-	stt := &sinkRecorder{}
-	b := NewDecoupledBridge(rec.newSink, stt.newSink)
-	defer b.Close()
-	p := newOpusPackets(t)
-
-	info := audioBinding("3", 10, 1)
-	p.sendFrames(b, info, 1000, 1)
-	if n := stt.count(); n != 0 {
-		t.Fatalf("STT sinks = %d while disabled", n)
-	}
-
-	b.SetSTTEnabled(true)
-	if n := stt.count(); n != 1 {
-		t.Fatalf("enabling STT created %d sinks for the live participant, want 1", n)
-	}
-	p.sendFrames(b, info, 1960, 1)
-	if got, _ := stt.sink(t, 0).snapshot(); got != opusFrameBytes {
-		t.Fatalf("STT bytes = %d, want one frame", got)
-	}
-
-	b.SetSTTEnabled(false)
-	if _, closed := stt.sink(t, 0).snapshot(); !closed {
-		t.Fatal("disabling STT left the STT sink open")
-	}
-	if n := rec.count(); n != 1 {
-		t.Fatalf("STT toggle changed record sinks to %d", n)
-	}
-	if _, closed := rec.sink(t, 0).snapshot(); closed {
-		t.Fatal("STT toggle closed the recording")
-	}
-}
-
 func TestDecoupledBridge_CloseClosesAllAndRejectsNewPackets(t *testing.T) {
 	rec := &sinkRecorder{}
-	b := NewDecoupledBridge(rec.newSink, nil)
+	b := NewDecoupledBridge(rec.newSink)
 	p := newOpusPackets(t)
 
 	p.sendFrames(b, audioBinding("3", 10, 1), 1000, 1)
@@ -317,7 +278,7 @@ func TestDecoupledBridge_CloseClosesAllAndRejectsNewPackets(t *testing.T) {
 // Run with -race: old and new MID read loops overlap during a slot move.
 func TestDecoupledBridge_ConcurrentBindingsShareOneRecording(t *testing.T) {
 	rec := &sinkRecorder{}
-	b := NewDecoupledBridge(rec.newSink, nil)
+	b := NewDecoupledBridge(rec.newSink)
 	defer b.Close()
 
 	var wg sync.WaitGroup
@@ -327,7 +288,6 @@ func TestDecoupledBridge_ConcurrentBindingsShareOneRecording(t *testing.T) {
 		wg.Go(func() { p.sendFrames(b, info, base, 20) })
 	}
 	wg.Go(func() {
-		b.SetSTTEnabled(true)
 		b.HandleTrackEnded(audioBinding("3", 10, 1))
 	})
 	wg.Wait()

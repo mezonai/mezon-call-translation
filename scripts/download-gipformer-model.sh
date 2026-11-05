@@ -2,7 +2,7 @@
 # Download the CPU Gipformer fallback model into a local directory.
 #
 # By default, downloads to models/gipformer-model (or specified via --output)
-# to keep model artifacts localized and consistent with Nemotron and Kokoro.
+# to keep model artifacts localized and consistent with the other model caches.
 
 set -e
 
@@ -27,7 +27,7 @@ MODEL_FILES=(
 print_header() {
     echo ""
     echo -e "${CYAN}${BOLD}============================================================${NC}"
-    echo -e "${CYAN}${BOLD}    Gipformer Non-Realtime STT Fallback Downloader${NC}"
+    echo -e "${CYAN}${BOLD}    Gipformer STT Fallback Downloader${NC}"
     echo -e "${CYAN}${BOLD}============================================================${NC}"
     echo ""
 }
@@ -39,7 +39,7 @@ print_error() { echo -e "${RED}❌ $1${NC}"; }
 
 show_help() {
     cat << EOF
-Download the CPU Gipformer fallback model used by non-realtime Whisper STT.
+Download the CPU Gipformer fallback model used by batch Whisper STT.
 
 USAGE:
     ./scripts/download-gipformer-model.sh [options]

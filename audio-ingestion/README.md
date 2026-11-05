@@ -25,7 +25,7 @@ The in-flight change above hasn't altered this shape yet, only prepared one serv
 
 ```
 agents (per-room worker)
-   │  subscribes a track dedicated to recording, independent of realtime STT
+   │  subscribes a track dedicated to recording
    │  forwards raw PCM16 over gRPC (proto/recording.proto, StreamAudio bidi stream)
    ▼
 record-service

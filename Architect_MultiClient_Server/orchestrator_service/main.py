@@ -10,14 +10,10 @@ load_dotenv()
 
 from orchestrator_service.api.exception_handlers import register_exception_handlers
 from orchestrator_service.api.sse.sse_manager import SSEManager
-from orchestrator_service.api.sse_agent_request_api import (
-    router as sse_agent_request_router,
-)
 from orchestrator_service.api.sse_chat_external_api import (
     router as sse_chat_external_router,
 )
 from orchestrator_service.api.sse_metadata_api import router as sse_metadata_router
-from orchestrator_service.api.sse_transcript_api import router as stream_router
 from orchestrator_service.api.summary_api import client_router as summary_client_router
 from orchestrator_service.api.v2.router import (
     api_router as api_router_v2,
@@ -151,10 +147,8 @@ app.add_middleware(
 
 
 # Include routers
-app.include_router(stream_router, prefix="/api", tags=["sse transcript"])
 app.include_router(sse_chat_external_router, prefix="/api", tags=["sse chat external"])
 app.include_router(sse_metadata_router, prefix="/api", tags=["sse metadata"])
-app.include_router(sse_agent_request_router, prefix="/api", tags=["sse agent requests"])
 # TODO: legacy summary API, mounted with no auth (unlike /api/v2/summary which
 # requires ROOMS_VIEW_ALL/ROOMS_VIEW_OWN). Confirm no downstream still calls this,
 # then remove this router and its module (api/summary_api.py).

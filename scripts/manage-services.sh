@@ -15,9 +15,8 @@ NC='\033[0m' # No Color
 # Service names
 SERVICES=(
     "mezon-stt-service"
-    "mezon-non-realtime-stt-service"
     "mezon-orchestrator-service"
-    "mezon-agents-service"
+    "mezon-tts-service"
 )
 
 # Functions

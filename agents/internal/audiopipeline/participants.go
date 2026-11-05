@@ -25,7 +25,7 @@ type decoderBinding struct {
 }
 
 type participantSession struct {
-	// Serializes decoder use, sink initialization, sends, STT toggles and close.
+	// Serializes decoder use, sink initialization, sends and close.
 	mu          sync.Mutex
 	info        rtcagent.TrackInfo // stable participant identity for sink metadata
 	initialized bool
@@ -33,27 +33,24 @@ type participantSession struct {
 	revision    uint64
 	binding     *decoderBinding
 	record      *recordTimeline
-	stt         Sink
 }
 
 type participantBridge struct {
 	mu            sync.Mutex
 	closed        bool
-	sttEnabled    bool
 	sessions      map[participantKey]*participantSession
 	departed      map[uint64]bool
 	retired       map[string]uint64 // highest ended revision per MID
 	newRecordSink func(rtcagent.TrackInfo) Sink
-	newSTTSink    func(rtcagent.TrackInfo) Sink
 }
 
 // NewDecoupledBridge gives each peer/kind one recording for this receiver
 // session. Muted/VAD-displaced peers retain their sinks and silence timeline.
-func NewDecoupledBridge(record, stt func(rtcagent.TrackInfo) Sink) *Bridge {
+func NewDecoupledBridge(record func(rtcagent.TrackInfo) Sink) *Bridge {
 	return &Bridge{participants: &participantBridge{
 		sessions: make(map[participantKey]*participantSession),
 		departed: make(map[uint64]bool), retired: make(map[string]uint64),
-		newRecordSink: record, newSTTSink: stt,
+		newRecordSink: record,
 	}}
 }
 
@@ -82,7 +79,7 @@ func (b *participantBridge) handlePacket(info rtcagent.TrackInfo, pkt *rtp.Packe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b.mu.Lock()
-	valid, sttEnabled := b.acceptsLocked(info), b.sttEnabled
+	valid := b.acceptsLocked(info)
 	b.mu.Unlock()
 	if !valid || s.closed || info.BindingRevision < s.revision {
 		return
@@ -109,18 +106,12 @@ func (b *participantBridge) handlePacket(info rtcagent.TrackInfo, pkt *rtp.Packe
 				s.record = newRecordTimeline(sink)
 			}
 		}
-		if sttEnabled && b.newSTTSink != nil {
-			s.stt = b.newSTTSink(s.info)
-		}
 	}
 	pcm := int16ToLEBytes(d.pcm[:n])
 	if s.record != nil {
 		s.record.sendPCM(pcm, pkt.Timestamp, time.Now(), !d.started)
 	}
 	d.started = true
-	if s.stt != nil {
-		s.stt.SendPCM(pcm)
-	}
 }
 
 func (b *participantBridge) endBinding(info rtcagent.TrackInfo) {
@@ -155,10 +146,6 @@ func (s *participantSession) close() {
 	if s.record != nil {
 		s.record.close(time.Now())
 		s.record = nil
-	}
-	if s.stt != nil {
-		s.stt.Close()
-		s.stt = nil
 	}
 }
 
@@ -209,32 +196,5 @@ func (b *Bridge) Close() {
 	b.mu.Unlock()
 	for _, s := range ended {
 		b.finalizeSession(s)
-	}
-}
-
-func (b *participantBridge) setSTTEnabled(enabled bool) {
-	b.mu.Lock()
-	b.sttEnabled = enabled
-	var sessions []*participantSession
-	for _, s := range b.sessions {
-		sessions = append(sessions, s)
-	}
-	b.mu.Unlock()
-	for _, s := range sessions {
-		s.mu.Lock()
-		// Read the latest intent after acquiring the session lock. A slow
-		// enable must not overwrite a concurrent disable or peer departure.
-		b.mu.Lock()
-		want := b.sttEnabled && !b.closed && !b.departed[s.info.PeerID]
-		b.mu.Unlock()
-		if !s.closed && s.initialized {
-			if want && s.stt == nil && b.newSTTSink != nil {
-				s.stt = b.newSTTSink(s.info)
-			} else if !want && s.stt != nil {
-				s.stt.Close()
-				s.stt = nil
-			}
-		}
-		s.mu.Unlock()
 	}
 }
