@@ -14,13 +14,11 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	"github.com/pion/webrtc/v4"
 
 	"github.com/mezonai/mezon-call-translation/agents/internal/agentcontrol"
 	"github.com/mezonai/mezon-call-translation/agents/internal/agentsbotclient"
@@ -34,8 +32,6 @@ import (
 	"github.com/mezonai/mezon-call-translation/agents/internal/sfuauth"
 	"github.com/mezonai/mezon-call-translation/agents/internal/signaling"
 	"github.com/mezonai/mezon-call-translation/agents/internal/tracksink"
-	"github.com/mezonai/mezon-call-translation/agents/internal/ttsclient"
-	"github.com/mezonai/mezon-call-translation/agents/internal/ttsplayer"
 )
 
 // orchestratorCallTimeout bounds the register/unregister-room HTTP calls.
@@ -45,14 +41,6 @@ import (
 // succeed no matter how long we wait (both calls already degrade gracefully
 // on failure rather than blocking startup/shutdown, see their call sites).
 const orchestratorCallTimeout = 3 * time.Second
-
-// sseRequestTypeSendChatMessage is the orchestrator SSE agent-request type
-// that asks this agent to post a room chat message. Deliberately a
-// different string from the mezon-sfu WS wire type the agent then sends
-// ("send_message", signaling.wireTypeSendMessage) -- one is the
-// orchestrator contract (kept stable so the caller side isn't affected),
-// the other is the SFU protocol; they are not renamed together.
-const sseRequestTypeSendChatMessage = "send_chat_message"
 
 func main() {
 	// Best-effort: only matters when bin/agent is run standalone for
@@ -132,13 +120,6 @@ func main() {
 		defer func() { _ = recClient.Close() }()
 	}
 
-	// refs holds the *current* session's bridge/player -- both are rebuilt
-	// on every reconnect (see runSession), but the orchestrator SSE
-	// listener below is started once and outlives every individual
-	// mezon-sfu session, so its handlers need a way to reach "whatever
-	// session is live right now" (or no-op if none is, e.g. mid-reconnect).
-	refs := &sessionRefs{}
-
 	// Agents-bot client for registering active rooms used by chat forwarding.
 	// nil if AGENTS_BOT_BASE_URL is not set.
 	var agentsBotClient *agentsbotclient.Client
@@ -152,23 +133,11 @@ func main() {
 	var orch *orchestratorclient.Client
 	if cfg.Orchestrator.BaseURL != "" {
 		orch = orchestratorclient.New(cfg.Orchestrator.BaseURL, cfg.Orchestrator.APIKey)
-		registerRequestHandlers(orch, refs, cfg)
-
-		go func() {
-			agentID := strconv.FormatInt(cfg.AgentUserID, 10)
-			// room_name: see internal/orchestratorclient's package doc --
-			// this is room_id as a decimal string, an assumption pending
-			// confirmation from the orchestrator side, not a settled contract.
-			roomName := strconv.FormatUint(cfg.RoomID, 10)
-			if err := orch.RunAgentRequestListener(ctx, agentID, roomName); err != nil && ctx.Err() == nil {
-				logging.L.Error("orchestratorclient: sse listener exited unexpectedly", logging.ErrAttrs(err)...)
-			}
-		}()
 	} else {
-		logging.L.Info("orchestratorclient: ORCHESTRATOR_BASE_URL not set, running without TTS trigger/transcript push/transcript_control")
+		logging.L.Info("orchestratorclient: ORCHESTRATOR_BASE_URL not set, running without orchestrator integration")
 	}
 
-	err = run(ctx, stop, cfg, recClient, orch, agentsBotClient, refs)
+	err = run(ctx, stop, cfg, recClient, orch, agentsBotClient)
 	switch {
 	case err == nil:
 		return
@@ -186,110 +155,12 @@ func main() {
 	}
 }
 
-// sessionRefs is how the long-lived orchestrator SSE listener's handlers
-// reach the current mezon-sfu session's audiopipeline.Bridge/ttsplayer.Player
-// -- all nil between sessions (mid-reconnect) or if the corresponding
-// feature isn't active this run (e.g. no Player unless Role is "speaker").
-type sessionRefs struct {
-	mu     sync.Mutex
-	bridge *audiopipeline.Bridge
-	player *ttsplayer.Player
-	// sigClient is the current session's WS client -- set right after
-	// signaling.Dial succeeds (before onJoined), cleared by session.close.
-	// The send_chat_message handler writes room messages through it; nil
-	// means "no live session", handled the same as a nil bridge/player.
-	sigClient *signaling.Client
-}
-
-func (r *sessionRefs) set(bridge *audiopipeline.Bridge, player *ttsplayer.Player) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.bridge, r.player = bridge, player
-}
-
-func (r *sessionRefs) get() (*audiopipeline.Bridge, *ttsplayer.Player) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.bridge, r.player
-}
-
-func (r *sessionRefs) setSignalingClient(c *signaling.Client) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.sigClient = c
-}
-
-func (r *sessionRefs) signalingClient() *signaling.Client {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.sigClient
-}
-
-// registerRequestHandlers wires the orchestrator SSE agent-request types
-// this agent acts on: tts_play drives ttsplayer.Player.Speak,
-// transcript_control drives audiopipeline.Bridge.SetSTTEnabled, and
-// send_chat_message posts a room chat message via the WS session
-// (signaling.Client.SendRoomMessage). cfg supplies the chat sender
-// identity (id/name/avatar) stamped on send_chat_message.
-func registerRequestHandlers(orch *orchestratorclient.Client, refs *sessionRefs, cfg config.Config) {
-	orch.RegisterHandler("tts_play", func(payload map[string]any) error {
-		_, player := refs.get()
-		if player == nil {
-			return fmt.Errorf("no active speaker-role session to play TTS into")
-		}
-		text, _ := payload["text"].(string)
-		if strings.TrimSpace(text) == "" {
-			return fmt.Errorf("missing/empty text")
-		}
-		voice, _ := payload["voice"].(string)
-		speed, _ := payload["speed"].(float64)
-		player.Speak(text, voice, speed)
-		return nil
-	})
-
-	orch.RegisterHandler("transcript_control", func(payload map[string]any) error {
-		bridge, _ := refs.get()
-		if bridge == nil {
-			return fmt.Errorf("no active session")
-		}
-		action, _ := payload["action"].(string)
-		switch action {
-		case "enable":
-			bridge.SetSTTEnabled(true)
-		case "disable":
-			bridge.SetSTTEnabled(false)
-		default:
-			return fmt.Errorf("unknown action %q (want \"enable\" or \"disable\")", action)
-		}
-		return nil
-	})
-
-	orch.RegisterHandler(sseRequestTypeSendChatMessage, func(payload map[string]any) error {
-		sig := refs.signalingClient()
-		if sig == nil {
-			return fmt.Errorf("no active session to send a room message into")
-		}
-		text, _ := payload["message"].(string)
-		// Best-effort per the plan: SendRoomMessage validates and writes the
-		// frame, but the SFU may still reject it (e.g. peer not fully joined
-		// yet -> "must_join_room_first"), which surfaces only as a logged
-		// signaling handler error, not here.
-		return sig.SendRoomMessage(signaling.RoomMessage{
-			ID:        strconv.FormatInt(cfg.AgentUserID, 10),
-			Name:      cfg.ChatName,
-			Avatar:    cfg.ChatAvatarURL,
-			Timestamp: time.Now().UnixMilli(),
-			Content:   text,
-		})
-	})
-}
-
 // run keeps a mezon-sfu session alive, retrying with backoff after a
 // session dies (see config.ReconnectConfig for why this is a full rejoin,
 // not a resume, and what it is not a substitute for). It only returns once
 // ctx is cancelled (graceful shutdown, e.g. worker manager sent SIGTERM --
 // no point retrying that) or the retry budget is exhausted.
-func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs) error {
+func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client) error {
 	backoff := reconnect.New(cfg.Reconnect)
 	roomName := strconv.FormatUint(cfg.RoomID, 10)
 	roomID := roomName
@@ -319,7 +190,7 @@ func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recCli
 
 	for conn := 1; ; conn++ {
 		start := time.Now()
-		err := runSession(ctx, stop, cfg, recClient, orch, agentsBotClient, refs, roomName, roomID, conn)
+		err := runSession(ctx, stop, cfg, recClient, orch, agentsBotClient, roomName, roomID, conn)
 
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -360,13 +231,13 @@ func run(ctx context.Context, stop context.CancelFunc, cfg config.Config, recCli
 // cancelled. Every call builds a brand new session -- mezon-sfu ties the
 // media session to the WS connection 1:1, so there is nothing to resume
 // from a previous attempt, and mid numbering restarts from scratch too.
-func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, refs *sessionRefs, roomName, roomID string, conn int) error {
+func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, agentsBotClient *agentsbotclient.Client, roomName, roomID string, conn int) error {
 	token, err := sfuauth.SignJoinToken(cfg.JWTSecret, cfg.AgentUserID, cfg.RoomID, cfg.ChatAvatarURL, cfg.TokenTTL)
 	if err != nil {
 		return err
 	}
 
-	sess := newSession(cfg, recClient, orch, refs, roomName, roomID, conn, stop)
+	sess := newSession(cfg, recClient, orch, roomName, roomID, conn, stop)
 
 	// Register room with agents-bot so it knows which channels to forward.
 	if agentsBotClient != nil {
@@ -397,10 +268,6 @@ func runSession(ctx context.Context, stop context.CancelFunc, cfg config.Config,
 	if err != nil {
 		return err
 	}
-	// Expose this session's WS client to the long-lived SSE handlers (the
-	// send_chat_message handler writes room messages through it). Cleared by
-	// sess.close() in the defer below.
-	refs.setSignalingClient(client)
 	defer func() {
 		sess.close()
 		_ = client.Close()
@@ -421,8 +288,7 @@ func registerRoomWithOrchestrator(ctx context.Context, orch *orchestratorclient.
 	return orch.RegisterRoom(rctx, roomName, roomID)
 }
 
-// session holds the mutable state of a single mezon-sfu join --
-// rtcagent.PeerAgent and (if speaking) ttsplayer.Player -- and is the
+// session holds the mutable state of a single mezon-sfu join and is the
 // receiver for every signaling.Callbacks hook. Bundling these as fields
 // instead of closure-captured locals means the state each handler reads is
 // explicit and the handlers are independently readable/testable, rather
@@ -437,11 +303,9 @@ type session struct {
 	cfg       config.Config
 	recClient *recordclient.Client
 	orch      *orchestratorclient.Client
-	refs      *sessionRefs
 	// roomName/roomID: see runSession's comment at the call site and
 	// orchestratorclient's package doc -- two different identifiers, roomID
-	// is what record-service/TTS forwarding need, roomName is what
-	// push_transcript/SSE/STT use.
+	// is what record-service needs.
 	roomName string
 	roomID   string
 	// conn is this signaling connection's 1-based ordinal within the run. It
@@ -458,15 +322,14 @@ type session struct {
 	peerAgent  *rtcagent.PeerAgent
 	bridge     *audiopipeline.Bridge
 	mediaEpoch int // advances on each joined, including an in-place rejoin
-	player     *ttsplayer.Player
 
 	// emptyRoomTimer: see checkEmptyRoom's doc. nil whenever the room isn't
 	// currently down to just this agent.
 	emptyRoomTimer *time.Timer
 }
 
-func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, refs *sessionRefs, roomName, roomID string, conn int, stop context.CancelFunc) *session {
-	return &session{cfg: cfg, recClient: recClient, orch: orch, refs: refs, roomName: roomName, roomID: roomID, conn: conn, stop: stop}
+func newSession(cfg config.Config, recClient *recordclient.Client, orch *orchestratorclient.Client, roomName, roomID string, conn int, stop context.CancelFunc) *session {
+	return &session{cfg: cfg, recClient: recClient, orch: orch, roomName: roomName, roomID: roomID, conn: conn, stop: stop}
 }
 
 func (s *session) callbacks() signaling.Callbacks {
@@ -499,107 +362,31 @@ func (s *session) onJoined(ev signaling.JoinedEvent) {
 	if s.bridge != nil {
 		s.bridge.Close()
 	}
-	if s.player != nil {
-		s.player.Close()
-		s.player = nil
-	}
 	s.bridge = nil
-	s.refs.set(nil, nil)
-
-	var publishTrack *webrtc.TrackLocalStaticSample
-	if s.cfg.Role == config.RoleSpeaker {
-		// Channels must be 2 here per RFC 7587 (Opus RTP payload format):
-		// the SDP rtpmap always declares 2 channels regardless of actual
-		// mono/stereo content -- mezon-sfu's offer says "opus/48000/2"
-		// (sdp.c) and so does pion's own default Opus registration
-		// (mediaengine.go). Actual mono output is unaffected: that's
-		// controlled by the (absent, so default) fmtp "stereo" param, not
-		// this field. Declaring Channels:1 here made pion's codec fuzzy
-		// match (internal/fmtp.ChannelsEqual) fail against the negotiated
-		// "opus/48000/2" codec -- Bind() would return ErrUnsupportedCodec
-		// even with a working encoder.
-		track, err := webrtc.NewTrackLocalStaticSample(
-			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2},
-			"tts-audio", "agent-tts",
-		)
-		if err != nil {
-			logging.L.Error("ttsplayer: failed to create publish track, joining as audience instead", logging.ErrAttrs(err)...)
-		} else {
-			publishTrack = track
-		}
-	}
-
-	// Classic Go typed-nil-interface trap: rtcagent.New takes webrtc.TrackLocal
-	// (an interface), and publishTrack's static type is the concrete
-	// *webrtc.TrackLocalStaticSample -- passing a nil publishTrack straight
-	// through would implicitly wrap it into a non-nil interface (type set,
-	// value nil), so rtcagent.New's own `!= nil` check would see it as
-	// non-nil and call pc.AddTrack on a nil pointer (confirmed: panics
-	// inside pion's AddTrack -> TrackLocalStaticSample.Kind, nil receiver).
-	// Converting explicitly here, while publishTrack is still the concrete
-	// type, keeps the interface genuinely nil for the audience case.
-	var rtcPublishTrack webrtc.TrackLocal
-	if publishTrack != nil {
-		rtcPublishTrack = publishTrack
-	}
-	pa, err := rtcagent.New(ev.ICEServers, rtcPublishTrack, ev.MediaPool)
+	pa, err := rtcagent.New(ev.ICEServers, nil, ev.MediaPool)
 	if err != nil {
 		logging.L.Error("rtcagent: failed to create peer connection", logging.ErrAttrs(err)...)
 		return
 	}
 
-	// recordFactory/sttFactory are nil when that consumer is disabled for
-	// this run (see tracksink's constructors); newRecordSink/newSTTSink must
+	// recordFactory is nil when recording is disabled for this run;
+	// newRecordSink must
 	// stay nil funcs (not a method value bound to a nil receiver) in that
 	// case -- Bridge nil-checks the func itself before calling it.
 	recordFactory := tracksink.NewRecordSinkFactory(s.recClient, s.cfg, s.roomID, s.conn, s.mediaEpoch)
-	sttFactory := tracksink.NewSTTSinkFactory(s.cfg, s.orch)
-	var newRecordSink, newSTTSink func(info rtcagent.TrackInfo) audiopipeline.Sink
+	var newRecordSink func(info rtcagent.TrackInfo) audiopipeline.Sink
 	if recordFactory != nil {
 		newRecordSink = recordFactory.NewSink
 	}
-	if sttFactory != nil {
-		newSTTSink = sttFactory.NewSink
-	}
-
-	bridge := audiopipeline.NewBridge(newRecordSink, newSTTSink)
+	bridge := audiopipeline.NewBridge(newRecordSink)
 	if ev.MediaPool.IsDecoupled() {
-		bridge = audiopipeline.NewDecoupledBridge(newRecordSink, newSTTSink)
+		bridge = audiopipeline.NewDecoupledBridge(newRecordSink)
 	}
 	pa.OnAudioPacket = bridge.HandlePacket
 	pa.OnTrackEnded = bridge.HandleTrackEnded
 
-	var player *ttsplayer.Player
-	if publishTrack != nil && s.orch != nil {
-		p, err := ttsplayer.New(publishTrack, ttsclient.New(s.cfg.TTSService.BaseURL), s.cfg.TTSService.SampleRate,
-			s.recClient, s.roomID, s.cfg.AgentUserID, s.cfg.TTSService.MaxQueueSize, s.orch)
-		if err != nil {
-			// Best-effort per audio-ingestion/PLAN.md D5 -- an encoder
-			// init failure (see internal/opusenc) must not stop the agent
-			// from joining and record/transcribing normally, just means it
-			// can't speak this session.
-			logging.L.Warn("ttsplayer: unavailable this session", logging.ErrAttrs(err)...)
-		} else {
-			player = p
-		}
-	}
-
 	s.peerAgent = pa
 	s.bridge = bridge
-	s.player = player
-	s.refs.set(bridge, player)
-
-	// mezon-sfu creates every session muted. In decoupled rooms, publishing
-	// RTP on MID 0 is not enough by itself: only unmuted active speakers are
-	// assigned into each listener's audio pool. The SFU accepts this intent
-	// before the answer and applies it when negotiation completes.
-	if publishTrack != nil {
-		if sig := s.refs.signalingClient(); sig != nil {
-			if err := sig.SetMute(false); err != nil {
-				logging.L.Warn("signaling: unmute failed, TTS will be inaudible in decoupled rooms", logging.ErrAttrs(err)...)
-			}
-		}
-	}
 }
 
 func (s *session) onOffer(sdp string) (string, error) {
@@ -823,9 +610,8 @@ func (s *session) onRoomMessage(message signaling.RoomMessage, userID string) {
 	}()
 }
 
-// close releases this signaling/WebRTC attempt's resources and clears refs
-// so long-lived orchestrator SSE handlers stop seeing it as active. The
-// enclosing run owns and unregisters the logical room after all reconnect
+// close releases this signaling/WebRTC attempt's resources. The enclosing
+// run owns and unregisters the logical room after all reconnect
 // attempts have ended. Safe to call if onJoined never fired.
 func (s *session) close() {
 	// Must happen before anything else that could block/take time below --
@@ -838,16 +624,11 @@ func (s *session) close() {
 		s.emptyRoomTimer.Stop()
 		s.emptyRoomTimer = nil
 	}
-	s.refs.set(nil, nil)
-	s.refs.setSignalingClient(nil)
 	if s.peerAgent != nil {
 		_ = s.peerAgent.Close()
 	}
 	if s.bridge != nil {
 		s.bridge.Close()
-	}
-	if s.player != nil {
-		s.player.Close()
 	}
 }
 

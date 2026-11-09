@@ -1,7 +1,5 @@
-// Package audiopipeline Opus-decodes each mic-slot RTP packet once and fans
-// the resulting 16kHz mono PCM out to whichever consumers want it --
-// currently record-service (internal/recordclient, always on when
-// configured) and STT (internal/sttclient, gated by SetSTTEnabled). See
+// Package audiopipeline Opus-decodes each mic-slot RTP packet and forwards
+// the resulting 16kHz mono PCM to record-service when configured. See
 // audio-ingestion/PLAN.md D3/D5/D12 for why decoding lives here (the agent
 // is the only WebRTC client, so it decodes once and reuses the PCM for both
 // consumers instead of each doing its own Opus decode).
@@ -10,7 +8,6 @@ package audiopipeline
 import (
 	"encoding/binary"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pion/opus"
@@ -22,9 +19,7 @@ import (
 
 const (
 	// PCMSampleRate/PCMChannels match the old Python agent's AudioConfig
-	// default (SAMPLE_RATE=16000, CHANNELS=1) that record-service and STT
-	// both assume -- exported so cmd/agent can use the same values when
-	// building SessionStart/STT connection params instead of duplicating
+	// default (SAMPLE_RATE=16000, CHANNELS=1) that record-service assumes.
 	// the magic numbers. pion/opus (a pure-Go RFC 6716 decoder, no
 	// libopus/cgo needed) can decode straight to this rate -- no separate
 	// resampling step required.
@@ -41,10 +36,8 @@ const (
 	opusRTPClockRate = 48000
 )
 
-// Sink receives decoded PCM for one track and is closed exactly once, when
-// the track ends (or, for the STT sink, when transcription is disabled
-// mid-track). recordclient.Forwarder and sttclient.Client both implement
-// this directly -- no adapter needed.
+// Sink receives decoded PCM for one track and is closed exactly once when
+// the track ends. recordclient.Forwarder implements this directly.
 type Sink interface {
 	SendPCM(pcm []byte)
 	Close()
@@ -54,18 +47,14 @@ type Sink interface {
 // loop for one track calls HandlePacket/HandleTrackEnded back-to-back,
 // never concurrently with itself (see rtcagent.PeerAgent's
 // OnAudioPacket/OnTrackEnded doc). decoder/pcmBuf need no lock for that
-// reason. recordTimeline and sttSink are the exceptions because their
-// background padding/transcript-control work runs on different goroutines;
-// each guards its own cross-goroutine state.
+// reason. recordTimeline owns its own lock because its padding work runs on
+// a background goroutine.
 type session struct {
 	info    rtcagent.TrackInfo
 	decoder opus.Decoder
 	pcmBuf  []int16
 
 	record *recordTimeline // nil if recording disabled/failed to start
-
-	mu      sync.Mutex
-	sttSink Sink // nil unless STT is currently enabled for this track
 }
 
 // Bridge owns legacy MID sessions or decoupled participant sessions.
@@ -73,25 +62,21 @@ type Bridge struct {
 	// Decoupled rooms keep participant sinks across slot release/reassignment.
 	// The legacy path below retains its existing track-based lifecycle.
 	participants *participantBridge
-	// newRecordSink/newSTTSink build a fresh Sink for a newly-seen track;
-	// either may be nil to disable that consumer entirely (e.g.
+	// newRecordSink builds a fresh Sink for a newly-seen track. It may be nil
+	// to disable recording entirely (e.g.
 	// newRecordSink is nil if dialing record-service failed at startup).
-	// Returning nil from either means "couldn't start this sink for this
+	// Returning nil means "couldn't start this sink for this
 	// track" (already logged by the factory) -- session creation continues
 	// regardless, best-effort per PLAN.md D5.
 	newRecordSink func(info rtcagent.TrackInfo) Sink
-	newSTTSink    func(info rtcagent.TrackInfo) Sink
-
-	sttEnabled atomic.Bool // mirrors the old Python agent's AgentControlState.transcription_enabled -- starts false, see SetSTTEnabled
 
 	mu       sync.Mutex
 	sessions map[string]*session
 }
 
-func NewBridge(newRecordSink, newSTTSink func(info rtcagent.TrackInfo) Sink) *Bridge {
+func NewBridge(newRecordSink func(info rtcagent.TrackInfo) Sink) *Bridge {
 	return &Bridge{
 		newRecordSink: newRecordSink,
-		newSTTSink:    newSTTSink,
 		sessions:      make(map[string]*session),
 	}
 }
@@ -196,7 +181,7 @@ func (r *recordTimeline) sendPCM(pcm []byte, rtpTimestamp uint32, now time.Time,
 			// Do not turn a late/duplicate timestamp into a huge unsigned gap.
 			// Recording it would also move the media cursor backward and make
 			// the following in-order packet look like a new gap, so omit it from
-			// the recording. HandlePacket still forwards the decoded PCM to STT.
+			// the recording.
 			logging.L.Warn("audiopipeline: late or overlapping RTP timestamp",
 				"rtp_timestamp", rtpTimestamp,
 				"end_of_last_packet", endOfLastPacket,
@@ -287,8 +272,8 @@ func (r *recordTimeline) close(now time.Time) {
 }
 
 // HandlePacket decodes one Opus RTP packet and fans the PCM out to whatever
-// sinks this track has. Starts a new session (decoder + record-service
-// sink, and an STT sink if currently enabled) on the first packet for a
+// sink this track has. Starts a new session (decoder + record-service
+// sink) on the first packet for a
 // given mid in legacy mode, or participant in decoupled mode.
 func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 	if b.participants != nil {
@@ -310,12 +295,6 @@ func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 
 	if s.record != nil {
 		s.record.sendAllPcm(pcm, pkt.Timestamp, time.Now())
-	}
-	s.mu.Lock()
-	stt := s.sttSink
-	s.mu.Unlock()
-	if stt != nil {
-		stt.SendPCM(pcm)
 	}
 }
 
@@ -351,81 +330,6 @@ func (b *Bridge) finalizeSession(s *session) {
 	if s.record != nil {
 		s.record.close(time.Now())
 	}
-	s.mu.Lock()
-	stt := s.sttSink
-	s.sttSink = nil
-	s.mu.Unlock()
-	if stt != nil {
-		stt.Close()
-	}
-}
-
-// SetSTTEnabled turns STT on/off for every currently-active track (and, via
-// sttEnabled, for tracks that start after this call). Wire to the
-// `transcript_control` SSE request handler (orchestratorclient). Ported
-// behavior from the old Python agent's AgentControlState +
-// start/stop_transcription_for_all: disabled by default, and toggling
-// affects tracks already flowing, not just future ones.
-func (b *Bridge) SetSTTEnabled(enabled bool) {
-	if b.participants != nil {
-		b.participants.setSTTEnabled(enabled)
-		return
-	}
-	b.sttEnabled.Store(enabled)
-
-	b.mu.Lock()
-	sessions := make([]*session, 0, len(b.sessions))
-	for _, s := range b.sessions {
-		sessions = append(sessions, s)
-	}
-	b.mu.Unlock()
-
-	for _, s := range sessions {
-		b.applySTTEnabled(s, enabled)
-	}
-
-	logging.L.Info("audiopipeline: stt enabled changed", "enabled", enabled, "affected_tracks", len(sessions))
-}
-
-func (b *Bridge) applySTTEnabled(s *session, enabled bool) {
-	if !enabled {
-		s.mu.Lock()
-		sink := s.sttSink
-		s.sttSink = nil
-		s.mu.Unlock()
-		if sink != nil {
-			sink.Close()
-		}
-		return
-	}
-
-	if b.newSTTSink == nil {
-		return
-	}
-	s.mu.Lock()
-	already := s.sttSink != nil
-	s.mu.Unlock()
-	if already {
-		return
-	}
-
-	sink := b.newSTTSink(s.info) // built outside the lock: may dial a WS connection
-	if sink == nil {
-		return
-	}
-
-	s.mu.Lock()
-	if s.sttSink == nil {
-		s.sttSink = sink
-	} else {
-		// Lost a race with a concurrent enabler (sessionFor for a track
-		// that just started, or another SetSTTEnabled call) -- discard the
-		// duplicate rather than leak/overwrite an in-use sink.
-		s.mu.Unlock()
-		sink.Close()
-		return
-	}
-	s.mu.Unlock()
 }
 
 func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
@@ -469,16 +373,12 @@ func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 			s.record = newRecordTimeline(sink)
 		}
 	}
-	if b.sttEnabled.Load() && b.newSTTSink != nil {
-		s.sttSink = b.newSTTSink(info)
-	}
-
 	b.mu.Lock()
 	b.sessions[info.Mid] = s
 	b.mu.Unlock()
 
 	logging.L.Info("audiopipeline: started session", "mid", info.Mid, "user_id", info.UserID, "peer_id", info.PeerID,
-		"recording", s.record != nil, "stt", s.sttSink != nil)
+		"recording", s.record != nil)
 	return s
 }
 
