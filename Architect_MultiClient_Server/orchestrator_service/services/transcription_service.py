@@ -50,13 +50,12 @@ class TranscriptionService:
         source: str = "",
     ) -> bool:
         """
-        Raw capture done (record-service's recording.completed, audio-ingestion
+        Ogg capture done (record-service's recording.completed, audio-ingestion
         PLAN.md D18) -- save track metadata (upserts: the row normally
         already exists from `recording.started`, PLAN.md D26, but this must
         still work standalone in case that event never made it) and kick off
-        Whisper STT via transcription:stream. Does NOT touch room_record_done
-        -- that fires on the separate, later derivative-completion path
-        (D19), not here.
+        Whisper STT via transcription:stream. RecordingEventService separately
+        checks whether the room's original Ogg recordings are all ready.
 
         Replaces the old enqueue(egress_info: Dict) which took a
         Recording event payload dict (audio-ingestion PLAN.md D2: no
@@ -78,7 +77,6 @@ class TranscriptionService:
                         "source": source,
                     },
                     status="wait_process",
-                    derivative_status="pending",
                 )
                 if not track_result:
                     logger.warning(f"Failed to save track metadata for recording_id={recording_id}")
@@ -126,11 +124,8 @@ class TranscriptionService:
             if not updated:
                 return False
 
-            # Second of the two call sites required by D19 -- the other is
-            # RecordingEventService.handle_derivative_event(). Whichever
-            # condition (room finalized vs. last track's derivative done)
-            # is satisfied last is the one that actually fires the event;
-            # the atomic UPDATE guard inside makes this safe to call from both.
+            # Recording completion and room finalization may arrive in either
+            # order; the atomic guard makes this safe to call from both paths.
             if await self.pg_repo.check_and_notify_room_recordings_ready(room_id):
                 await metadata_channel.push_room_record_done(
                     room_id=str(room_id), room_name=room_name

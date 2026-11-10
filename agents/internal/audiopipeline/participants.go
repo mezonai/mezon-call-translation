@@ -100,16 +100,33 @@ func (b *participantBridge) handlePacket(info rtcagent.TrackInfo, pkt *rtp.Packe
 		return
 	}
 	if !s.initialized {
-		s.initialized = true
 		if b.newRecordSink != nil {
 			if sink := b.newRecordSink(s.info); sink != nil {
-				s.record = newRecordTimeline(sink)
+				record, recordErr := newRecordTimeline(sink, pkt.SSRC)
+				if recordErr != nil {
+					sink.Close()
+					logging.L.Error("audiopipeline: failed to create participant Ogg stream",
+						append(logging.ErrAttrs(recordErr), "mid", info.Mid, "user_id", info.UserID)...)
+				} else {
+					s.record = record
+				}
 			}
 		}
+		s.initialized = true
 	}
-	pcm := int16ToLEBytes(d.pcm[:n])
 	if s.record != nil {
-		s.record.sendPCM(pcm, pkt.Timestamp, time.Now(), !d.started)
+		packetRTPTicks := uint32(uint64(n) * opusRTPClockRate / PCMSampleRate)
+		transition, recordErr := s.record.sendAllOgg(pkt, packetRTPTicks, time.Now(), !d.started)
+		if transition != nil {
+			logging.L.Info("audiopipeline: started chained participant Ogg stream",
+				"mid", info.Mid, "user_id", info.UserID,
+				"old_ssrc", transition.oldSSRC, "new_ssrc", transition.newSSRC,
+				"reason", transition.reason)
+		}
+		if recordErr != nil {
+			logging.L.Warn("audiopipeline: failed to mux participant recording packet",
+				append(logging.ErrAttrs(recordErr), "mid", info.Mid, "user_id", info.UserID)...)
+		}
 	}
 	d.started = true
 }

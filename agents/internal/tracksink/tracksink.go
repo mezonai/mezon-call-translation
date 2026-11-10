@@ -80,8 +80,9 @@ func (f *RecordSinkFactory) NewSink(info rtcagent.TrackInfo) audiopipeline.Sink 
 		TrackID:             RecordTrackID(info.PeerID, info.Kind, f.conn, f.epoch),
 		ParticipantIdentity: strconv.FormatInt(info.UserID, 10),
 		Source:              string(info.Kind), // always "mic": callers only ever see KindAudio tracks here, see rtcagent
-		SampleRate:          audiopipeline.PCMSampleRate,
-		Channels:            audiopipeline.PCMChannels,
+		SampleRate:          audiopipeline.RecordOpusSampleRate,
+		Channels:            audiopipeline.RecordOpusChannels,
+		Format:              "ogg",
 	}, f.cfg.RecordService.MaxQueueSize)
 	if err != nil {
 		// Best-effort per audio-ingestion/PLAN.md D5 -- no recording for

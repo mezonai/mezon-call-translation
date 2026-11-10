@@ -44,7 +44,6 @@ def _track_to_dict(track: Track) -> dict[str, Any]:  # type: ignore[explicit-any
         "room_ref_id": str(track.room_ref_id) if track.room_ref_id else None,
         "participant_identity": track.participant_identity,
         "status": track.status,
-        "derivative_status": track.derivative_status,
         "chunk_count": track.chunk_count,
         "audio_info": track.audio_info,
         "error": track.error,
@@ -92,7 +91,6 @@ class PgTrackRepository:
                         room_ref_id=room_ref_id,
                         participant_identity=participant_identity,
                         status="pending",
-                        derivative_status="pending",
                         created_at=now,
                         updated_at=now,
                     )
@@ -103,46 +101,6 @@ class PgTrackRepository:
         except Exception as e:
             logger.error(f"Failed to create track placeholder: {e}")
 
-    async def update_track_derivative(  # type: ignore[explicit-any]
-        self,
-        record_id: str,
-        derivative_status: str,
-        derivative_error: str | None = None,
-        derivative_object_key: str | None = None,
-    ) -> dict[str, Any] | None:
-        """Updates a track's derivative pipeline state (audio-ingestion
-        PLAN.md D18). Independent of `status` (STT) -- see
-        save_track_metadata's derivative_status param below.
-        """
-        session_factory = get_session_factory()
-        now = datetime.now(UTC)
-        try:
-            async with session_factory() as session:
-                track = await session.get(Track, record_id)
-                if track is None:
-                    logger.warning(f"update_track_derivative: no track found for id={record_id}")
-                    return None
-
-                track.derivative_status = derivative_status
-                track.updated_at = now
-                if derivative_error is not None:
-                    track.error = derivative_error
-                if derivative_object_key is not None:
-                    # Folded into audio_info JSONB rather than a new column --
-                    # this is auxiliary metadata, not something queried on.
-                    # Reassigning (not mutating in place) so SQLAlchemy's
-                    # change-tracking picks it up.
-                    track.audio_info = {
-                        **(track.audio_info or {}),
-                        "derivative_object_key": derivative_object_key,
-                    }
-
-                await session.commit()
-                return _track_to_dict(track)
-        except Exception as e:
-            logger.error(f"Failed to update track derivative status: {e}")
-            return None
-
     async def save_track_metadata(  # type: ignore[explicit-any]
         self,
         *,
@@ -152,7 +110,6 @@ class PgTrackRepository:
         participant_identity: str | None = None,
         audio_info: dict[str, Any] | None = None,
         status: str = "pending",
-        derivative_status: str | None = None,
         error: str | None = None,
     ) -> dict[str, Any] | None:
         """Upsert on `tracks.id` -- creates the row if `recording.started`
@@ -174,8 +131,6 @@ class PgTrackRepository:
                 if track is not None:
                     if status:
                         track.status = status
-                    if derivative_status is not None:
-                        track.derivative_status = derivative_status
                     if audio_info is not None:
                         track.audio_info = audio_info
                     if error is not None:
@@ -188,7 +143,6 @@ class PgTrackRepository:
                         room_ref_id=room_ref_id,
                         participant_identity=participant_identity,
                         status=status,
-                        derivative_status=derivative_status,
                         audio_info=audio_info,
                         error=error,
                         created_at=now,

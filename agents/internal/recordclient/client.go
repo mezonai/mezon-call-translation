@@ -9,7 +9,7 @@
 // point of view (PLAN.md D5: "tuyệt đối không để việc này chặn pipeline
 // STT"). If record-service is slow or unreachable, frames are dropped (and
 // the drop count reported, PLAN.md D12), never awaited-on by the audio hot
-// path -- see Forwarder.SendPCM.
+// path -- see Forwarder.SendOgg.
 package recordclient
 
 import (

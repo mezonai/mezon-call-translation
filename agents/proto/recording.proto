@@ -5,10 +5,8 @@ package record_service.v1;
 option go_package = "github.com/mezonai/mezon-call-translation/agents/internal/recordpb";
 
 // KEPT IN SYNC MANUALLY with audio-ingestion/record-service/proto/recording.proto
-// (source of truth) and Architect_MultiClient_Server/agents/src/proto/recording.proto
-// (the old Python agent's copy, kept around for reference until it's retired).
-// Three independent deployables each generate their own stubs from their own
-// copy of this file rather than sharing a package -- see
+// (source of truth). The two deployables generate their own stubs rather than
+// sharing a package -- see
 // audio-ingestion/PLAN.md Phase 2 notes for why. The `go_package` option
 // below is the one addition specific to this copy (needed for protoc-gen-go;
 // the Python copies don't need it). If you change one, change all three and
@@ -26,6 +24,7 @@ message AudioChunk {
     SessionStart start = 1;
     bytes pcm = 2;
     DroppedFrames dropped = 3;
+    bytes ogg = 4;
   }
 }
 
@@ -40,6 +39,7 @@ message SessionStart {
   string source = 4;           // "mic" | "screen"
   int32 sample_rate = 5;
   int32 channels = 6;
+  string format = 7;
 }
 
 // Agent-side backpressure drop count (PLAN.md D12) -- record-service only
