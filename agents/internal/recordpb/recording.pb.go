@@ -28,6 +28,7 @@ type AudioChunk struct {
 	//	*AudioChunk_Start
 	//	*AudioChunk_Pcm
 	//	*AudioChunk_Dropped
+	//	*AudioChunk_Ogg
 	Payload       isAudioChunk_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -97,6 +98,15 @@ func (x *AudioChunk) GetDropped() *DroppedFrames {
 	return nil
 }
 
+func (x *AudioChunk) GetOgg() []byte {
+	if x != nil {
+		if x, ok := x.Payload.(*AudioChunk_Ogg); ok {
+			return x.Ogg
+		}
+	}
+	return nil
+}
+
 type isAudioChunk_Payload interface {
 	isAudioChunk_Payload()
 }
@@ -113,11 +123,17 @@ type AudioChunk_Dropped struct {
 	Dropped *DroppedFrames `protobuf:"bytes,3,opt,name=dropped,proto3,oneof"`
 }
 
+type AudioChunk_Ogg struct {
+	Ogg []byte `protobuf:"bytes,4,opt,name=ogg,proto3,oneof"`
+}
+
 func (*AudioChunk_Start) isAudioChunk_Payload() {}
 
 func (*AudioChunk_Pcm) isAudioChunk_Payload() {}
 
 func (*AudioChunk_Dropped) isAudioChunk_Payload() {}
+
+func (*AudioChunk_Ogg) isAudioChunk_Payload() {}
 
 // First message of a stream. Doubles as the (re)connect handshake for
 // PLAN.md D5 tier 2 -- sending this again with the same room_id/track_id
@@ -131,6 +147,7 @@ type SessionStart struct {
 	Source              string                 `protobuf:"bytes,4,opt,name=source,proto3" json:"source,omitempty"` // "mic" | "screen"
 	SampleRate          int32                  `protobuf:"varint,5,opt,name=sample_rate,json=sampleRate,proto3" json:"sample_rate,omitempty"`
 	Channels            int32                  `protobuf:"varint,6,opt,name=channels,proto3" json:"channels,omitempty"`
+	Format              string                 `protobuf:"bytes,7,opt,name=format,proto3" json:"format,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -205,6 +222,13 @@ func (x *SessionStart) GetChannels() int32 {
 		return x.Channels
 	}
 	return 0
+}
+
+func (x *SessionStart) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
 }
 
 // Agent-side backpressure drop count (PLAN.md D12) -- record-service only
@@ -317,13 +341,14 @@ var File_proto_recording_proto protoreflect.FileDescriptor
 
 const file_proto_recording_proto_rawDesc = "" +
 	"\n" +
-	"\x15proto/recording.proto\x12\x11record_service.v1\"\xa2\x01\n" +
+	"\x15proto/recording.proto\x12\x11record_service.v1\"\xb6\x01\n" +
 	"\n" +
 	"AudioChunk\x127\n" +
 	"\x05start\x18\x01 \x01(\v2\x1f.record_service.v1.SessionStartH\x00R\x05start\x12\x12\n" +
 	"\x03pcm\x18\x02 \x01(\fH\x00R\x03pcm\x12<\n" +
-	"\adropped\x18\x03 \x01(\v2 .record_service.v1.DroppedFramesH\x00R\adroppedB\t\n" +
-	"\apayload\"\xca\x01\n" +
+	"\adropped\x18\x03 \x01(\v2 .record_service.v1.DroppedFramesH\x00R\adropped\x12\x12\n" +
+	"\x03ogg\x18\x04 \x01(\fH\x00R\x03oggB\t\n" +
+	"\apayload\"\xe2\x01\n" +
 	"\fSessionStart\x12\x17\n" +
 	"\aroom_id\x18\x01 \x01(\tR\x06roomId\x12\x19\n" +
 	"\btrack_id\x18\x02 \x01(\tR\atrackId\x121\n" +
@@ -331,7 +356,8 @@ const file_proto_recording_proto_rawDesc = "" +
 	"\x06source\x18\x04 \x01(\tR\x06source\x12\x1f\n" +
 	"\vsample_rate\x18\x05 \x01(\x05R\n" +
 	"sampleRate\x12\x1a\n" +
-	"\bchannels\x18\x06 \x01(\x05R\bchannels\"%\n" +
+	"\bchannels\x18\x06 \x01(\x05R\bchannels\x12\x16\n" +
+	"\x06format\x18\a \x01(\tR\x06format\"%\n" +
 	"\rDroppedFrames\x12\x14\n" +
 	"\x05count\x18\x01 \x01(\x05R\x05count\"[\n" +
 	"\fRecordingAck\x12\x16\n" +
@@ -382,6 +408,7 @@ func file_proto_recording_proto_init() {
 		(*AudioChunk_Start)(nil),
 		(*AudioChunk_Pcm)(nil),
 		(*AudioChunk_Dropped)(nil),
+		(*AudioChunk_Ogg)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

@@ -15,6 +15,7 @@ message AudioChunk {
     SessionStart start = 1;
     bytes pcm = 2;
     DroppedFrames dropped = 3;
+    bytes ogg = 4;
   }
 }
 
@@ -29,6 +30,7 @@ message SessionStart {
   string source = 4;           // "mic" | "screen"
   int32 sample_rate = 5;
   int32 channels = 6;
+  string format = 7;
 }
 
 // Agent-side backpressure drop count (PLAN.md D12) -- record-service only

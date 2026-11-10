@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0frecording.proto\x12\x11record_service.v1\"\x8d\x01\n\nAudioChunk\x12\x30\n\x05start\x18\x01 \x01(\x0b\x32\x1f.record_service.v1.SessionStartH\x00\x12\r\n\x03pcm\x18\x02 \x01(\x0cH\x00\x12\x33\n\x07\x64ropped\x18\x03 \x01(\x0b\x32 .record_service.v1.DroppedFramesH\x00\x42\t\n\x07payload\"\x86\x01\n\x0cSessionStart\x12\x0f\n\x07room_id\x18\x01 \x01(\t\x12\x10\n\x08track_id\x18\x02 \x01(\t\x12\x1c\n\x14participant_identity\x18\x03 \x01(\t\x12\x0e\n\x06source\x18\x04 \x01(\t\x12\x13\n\x0bsample_rate\x18\x05 \x01(\x05\x12\x10\n\x08\x63hannels\x18\x06 \x01(\x05\"\x1e\n\rDroppedFrames\x12\r\n\x05\x63ount\x18\x01 \x01(\x05\"A\n\x0cRecordingAck\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x12\n\nobject_key\x18\x02 \x01(\t\x12\r\n\x05\x65rror\x18\x03 \x01(\t2d\n\x0fRecordingIngest\x12Q\n\x0bStreamAudio\x12\x1d.record_service.v1.AudioChunk\x1a\x1f.record_service.v1.RecordingAck(\x01\x30\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0frecording.proto\x12\x11record_service.v1\"\x9c\x01\n\nAudioChunk\x12\x30\n\x05start\x18\x01 \x01(\x0b\x32\x1f.record_service.v1.SessionStartH\x00\x12\r\n\x03pcm\x18\x02 \x01(\x0cH\x00\x12\x33\n\x07\x64ropped\x18\x03 \x01(\x0b\x32 .record_service.v1.DroppedFramesH\x00\x12\r\n\x03ogg\x18\x04 \x01(\x0cH\x00\x42\t\n\x07payload\"\x96\x01\n\x0cSessionStart\x12\x0f\n\x07room_id\x18\x01 \x01(\t\x12\x10\n\x08track_id\x18\x02 \x01(\t\x12\x1c\n\x14participant_identity\x18\x03 \x01(\t\x12\x0e\n\x06source\x18\x04 \x01(\t\x12\x13\n\x0bsample_rate\x18\x05 \x01(\x05\x12\x10\n\x08\x63hannels\x18\x06 \x01(\x05\x12\x0e\n\x06\x66ormat\x18\x07 \x01(\t\"\x1e\n\rDroppedFrames\x12\r\n\x05\x63ount\x18\x01 \x01(\x05\"A\n\x0cRecordingAck\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x12\n\nobject_key\x18\x02 \x01(\t\x12\r\n\x05\x65rror\x18\x03 \x01(\t2d\n\x0fRecordingIngest\x12Q\n\x0bStreamAudio\x12\x1d.record_service.v1.AudioChunk\x1a\x1f.record_service.v1.RecordingAck(\x01\x30\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,13 +32,13 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'recording_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_AUDIOCHUNK']._serialized_start=39
-  _globals['_AUDIOCHUNK']._serialized_end=180
-  _globals['_SESSIONSTART']._serialized_start=183
-  _globals['_SESSIONSTART']._serialized_end=317
-  _globals['_DROPPEDFRAMES']._serialized_start=319
-  _globals['_DROPPEDFRAMES']._serialized_end=349
-  _globals['_RECORDINGACK']._serialized_start=351
-  _globals['_RECORDINGACK']._serialized_end=416
-  _globals['_RECORDINGINGEST']._serialized_start=418
-  _globals['_RECORDINGINGEST']._serialized_end=518
+  _globals['_AUDIOCHUNK']._serialized_end=195
+  _globals['_SESSIONSTART']._serialized_start=198
+  _globals['_SESSIONSTART']._serialized_end=348
+  _globals['_DROPPEDFRAMES']._serialized_start=350
+  _globals['_DROPPEDFRAMES']._serialized_end=380
+  _globals['_RECORDINGACK']._serialized_start=382
+  _globals['_RECORDINGACK']._serialized_end=447
+  _globals['_RECORDINGINGEST']._serialized_start=449
+  _globals['_RECORDINGINGEST']._serialized_end=549
 # @@protoc_insertion_point(module_scope)
