@@ -245,13 +245,18 @@ def aligned_marker_indexes(candidate: list[str], expected: list[str]) -> list[in
     return list(reversed(indexes))
 
 
-def marker_matches(tokens: list[dict]) -> list[dict]:
-    expected = normalize_tokens(MARKER_TEXT)
-    normalized = [normalize_tokens(token["text"]) for token in tokens]
-    words = [item[0] if item else "" for item in normalized]
-    matches = []
+def strict_marker_matches(tokens: list[dict]) -> list[dict]:
+    """Edit-distance marker matches -- the production (pre-Phase 8-2) rule.
 
-    # 1. Edit distance matching (normalized over sliding window of expected length +/- 1)
+    Only single-word tokens take part, so a multi-word Whisper token is never
+    partially consumed as a marker.
+    """
+    expected = normalize_tokens(MARKER_TEXT)
+    words = [
+        item[0] if len(item) == 1 else ""
+        for item in (normalize_tokens(token["text"]) for token in tokens)
+    ]
+    matches = []
     for index in range(len(tokens)):
         for width in range(len(expected) - 1, len(expected) + 2):
             if index + width > len(tokens):
@@ -268,9 +273,23 @@ def marker_matches(tokens: list[dict]) -> list[dict]:
                             "exact": distance == 0,
                         }
                     )
+    return matches
 
-    # 2. Anchor keyword matching (detect core anchor bigram 'hong', 'ngoc')
-    # Catches acoustic misrecognitions of prefix variants: "muc hong ngoc", "giu muc hong ngoc", "hong ngoc", etc.
+
+def loose_marker_matches(tokens: list[dict]) -> list[dict]:
+    """Looser candidates for acoustically misrecognised markers.
+
+    "hong ngoc" / "dau moc" / "dau muc" are also ordinary Vietnamese speech
+    (a person's or hospital's name, "đầu mục"), so these candidates are never
+    trusted on their own: select_marker_matches only uses them to fill a marker
+    slot the strict rule left empty, and only near that slot's expected position.
+    """
+    expected = normalize_tokens(MARKER_TEXT)
+    words = [item[0] if item else "" for item in (normalize_tokens(t["text"]) for t in tokens)]
+    matches = []
+
+    # Anchor bigram "hong ngoc", optionally preceded by up to two prefix variants
+    # ("muc hong ngoc", "giu muc hong ngoc", "hong ngoc", ...).
     for k in range(len(words) - 1):
         if words[k] == "hong" and words[k + 1] == "ngoc":
             start_index = k
@@ -282,33 +301,26 @@ def marker_matches(tokens: list[dict]) -> list[dict]:
                 start_index = k - 2
             elif k >= 1 and words[k - 1] in MARKER_PREFIX_VARIANTS:
                 start_index = k - 1
-            candidate_span = words[start_index : k + 2]
             matches.append(
                 {
                     "start": start_index,
                     "end": k + 2,
-                    "exact": candidate_span == expected,
+                    "exact": words[start_index : k + 2] == expected,
                 }
             )
 
-    # 3. Prefix-only matching (detect prefix phrase 'dau moc' / 'dau muc' when tail is swallowed)
+    # Prefix only ("dau moc" / "dau muc") when the tail was swallowed.
     for k in range(len(words) - 1):
         if words[k] == "dau" and words[k + 1] in {"moc", "muc"}:
             if k + 2 < len(words) and words[k + 2] == "hong":
-                continue  # Already handled by anchor keyword matching above
-            matches.append(
-                {
-                    "start": k,
-                    "end": k + 2,
-                    "exact": False,
-                }
-            )
+                continue  # Covered by the anchor rule above.
+            matches.append({"start": k, "end": k + 2, "exact": False})
 
     return matches
 
 
-def select_marker_matches(tokens: list[dict]) -> list[dict]:
-    candidates = marker_matches(tokens)
+def select_non_overlapping(candidates: list[dict]) -> list[dict]:
+    """Greedy left-to-right pick; at equal start prefer exact, then longer."""
     selected = []
     cursor = 0
     while True:
@@ -322,6 +334,69 @@ def select_marker_matches(tokens: list[dict]) -> list[dict]:
         )
         selected.append(match)
         cursor = match["end"]
+
+
+def expected_marker_positions(token_count: int, children: list[dict]) -> list[float]:
+    """Token index where each injected marker is expected, by speech duration."""
+    durations = [child["source_end"] - child["source_start"] for child in children]
+    total = max(1, sum(durations))
+    positions = []
+    elapsed = 0
+    for duration in durations[:-1]:
+        elapsed += duration
+        positions.append(token_count * elapsed / total)
+    return positions
+
+
+def select_marker_matches(tokens: list[dict], children: list[dict]) -> list[dict]:
+    """Pick at most one marker match per injected marker.
+
+    A chunk with N children has exactly N - 1 markers (pack_speech_with_marker
+    only bridges *between* spans), so:
+    - one child: there is no marker, nothing is removed;
+    - strict matches are used as in production;
+    - only when strict matching found too few, each still-empty marker slot may
+      be filled by the closest loose candidate within a window around that
+      slot's expected position. Anything else stays in the transcript; if a
+      slot is still empty, partition_tokens rejects the chunk (Gipformer
+      per-child fallback).
+    """
+    expected_count = len(children) - 1
+    if expected_count <= 0:
+        return []
+
+    selected = select_non_overlapping(strict_marker_matches(tokens))
+    if len(selected) >= expected_count:
+        return selected
+
+    positions = expected_marker_positions(len(tokens), children)
+    free_slots = set(range(expected_count))
+    for match in selected:
+        if not free_slots:
+            break
+        nearest = min(free_slots, key=lambda slot: abs(positions[slot] - match["start"]))
+        free_slots.discard(nearest)
+
+    window = max(2.0, 0.5 * len(tokens) / len(children))
+    loose = loose_marker_matches(tokens)
+    for slot in sorted(free_slots):
+        candidates = [
+            match
+            for match in loose
+            if abs(match["start"] - positions[slot]) <= window
+            and all(match["end"] <= kept["start"] or match["start"] >= kept["end"] for kept in selected)
+        ]
+        if candidates:
+            selected.append(
+                min(
+                    candidates,
+                    key=lambda match: (
+                        abs(match["start"] - positions[slot]),
+                        -(match["end"] - match["start"]),
+                    ),
+                )
+            )
+    return sorted(selected, key=lambda match: match["start"])
 
 
 def filter_whisper_hallucinations(
@@ -420,7 +495,7 @@ def partition_tokens(
     children: list[dict],
     decoder_boundaries: list[int],
 ) -> list[list[dict]] | None:
-    matches = select_marker_matches(tokens)
+    matches = select_marker_matches(tokens, children)
     expected_markers = len(children) - 1
 
     # SAFE-GUARD (P0):
