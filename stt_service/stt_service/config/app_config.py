@@ -87,8 +87,8 @@ class RedisConfig:
 @dataclass
 class ServerConfig:
     """Minimal server configuration for health/metrics endpoints."""
-    host: str = "0.0.0.0"
-    port: int = 8001  # Different from realtime's 8000
+    host: str = "localhost"
+    port: int = 8000
     log_level: str = "INFO"
 
 
