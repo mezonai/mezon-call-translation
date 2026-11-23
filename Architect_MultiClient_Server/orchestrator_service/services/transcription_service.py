@@ -20,10 +20,7 @@ class TranscriptionService:
     """Service sent audio to transcription queue via Redis Stream"""
 
     def __init__(self):
-        self.config = get_config().stt_service
         self.redis_config = get_config().redis
-        self.api_url = f"http://{self.config.host}:{self.config.port}/api/transcribe"
-        self.timeout = 30.0
         self.pg_repo = PgTranscriptRepository()
         self.track_repo = PgTrackRepository()
         self._redis_producer: RedisProducerService[TranscriptionTask] | None = None
@@ -51,7 +48,6 @@ class TranscriptionService:
         started_at: str,
         ended_at: str,
         source: str = "",
-        skip_stt: bool = False,
     ) -> bool:
         """
         Raw capture done (record-service's recording.completed, audio-ingestion
@@ -61,11 +57,6 @@ class TranscriptionService:
         Whisper STT via transcription:stream. Does NOT touch room_record_done
         -- that fires on the separate, later derivative-completion path
         (D19), not here.
-
-        skip_stt: the agent's own TTS track (PLAN.md D3x) -- still needs the
-        track row (room-completion gating counts it), just not a Whisper job;
-        RecordingEventService.handle_tts_transcript_event is what eventually
-        flips this row to "completed" instead.
 
         Replaces the old enqueue(egress_info: Dict) which took a
         Recording event payload dict (audio-ingestion PLAN.md D2: no
@@ -96,10 +87,6 @@ class TranscriptionService:
             except Exception as e:
                 logger.warning(f"Failed to update track metadata: {e}")
                 # Continue processing even if metadata update fails
-
-            if skip_stt:
-                logger.info(f"Skipping Whisper STT enqueue for recording_id={recording_id} (agent TTS track)")
-                return True
 
             producer = await self._get_producer()
 
@@ -167,7 +154,7 @@ class TranscriptionService:
         except Exception as e:
             logger.exception(f"✗ Unexpected error starting room: {e}")
             return False
-        
+
 
     async def save_participant(
         self, room_id: str, participant_identity: str, timestamp: datetime | None = None, username: str | None = None
@@ -210,3 +197,55 @@ class TranscriptionService:
         except Exception as e:
             logger.exception(f"Failed to save batch participants: {e}")
             return False
+
+    async def retry_room_transcription(self, room_id: str) -> dict[str, Any]:
+        """
+        Retry transcription for an entire room through Redis Stream (Real Production Flow).
+        1. Find room & tracks in PostgreSQL.
+        2. Clean previous transcript chunks & summaries to prevent duplicate data.
+        3. Enqueue TranscriptionTask into Redis 'transcription:stream'.
+        4. stt_service processes audio and streams batches back to Orchestrator.
+        """
+        # 1 & 2: Reset DB and get tracks
+        reset_result = await self.pg_repo.reset_room_transcription(room_id)
+        tracks_info = reset_result.get("tracks", [])
+        room_name = reset_result.get("room_name")
+        resolved_room_id = reset_result.get("room_id")
+
+        valid_tracks = [t for t in tracks_info if t.get("filename")]
+        if not valid_tracks:
+            raise ValueError(f"Room '{room_id}' has no audio tracks with valid filenames to transcribe")
+
+        # 3. Enqueue tasks into Redis Stream
+        producer = await self._get_producer()
+        enqueued_tracks = []
+        for track in valid_tracks:
+            audio_info = track.get("audio_info") or {}
+            task = TranscriptionTask(
+                egress_id=track["id"],
+                filename=track["filename"],
+                location=audio_info.get("location", ""),
+                duration=str(audio_info.get("duration_sec", "")),
+                started_at=str(audio_info.get("started_at_ns", "")),
+                ended_at=str(audio_info.get("ended_at_ns", "")),
+                source=audio_info.get("source", ""),
+            )
+            task_id = await producer.enqueue(task)
+            enqueued_tracks.append({
+                "track_id": track["id"],
+                "filename": track["filename"],
+                "participant": track.get("participant_identity"),
+                "task_id": task_id,
+            })
+            logger.info(f"📤 Enqueued track {track['id']} -> task_id={task_id}")
+
+        return {
+            "status": "queued",
+            "message": f"Successfully queued {len(enqueued_tracks)} tracks for room {room_name}",
+            "room_id": resolved_room_id,
+            "room_name": room_name,
+            "total_tracks": len(enqueued_tracks),
+            "enqueued_tracks": enqueued_tracks,
+        }
+
+

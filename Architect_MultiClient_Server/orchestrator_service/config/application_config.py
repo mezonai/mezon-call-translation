@@ -4,7 +4,7 @@ All configuration values are loaded from environment variables with sensible def
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import ClassVar
 
@@ -58,60 +58,6 @@ class PostgreSQLConfig:
     def sync_url(self) -> str:
         """SQLAlchemy sync connection URL (psycopg2, for Alembic)"""
         return f"postgresql+psycopg2://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
-
-
-# ============================================================================
-# Stt Configuration
-# ============================================================================
-
-
-@dataclass
-class STTServiceConfig:
-    """WebSocket client configuration"""
-
-    # Connection parameters
-    host: str = "localhost"
-    port: int = 8000
-
-    # Authentication
-    auth_token: str = ""
-    api_key: str = ""
-    auth_header: str = "Authorization"
-
-    # Connection handling
-    reconnect_max_attempts: int = 5
-    reconnect_base_delay: float = 1.0
-    connection_timeout: float = 10.0
-
-    # Keep-alive
-    ping_interval: int = 30
-    ping_timeout: int = 15
-
-    # Data handling
-    max_queue_size: int = 32
-    batch_size: int = 1
-    max_buffer_size: int = 32768  # 32KB
-    send_delay: float = 0.01  # 10ms
-
-    @classmethod
-    def from_env(cls) -> "STTServiceConfig":
-        """Create WebSocket config from environment variables"""
-        return cls(
-            host=os.getenv("STT_HOST", "localhost"),
-            port=int(os.getenv("STT_PORT", "8000")),
-            auth_token=os.getenv("STT_AUTH_TOKEN", ""),
-            api_key=os.getenv("STT_API_KEY", ""),
-            auth_header=os.getenv("STT_AUTH_HEADER", "Authorization"),
-            reconnect_max_attempts=int(os.getenv("STT_RECONNECT_MAX_ATTEMPTS", "5")),
-            reconnect_base_delay=float(os.getenv("STT_RECONNECT_BASE_DELAY", "1.0")),
-            connection_timeout=float(os.getenv("STT_CONNECTION_TIMEOUT", "10.0")),
-            ping_interval=int(os.getenv("STT_PING_INTERVAL", "30")),
-            ping_timeout=int(os.getenv("STT_PING_TIMEOUT", "15")),
-            max_queue_size=int(os.getenv("STT_MAX_QUEUE_SIZE", "32")),
-            batch_size=int(os.getenv("STT_BATCH_SIZE", "1")),
-            max_buffer_size=int(os.getenv("STT_MAX_BUFFER_SIZE", "32768")),
-            send_delay=float(os.getenv("STT_SEND_DELAY", "0.01")),
-        )
 
 
 # ============================================================================
@@ -467,6 +413,30 @@ class TranscriptCorrectionConfig:
         )
 
 
+@dataclass
+class HallucinationFilterConfig:
+    """Whisper hallucination filter configuration"""
+
+    onnx_model_path: str = "models/bi-encoder-model/vietnamese_bi_encoder_int8_accurate.onnx"
+    tokenizer_path: str = "bkai-foundation-models/vietnamese-bi-encoder"
+    similarity_threshold: float = 0.78
+    fuzzy_threshold: float = 86.0
+    no_speech_threshold: float = 0.35
+    avg_logprob_threshold: float = -0.85
+    compression_ratio_threshold: float = 2.15
+
+    @classmethod
+    def from_env(cls) -> "HallucinationFilterConfig":
+        return cls(
+            onnx_model_path=os.getenv("HALLUCINATION_FILTER_MODEL_PATH", "models/bi-encoder-model/vietnamese_bi_encoder_int8_accurate.onnx"),
+            tokenizer_path=os.getenv("HALLUCINATION_FILTER_TOKENIZER_PATH", "bkai-foundation-models/vietnamese-bi-encoder"),
+            similarity_threshold=float(os.getenv("HALLUCINATION_SIMILARITY_THRESHOLD", "0.78")),
+            fuzzy_threshold=float(os.getenv("HALLUCINATION_FUZZY_THRESHOLD", "86")),
+            no_speech_threshold=float(os.getenv("HALLUCINATION_NO_SPEECH_THRESHOLD", "0.35")),
+            avg_logprob_threshold=float(os.getenv("HALLUCINATION_AVG_LOGPROB_THRESHOLD", "-0.85")),
+            compression_ratio_threshold=float(os.getenv("HALLUCINATION_COMPRESSION_RATIO_THRESHOLD", "2.15")),
+        )
+
 # ============================================================================
 # Main Application Configuration (Singleton)
 # ============================================================================
@@ -498,7 +468,6 @@ class Config:
         """
 
         # Load all configuration sections
-        self.stt_service = STTServiceConfig.from_env()
         self.postgresql = PostgreSQLConfig.from_env()
         self.server = ServerConfig.from_env()
         self.logger = LoggerConfig.from_env()
@@ -516,6 +485,7 @@ class Config:
         self.summary = SummaryConfig.from_env()
         self.light_summary = LightSummaryConfig.from_env()
         self.transcript_correction = TranscriptCorrectionConfig.from_env()
+        self.hallucination_filter = HallucinationFilterConfig.from_env()
 
         self._initialized = True
         self._validate_all()

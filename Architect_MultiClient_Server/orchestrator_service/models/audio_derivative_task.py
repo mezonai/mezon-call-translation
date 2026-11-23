@@ -27,9 +27,8 @@ class AudioDerivativeTask(BaseProducerTask):
     object_key: str = ""    # raw PCM source object to transcode
     # Raw capture's actual format (record-service's RecordingEventRequest.sample_rate/
     # channels -- see HttpEventReporter._to_payload). Previously not threaded
-    # through here at all; audio-processing-service just hardcoded 16000/1 for
-    # every track (audio-ingestion PLAN.md D28 point 1), which broke once a
-    # second real capture rate (the agent's own 24kHz TTS track, D3x) existed.
+    # through here at all; audio-processing-service previously hardcoded
+    # 16000/1 for every track.
     sample_rate: int = 16000
     channels: int = 1
 

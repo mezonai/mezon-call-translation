@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends
 
 from orchestrator_service.auth.transcript_auth import verify_api_key
 from orchestrator_service.models.recording_event_models import (
-    DerivativeEventRequest,
     RecordingEventPayload,
     RecordingEventRequest,
     RecordingEventResponse,
@@ -39,7 +38,4 @@ async def recording_events_endpoint(  # type: ignore[explicit-any]
     if isinstance(body, RecordingEventRequest):
         return await recording_event_service.handle_recording_event(body)
 
-    if isinstance(body, DerivativeEventRequest):
-        return await recording_event_service.handle_derivative_event(body)
-
-    return await recording_event_service.handle_tts_transcript_event(body)
+    return await recording_event_service.handle_derivative_event(body)

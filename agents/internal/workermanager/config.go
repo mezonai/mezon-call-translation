@@ -62,10 +62,8 @@ type Config struct {
 	// SIGKILL. Runs in the background (manager.go's killAfterTimeout), not
 	// gating anything else -- see Stop's [2026-08-21] doc for why it's safe
 	// for this to be generous. Should stay comfortably above the agent's own
-	// graceful-shutdown worst case (~16s as of the trackWG/ttsplayer close
-	// grace added 2026-08-20/21 -- see agents/README.md's shutdown timeout
-	// bullet) so SIGKILL doesn't cut off recording/orchestrator cleanup that
-	// was already running.
+	// graceful-shutdown worst case so SIGKILL doesn't cut off recording or
+	// orchestrator cleanup that was already running.
 	StopTimeout time.Duration
 	// BaseAgentEnv is applied to every spawned agent (mezon-sfu connection
 	// details, reconnect tuning...) -- same for every room in a given
@@ -128,24 +126,15 @@ var agentPassthroughEnvKeys = []string{
 	"AGENT_RECONNECT_STABLE_AFTER_SECONDS",
 	"RECORD_SERVICE_GRPC_ADDR",
 	"RECORD_SERVICE_MAX_QUEUE_SIZE",
-	"WS_HOST",
-	"WS_PORT",
-	"STT_MAX_QUEUE_SIZE",
 	"ORCHESTRATOR_BASE_URL",
 	"INTERNAL_API_SECRET",
-	"TTS_SERVICE_BASE_URL",
-	"TTS_SAMPLE_RATE",
-	"TTS_RECORD_MAX_QUEUE_SIZE",
 	"LOG_LEVEL",
 	// AGENT_EMPTY_ROOM_GRACE_SECONDS: unlike AGENT_MAX_LIFETIME_SECONDS
 	// above, this isn't per-room/plan-derived -- same value makes sense for
 	// every agent, so a plain passthrough is enough (no need for Start to
 	// set it explicitly per spawn).
 	"AGENT_EMPTY_ROOM_GRACE_SECONDS",
-	// AGENT_CHAT_NAME / AGENT_CHAT_AVATAR_URL: sender identity the agent
-	// stamps on chat messages it posts (internal/config.Config). Same for
-	// every room -> plain passthrough.
-	"AGENT_CHAT_NAME",
+	// AGENT_CHAT_AVATAR_URL is included in the SFU join token.
 	"AGENT_CHAT_AVATAR_URL",
 	"AGENTS_BOT_BASE_URL",
 	// AGENT_SOCKET_DIR: shared with worker-manager's own env of the same

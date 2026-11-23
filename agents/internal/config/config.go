@@ -17,7 +17,7 @@ type Role string
 const (
 	// RoleAudience: subscribe-only, used for the record-forwarding path.
 	RoleAudience Role = "audience"
-	// RoleSpeaker: can also publish (TTS talk-back).
+	// RoleSpeaker: can publish media.
 	RoleSpeaker Role = "speaker"
 )
 
@@ -34,7 +34,7 @@ type Config struct {
 	RoomID uint64
 	// AgentUserID is the identity the agent presents as (JWT `identity` claim).
 	AgentUserID int64
-	// Role: "audience" (record-only, default) or "speaker" (also publishes TTS).
+	// Role: "audience" (record-only, default) or "speaker" (can publish media).
 	Role Role
 	// TokenTTL controls the JWT `exp` claim.
 	TokenTTL time.Duration
@@ -49,19 +49,9 @@ type Config struct {
 	// if unset/unreachable, the agent logs and keeps running without it
 	// rather than failing to join the room (audio-ingestion/PLAN.md D5).
 	RecordService RecordServiceConfig
-	// STT: Vosk transcription service this agent's audiopipeline forwards
-	// decoded PCM to, gated by AgentControlState (default disabled --
-	// enabled via the `transcript_control` request over the orchestrator
-	// SSE connection, see internal/orchestratorclient).
-	STT STTConfig
-	// Orchestrator: base URL/API key for push_transcript and the SSE
-	// agent-request listener (tts_play, transcript_control). Optional --
-	// if BaseURL is empty, the agent runs without it (no transcript push,
-	// no TTS trigger, no transcript_control toggle -- effectively record-only).
+	// Orchestrator: base URL/API key for room registration, participant
+	// updates, recording events, and inbound chat forwarding.
 	Orchestrator OrchestratorConfig
-	// TTSService: HTTP endpoint synthesizing text to PCM. Only relevant
-	// when Role is "speaker" -- see internal/ttsplayer.
-	TTSService TTSServiceConfig
 	// AgentsBot: HTTP endpoint for active-room registration used by chat
 	// forwarding. Optional; an empty BaseURL disables that integration.
 	AgentsBot AgentsBotConfig
@@ -92,7 +82,7 @@ type Config struct {
 	// (cmd/agent/main.go) -- the exact same graceful-shutdown path, not a
 	// separate one. No additional "did it actually stop in time" backstop
 	// timer needed here: every step of that path (rtcagent.PeerAgent.Close,
-	// ttsplayer.Player.Close, recordclient.Forwarder.Close,
+	// recordclient.Forwarder.Close,
 	// orchestratorclient's HTTP calls) is already individually bounded by its
 	// own timeout, so the existing chain's documented worst case (~16-20s,
 	// see workermanager.Config.StopTimeout's doc) already holds here the same
@@ -121,13 +111,7 @@ type Config struct {
 	// why this is independent of, and much shorter than, this agent's own
 	// Reconnect budget).
 	EmptyRoomGrace time.Duration
-	// ChatName / ChatAvatarURL are the sender identity the agent stamps on
-	// every chat message it posts into the room (signaling.RoomMessage's
-	// name/avatar fields -- see signaling.Client.SendRoomMessage). Same for
-	// every room, so worker-manager passes them through unchanged. Avatar is
-	// a URL the receiving chat UI renders; empty is fine (UI falls back to
-	// an initials tile).
-	ChatName      string
+	// ChatAvatarURL is included in the SFU join token.
 	ChatAvatarURL string
 }
 
@@ -154,28 +138,10 @@ type RecordServiceConfig struct {
 	MaxQueueSize int
 }
 
-// STTConfig mirrors the (actually-used subset of the) old Python agent's
-// STTServiceConfig -- Host/Port only. The old config also carried
-// auth_token/api_key/auth_header, but grepping the old WS base client
-// confirmed they were never attached to the connection, so this port
-// doesn't carry over dead config surface.
-type STTConfig struct {
-	Host         string
-	Port         int
-	MaxQueueSize int
-}
-
 // OrchestratorConfig mirrors the old Python agent's OrchestratorConfig.
 type OrchestratorConfig struct {
 	BaseURL string
 	APIKey  string
-}
-
-// TTSServiceConfig mirrors the old Python agent's TTSConfig.
-type TTSServiceConfig struct {
-	BaseURL      string
-	SampleRate   int
-	MaxQueueSize int
 }
 
 // AgentsBotConfig configures active-room registration with agents-bot.
@@ -187,7 +153,7 @@ func FromEnv() (Config, error) {
 	cfg := Config{
 		SFUWebSocketURL:  getEnv("SFU_WS_URL", "ws://127.0.0.1:8000/ws"),
 		JWTSecret:        getEnv("SFU_JWT_SECRET", "default"),
-		Role:             Role(getEnv("AGENT_ROLE", string(RoleSpeaker))),
+		Role:             Role(getEnv("AGENT_ROLE", string(RoleAudience))),
 		ControlSocketDir: getEnv("AGENT_SOCKET_DIR", "/tmp/mezon-agents"),
 	}
 
@@ -227,7 +193,6 @@ func FromEnv() (Config, error) {
 	}
 	cfg.EmptyRoomGrace = time.Duration(emptyRoomGraceSeconds) * time.Second
 
-	cfg.ChatName = getEnv("AGENT_CHAT_NAME", "KOMU Agent")
 	cfg.ChatAvatarURL = getEnv("AGENT_CHAT_AVATAR_URL", "")
 
 	if cfg.Role != RoleAudience && cfg.Role != RoleSpeaker {
@@ -272,40 +237,9 @@ func FromEnv() (Config, error) {
 		MaxQueueSize: recordMaxQueueSize,
 	}
 
-	sttPort, err := strconv.Atoi(getEnv("WS_PORT", "8000"))
-	if err != nil {
-		return Config{}, fmt.Errorf("config: invalid WS_PORT: %w", err)
-	}
-	sttMaxQueueSize, err := strconv.Atoi(getEnv("STT_MAX_QUEUE_SIZE", "32"))
-	if err != nil {
-		return Config{}, fmt.Errorf("config: invalid STT_MAX_QUEUE_SIZE: %w", err)
-	}
-	if sttMaxQueueSize <= 0 {
-		return Config{}, fmt.Errorf("config: STT_MAX_QUEUE_SIZE must be > 0, got %d", sttMaxQueueSize)
-	}
-	cfg.STT = STTConfig{
-		Host:         getEnv("WS_HOST", "localhost"),
-		Port:         sttPort,
-		MaxQueueSize: sttMaxQueueSize,
-	}
-
 	cfg.Orchestrator = OrchestratorConfig{
 		BaseURL: getEnv("ORCHESTRATOR_BASE_URL", "http://localhost:8002"),
 		APIKey:  getEnv("INTERNAL_API_SECRET", ""),
-	}
-
-	ttsSampleRate, err := strconv.Atoi(getEnv("TTS_SAMPLE_RATE", "24000"))
-	if err != nil {
-		return Config{}, fmt.Errorf("config: invalid TTS_SAMPLE_RATE: %w", err)
-	}
-	ttsMaxQueueSize, err := strconv.Atoi(getEnv("TTS_RECORD_MAX_QUEUE_SIZE", "200"))
-	if err != nil {
-		return Config{}, fmt.Errorf("config: invalid TTS_RECORD_MAX_QUEUE_SIZE: %w", err)
-	}
-	cfg.TTSService = TTSServiceConfig{
-		BaseURL:      getEnv("TTS_SERVICE_BASE_URL", "http://localhost:8008"),
-		SampleRate:   ttsSampleRate,
-		MaxQueueSize: ttsMaxQueueSize,
 	}
 
 	cfg.AgentsBot = AgentsBotConfig{

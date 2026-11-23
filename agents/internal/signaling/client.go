@@ -88,12 +88,8 @@ type Client struct {
 	conn *websocket.Conn
 	cb   Callbacks
 
-	// writeMu serializes all writes to conn. Until send_message, every write
-	// happened on the single Run read-loop goroutine (pong/answer), so no
-	// lock was needed. SendRoomMessage is called from a different goroutine
-	// (cmd/agent's SSE agent-request handler), and gorilla/websocket allows
-	// only one concurrent writer -- without this the two can interleave and
-	// corrupt a frame.
+	// writeMu serializes writes to conn; gorilla/websocket permits only one
+	// concurrent writer.
 	writeMu sync.Mutex
 }
 
@@ -299,11 +295,6 @@ func (c *Client) dispatch(msgType string, raw []byte) error {
 		// record-only (audience) path yet. Logged for observability.
 		logging.L.Info("signaling: ack", "type", msgType)
 
-	case "message_sent":
-		// Ack for our own SendRoomMessage; no request-id correlation, so
-		// nothing actionable -- logged for observability only.
-		logging.L.Info("signaling: ack", "type", msgType)
-
 	case "room_message":
 		var m roomMessageMsg
 		if err := json.Unmarshal(raw, &m); err != nil {
@@ -338,31 +329,6 @@ func (c *Client) send(v any) error {
 func (c *Client) SetMute(isMute bool) error {
 	if err := c.send(muteMsg{Type: "mute", IsMute: isMute}); err != nil {
 		return fmt.Errorf("signaling: set mute: %w", err)
-	}
-	return nil
-}
-
-// SendRoomMessage posts a chat message into the room as this peer (mezon-sfu
-// wireTypeSendMessage). msg is JSON-encoded into the frame's `message`
-// string -- the SFU treats that as an opaque blob and just relays it, and
-// the receiving side decodes it back into a RoomMessage (see the
-// "room_message" case in dispatch), so this must stay symmetric with that.
-//
-// Best-effort: the SFU broadcasts it to other peers and acks with
-// `message_sent`, but there's no per-message result on the wire, so a
-// success here only means the frame was written -- a later `error`
-// "must_join_room_first" (peer not fully joined yet) or "invalid_message"
-// only shows up as a logged handler error in Run's loop.
-//
-// Safe to call from any goroutine (see writeMu). Rejects an empty or
-// over-long message locally rather than after a WS round-trip.
-func (c *Client) SendRoomMessage(msg RoomMessage) error {
-	frame, err := encodeSendMessageFrame(msg)
-	if err != nil {
-		return err
-	}
-	if err := c.send(frame); err != nil {
-		return fmt.Errorf("signaling: send room message: %w", err)
 	}
 	return nil
 }

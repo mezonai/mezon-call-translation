@@ -1,5 +1,5 @@
-// Package opusenc turns synthesized PCM into RTP-ready Opus payloads for
-// internal/ttsplayer.
+// Package opusenc turns PCM into Opus payloads. It remains as test support
+// for audio-pipeline tests that need valid encoded input packets.
 //
 // Backed by gopkg.in/hraban/opus.v2, the de-facto-standard Go binding for
 // libopus (352 stars at the time this was written, MIT, the binding most of
@@ -21,10 +21,7 @@
 //     libopus-dev libopusfile-dev` on this machine).
 //
 // This is why the Encoder interface below is deliberately kept tiny and
-// implementation-agnostic: if the cgo/libopus-dev build requirement ever
-// becomes a real deployment blocker, swapping back to one of the WASM
-// options is a contained change behind this interface, not a rewrite of
-// internal/ttsplayer.
+// implementation-agnostic.
 package opusenc
 
 import (
@@ -49,14 +46,9 @@ type encoder struct {
 	buf []byte // reused across Encode calls; results are copied out, see Encode
 }
 
-// New creates an Opus encoder for sampleRate/channels, tuned for voice
-// (opus.AppVoIP -- this is TTS speech, not music). sampleRate must be one
-// of the rates libopus accepts natively (8000/12000/16000/24000/48000);
-// internal/config's TTS_SAMPLE_RATE default (24000) is one of them, so no
-// resampling step is needed before Encode. Note this is independent of the
-// RTP-level "channels" WebRTC negotiates (always 2 for Opus per RFC 7587,
-// see cmd/agent's publish-track comment) -- this channels is the actual
-// number of channels in the PCM ttsplayer feeds in (1, TTS output is mono).
+// New creates an Opus encoder for sampleRate/channels, tuned for voice.
+// sampleRate must be one of the rates libopus accepts natively
+// (8000/12000/16000/24000/48000).
 func New(sampleRate, channels int) (Encoder, error) {
 	enc, err := opus.NewEncoder(sampleRate, channels, opus.AppVoIP)
 	if err != nil {
@@ -70,9 +62,7 @@ func (e *encoder) Encode(pcm []int16) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opusenc: encode: %w", err)
 	}
-	// e.buf is reused on the next call -- callers (ttsplayer hands this
-	// straight to pion's WriteSample, which may not consume it
-	// synchronously) need their own copy, not a view into it.
+	// e.buf is reused on the next call, so callers need their own copy.
 	out := make([]byte, n)
 	copy(out, e.buf[:n])
 	return out, nil

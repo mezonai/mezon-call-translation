@@ -1,9 +1,12 @@
 #!/bin/bash
 
-# Configuration Paths
-AGENT_ENV="../Architect_MultiClient_Server/agents/.env"
-ORCHESTRATOR_ENV="../Architect_MultiClient_Server/orchestrator_service/.env"
-STT_ENV="../Architect_MultiClient_Server/stt_service/.env"
+# Resolve configuration paths from this script, so the command works from any
+# current working directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+AGENT_ENV="$PROJECT_ROOT/agents/.env"
+ORCHESTRATOR_ENV="$PROJECT_ROOT/Architect_MultiClient_Server/orchestrator_service/.env"
+STT_ENV="$PROJECT_ROOT/stt_service/.env"
 
 # Current target content
 TARGET_FILE=""

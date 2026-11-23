@@ -4,7 +4,8 @@ A small FastAPI service that turns text into speech using the [Kokoro-82M](https
 
 ## Why a separate service
 
-The Go `agents` binary (repo-root `agents/`; `Architect_MultiClient_Server/agents` is now just an empty placeholder directory, the old Python agent code having already been removed) calls this service over HTTP whenever a room's agent runs with `AGENT_ROLE=speaker` — see `agents/internal/ttsclient/client.go`, whose package doc says it's "ported from the old Python agent's `process_text_to_audio`". `ttsclient.Synthesize` POSTs to `{TTS_SERVICE_BASE_URL}/api/tts/process` and treats the response body as raw S16LE PCM at a sample rate it has to already know (`TTS_SAMPLE_RATE`, default `24000`, documented in `agents/README.md` as "Kokoro's default" — confirmed below, this service hardcodes 24000Hz).
+This is a standalone synthesis API. The Go call agent no longer invokes it;
+clients that still need speech synthesis can call the HTTP endpoint directly.
 
 Keeping it a separate microservice rather than embedding Kokoro in the agent process means: the model (PyTorch + `kokoro` package, GPU/CPU inference) only needs to be loaded once per host regardless of how many rooms/agents are running, agent processes stay small Go binaries with no Python/PyTorch dependency, and the two can be scaled/restarted independently.
 
@@ -45,7 +46,7 @@ There is no port/host configuration read from the environment — that's an ASGI
 ```bash
 python -m uvicorn tts_service.main:app --host 0.0.0.0 --port 8008
 ```
-Must be run with `Architect_MultiClient_Server/` as the working directory (or otherwise on `PYTHONPATH`), since `main.py` and everything else import with the `tts_service.` package prefix (`from tts_service.api.tts_api import router...`). Port `8008` is not a default baked into this service — it's the convention used by `scripts/create-systemd-services.sh` and matches `agents/README.md`'s documented default for `TTS_SERVICE_BASE_URL` (`http://localhost:8008`).
+Must be run with `Architect_MultiClient_Server/` as the working directory (or otherwise on `PYTHONPATH`), since `main.py` and everything else import with the `tts_service.` package prefix (`from tts_service.api.tts_api import router...`). Port `8008` is the convention used by `scripts/create-systemd-services.sh`.
 
 On startup the FastAPI `lifespan` handler (`main.py`) loads the Kokoro pipeline once via `get_tts_engine().load()`; on shutdown it calls `engine.cleanup()`, which drops the pipeline reference and clears the synthesis cache.
 
@@ -67,7 +68,7 @@ Request body (JSON):
 - `voice` (string, optional) — one of the `KokoroVoice` enum values: `af_heart`, `af_bella`, `af_sarah`, `am_adam`, `am_michael`, `bf_emma`, `bf_isabella`, `bm_george`, `bm_lewis`. Defaults to `af_heart` if omitted.
 - `speed` (float, optional) — validated to the range `0.5`–`2.0` by Pydantic (`Field(ge=0.5, le=2.0)`); a value outside that range is rejected with a 422. Defaults to `1.0` if omitted.
 
-Response: `200 OK`, `Content-Type: application/octet-stream`, body is raw **signed 16-bit little-endian PCM, mono, 24000 Hz** — the engine synthesizes as 32-bit float (`np.ndarray`) and `tts_api.py` converts it in place with `(audio * 32767).astype(np.int16)` before returning the bytes. The sample rate is fixed by `TTSEngine.__init__`'s `sample_rate: int = 24000` default (never overridden elsewhere in this codebase) — it is **not** included anywhere in the response, matching what `agents/internal/ttsclient` and `agents/README.md`'s `TTS_SAMPLE_RATE` note already assume.
+Response: `200 OK`, `Content-Type: application/octet-stream`, body is raw **signed 16-bit little-endian PCM, mono, 24000 Hz** — the engine synthesizes as 32-bit float (`np.ndarray`) and `tts_api.py` converts it in place with `(audio * 32767).astype(np.int16)` before returning the bytes. The sample rate is fixed by `TTSEngine.__init__`'s `sample_rate: int = 24000` default and is not included in the response.
 
 Repeated requests with the same normalized text + voice + speed are served from the in-process LFU cache (`services/tts_engine.py`'s `_make_cache_key`/`_normalize_text`) instead of re-running inference.
 
@@ -89,7 +90,7 @@ There is no `tests/` directory and no automated tests for this service at all cu
 
 ## Relation to other services
 
-- **`agents` (Go, repo-root `agents/`)** — the only known caller. `internal/ttsclient` HTTP-POSTs to this service's `/api/tts/process` when a room's agent has `AGENT_ROLE=speaker`, then hands the returned PCM to `internal/ttsplayer` for Opus encoding and publish-back into the call. Configured via that binary's `TTS_SERVICE_BASE_URL` / `TTS_SAMPLE_RATE` env vars (see `agents/README.md`).
-- **`orchestrator_service`** — per `agents/README.md`, `orchestrator_service` is what triggers a `tts_play` request in the first place (SSE agent-request), but this `tts_service` has no direct dependency on or knowledge of the orchestrator; it only ever sees the HTTP call from `agents`.
+- **`agents`** — no runtime relationship; agent TTS playback was removed.
+- **`orchestrator_service`** — no runtime relationship.
 - **`stt_service`** — no runtime relationship; mentioned only because `requirements-tts.txt` appears to share leftover dependencies with it (see Layout above).
 

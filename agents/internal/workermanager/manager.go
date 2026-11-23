@@ -120,7 +120,7 @@ func (m *Manager) Start(ev StartEvent) error {
 
 	role := ev.Role
 	if role == "" {
-		role = string(config.RoleSpeaker)
+		role = string(config.RoleAudience)
 	}
 
 	m.mu.Lock()
@@ -259,7 +259,7 @@ func (m *Manager) reap(a *managedAgent) {
 // stop event), decides to add it back a few seconds later while the old
 // agent's still mid-graceful-shutdown (flushing its record-service forwarder,
 // reporting to orchestrator, etc, agents/internal/rtcagent's trackWG/
-// ttsplayer close grace) -- the UI already shows no agent (mezon-sfu treats
+// the agent's graceful shutdown) -- the UI already shows no agent (mezon-sfu treats
 // the WS close as an immediate leave, cmd/agent/main.go's ctx cancellation
 // closes it right away, well before any of that local cleanup finishes) but
 // the "add" click would silently queue behind the still-running Stop call

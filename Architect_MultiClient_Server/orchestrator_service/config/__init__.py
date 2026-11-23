@@ -8,7 +8,6 @@ from .application_config import (
     LoggerConfig,
     MinIOConfig,
     ServerConfig,
-    STTServiceConfig,
     get_config,
 )
 
@@ -16,7 +15,6 @@ __all__ = [
     "Config",
     "LoggerConfig",
     "MinIOConfig",
-    "STTServiceConfig",
     "ServerConfig",
     "get_config",
 ]

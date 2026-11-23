@@ -7,7 +7,7 @@ FastAPI service that is the central coordination layer of `mezon-call-translatio
 Depends on:
 - **PostgreSQL** — primary datastore (rooms, tracks, transcript chunks, summaries, outbox, users/auth). Schema managed by Alembic (`migrations_pg/`).
 - **Redis** — Streams for async work dispatch (`services/redis/`) and a hash-based room-name registry (`services/room_registry.py`).
-- **`stt_service`** (`Architect_MultiClient_Server/stt_service`) — consumes the `transcription:stream` Redis Stream this service produces to; not called directly over HTTP by orchestrator for transcription.
+- **`stt_service`** (repo-root `stt_service/`) — consumes the `transcription:stream` Redis Stream this service produces to; it is not called directly over HTTP by Orchestrator.
 - **An LLM provider** (Gemini via `google-genai`, or an OpenAI-compatible local endpoint) — for meeting summaries (`services/llm/`).
 - **The Go `agents-bot`** (`AGENTS_BOT_BASE_URL`, see `Architect_MultiClient_Server/agents`) — voice-channel roster and Mezon `user_id` → username resolution during room registration (`services/agents_bot_user_client.py`).
 - **Mezon OAuth2** — end-user login (`auth/`, `services/auth_service.py`).
@@ -15,7 +15,7 @@ Depends on:
 Depended on by:
 - **`audio-ingestion/record-service`** — POSTs recording lifecycle events (`recording.started`/`completed`/`failed`) to `POST /api/v2/recordings/events`. See that service's README for its side of this contract.
 - **`audio-ingestion/audio-processing-service`** (planned, Phase 5 per `audio-ingestion/PLAN.md`) — will POST `derivative.completed`/`derivative.failed` to the same endpoint once built; the request/response models (`models/recording_event_models.py`) and dispatch logic already exist and are exercised by that same endpoint today.
-- **A frontend/dashboard** — reads rooms/transcripts/summaries via the v2 REST API and subscribes to the SSE endpoints for live transcript/chat/metadata/agent-request updates.
+- **A frontend/dashboard** — reads rooms/transcripts/summaries via the v2 REST API and subscribes to the remaining chat/metadata SSE endpoints.
 
 ## Architecture / data flow
 
@@ -53,8 +53,6 @@ stt_service ──(elsewhere: batches of transcript segments)──▶ save_tran
 Two identifiers matter throughout this flow: `room_id` (orchestrator's own stable UUID for one call, minted at registration) and `room_name` (the reused Mezon channel name). `services/recording_event_service.py`'s `_resolve_room_ref_id` accepts either from record-service (it sends whatever the agent had), preferring a direct `room_id` lookup and only falling back to the Redis name registry (`services/room_registry.py`) if the value isn't a UUID.
 
 Track completion for a room is a race between two independent paths that can each finish last — the derivative pipeline (`handle_derivative_event`) and the transcript-save pipeline (`RedisSaveTranscriptionService`/ `TranscriptionService.final_room`) — both call the same atomic `check_and_notify_room_recordings_ready` / `check_and_complete_room` guards in `pg_transcript_repository.py`, so the SSE `room_record_done` notice and `SummaryService.generate_summary` each fire exactly once regardless of which path gets there last.
-
-The agent's own TTS track is a special case: it is never sent through Whisper (`skip_stt` — Whisper's feature extractor is fixed at 16kHz, TTS captures at 24kHz, and the text is already known), and instead its terminal status/segments arrive via `tts.transcript`/`tts.completed` events on the same `/api/v2/recordings/events` endpoint, handled by `handle_tts_transcript_event`.
 
 A `SummaryOutboxWorker` (started in `main.py`'s lifespan) polls `OutboxTask` rows on an interval (`OUTBOX_CHECK_INTERVAL_SEC`) to retry summarization for rooms whose summary generation failed, rather than losing it silently.
 
@@ -95,8 +93,6 @@ All configuration is environment-driven, loaded once into a `Config` singleton a
 | `INTERNAL_API_SECRET` | no — `""` | Bearer secret record-service/agents present to call service-to-service endpoints (`auth/transcript_auth.py::verify_api_key`), e.g. `POST /api/v2/recordings/events`. |
 | `MINIO_ENABLED` / `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET` / `MINIO_BUCKET` / `MINIO_REGION` | required if `MINIO_ENABLED=true` (validated at startup) | MinIO/S3 config for recordings storage; validated against record-service's own bucket configuration. |
 | `LOG_LEVEL` | no — `INFO` | Logger level. |
-| `STT_HOST` / `STT_PORT` | no — `localhost` / `8000` | Not in `.env.example`. Present in config (`STTServiceConfig`) but note: STT dispatch actually happens over the `transcription:stream` Redis Stream, not this HTTP address — this looks like a leftover from a pre-Redis-Streams direct-HTTP design; confirm before relying on it. |
-| `STT_AUTH_TOKEN` / `STT_API_KEY` / `STT_AUTH_HEADER` / `STT_RECONNECT_*` / `STT_CONNECTION_TIMEOUT` / `STT_PING_*` / `STT_MAX_QUEUE_SIZE` / `STT_BATCH_SIZE` / `STT_MAX_BUFFER_SIZE` / `STT_SEND_DELAY` | no | Not in `.env.example`. Same `STTServiceConfig` — see caveat above. |
 | `GEMINI_API_KEY` / `GEMINI_URL` | no | Gemini LLM credentials (`GEMINI_URL` not in `.env.example`; defaults to the SDK's own default). |
 | `LOCAL_LLM_API_KEY` / `LOCAL_LLM_URL` | no — url defaults to `http://localhost:8080/v1/chat/completions` | OpenAI-compatible local/self-hosted LLM endpoint. |
 | `NOTIFICATION_ENABLED` / `NOTIFICATION_WEBHOOK_ENDPOINT` / `NOTIFICATION_CHANNEL_ID` / `NOTIFICATION_WEBHOOK_TOKEN` | no | Mezon webhook used for operational notifications (`utils/notification_log_handler.py`). |
@@ -122,23 +118,21 @@ On startup (`main.py`'s `lifespan`) it initializes the Postgres engine, connects
 
 ## API surface
 
-Mounted in `main.py`: a set of legacy routes directly under `/api` (older `api/*.py` modules, using per-endpoint ad hoc auth — e.g. `sse_transcript_api.py`'s `push_transcript` route takes an `appid`/`token` query pair checked against `AUTHENTICATE_ACCOUNT_URL`, and the legacy `summary_api.py` client router is mounted with **no auth at all**, flagged with a `# TODO` in `main.py` pending confirmation nothing downstream still calls it), and the current API under `/api/v2` (`api/v2/router.py`), which uses the permission-based `AuthContext`/`require_any_permission` model (`auth/authorization.py`, `constants/permissions.py`: `rooms:view_all`, `rooms:view_own`, `rooms:delete`, `queues:view_stats`, `metadata_events:view_all`, `chat_external:view_all`, `agent:control`, `resource:delete_any`). The v1 and v2 versions of the same-named endpoints (transcript push, summary) are independent implementations, not aliases — v1 is not simply an older mount of v2's code.
+Mounted in `main.py`: legacy routes directly under `/api` and the current API under `/api/v2` (`api/v2/router.py`). The v2 routes use the permission-based `AuthContext`/`require_any_permission` model. The live transcript and agent-request SSE APIs have been removed.
 
 v2 route groups (`api/v2/endpoints/`):
 - **`auth_api.py`** (`/api/v2/auth`) — Mezon OAuth2 code exchange, userinfo, refresh, logout, bot login.
 - **`room_api.py`** (`/api/v2/rooms`) — list rooms, get room by id, room statistics, per-room audio info.
 - **`room_registry_api.py`** (`/api/v2/room-registry`) — register/unregister a room, participant roster snapshot/join events, registry status/list/clear-all.
-- **`recording_events_api.py`** (`/api/v2/recordings/events`) — single POST entrypoint for record-service and (eventually) audio-processing-service lifecycle events; secured with `verify_api_key` (`INTERNAL_API_SECRET`), not user auth. Dispatches on payload shape to `RecordingEventService.handle_recording_event` / `handle_derivative_event` / `handle_tts_transcript_event`. Idempotent by design.
-- **`dispatch_api.py`** — create/cancel/status of agent dispatch requests.
+- **`recording_events_api.py`** (`/api/v2/recordings/events`) — single POST entrypoint for record-service and audio-processing-service lifecycle events; secured with `verify_api_key` (`INTERNAL_API_SECRET`), not user auth. Dispatches on payload shape to `RecordingEventService.handle_recording_event` or `handle_derivative_event`. Idempotent by design.
+- **`dispatch_api.py`** — authenticated create/cancel dispatch compatibility endpoints (`/api/v2/create_dispatch`, `/api/v2/cancel_dispatch`, currently returning `{"status": "ok"`) and recorded participant lookup (`/api/v2/rooms/participant/{room_id}`); actual agent process lifecycle is handled through NATS and the Go worker-manager.
 - **`queue_api.py`** (`/api/v2/queue`) — Redis Stream queue introspection: list queues, stats, pending/DLQ tasks, retry a DLQ task.
 - **`summary_api.py`** (`/api/v2/summary`) — get summary by room name or room id, permission-gated.
-- **`sse_transcript_api.py`**, **`sse_chat_external_api.py`**, **`sse_metadata_api.py`**, **`sse_agent_request_api.py`** — SSE endpoints (see below).
+- **`sse_chat_external_api.py`**, **`sse_metadata_api.py`** — remaining SSE endpoints.
 
 SSE channels (`api/sse/channels/`, delivered through `SSEManager`, `api/sse/sse_manager.py`):
-- **transcript** (`message_channel.py`) — live transcript push per room.
 - **chat_external** — external chat bridging.
 - **metadata** (`metadata_channel.py`) — room lifecycle notices, including the `room_record_done` event described above.
-- **agent_request** (`agent_request_channel.py`) — commands to the Go agent (`tts_play`, `transcript_control`), consumed by `agents/internal/orchestratorclient`.
 
 `controller/` exists as a package (`__init__.py` only, 1 line) with no implementation yet — not currently used by any route.
 
@@ -162,8 +156,7 @@ Dependencies for linting/type-checking come from this service's own `requirement
 
 
 - **Legacy `/api` summary endpoint has no auth.** Flagged with a `# TODO` in `main.py`: `summary_client_router` (the v1, non-`/v2` version) is mounted with no authentication at all, unlike `/api/v2/summary` which requires `rooms:view_all`/`rooms:view_own`. Not yet removed because it hasn't been confirmed that nothing downstream still calls it.
-- **`STT_HOST`/`STT_PORT`/`STTServiceConfig` look unused by the actual dispatch path.** STT work is dispatched via the `transcription:stream` Redis Stream (`services/transcription_service.py`), not an HTTP call to `STT_HOST:STT_PORT`. This config class may be a leftover from an earlier direct-HTTP design; verify before depending on it.
-- **`.env.example` is missing several variables the code actually reads** (all `REDIS_*` vars, `STT_HOST`/`STT_PORT` and the other `STT_*` knobs, `AGENT_HOST`/`AGENT_PORT`) — they still work via their code-level defaults, but a fresh setup copying only `.env.example` will silently get Redis on `localhost:6379` with no password, which may not match a real deployment.
+- **`.env.example` is missing several variables the code actually reads** (including Redis and server bind settings) — they still work via code-level defaults, but a fresh setup may not match a real deployment.
 - **`controller/` is an empty package** (`__init__.py` only) — present but not implemented.
 - **Widespread `# type: ignore[explicit-any]` / `dict[str, Any]` TODOs.** `pyproject.toml` sets `disallow_any_explicit = true` for mypy, and a large number of call sites (`services/room_service.py`, `services/summary_service.py`, `services/postgresql/models.py`, `services/redis/redis_stream_service.py`, most Pydantic models with dynamic JSON fields) carry `# TODO: Use Any type because ...` comments explaining why the strict rule is locally suppressed rather than the type actually tightened. This is the gradual-typing rollout in progress (see project memory `project_static_analysis_rollout_plan.md`), not resolved yet.
 - **`motor`/`pymongo` are still in `requirements-orchestrator.txt`** ("kept for reference") from the pre-Postgres MongoDB era; not exercised by any code path found in this service today.

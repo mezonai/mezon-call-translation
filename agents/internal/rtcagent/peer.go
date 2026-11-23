@@ -219,7 +219,7 @@ const stunGatherTimeout = 500 * time.Millisecond
 // cut down, both driven by the same mezon-sfu STUN-withholding behavior.
 //
 // publishTrack is nil for an "audience" session (record-only). For a
-// "speaker" session (internal/ttsplayer), pass a
+// session that publishes media, pass a
 // *webrtc.TrackLocalStaticSample here -- it must be attached via AddTrack
 // before the first SetRemoteDescription/CreateAnswer (i.e. before the
 // caller wires HandleOffer to any incoming offer), because mezon-sfu's own

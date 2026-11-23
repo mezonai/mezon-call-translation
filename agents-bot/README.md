@@ -11,7 +11,7 @@ Who talks to it:
 - `agents/cmd/agent` (`internal/agentsbotclient`) calls `POST /api/rooms/register` / `/unregister` when it joins/leaves a `mezon-sfu` room, and `GET /api/bot/profile`.
 - `orchestrator_service` (`services/agents_bot_user_client.py`, `AGENTS_BOT_BASE_URL`) calls `GET /api/users/{id}` / `POST /api/users` to resolve display names for participant rosters and transcripts.
 
-What it does **not** do (anymore): outbound chat (agent/orchestrator -> Mezon chat) used to be routed through `agents-bot` (`POST /api/rooms/{room_name}/chat`), but as of `mezon-sfu` commit `c41e59b` (2026-09-09) the Go `agent` sends outbound chat directly over its own `mezon-sfu` WS session (`signaling.Client.SendRoomMessage`); the old `agents-bot` chat-send endpoint and its client wrapper were deleted as dead code. Inbound chat still has no `mezon-sfu`-level equivalent, so `agents-bot` remains the only path for it.
+What it does **not** do (anymore): outbound chat (agent/orchestrator -> Mezon chat) is outside the current agent flow. The old `agents-bot` chat-send endpoint and the later direct SFU `SendRoomMessage` path were both removed. Inbound chat still has no `mezon-sfu`-level equivalent, so `agents-bot` remains the path for forwarding Mezon chat into the orchestrator.
 
 ## Requirements
 
