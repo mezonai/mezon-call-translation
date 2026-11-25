@@ -51,6 +51,11 @@ class RecordingIngestServicer(recording_pb2_grpc.RecordingIngestServicer):
 
                 if which == "start":
                     start = chunk.start
+                    if start.format != "ogg":
+                        yield recording_pb2.RecordingAck(
+                            status="rejected", error="recording format must be ogg"
+                        )
+                        return
                     object_key = build_object_key(start.room_id, start.participant_identity, start.source)
                     try:
                         session = await self._start_recording.execute(
@@ -73,12 +78,19 @@ class RecordingIngestServicer(recording_pb2_grpc.RecordingIngestServicer):
                     yield recording_pb2.RecordingAck(status="accepted", object_key=session.object_key)
 
                 elif which == "pcm":
+                    graceful_close = True
+                    yield recording_pb2.RecordingAck(
+                        status="rejected", error="PCM recording payloads are not supported"
+                    )
+                    return
+
+                elif which == "ogg":
                     if session_id is None:
                         yield recording_pb2.RecordingAck(
                             status="rejected", error="must send SessionStart first"
                         )
                         return
-                    ok = await self._append_audio.execute(session_id, chunk.pcm)
+                    ok = await self._append_audio.execute(session_id, chunk.ogg)
                     if not ok:
                         yield recording_pb2.RecordingAck(
                             status="rejected", error="unknown session (already finalized?)"

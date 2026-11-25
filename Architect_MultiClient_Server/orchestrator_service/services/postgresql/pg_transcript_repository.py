@@ -178,7 +178,7 @@ class PgTranscriptRepository:
         except Exception as e:
             logger.error(f"Failed to save participant: {e}")
             return False
-    
+
 
     # TODO: Use `Any` type because `room_participants` input field from generate_summary() in SummaryService
     # has list[dict[str, Any]] type
@@ -552,7 +552,7 @@ class PgTranscriptRepository:
     # ------------------------------------------------------------------
     # Kept here deliberately (not moved to pg_track_repository.py):
     # mixes room state (rooms.record_notified_at/status) and track state
-    # (tracks.derivative_status) in one atomic statement, so it doesn't
+    # (tracks.audio_info/status) in one atomic statement, so it doesn't
     # belong in a track-only repository. Placed at the very end of the
     # class instead of alongside the other room-completion checks above --
     # this file predates `develop`'s in-progress ORM migration for this
@@ -563,10 +563,10 @@ class PgTranscriptRepository:
     async def check_and_notify_room_recordings_ready(self, room_ref_id: str) -> bool:
         """Room-level, fire-once gate for room_record_done (audio-ingestion PLAN.md D19).
 
-        True only when this call is the one that flips record_notified_at from
-        NULL -- i.e. the room is finalized AND every track in it has reached a
-        terminal derivative_status. Must be called from both places order can
-        arrive in (a track's derivative finishing, and room finalization)
+        True only when this call flips record_notified_at from NULL: the room
+        is finalized and every track either has its original Ogg metadata or
+        has terminally failed. Must be called from both event orders
+        (a recording finishing, and room finalization)
         since either can happen first; the atomic UPDATE...WHERE guard (same
         technique as final_room_status()) ensures exactly one caller ever
         sees True for a given room, regardless of which order or how many
@@ -586,11 +586,11 @@ class PgTranscriptRepository:
         local durable state before it can ever deliver `recording.completed`/
         `.failed` for it (state_repo is local disk, PLAN.md D5 tier 3 -- an
         already-called-out loss scenario), that track's row sits at
-        derivative_status='pending' forever and this NOT EXISTS never clears
+        no audio_info forever and this NOT EXISTS never clears
         for its room. There is no timeout/reconciliation on the orchestrator
         side that force-terminates an abandoned track today -- would need
         something like "track pending longer than N minutes with no live
-        record-service session -> mark derivative_status='failed'" before
+        record-service session -> mark status='failed'" before
         this can be called fully closed.
         """
         uid = room_ref_id
@@ -603,7 +603,8 @@ class PgTranscriptRepository:
                         WHERE id = :id AND record_notified_at IS NULL AND status = 'final_room'
                           AND NOT EXISTS (
                             SELECT 1 FROM tracks WHERE room_ref_id = :id
-                            AND derivative_status NOT IN ('completed', 'failed')
+                            AND audio_info IS NULL
+                            AND status IS DISTINCT FROM 'failed'
                           )
                         RETURNING id
                     """),

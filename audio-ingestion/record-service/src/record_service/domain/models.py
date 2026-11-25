@@ -10,6 +10,13 @@ import time
 from dataclasses import dataclass, field
 
 
+# The agent's streaming Ogg writer emits one page for each 20ms Opus packet.
+# Even a one-byte Opus silence packet therefore occupies a 27-byte Ogg header,
+# one lacing byte and one payload byte. This is a conservative corruption/
+# truncation baseline, not an assumed speech bitrate.
+OGG_OPUS_MIN_BYTES_PER_SECOND = 29 * 50
+
+
 class RecordingStatus(str, enum.Enum):
     RECORDING = "recording"
     GRACE_WAIT = "grace_wait"      # PLAN.md D5 tier 2: stream dropped abruptly, waiting for reconnect
@@ -77,9 +84,13 @@ class RecordingSession:
         return 2  # PCM16
 
     def expected_bytes(self, at: float | None = None) -> float:
-        """PLAN.md D11: sanity-check baseline, elapsed time x nominal byte rate."""
+        """Sanity-check baseline using the stored format's minimum byte rate."""
         elapsed = (at or self.ended_at or time.time()) - self.started_at
-        bytes_per_second = self.sample_rate * self.channels * self.bit_depth_bytes()
+        if self.object_key.endswith(".ogg"):
+            bytes_per_second = OGG_OPUS_MIN_BYTES_PER_SECOND
+        else:
+            # Retain recovery compatibility for old persisted PCM sessions.
+            bytes_per_second = self.sample_rate * self.channels * self.bit_depth_bytes()
         return max(0.0, elapsed) * bytes_per_second
 
     def is_byte_rate_suspect(self, tolerance: float) -> bool:

@@ -167,7 +167,7 @@ async def unregister_room(
 
     After unregistering, the webhook will no longer process events for this room.
     Additionally finalizes room status in the STT service (which also drives
-    the recording-derivative lifecycle, audio-ingestion PLAN.md D18/D19 --
+    the recording lifecycle --
     record-service/agents stop recording independently once the agent leaves
     the room, not because of this call).
 

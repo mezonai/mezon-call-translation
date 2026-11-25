@@ -1,17 +1,16 @@
 """
 Request models for POST /api/v2/recordings/events.
 
-Deliberately NOT shaped like a LiveKit egress webhook (audio-ingestion
-PLAN.md D2) -- this is the clean, self-describing contract record-service
-and (later, Phase 5) audio-processing-service post to. Field names match
+Deliberately NOT shaped like a LiveKit egress webhook -- this is the clean,
+self-describing contract record-service posts. Field names match
 record-service's HttpEventReporter._to_payload() exactly
 (record-service/src/record_service/infra/reporting/http_event_reporter.py).
 """
 
 
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class QualityAnnotationModel(BaseModel):  # type: ignore[explicit-any]
@@ -48,25 +47,6 @@ class RecordingEventRequest(BaseModel):  # type: ignore[explicit-any]
     dropped_frame_count: int = 0
     quality_annotations: list[QualityAnnotationModel] = []
 
-
-class DerivativeEventRequest(BaseModel):  # type: ignore[explicit-any]
-    """Posted by audio-processing-service (Phase 5). event: "derivative.completed" | "derivative.failed"."""
-
-    event: Literal[
-        "derivative.completed",
-        "derivative.failed"
-    ]
-    recording_id: str          # matches tracks.id from the originating RecordingEventRequest
-    bucket: str | None = None
-    object_key: str | None = None
-    error: str | None = None
-
-
-RecordingEventPayload = Annotated[
-    RecordingEventRequest
-    | DerivativeEventRequest,
-    Field(discriminator="event"),
-]
 
 class RecordingEventResponse(BaseModel):  # type: ignore[explicit-any]
     received: bool

@@ -1,19 +1,19 @@
-// Package audiopipeline Opus-decodes each mic-slot RTP packet and forwards
-// the resulting 16kHz mono PCM to record-service when configured. See
-// audio-ingestion/PLAN.md D3/D5/D12 for why decoding lives here (the agent
-// is the only WebRTC client, so it decodes once and reuses the PCM for both
-// consumers instead of each doing its own Opus decode).
+// Package audiopipeline wraps each mic track's existing Opus RTP payloads in
+// Ogg for record-service. Decoding is retained only to determine each packet's
+// media duration for exact silence padding.
 package audiopipeline
 
 import (
-	"encoding/binary"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/pion/opus"
 	"github.com/pion/rtp"
+	"github.com/pion/webrtc/v4/pkg/media/oggwriter"
 
 	"github.com/mezonai/mezon-call-translation/agents/internal/logging"
+	"github.com/mezonai/mezon-call-translation/agents/internal/opusenc"
 	"github.com/mezonai/mezon-call-translation/agents/internal/rtcagent"
 )
 
@@ -30,16 +30,21 @@ const (
 	maxSamplesPerPacket = 1920
 	recordSilenceTick   = 100 * time.Millisecond
 	rtpActivityGrace    = 200 * time.Millisecond
-	maxSilenceChunk     = 2 * time.Second
 	// WebRTC Opus RTP timestamps always use a 48kHz media clock, even though
 	// this pipeline decodes packets to 16kHz PCM before forwarding them.
 	opusRTPClockRate = 48000
+
+	RecordOpusSampleRate    = opusRTPClockRate
+	RecordOpusChannels      = 1
+	maxSilenceFrameRTPTicks = RecordOpusSampleRate / 50  // 20ms
+	minSilenceFrameRTPTicks = RecordOpusSampleRate / 400 // 2.5ms
 )
 
-// Sink receives decoded PCM for one track and is closed exactly once when
-// the track ends. recordclient.Forwarder implements this directly.
+// Sink receives consecutive fragments of a single physical Ogg object. That
+// object may contain chained logical Ogg streams when an SFU binding/SSRC
+// changes; concatenating the fragments in order produces the complete file.
 type Sink interface {
-	SendPCM(pcm []byte)
+	SendOgg(ogg []byte)
 	Close()
 }
 
@@ -84,34 +89,86 @@ func NewBridge(newRecordSink func(info rtcagent.TrackInfo) Sink) *Bridge {
 type recordTimeline struct {
 	mu sync.Mutex
 
-	sink        Sink
-	closed      bool
-	initialized bool
+	sink           Sink
+	oggWriter      *oggwriter.Writer
+	oggTrack       *oggwriter.Track
+	silenceEncoder opusenc.Encoder
+	silencePCM     []int16
+	ssrc           uint32
+	closed         bool
+	initialized    bool
 	// lastRTPTimestamp is the media timestamp of the first sample in the
 	// previous packet. lastPacketRTPTicks is that packet's duration on the
 	// mandatory 48kHz Opus RTP clock.
 	lastRTPTimestamp   uint32
 	lastPacketRTPTicks uint32
-	// paddedSamplesSinceLastRTP counts 16kHz silence samples already sent by
+	// paddedRTPTicksSinceLastRTP counts 48kHz silence ticks already sent by
 	// onTick after the latest real packet. When another packet arrives its
-	// RTP timestamp gives the exact gap, so sendAllPcm only fills the part
+	// RTP timestamp gives the exact gap, so sendAllOgg only fills the part
 	// not already committed by the ticker.
-	paddedSamplesSinceLastRTP int64
-	lastRTPAt                 time.Time
+	paddedRTPTicksSinceLastRTP int64
+	lastRTPAt                  time.Time
 
 	stop     chan struct{}
 	done     chan struct{}
 	stopOnce sync.Once
 }
 
-func newRecordTimeline(sink Sink) *recordTimeline {
+type oggSinkWriter struct {
+	sink Sink
+}
+
+func (w *oggSinkWriter) Write(data []byte) (int, error) {
+	// Pion owns data after Write returns; the asynchronous forwarder needs an
+	// independent copy.
+	w.sink.SendOgg(append([]byte(nil), data...))
+	return len(data), nil
+}
+
+func newOggLogicalStream(sink Sink, ssrc uint32) (*oggwriter.Writer, *oggwriter.Track, error) {
+	writer, err := oggwriter.NewWriter(
+		&oggSinkWriter{sink: sink},
+		oggwriter.WithSampleRate(RecordOpusSampleRate),
+		oggwriter.WithChannelCount(RecordOpusChannels),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create Ogg writer: %w", err)
+	}
+	track, err := writer.NewTrack(ssrc)
+	if err != nil {
+		_ = writer.Close()
+		return nil, nil, fmt.Errorf("create Ogg track: %w", err)
+	}
+	return writer, track, nil
+}
+
+func newRecordTimeline(sink Sink, ssrc uint32) (*recordTimeline, error) {
+	silenceEncoder, err := opusenc.New(RecordOpusSampleRate, RecordOpusChannels)
+	if err != nil {
+		return nil, fmt.Errorf("create recording silence encoder: %w", err)
+	}
+	writer, track, err := newOggLogicalStream(sink, ssrc)
+	if err != nil {
+		return nil, err
+	}
 	r := &recordTimeline{
-		sink: sink,
-		stop: make(chan struct{}),
-		done: make(chan struct{}),
+		sink:           sink,
+		oggWriter:      writer,
+		oggTrack:       track,
+		silenceEncoder: silenceEncoder,
+		silencePCM:     make([]int16, maxSilenceFrameRTPTicks*RecordOpusChannels),
+		ssrc:           ssrc,
+		stop:           make(chan struct{}),
+		done:           make(chan struct{}),
 	}
 	go r.run()
-	return r
+	return r, nil
+}
+
+type oggStreamTransition struct {
+	oldSSRC uint32
+	newSSRC uint32
+	reason  string
 }
 
 func (r *recordTimeline) run() {
@@ -122,60 +179,76 @@ func (r *recordTimeline) run() {
 	for {
 		select {
 		case now := <-ticker.C:
-			r.onTick(now)
+			if err := r.onTick(now); err != nil {
+				logging.L.Warn("audiopipeline: failed to write Ogg silence", logging.ErrAttrs(err)...)
+			}
 		case <-r.stop:
 			return
 		}
 	}
 }
 
-func (r *recordTimeline) sendAllPcm(pcm []byte, rtpTimestamp uint32, now time.Time) {
-	r.sendPCM(pcm, rtpTimestamp, now, false)
-}
-
-// A new binding can have an unrelated RTP clock. Use elapsed arrival time
-// only across that boundary; preserve RTP timing within a binding.
-func (r *recordTimeline) sendPCM(pcm []byte, rtpTimestamp uint32, now time.Time, newBinding bool) {
+// sendAllOgg writes the packet's existing Opus payload without re-encoding.
+// A new SFU binding has an unrelated RTP clock, so it starts a chained logical
+// Ogg stream even when the SFU happens to reuse the same SSRC.
+func (r *recordTimeline) sendAllOgg(
+	pkt *rtp.Packet,
+	packetRTPTicks uint32,
+	now time.Time,
+	newBinding bool,
+) (*oggStreamTransition, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
-		return
+		return nil, nil
+	}
+	if packetRTPTicks == 0 {
+		return nil, nil
 	}
 
-	bytesPerSample := PCMChannels * 2
-	sampleCount := int64(len(pcm) / bytesPerSample)
-	if sampleCount <= 0 {
-		return
-	}
-	packetRTPTicks := uint32(uint64(sampleCount) * opusRTPClockRate / PCMSampleRate)
-
-	if r.initialized && newBinding {
-		previousSamples := int64(r.lastPacketRTPTicks) * PCMSampleRate / opusRTPClockRate
-		gap := durationToPCMSamples(now.Sub(r.lastRTPAt)) - previousSamples
-		if remaining := gap - r.paddedSamplesSinceLastRTP; remaining > 0 {
-			r.sendSilenceSamplesLocked(remaining)
+	var transition *oggStreamTransition
+	if r.initialized && (newBinding || pkt.SSRC != r.ssrc) {
+		reason := "ssrc_rotation"
+		if newBinding {
+			reason = "binding_change"
 		}
-	} else if r.initialized {
+		transition = &oggStreamTransition{oldSSRC: r.ssrc, newSSRC: pkt.SSRC, reason: reason}
+
+		// RTP timestamps cannot be compared across bindings/SSRC domains. Use
+		// arrival time only at this boundary, accounting for the old packet's
+		// duration and any silence the ticker already committed.
+		previousPacketDuration := time.Duration(r.lastPacketRTPTicks) * time.Second / opusRTPClockRate
+		targetTicks := durationToRTPTicks(now.Sub(r.lastRTPAt) - previousPacketDuration)
+		if err := r.padToTargetLocked(targetTicks); err != nil {
+			return transition, fmt.Errorf("pad before Ogg stream transition: %w", err)
+		}
+		if err := r.rotateLogicalStreamLocked(pkt.SSRC); err != nil {
+			return transition, err
+		}
+	}
+
+	if r.initialized {
 		endOfLastPacket := r.lastRTPTimestamp + r.lastPacketRTPTicks
 		// Converting the modular uint32 subtraction to int32 gives the usual
 		// RTP serial-number ordering for differences below half the timestamp
 		// space and naturally handles the uint32 wraparound.
-		gapTicks := int32(rtpTimestamp - endOfLastPacket)
+		gapTicks := int32(pkt.Timestamp - endOfLastPacket)
 		if gapTicks >= 0 {
-			requiredSilenceSamples := int64(gapTicks) * PCMSampleRate / opusRTPClockRate
-			remainingSilenceSamples := requiredSilenceSamples - r.paddedSamplesSinceLastRTP
-			if remainingSilenceSamples > 0 {
-				r.sendSilenceSamplesLocked(remainingSilenceSamples)
-			} else if remainingSilenceSamples < 0 {
+			remainingSilenceTicks := int64(gapTicks) - r.paddedRTPTicksSinceLastRTP
+			if remainingSilenceTicks > 0 {
+				if _, err := r.sendSilenceRTPTicksLocked(remainingSilenceTicks); err != nil {
+					return transition, err
+				}
+			} else if remainingSilenceTicks < 0 {
 				// The ticker committed farther than the subsequently observed RTP
-				// media gap. An append-only PCM stream cannot retract those bytes;
+				// media gap. An append-only Ogg stream cannot retract those pages;
 				// retain real audio and make the grace-window violation visible.
-				logging.L.Warn("audiopipeline: Too much silence padding",
-					"rtp_timestamp", rtpTimestamp,
+				logging.L.Warn("audiopipeline: too much silence padding",
+					"rtp_timestamp", pkt.Timestamp,
 					"end_of_last_packet", endOfLastPacket,
-					"required_silence_samples", requiredSilenceSamples,
-					"already_padded_samples", r.paddedSamplesSinceLastRTP,
-					"overlap_samples", -remainingSilenceSamples)
+					"required_silence_rtp_ticks", gapTicks,
+					"already_padded_rtp_ticks", r.paddedRTPTicksSinceLastRTP,
+					"overlap_rtp_ticks", -remainingSilenceTicks)
 			}
 		} else {
 			// Do not turn a late/duplicate timestamp into a huge unsigned gap.
@@ -183,66 +256,107 @@ func (r *recordTimeline) sendPCM(pcm []byte, rtpTimestamp uint32, now time.Time,
 			// the following in-order packet look like a new gap, so omit it from
 			// the recording.
 			logging.L.Warn("audiopipeline: late or overlapping RTP timestamp",
-				"rtp_timestamp", rtpTimestamp,
+				"rtp_timestamp", pkt.Timestamp,
 				"end_of_last_packet", endOfLastPacket,
 				"overlap_rtp_ticks", -int64(gapTicks))
-			return
+			return transition, nil
 		}
 	}
 
-	r.sink.SendPCM(pcm)
+	if err := r.oggTrack.WriteRTP(pkt); err != nil {
+		return transition, fmt.Errorf("mux real RTP packet: %w", err)
+	}
 	r.initialized = true
-	r.lastRTPTimestamp = rtpTimestamp
+	r.lastRTPTimestamp = pkt.Timestamp
 	r.lastPacketRTPTicks = packetRTPTicks
 	r.lastRTPAt = now
-	r.paddedSamplesSinceLastRTP = 0
+	r.paddedRTPTicksSinceLastRTP = 0
+	return transition, nil
 }
 
-func (r *recordTimeline) onTick(now time.Time) {
+func (r *recordTimeline) rotateLogicalStreamLocked(newSSRC uint32) error {
+	newSilenceEncoder, err := opusenc.New(RecordOpusSampleRate, RecordOpusChannels)
+	if err != nil {
+		return fmt.Errorf("create silence encoder for Ogg stream transition: %w", err)
+	}
+	newWriter, newTrack, err := newOggLogicalStream(r.sink, newSSRC)
+	if err != nil {
+		return fmt.Errorf("create chained Ogg stream for SSRC %d: %w", newSSRC, err)
+	}
+	if err := r.oggWriter.Close(); err != nil {
+		return fmt.Errorf("finalize Ogg stream for SSRC %d: %w", r.ssrc, err)
+	}
+
+	r.oggWriter = newWriter
+	r.oggTrack = newTrack
+	r.silenceEncoder = newSilenceEncoder
+	r.ssrc = newSSRC
+	r.initialized = false
+	r.lastRTPTimestamp = 0
+	r.lastPacketRTPTicks = 0
+	r.paddedRTPTicksSinceLastRTP = 0
+	r.lastRTPAt = time.Time{}
+	return nil
+}
+
+func (r *recordTimeline) onTick(now time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed || !r.initialized || r.lastRTPAt.IsZero() {
-		return
+		return nil
 	}
 	elapsed := now.Sub(r.lastRTPAt)
 	if elapsed < rtpActivityGrace {
-		return
+		return nil
 	}
 
 	// Keep the most recent grace period uncommitted. If a delayed RTP packet
-	// arrives inside that window it is forwarded normally. Count committed
-	// silence in samples so sendAllPcm can reconcile it with the exact gap
-	// revealed by the next RTP media timestamp.
-	targetSamples := durationToPCMSamples(elapsed - rtpActivityGrace)
-	samplesToSend := targetSamples - r.paddedSamplesSinceLastRTP
-	if samplesToSend <= 0 {
-		return
-	}
-	r.sendSilenceSamplesLocked(samplesToSend)
-	r.paddedSamplesSinceLastRTP += samplesToSend
+	// arrives inside that window it is forwarded normally. The next RTP media
+	// timestamp reconciles this provisional wall-clock padding exactly.
+	return r.padToTargetLocked(durationToRTPTicks(elapsed - rtpActivityGrace))
 }
 
-func durationToPCMSamples(duration time.Duration) int64 {
+func durationToRTPTicks(duration time.Duration) int64 {
 	if duration <= 0 {
 		return 0
 	}
-	return duration.Nanoseconds() * int64(PCMSampleRate) / int64(time.Second)
+	return duration.Nanoseconds() * int64(opusRTPClockRate) / int64(time.Second)
 }
 
-func (r *recordTimeline) sendSilenceSamplesLocked(sampleCount int64) {
-	if sampleCount <= 0 {
-		return
+func (r *recordTimeline) padToTargetLocked(targetTicks int64) error {
+	ticksToSend := targetTicks - r.paddedRTPTicksSinceLastRTP
+	if ticksToSend <= 0 {
+		return nil
 	}
+	written, err := r.sendSilenceRTPTicksLocked(ticksToSend)
+	r.paddedRTPTicksSinceLastRTP += written
+	return err
+}
 
-	maxChunkSamples := durationToPCMSamples(maxSilenceChunk)
-	for sampleCount > 0 {
-		chunkSamples := sampleCount
-		if chunkSamples > maxChunkSamples {
-			chunkSamples = maxChunkSamples
+func (r *recordTimeline) sendSilenceRTPTicksLocked(ticks int64) (int64, error) {
+	var written int64
+	for ticks >= minSilenceFrameRTPTicks {
+		frameTicks := int64(maxSilenceFrameRTPTicks)
+		for frameTicks > ticks {
+			frameTicks /= 2
 		}
-		r.sink.SendPCM(make([]byte, int(chunkSamples)*PCMChannels*2))
-		sampleCount -= chunkSamples
+		if frameTicks < minSilenceFrameRTPTicks {
+			break
+		}
+		payload, err := r.silenceEncoder.Encode(r.silencePCM[:int(frameTicks)*RecordOpusChannels])
+		if err != nil {
+			return written, fmt.Errorf("encode Ogg silence: %w", err)
+		}
+		if err := r.oggTrack.WriteRTP(&rtp.Packet{
+			Header:  rtp.Header{SSRC: r.ssrc},
+			Payload: payload,
+		}); err != nil {
+			return written, fmt.Errorf("mux Ogg silence: %w", err)
+		}
+		ticks -= frameTicks
+		written += frameTicks
 	}
+	return written, nil
 }
 
 func (r *recordTimeline) close(now time.Time) {
@@ -257,11 +371,12 @@ func (r *recordTimeline) close(now time.Time) {
 		return
 	}
 	if r.initialized && !r.lastRTPAt.IsZero() {
-		requiredTailSamples := durationToPCMSamples(now.Sub(r.lastRTPAt))
-		remainingTailSamples := requiredTailSamples - r.paddedSamplesSinceLastRTP
-		if remainingTailSamples > 0 {
-			r.sendSilenceSamplesLocked(remainingTailSamples)
+		if err := r.padToTargetLocked(durationToRTPTicks(now.Sub(r.lastRTPAt))); err != nil {
+			logging.L.Warn("audiopipeline: failed to finalize Ogg silence", logging.ErrAttrs(err)...)
 		}
+	}
+	if err := r.oggWriter.Close(); err != nil {
+		logging.L.Warn("audiopipeline: failed to finalize Ogg stream", logging.ErrAttrs(err)...)
 	}
 	r.closed = true
 	sink := r.sink
@@ -271,16 +386,15 @@ func (r *recordTimeline) close(now time.Time) {
 	sink.Close()
 }
 
-// HandlePacket decodes one Opus RTP packet and fans the PCM out to whatever
-// sink this track has. Starts a new session (decoder + record-service
-// sink) on the first packet for a
+// HandlePacket wraps one Opus RTP packet into the recording's Ogg stream.
+// It starts a new session (decoder + record-service sink) on the first packet for a
 // given mid in legacy mode, or participant in decoupled mode.
 func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 	if b.participants != nil {
 		b.participants.handlePacket(info, pkt)
 		return
 	}
-	s := b.sessionFor(info)
+	s := b.sessionFor(info, pkt.SSRC)
 	if s == nil {
 		return
 	}
@@ -291,10 +405,19 @@ func (b *Bridge) HandlePacket(info rtcagent.TrackInfo, pkt *rtp.Packet) {
 			append(logging.ErrAttrs(err), "mid", info.Mid, "user_id", info.UserID)...)
 		return
 	}
-	pcm := int16ToLEBytes(s.pcmBuf[:n])
-
 	if s.record != nil {
-		s.record.sendAllPcm(pcm, pkt.Timestamp, time.Now())
+		packetRTPTicks := uint32(uint64(n) * opusRTPClockRate / PCMSampleRate)
+		transition, recordErr := s.record.sendAllOgg(pkt, packetRTPTicks, time.Now(), false)
+		if transition != nil {
+			logging.L.Info("audiopipeline: started chained Ogg stream",
+				"mid", info.Mid, "user_id", info.UserID,
+				"old_ssrc", transition.oldSSRC, "new_ssrc", transition.newSSRC,
+				"reason", transition.reason)
+		}
+		if recordErr != nil {
+			logging.L.Warn("audiopipeline: failed to mux recording packet",
+				append(logging.ErrAttrs(recordErr), "mid", info.Mid, "user_id", info.UserID)...)
+		}
 	}
 }
 
@@ -332,7 +455,7 @@ func (b *Bridge) finalizeSession(s *session) {
 	}
 }
 
-func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
+func (b *Bridge) sessionFor(info rtcagent.TrackInfo, ssrc uint32) *session {
 	b.mu.Lock()
 	if s, ok := b.sessions[info.Mid]; ok {
 		if s.info.PeerID == info.PeerID && s.info.BindingRevision == info.BindingRevision {
@@ -370,7 +493,14 @@ func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 
 	if b.newRecordSink != nil {
 		if sink := b.newRecordSink(info); sink != nil {
-			s.record = newRecordTimeline(sink)
+			record, recordErr := newRecordTimeline(sink, ssrc)
+			if recordErr != nil {
+				sink.Close()
+				logging.L.Error("audiopipeline: failed to create Ogg recording stream",
+					append(logging.ErrAttrs(recordErr), "mid", info.Mid, "user_id", info.UserID)...)
+			} else {
+				s.record = record
+			}
 		}
 	}
 	b.mu.Lock()
@@ -380,12 +510,4 @@ func (b *Bridge) sessionFor(info rtcagent.TrackInfo) *session {
 	logging.L.Info("audiopipeline: started session", "mid", info.Mid, "user_id", info.UserID, "peer_id", info.PeerID,
 		"recording", s.record != nil)
 	return s
-}
-
-func int16ToLEBytes(samples []int16) []byte {
-	out := make([]byte, len(samples)*2)
-	for i, v := range samples {
-		binary.LittleEndian.PutUint16(out[i*2:], uint16(v))
-	}
-	return out
 }

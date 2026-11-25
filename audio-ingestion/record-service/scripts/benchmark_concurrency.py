@@ -1,8 +1,8 @@
 """Concurrency benchmark for record-service (PLAN.md D13 action item).
 
 Opens N concurrent StreamAudio sessions against a *running* record-service
-instance, feeding each one realistic 16-bit PCM silence at real capture
-cadence, while sampling the target process's CPU%/RSS. Sweeps a list of
+instance, feeding each one representative streaming Ogg page fragments at
+real capture cadence, while sampling the target process's CPU%/RSS. Sweeps a list of
 concurrency levels to find where a single instance/core starts to strain --
 see deploy/systemd/README.md and PLAN.md D13/D14 for how the result feeds
 into systemd instance-count capacity planning.
@@ -70,9 +70,14 @@ def _autodetect_pid() -> int:
     )
 
 
-def _silence_frame(sample_rate: int, channels: int, frame_ms: int) -> bytes:
-    n_samples = sample_rate * frame_ms // 1000
-    return b"\x00\x00" * n_samples * channels  # PCM16 silence, 2 bytes/sample
+def _ogg_fragment(frame_ms: int) -> bytes:
+    """Representative Ogg/Opus page size for ingest-throughput testing.
+
+    record-service deliberately does not parse media, so the benchmark needs
+    the production payload cadence/size rather than a complete encoder.
+    """
+    payload_bytes = max(1, 32 * frame_ms // 20)
+    return b"OggS" + bytes(24 + 1 + payload_bytes)
 
 
 class _Session:
@@ -117,13 +122,14 @@ class _Session:
                     source="mic",
                     sample_rate=self._sample_rate,
                     channels=self._channels,
+                    format="ogg",
                 )
             )
         )
 
-    def send(self, pcm: bytes) -> None:
+    def send(self, ogg: bytes) -> None:
         try:
-            self._queue.put_nowait(recording_pb2.AudioChunk(pcm=pcm))
+            self._queue.put_nowait(recording_pb2.AudioChunk(ogg=ogg))
             self.frames_sent += 1
         except asyncio.QueueFull:
             self.frames_dropped += 1
@@ -181,7 +187,7 @@ async def _run_session(
     )
     await session.start()
 
-    frame = _silence_frame(sample_rate, channels, frame_ms)
+    frame = _ogg_fragment(frame_ms)
     interval = frame_ms / 1000.0
     deadline = time.monotonic() + duration_s
     next_tick = time.monotonic()
@@ -320,7 +326,7 @@ async def main() -> None:
     parser.add_argument("--duration", type=float, default=30.0, help="seconds of load per level")
     parser.add_argument("--warmup", type=float, default=5.0, help="seconds excluded from CPU stats while load ramps up")
     parser.add_argument("--cooldown", type=float, default=5.0, help="pause between levels")
-    parser.add_argument("--frame-ms", type=int, default=20, help="PCM frame size in ms (matches real capture cadence)")
+    parser.add_argument("--frame-ms", type=int, default=20, help="Ogg/Opus packet cadence in ms")
     parser.add_argument("--sample-rate", type=int, default=16000)
     parser.add_argument("--channels", type=int, default=1)
     parser.add_argument(

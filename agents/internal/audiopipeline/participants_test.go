@@ -11,9 +11,6 @@ import (
 	"github.com/mezonai/mezon-call-translation/agents/internal/rtcagent"
 )
 
-// opusFrameBytes is the 16kHz mono PCM16 size of one decoded 20ms Opus frame.
-var opusFrameBytes = silenceBytes(20 * time.Millisecond)
-
 // sinkRecorder hands out a fresh fakeSink per factory call so tests can
 // assert how many recordings/STT sessions a participant produced.
 type sinkRecorder struct {
@@ -72,7 +69,7 @@ func (p *opusPackets) packet(ts uint32) *rtp.Packet {
 	if err != nil {
 		p.t.Fatalf("Encode: %v", err)
 	}
-	return &rtp.Packet{Header: rtp.Header{Timestamp: ts}, Payload: payload}
+	return &rtp.Packet{Header: rtp.Header{SSRC: testSSRC, Timestamp: ts}, Payload: payload}
 }
 
 // sendFrames feeds n consecutive 20ms packets for info starting at ts.
@@ -84,43 +81,6 @@ func (p *opusPackets) sendFrames(b *Bridge, info rtcagent.TrackInfo, ts uint32, 
 
 func audioBinding(mid string, peerID uint64, revision uint64) rtcagent.TrackInfo {
 	return rtcagent.TrackInfo{Mid: mid, UserID: int64(peerID) * 100, PeerID: peerID, Kind: rtcagent.KindAudio, BindingRevision: revision}
-}
-
-func TestRecordTimeline_NewBindingPadsArrivalGap(t *testing.T) {
-	sink := &fakeSink{}
-	r := newRecordTimeline(sink)
-	defer r.close(time.Now())
-
-	t0 := time.Now()
-	pcm := make([]byte, opusFrameBytes)
-	r.sendPCM(pcm, 1000, t0, true)
-	// The new binding's RTP clock is unrelated (and here even behind the old
-	// one); only the 500ms arrival gap may decide the silence length.
-	r.sendPCM(pcm, 5, t0.Add(500*time.Millisecond), true)
-
-	got, _ := sink.snapshot()
-	want := 2*len(pcm) + silenceBytes(500*time.Millisecond-20*time.Millisecond)
-	if got != want {
-		t.Fatalf("bytes = %d, want %d", got, want)
-	}
-}
-
-func TestRecordTimeline_NewBindingSubtractsTickerPadding(t *testing.T) {
-	sink := &fakeSink{}
-	r := newRecordTimeline(sink)
-	defer r.close(time.Now())
-
-	t0 := time.Now()
-	pcm := make([]byte, opusFrameBytes)
-	r.sendPCM(pcm, 1000, t0, true)
-	r.onTick(t0.Add(2 * time.Second)) // muted: ticker already committed some silence
-	r.sendPCM(pcm, 77, t0.Add(3*time.Second), true)
-
-	got, _ := sink.snapshot()
-	want := 2*len(pcm) + silenceBytes(3*time.Second-20*time.Millisecond)
-	if got != want {
-		t.Fatalf("bytes = %d, want %d (silence double-counted or missing)", got, want)
-	}
 }
 
 func TestDecoupledBridge_SlotMoveKeepsOneRecording(t *testing.T) {
@@ -139,13 +99,12 @@ func TestDecoupledBridge_SlotMoveKeepsOneRecording(t *testing.T) {
 	if n := rec.count(); n != 1 {
 		t.Fatalf("record sinks = %d, want 1 per participant", n)
 	}
-	got, closed := rec.sink(t, 0).snapshot()
+	_, closed := rec.sink(t, 0).snapshot()
 	if closed {
 		t.Fatal("slot release closed the participant's recording")
 	}
-	silence := got - 10*opusFrameBytes
-	if silence < silenceBytes(150*time.Millisecond) || silence > silenceBytes(500*time.Millisecond) {
-		t.Fatalf("silence across the slot move = %d bytes, want roughly 180ms (%d)", silence, silenceBytes(180*time.Millisecond))
+	if duration := chainedOggDuration(t, rec.sink(t, 0).oggData()); duration < 350*time.Millisecond || duration > 800*time.Millisecond {
+		t.Fatalf("recording duration across slot move = %s, want roughly 500ms", duration)
 	}
 	if rec.infos[0].PeerID != 10 || rec.infos[0].Kind != rtcagent.KindAudio {
 		t.Fatalf("sink created with %+v", rec.infos[0])
@@ -226,9 +185,24 @@ func TestDecoupledBridge_IgnoresPlaceholderIdentity(t *testing.T) {
 	if n := rec.count(); n != 1 {
 		t.Fatalf("record sinks = %d, want 1 (placeholder must not get a sink)", n)
 	}
-	if got, _ := rec.sink(t, 0).snapshot(); got != 2*opusFrameBytes {
-		t.Fatalf("bytes = %d, want both live frames (%d)", got, 2*opusFrameBytes)
+	if got := chainedOggDuration(t, rec.sink(t, 0).oggData()); got != 40*time.Millisecond {
+		t.Fatalf("duration = %s, want both 20ms live frames", got)
 	}
+}
+
+func chainedOggDuration(t *testing.T, data []byte) time.Duration {
+	t.Helper()
+	maxBySerial := map[uint32]uint64{}
+	for _, page := range parseOggPages(t, data) {
+		if page.granule != ^uint64(0) && page.granule > maxBySerial[page.serial] {
+			maxBySerial[page.serial] = page.granule
+		}
+	}
+	var ticks uint64
+	for _, granule := range maxBySerial {
+		ticks += granule
+	}
+	return time.Duration(ticks) * time.Second / RecordOpusSampleRate
 }
 
 func TestDecoupledBridge_PeerEndedClosesAndBlocksLatePackets(t *testing.T) {

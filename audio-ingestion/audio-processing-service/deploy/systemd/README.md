@@ -1,5 +1,9 @@
 # systemd deployment (PLAN.md D14, applied to audio-processing-service in D28)
 
+> **Retired:** these instructions are retained for historical reference only.
+> The active pipeline stores Ogg directly and no longer schedules derivative
+> work, so this service must not be deployed for new environments.
+
 Host-native deploy, no Docker (Docker stays local-dev/CI only, matching
 record-service's `deploy/systemd/README.md`). One template unit, one
 instance per CPU core -- scale by starting more instances, not by

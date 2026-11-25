@@ -1,6 +1,6 @@
 # orchestrator_service
 
-FastAPI service that is the central coordination layer of `mezon-call-translation`. It does not touch media itself — it registers rooms/calls, receives lifecycle events from the recording/transcode pipeline, dispatches STT and transcode work over Redis Streams, persists transcripts/tracks/summaries to Postgres, pushes live updates to clients over Server-Sent Events (SSE), and generates end-of-call meeting summaries via an LLM.
+FastAPI service that is the central coordination layer of `mezon-call-translation`. It does not touch media itself — it registers rooms/calls, receives recording lifecycle events, dispatches STT work over Redis Streams, persists transcripts/tracks/summaries to Postgres, pushes live updates over SSE, and generates end-of-call summaries.
 
 ## Role in the system
 
@@ -14,32 +14,28 @@ Depends on:
 
 Depended on by:
 - **`audio-ingestion/record-service`** — POSTs recording lifecycle events (`recording.started`/`completed`/`failed`) to `POST /api/v2/recordings/events`. See that service's README for its side of this contract.
-- **`audio-ingestion/audio-processing-service`** (planned, Phase 5 per `audio-ingestion/PLAN.md`) — will POST `derivative.completed`/`derivative.failed` to the same endpoint once built; the request/response models (`models/recording_event_models.py`) and dispatch logic already exist and are exercised by that same endpoint today.
 - **A frontend/dashboard** — reads rooms/transcripts/summaries via the v2 REST API and subscribes to the remaining chat/metadata SSE endpoints.
 
 ## Architecture / data flow
 
 ```
-record-service  ──POST /api/v2/recordings/events──▶  recording_events_api.py
-audio-processing-service (planned)                    │
-                                                        ▼
-                                          services/recording_event_service.py
-                                            │                         │
-                              recording.completed          recording.failed /
-                                    │                       derivative.completed/.failed
-                                    ▼                                 │
-                    TranscriptionService.handle_recording_completed   │
-                      - upsert Track (status=wait_process)            │
-                      - XADD transcription:stream  ───▶ stt_service   │
-                    AudioDerivativeService.enqueue                    │
-                      - XADD audio_derivative:stream (Phase 5 consumer)
-                                    │                                 │
-                                    └──────────────┬──────────────────┘
-                                                    ▼
-                              PgTranscriptRepository.check_and_notify_room_recordings_ready
-                                        (fires once per room)
-                                                    ▼
-                                SSE metadata channel: room_record_done
+record-service  ──POST /api/v2/recordings/events──▶ recording_events_api.py
+                                                       │
+                                                       ▼
+                                           recording_event_service.py
+                                              │                  │
+                                    recording.completed    recording.failed
+                                              │                  │
+                                              ▼                  │
+                              save original Ogg key in Track      │
+                              XADD transcription:stream ──▶ stt_service
+                                              │                  │
+                                              └────────┬─────────┘
+                                                       ▼
+                         check_and_notify_room_recordings_ready
+                         (room finalized + every Ogg ready/failed)
+                                                       ▼
+                                          SSE room_record_done
 
 stt_service ──(elsewhere: batches of transcript segments)──▶ save_transcription:stream
                                                     │
@@ -52,7 +48,7 @@ stt_service ──(elsewhere: batches of transcript segments)──▶ save_tran
 
 Two identifiers matter throughout this flow: `room_id` (orchestrator's own stable UUID for one call, minted at registration) and `room_name` (the reused Mezon channel name). `services/recording_event_service.py`'s `_resolve_room_ref_id` accepts either from record-service (it sends whatever the agent had), preferring a direct `room_id` lookup and only falling back to the Redis name registry (`services/room_registry.py`) if the value isn't a UUID.
 
-Track completion for a room is a race between two independent paths that can each finish last — the derivative pipeline (`handle_derivative_event`) and the transcript-save pipeline (`RedisSaveTranscriptionService`/ `TranscriptionService.final_room`) — both call the same atomic `check_and_notify_room_recordings_ready` / `check_and_complete_room` guards in `pg_transcript_repository.py`, so the SSE `room_record_done` notice and `SummaryService.generate_summary` each fire exactly once regardless of which path gets there last.
+Recording completion and room finalization may arrive in either order. Both paths call the atomic `check_and_notify_room_recordings_ready` guard, which fires `room_record_done` once the room is finalized and every track has an original Ogg object (or failed). Transcript completion independently drives summary generation.
 
 A `SummaryOutboxWorker` (started in `main.py`'s lifespan) polls `OutboxTask` rows on an interval (`OUTBOX_CHECK_INTERVAL_SEC`) to retry summarization for rooms whose summary generation failed, rather than losing it silently.
 
@@ -72,7 +68,7 @@ cd Architect_MultiClient_Server/orchestrator_service
 alembic upgrade head
 ```
 
-Current migrations (`migrations_pg/versions/`): `001_initial_schema` → `002_calculate_participant_durations` → `003_drop_full_text_column` → `004_add_outbox_tasks_with_enums` → `005_add_derivative_tracking` (adds `tracks.derivative_status` / `rooms.record_notified_at`, the columns the recording-event flow above depends on) → `006_add_rooms_section_summary` (per-section summary table used by `light_summary_service.py`).
+Current migrations end at `008_remove_derivative_tracking`, which removes the obsolete `tracks.derivative_status` column while retaining `rooms.record_notified_at` as the once-only recording-ready notification guard.
 
 ## Configuration
 
@@ -124,7 +120,7 @@ v2 route groups (`api/v2/endpoints/`):
 - **`auth_api.py`** (`/api/v2/auth`) — Mezon OAuth2 code exchange, userinfo, refresh, logout, bot login.
 - **`room_api.py`** (`/api/v2/rooms`) — list rooms, get room by id, room statistics, per-room audio info.
 - **`room_registry_api.py`** (`/api/v2/room-registry`) — register/unregister a room, participant roster snapshot/join events, registry status/list/clear-all.
-- **`recording_events_api.py`** (`/api/v2/recordings/events`) — single POST entrypoint for record-service and audio-processing-service lifecycle events; secured with `verify_api_key` (`INTERNAL_API_SECRET`), not user auth. Dispatches on payload shape to `RecordingEventService.handle_recording_event` or `handle_derivative_event`. Idempotent by design.
+- **`recording_events_api.py`** (`/api/v2/recordings/events`) — POST entrypoint for record-service lifecycle events; secured with `verify_api_key` (`INTERNAL_API_SECRET`), not user auth. Idempotent by design.
 - **`dispatch_api.py`** — authenticated create/cancel dispatch compatibility endpoints (`/api/v2/create_dispatch`, `/api/v2/cancel_dispatch`, currently returning `{"status": "ok"`) and recorded participant lookup (`/api/v2/rooms/participant/{room_id}`); actual agent process lifecycle is handled through NATS and the Go worker-manager.
 - **`queue_api.py`** (`/api/v2/queue`) — Redis Stream queue introspection: list queues, stats, pending/DLQ tasks, retry a DLQ task.
 - **`summary_api.py`** (`/api/v2/summary`) — get summary by room name or room id, permission-gated.

@@ -249,7 +249,7 @@ class MetadataChannel:
 
         Fired exactly once per room, gated by
         PgTranscriptRepository.check_and_notify_room_recordings_ready()
-        (room finalized AND every track's derivative_status terminal) --
+        (room finalized AND every track has original Ogg metadata or failed) --
         callers must go through that check, this method does not re-check
         anything, it only broadcasts.
         """

@@ -44,7 +44,7 @@ class S3BlobStorage(BlobStorage):
             self._client.create_multipart_upload,
             Bucket=bucket,
             Key=key,
-            ContentType="application/octet-stream",
+            ContentType="audio/ogg",
         )
         return response["UploadId"]
 
