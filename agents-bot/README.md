@@ -5,13 +5,15 @@ A standalone Go service that logs into the Mezon platform as a bot account and i
 Concretely, it:
 - Logs into Mezon via `mezon-sdk-go` and listens for `VoiceJoinedEvent`/`VoiceLeavedEvent` and channel chat messages, building an in-memory `user_id -> {username, display_name, clan_nick, avatar}` cache (`internal/userresolver`) — the only source of Mezon display names, since `mezon-sfu`/the Go `agent` only ever carry the numeric user id.
 - Forwards inbound Mezon chat messages to `orchestrator_service` (`POST /api/v2/agent_push_chat_external`) for any channel a room has been registered against, so the meeting UI can show real chat alongside transcripts.
+- Subscribes to the orchestrator metadata SSE stream. When it receives `room_summary_done`, it fetches the completed summary and persisted room roster, opens a Mezon DM with each eligible participant, and sends the summary through Mezon's protobuf `SendSystemMessage` HTTP route.
 - Serves an HTTP API so other services can resolve user profiles, look up a room's participant roster, and register/unregister which Mezon channel maps to which active call.
 
 Who talks to it:
 - `agents/cmd/agent` (`internal/agentsbotclient`) calls `POST /api/rooms/register` / `/unregister` when it joins/leaves a `mezon-sfu` room, and `GET /api/bot/profile`.
 - `orchestrator_service` (`services/agents_bot_user_client.py`, `AGENTS_BOT_BASE_URL`) calls `GET /api/users/{id}` / `POST /api/users` to resolve display names for participant rosters and transcripts.
+- `agents-bot` calls the orchestrator bot-login, metadata SSE, summary, and room-participant endpoints for post-meeting DM delivery.
 
-What it does **not** do (anymore): outbound chat (agent/orchestrator -> Mezon chat) is outside the current agent flow. The old `agents-bot` chat-send endpoint and the later direct SFU `SendRoomMessage` path were both removed. Inbound chat still has no `mezon-sfu`-level equivalent, so `agents-bot` remains the path for forwarding Mezon chat into the orchestrator.
+The post-meeting notification is deliberately narrow: it sends only completed summaries triggered by `room_summary_done`; it does not restore the old general-purpose outbound chat endpoint.
 
 ## Requirements
 
@@ -34,6 +36,7 @@ All via environment variables (`internal/config/config.go`), loaded from a `.env
 | `GATEWAY_PORT` | no | `8003` | Port the internal HTTP API listens on. |
 | `ORCHESTRATOR_BASE_URL` | no | `http://localhost:8002` | Base URL used to POST forwarded chat to `orchestrator_service`. |
 | `INTERNAL_API_SECRET` | no | `""` (unset) | Bearer token sent as `Authorization` on the orchestrator push call, if set. |
+| `MEZON_SYSTEM_API_URL` | no | `http://127.0.0.1:7350` | Base URL of the Mezon API HTTP listener that exposes `SendSystemMessage`. |
 | `LOG_LEVEL` | no | `info` | Any `log/slog`-parseable level string. |
 
 ## Running standalone
@@ -64,7 +67,7 @@ cmd/agents-bot/main.go        entrypoint: env/config -> gateway.New -> gateway.R
 internal/config/              env var parsing/validation
 internal/gateway/             core service: Mezon SDK client + event handlers, HTTP server/handlers, active-room registry
 internal/userresolver/        thread-safe in-memory user_id -> profile cache, populated passively from Mezon events
-internal/orchestratorclient/  HTTP client for forwarding chat to orchestrator's agent_push_chat_external endpoint
+internal/orchestratorclient/  HTTP/SSE client for chat forwarding, bot auth, summaries, and room rosters
 internal/logging/             process-wide slog logger
 ```
 
@@ -74,6 +77,9 @@ internal/logging/             process-wide slog logger
 - **Passive-only user cache, and it can only know what it has seen.** `internal/userresolver`'s package doc explains why: the SDK's `Users.Fetch` only opens DM channels and never returns username/display_name, so the cache is populated solely by observing `VoiceJoinedEvent` and channel messages. A user who joins voice but never speaks still resolves (coarser voice-only name); a user `agents-bot` has never seen in either event returns not-found. Voice data never overwrites a richer chat-derived entry (see `CacheFromVoiceJoined`'s fill-if-empty policy).
 - **Chat forwarding is scoped to registered rooms only.** `forwardChatIfActive` forwards a channel message only if that channel id is a currently-registered `room_name`; unregistered/unrelated channel traffic (e.g. other clan chats the bot account can see) is never pushed to orchestrator.
 - **Two identifiers per room, not one.** `room_name` is the Mezon voice-channel id as a string (stable per channel, reused across calls over time); `room_id` is orchestrator's own per-call UUID, used to reject a stale unregister from an older session after a channel gets reused.
+- **Two different bearer tokens are involved.** The orchestrator bot-login response supplies the JWT used for SSE/summary/participant reads. The live Mezon SDK session supplies the token used by `SendSystemMessage`; neither token is stored in configuration separately.
+- **The summary roster comes from orchestrator persistence.** `room_summary_done` contains the `room_id`; the notifier reads `/api/v2/rooms/participant/{room_id}` and ignores guest/non-numeric identities and the agent's own id before creating DMs.
+- **Summary notification currently follows the live SSE stream.** If `agents-bot` is offline at the exact time an event is emitted, this implementation does not replay the persisted metadata-event history after restart.
 - **Why this is a separate binary from `agents`/`worker-manager`:** it isn't discoverable from `agents-bot`'s own code — `mezon-sfu` has no data channel, so chat/identity had to be solved by a bot joining Mezon's real chat API directly, architecturally unrelated to the per-room SFU media pipeline `agent`/`worker-manager` implement. It shares the bot's `AGENT_USER_ID` identity with the SFU agents by convention, not by any code-level coupling.
 
 ## Open questions

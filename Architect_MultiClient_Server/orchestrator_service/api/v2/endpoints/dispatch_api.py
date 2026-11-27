@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends
 
 from orchestrator_service.auth.authorization import AuthContext, require_any_permission
-from orchestrator_service.constants.permissions import AGENT_CONTROL
+from orchestrator_service.constants.permissions import AGENT_CONTROL, ROOMS_VIEW_ALL
 from orchestrator_service.models.dispatch_models import RoomIdPath
 from orchestrator_service.models.room_models import ParticipantListResponseModel
 from orchestrator_service.services.room_service import (
@@ -43,7 +43,7 @@ async def api_cancel_dispatch(
 )
 async def list_participants(
     room_id: RoomIdPath,
-    auth: AuthContext = Depends(require_any_permission(AGENT_CONTROL)),
+    auth: AuthContext = Depends(require_any_permission(ROOMS_VIEW_ALL, AGENT_CONTROL)),
     room_service: RoomService = Depends(get_room_service),
 ) -> ParticipantListResponseModel:
     """List participants recorded for a room."""

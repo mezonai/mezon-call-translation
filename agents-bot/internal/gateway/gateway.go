@@ -32,10 +32,12 @@ type orchestratorAPI interface {
 
 // Gateway is the main service struct.
 type Gateway struct {
-	cfg        config.Config
-	client     *mezon.MezonClient
-	accountAPI *mezon.MezonApi
-	orch       orchestratorAPI
+	cfg         config.Config
+	client      *mezon.MezonClient
+	accountAPI  *mezon.MezonApi
+	orch        orchestratorAPI
+	summaryOrch *orchestratorclient.Client
+	systemHTTP  *http.Client
 
 	// activeRooms maps room_name (SFU numeric id as string) → RoomInfo.
 	// The agent registers its room here so the gateway knows which
@@ -68,10 +70,13 @@ func New(cfg config.Config) (*Gateway, error) {
 		return nil, fmt.Errorf("gateway: init mezon client: %w", err)
 	}
 
+	orchClient := orchestratorclient.New(cfg.OrchestratorBaseURL, cfg.InternalAPISecret)
 	g := &Gateway{
 		cfg:         cfg,
 		client:      client,
-		orch:        orchestratorclient.New(cfg.OrchestratorBaseURL, cfg.InternalAPISecret),
+		orch:        orchClient,
+		summaryOrch: orchClient,
+		systemHTTP:  &http.Client{Timeout: 10 * time.Second},
 		activeRooms: make(map[string]*RoomInfo),
 	}
 
@@ -89,6 +94,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 	logging.L.Info("agents-bot: logged in", "client_id", g.client.ClientID)
 	logging.L.Info("agents-bot: clans cached", "count", g.client.Clans.Size())
 	g.accountAPI = newAccountAPI(g.client)
+	go g.runSummaryNotifier(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", g.handleHealthz)

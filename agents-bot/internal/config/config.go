@@ -26,6 +26,10 @@ type Config struct {
 	// Orchestrator connection (for forwarding chat)
 	OrchestratorBaseURL string
 	InternalAPISecret   string
+
+	// Post-meeting summary DM delivery. SendSystemMessage is an HTTP-only
+	// Mezon API, so its base URL is separate from the SDK gateway address.
+	MezonSystemAPIURL string
 }
 
 func FromEnv() (Config, error) {
@@ -37,6 +41,7 @@ func FromEnv() (Config, error) {
 		MezonTLSInsecure:    getEnv("MEZON_TLS_INSECURE", "") == "true",
 		OrchestratorBaseURL: getEnv("ORCHESTRATOR_BASE_URL", "http://localhost:8002"),
 		InternalAPISecret:   getEnv("INTERNAL_API_SECRET", ""),
+		MezonSystemAPIURL:   getEnv("MEZON_SYSTEM_API_URL", "http://127.0.0.1:7350"),
 	}
 
 	if cfg.BotID == "" {
