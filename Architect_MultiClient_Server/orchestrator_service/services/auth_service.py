@@ -270,14 +270,16 @@ class AuthService:
             )
             logger.info(f"Assigned {len(DEFAULT_BOT_PERMISSIONS)} default bot permissions")
         else:
-            # Existing bot - just update basic info (keep existing permissions)
+            # Preserve custom permissions while ensuring bots receive newly
+            # introduced baseline capabilities such as summary/roster reads.
+            permissions = sorted(set(existing_bot.permissions or []) | set(DEFAULT_BOT_PERMISSIONS))
             await self.user_repo.create_or_update_user(
                 user_id=user_id,
                 username=username,
                 display_name=username,
-                permissions=None,  # Don't update permissions for existing bots
+                permissions=permissions,
             )
-            logger.debug(f"Updated bot info for user_id={user_id}")
+            logger.debug(f"Updated bot info and baseline permissions for user_id={user_id}")
 
         user_data = UserProfile(user_id=user_id)
 
